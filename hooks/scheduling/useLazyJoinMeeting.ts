@@ -1,15 +1,20 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { reportClientFailure } from "@/lib/errors/classification/client-failure";
+import { failureToast } from "@/components/ui/failure-toast";
 // #248: type-only imports are erased at compile time, so referencing
 // lib/meeting's types here does NOT pull the Stream SDK into the bundle.
 // MeetingAppointment/MeetingSlot are structural subsets that TAppointment
 // and its slots satisfy, so callers pass their richer types directly.
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
-import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import {
+  describeVideoClientWait,
+  waitForGlobalVideoClient,
+} from "@/lib/stream/disconnect";
 
 /**
  * Join-meeting handler that keeps the Stream video SDK off the tab
@@ -37,12 +42,22 @@ export function useLazyJoinMeeting() {
       // The video connect is deferred to requestIdleCallback, so a fast
       // Join click can land before the client exists — briefly wait for
       // it instead of immediately erroring.
+      const waitStartedAt = Date.now();
       const client = await waitForGlobalVideoClient();
       if (!client) {
+        // Reported so this stays distinguishable from a chunk failure in
+        // Sentry as well as in the toast. Expected: the user is told to try
+        // again and the retry normally works — the extras are what say
+        // whether that is still true.
+        reportSentryMessage("Video client not ready at Join", {
+          subsystem: "client",
+          op: "join-meeting",
+          expected: true,
+          extra: describeVideoClientWait(Date.now() - waitStartedAt),
+        });
         toast({
           title: "Connecting…",
-          description:
-            "Setting up your meeting client. Please try Join again.",
+          description: "Setting up your meeting client. Please try Join again.",
         });
         return false;
       }
@@ -58,9 +73,7 @@ export function useLazyJoinMeeting() {
       }
 
       try {
-        const { getOrCreateAppointmentMeeting } = await import(
-          "@/lib/meeting"
-        );
+        const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
         const meetingId = await getOrCreateAppointmentMeeting(
           client,
           appointment,
@@ -73,17 +86,20 @@ export function useLazyJoinMeeting() {
         });
         return true;
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "client" } },
-        );
         console.error("Error joining meeting:", error);
-        toast({
-          title: "Error joining meeting",
-          description:
-            error instanceof Error ? error.message : "Unknown error",
-          variant: "destructive",
-        });
+        toast(
+          failureToast(
+            reportClientFailure(error, {
+              subsystem: "client",
+              op: "join-meeting",
+              title: "Error joining meeting",
+              extra: {
+                appointmentId: appointment.id,
+                slotId: relevantSlot.id,
+              },
+            }),
+          ),
+        );
         return false;
       }
     },

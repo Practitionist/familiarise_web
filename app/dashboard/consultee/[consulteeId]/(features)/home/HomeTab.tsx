@@ -26,7 +26,13 @@ import { useState, useMemo, useRef } from "react";
 // lib/meeting (which imports the SDK) here — that would pull the heavy SDK into
 // the dashboard-HOME bundle / critical path. The video client + meeting helper
 // are acquired lazily inside the Join handler (only when a user clicks Join).
-import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import {
+  describeVideoClientWait,
+  waitForGlobalVideoClient,
+} from "@/lib/stream/disconnect";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { reportClientFailure } from "@/lib/errors/classification/client-failure";
+import { failureToast } from "@/components/ui/failure-toast";
 import { useToast } from "@/hooks/use-toast";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import {
@@ -657,9 +663,19 @@ export default function HomeTab({
     // exists — show the joining spinner and briefly wait for it instead of
     // immediately erroring.
     setJoiningEventId(event.id);
+    const waitStartedAt = Date.now();
     const client = await waitForGlobalVideoClient();
     if (!client) {
       setJoiningEventId(null);
+      // Kept distinct from a chunk failure in Sentry as well as in the toast;
+      // the extras are what tell a cold start from a provider that never
+      // connected at all.
+      reportSentryMessage("Video client not ready at Join", {
+        subsystem: "client",
+        op: "join-meeting",
+        expected: true,
+        extra: describeVideoClientWait(Date.now() - waitStartedAt),
+      });
       toast({
         title: "Connecting…",
         description:
@@ -685,11 +701,19 @@ export default function HomeTab({
       });
     } catch (error) {
       console.error("Error joining meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast(
+        failureToast(
+          reportClientFailure(error, {
+            subsystem: "client",
+            op: "join-meeting",
+            title: "Error joining meeting",
+            extra: {
+              appointmentId: event.joinableAppointment.id,
+              slotId: event.joinableSlot.id,
+            },
+          }),
+        ),
+      );
     } finally {
       setJoiningEventId(null);
     }

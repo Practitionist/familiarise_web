@@ -6,6 +6,10 @@ import {
   resolveSessionAnchorSlot,
   resolveSessionCallProfile,
 } from "@/actions/stream/meetings/meeting.action";
+import {
+  isUserFacingError,
+  userFacingError,
+} from "@/lib/errors/classification/client-failure";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
 import type { AppointmentsType } from "@prisma/client";
@@ -127,7 +131,7 @@ export const getOrCreateAppointmentMeeting = async (
       // a row for, carrying the bounds and members computed at the blocked
       // moment with nothing to ever correct them.
       const refusal = await getMeetingCreationRefusal(anchorSlot);
-      if (refusal) throw new Error(refusal);
+      if (refusal) throw userFacingError(refusal);
 
       // 3. Create the Stream call.
       // #1070 — a call created with nothing but an id is illegible in Stream's
@@ -247,17 +251,27 @@ export const getOrCreateAppointmentMeeting = async (
     // 5. Return the Stream Call ID (either existing or newly created)
     return streamCallId;
   } catch (error) {
+    // A refusal we authored (maintenance, a slot that is not one) travels
+    // unwrapped: prefixing it would bury the one sentence worth showing, and
+    // the classifier at the toast boundary shows it verbatim.
+    if (isUserFacingError(error)) throw error;
+
     console.error(
       `Error in getOrCreateAppointmentMeeting for slot ${slot.id}:`,
       error,
     );
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
-    // Wrap the original error
+    // Wrapped, but with `cause` set: the browser catch needs the original to
+    // classify it, and a chunk failure or a server-action `digest` is invisible
+    // once the message has been flattened into a string.
     if (error instanceof Error) {
-      throw new Error(`Failed to get/create meeting session: ${error.message}`);
+      throw new Error(`Failed to get/create meeting session: ${error.message}`, {
+        cause: error,
+      });
     }
     throw new Error(
       "An unknown error occurred while managing the appointment meeting session.",
+      { cause: error },
     );
   }
 };

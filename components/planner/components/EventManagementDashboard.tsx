@@ -9,7 +9,13 @@ import { EventCarousel } from "./EventCarousel";
 // #248 bundle discipline: never statically import the Stream SDK or
 // @/lib/meeting (which imports it) — the client singleton is read at
 // click time and the meeting helper is lazy-imported on demand.
-import { waitForGlobalVideoClient } from "@/lib/stream/disconnect";
+import {
+  describeVideoClientWait,
+  waitForGlobalVideoClient,
+} from "@/lib/stream/disconnect";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { reportClientFailure } from "@/lib/errors/classification/client-failure";
+import { failureToast } from "@/components/ui/failure-toast";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
   getCurrentOrNextSession,
@@ -133,8 +139,18 @@ export function EventManagementDashboard({
   // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
   // stays off the planner bundle.
   const handleJoinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
+    const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
+      // Kept distinct from a chunk failure in Sentry as well as in the toast;
+      // the extras are what tell a cold start from a provider that never
+      // connected at all.
+      reportSentryMessage("Video client not ready at Join", {
+        subsystem: "client",
+        op: "join-webinar",
+        expected: true,
+        extra: describeVideoClientWait(Date.now() - waitStartedAt),
+      });
       toast({
         title: "Connecting…",
         description: "Setting up your meeting client. Please try Join again.",
@@ -205,20 +221,34 @@ export function EventManagementDashboard({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining webinar meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast(
+        failureToast(
+          reportClientFailure(error, {
+            subsystem: "client",
+            op: "join-webinar",
+            title: "Error joining meeting",
+            extra: { appointmentId: webinar.appointment.id, slotId: slot.id },
+          }),
+        ),
+      );
       setJoiningEventId(null);
     }
   };
 
   const handleJoinClassMeeting = async (classEvent: PlannerClassEvent) => {
+    const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
+      // Kept distinct from a chunk failure in Sentry as well as in the toast;
+      // the extras are what tell a cold start from a provider that never
+      // connected at all.
+      reportSentryMessage("Video client not ready at Join", {
+        subsystem: "client",
+        op: "join-class",
+        expected: true,
+        extra: describeVideoClientWait(Date.now() - waitStartedAt),
+      });
       toast({
         title: "Connecting…",
         description: "Setting up your meeting client. Please try Join again.",
@@ -282,13 +312,17 @@ export function EventManagementDashboard({
       });
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error joining class meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast(
+        failureToast(
+          reportClientFailure(error, {
+            subsystem: "client",
+            op: "join-class",
+            title: "Error joining meeting",
+            extra: { appointmentId: targetAppt.id, slotId: targetSlot.id },
+          }),
+        ),
+      );
       setJoiningEventId(null);
     }
   };

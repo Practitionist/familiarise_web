@@ -52,6 +52,29 @@ export async function waitForGlobalVideoClient(
   }
   return getGlobalVideoClient();
 }
+/**
+ * Context for a `waitForGlobalVideoClient` that came back empty, in the terms
+ * that separate a cold start from a real failure (#1067).
+ *
+ * Reaching the singleton on a cold load costs the provider's dynamic chunk,
+ * `useUserData`'s serial profile fetches, and a `requestIdleCallback` with a
+ * 2s timeout — none of which the 4s wait above knows about. A Join clicked
+ * seconds after the page opened is that race; one clicked minutes in, with no
+ * `connectedStreamUserId`, is the provider genuinely failing to connect.
+ */
+export function describeVideoClientWait(waitedMs: number): {
+  waitedMs: number;
+  msSincePageLoad: number | null;
+  connectedStreamUserId: string | null;
+} {
+  return {
+    waitedMs,
+    msSincePageLoad:
+      typeof performance === "undefined" ? null : Math.round(performance.now()),
+    connectedStreamUserId: getCurrentStreamUserId(),
+  };
+}
+
 export function getCurrentStreamUserId(): string | null {
   return currentUserId;
 }
