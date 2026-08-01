@@ -13,9 +13,14 @@ import { CountdownBadge } from "./CountdownBadge";
 
 /**
  * Per-session timeline for multi-session (and one-off) appointments.
- * Generalized from the consultee card timeline to consume SessionVM[]:
- * VM sessions are per-slot, so rows re-group by owning appointment
- * (a 1-hour session can be 2×30-min slots).
+ * Generalized from the consultee card timeline to consume SessionVM[].
+ *
+ * One SessionVM is one row. It used to re-group by owning appointment,
+ * because the mappers emitted a VM per 30-minute slot row — but that rule was
+ * wrong in the other direction: two separate sittings booked under a single
+ * appointment fused into one row spanning both. The mappers now group into
+ * contiguous runs (#1061, `sessionsOfAppointment`), which is the same rule the
+ * room key and the join gate use, so re-grouping here would only undo it.
  */
 
 type SessionStatus = "completed" | "noRecord" | "upcoming" | "joinable";
@@ -70,29 +75,18 @@ function sessionStatusOf(
   return "upcoming";
 }
 
-function groupByAppointment(sessions: SessionVM[]): SessionGroup[] {
-  const groups = new Map<string, SessionVM[]>();
-  for (const slot of sessions) {
-    const key = slot.appointmentId ?? slot.slotId;
-    const bucket = groups.get(key);
-    if (bucket) bucket.push(slot);
-    else groups.set(key, [slot]);
-  }
-  return Array.from(groups.entries())
-    .map(([key, slots]) => {
-      const sorted = [...slots].sort(
-        (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
-      );
-      const last = sorted[sorted.length - 1];
-      return {
-        key,
-        slots: sorted,
-        startTime: sorted[0].startsAt,
-        endTime:
-          last.endsAt ??
-          new Date(last.startsAt.getTime() + DEFAULT_MEETING_DURATION_MS),
-      };
-    })
+function toSessionGroups(sessions: SessionVM[]): SessionGroup[] {
+  return [...sessions]
+    .map((session) => ({
+      // The anchor's slot id — unique per run, and the same id the video room
+      // is keyed to, so a row and its meeting name each other.
+      key: session.slotId,
+      slots: [session],
+      startTime: session.startsAt,
+      endTime:
+        session.endsAt ??
+        new Date(session.startsAt.getTime() + DEFAULT_MEETING_DURATION_MS),
+    }))
     .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 }
 
@@ -127,7 +121,7 @@ export function SessionTimeline({
     () => sessions.filter((s) => !s.isTentative),
     [sessions],
   );
-  const groups = useMemo(() => groupByAppointment(nonTentative), [nonTentative]);
+  const groups = useMemo(() => toSessionGroups(nonTentative), [nonTentative]);
   const showExpand = groups.length > 1;
 
   const groupStatuses = useMemo(
@@ -164,7 +158,9 @@ export function SessionTimeline({
   const visibleGroups =
     showExpand && !expanded && focusGroup ? [focusGroup] : groups;
 
-  const focusStatus = focusGroup ? groupStatuses.get(focusGroup.key) : undefined;
+  const focusStatus = focusGroup
+    ? groupStatuses.get(focusGroup.key)
+    : undefined;
   const collapsedCaption =
     focusStatus === "joinable"
       ? "Live now"
@@ -184,7 +180,9 @@ export function SessionTimeline({
         const status = groupStatuses.get(group.key)!;
         const joinable =
           status === "joinable" && onJoinSession
-            ? group.slots.find((s) => slotStatus(s, joinWindowMs) === "joinable")
+            ? group.slots.find(
+                (s) => slotStatus(s, joinWindowMs) === "joinable",
+              )
             : undefined;
 
         return (

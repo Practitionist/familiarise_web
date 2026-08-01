@@ -4,12 +4,7 @@
  * the consultee useEventActions hook and the consultant joinState util.
  */
 
-import {
-  toDate,
-  toDateOrNull,
-  type SessionVM,
-  type SlotLike,
-} from "./view-model";
+import { toDate, toDateOrNull, type SessionVM } from "./view-model";
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
@@ -19,6 +14,34 @@ export const CONSULTEE_JOIN_WINDOW_MS = 10 * 60 * 1000;
 export const CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000;
 
 export type SlotJoinState = "disabled" | "countdown" | "joinable" | "ended";
+
+/**
+ * Structural slot shape the session helpers below accept. Deliberately looser
+ * than `SlotLike`: the join surfaces also hand us `lib/meeting`'s `MeetingSlot`
+ * and planner rows, which carry no `completionStatus` and an optional
+ * `isTentative`.
+ */
+export interface SessionSlotLike {
+  id: string;
+  appointmentId?: string | null;
+  startsAt: Date | string;
+  endsAt?: Date | string | null;
+  isTentative?: boolean | null;
+  completionStatus?: string | null;
+  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+}
+
+/**
+ * One real session: the contiguous run of 30-minute slot rows that a single
+ * booking was chunked into (#1061). `anchor` is the run's first row and is the
+ * only row the video room may ever be keyed to.
+ */
+export interface SessionRun<T extends SessionSlotLike> {
+  anchor: T;
+  slots: T[];
+  startsAt: Date;
+  endsAt: Date;
+}
 
 const DEAD_COMPLETION_STATUSES = new Set(["CANCELLED", "RESCHEDULED"]);
 
@@ -58,7 +81,7 @@ export function slotsAllowReschedule(
   return !slots.some((slot) => slot.completionStatus === "RESCHEDULED");
 }
 
-function slotTimes(slot: SlotLike): { start: number; end: number } {
+function slotTimes(slot: SessionSlotLike): { start: number; end: number } {
   const start = toDate(slot.startsAt).getTime();
   const endsAt = toDateOrNull(slot.endsAt ?? null);
   return {
@@ -67,8 +90,13 @@ function slotTimes(slot: SlotLike): { start: number; end: number } {
   };
 }
 
+/**
+ * Per-row join state. Retained as the primitive; every join surface goes
+ * through the session-shaped helpers below, because a row is half an hour and
+ * a session is not (#1061).
+ */
 export function getSlotJoinState(
-  slot: SlotLike,
+  slot: SessionSlotLike,
   opts?: { joinWindowMs?: number; now?: Date },
 ): SlotJoinState {
   if (slot.isTentative) return "disabled";
@@ -85,18 +113,137 @@ export function getSlotJoinState(
   return "countdown";
 }
 
-/** Earliest slot currently inside its join window, or null. */
-export function getJoinableSlot<T extends SlotLike>(
+function buildRun<T extends SessionSlotLike>(slots: T[]): SessionRun<T> {
+  const first = slots[0];
+  const last = slots[slots.length - 1];
+  return {
+    anchor: first,
+    slots,
+    startsAt: new Date(slotTimes(first).start),
+    endsAt: new Date(slotTimes(last).end),
+  };
+}
+
+/**
+ * Split slot rows into sessions — runs of back-to-back rows inside the same
+ * appointment (#1061). A booking longer than 30 minutes is stored as N rows;
+ * treating any one of them as the session is what let the two sides of a call
+ * land in different Stream rooms.
+ *
+ * Cancelled/rescheduled rows are dropped: they can never be joined, and they
+ * must not bridge two runs that are not actually contiguous. A change of
+ * `isTentative` also breaks the run — an unallocated placeholder is not part
+ * of the confirmed session sitting next to it.
+ */
+export function groupSlotsIntoRuns<T extends SessionSlotLike>(
+  slots: T[],
+): SessionRun<T>[] {
+  const byAppointment = new Map<string, T[]>();
+  for (const slot of slots) {
+    if (isDeadSlot(slot)) continue;
+    // A row with no appointment cannot be grouped with anything, so it is its
+    // own session rather than being pooled with every other orphan.
+    const key = slot.appointmentId ?? `slot:${slot.id}`;
+    const bucket = byAppointment.get(key);
+    if (bucket) bucket.push(slot);
+    else byAppointment.set(key, [slot]);
+  }
+
+  const runs: SessionRun<T>[] = [];
+  for (const bucket of byAppointment.values()) {
+    const sorted = [...bucket].sort(
+      (a, b) => slotTimes(a).start - slotTimes(b).start,
+    );
+    let current: T[] = [];
+    for (const slot of sorted) {
+      const prev = current[current.length - 1];
+      const contiguous =
+        !!prev &&
+        slotTimes(prev).end === slotTimes(slot).start &&
+        !!prev.isTentative === !!slot.isTentative;
+      if (prev && !contiguous) {
+        runs.push(buildRun(current));
+        current = [];
+      }
+      current.push(slot);
+    }
+    if (current.length > 0) runs.push(buildRun(current));
+  }
+
+  return runs.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+}
+
+/** The run containing `slotId`, or null when the row is dead/absent. */
+export function findSessionRun<T extends SessionSlotLike>(
+  slots: T[],
+  slotId: string,
+): SessionRun<T> | null {
+  return (
+    groupSlotsIntoRuns(slots).find((run) =>
+      run.slots.some((slot) => slot.id === slotId),
+    ) ?? null
+  );
+}
+
+/** Join state for a whole session, evaluated over `[firstStart, lastEnd]`. */
+export function getSessionJoinState<T extends SessionSlotLike>(
+  run: SessionRun<T>,
+  opts?: { joinWindowMs?: number; now?: Date },
+): SlotJoinState {
+  if (run.anchor.isTentative) return "disabled";
+  // #1061 — the host ends ONE call for the run, and only the row that carried
+  // the MeetingSession learns about it. Which row that was must not decide
+  // whether Join re-lights into a fresh empty room for the rest of the hour.
+  if (
+    run.slots.some((slot) => toDateOrNull(slot.meetingSession?.endedAt ?? null))
+  )
+    return "ended";
+
+  const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const now = (opts?.now ?? new Date()).getTime();
+
+  if (now > run.endsAt.getTime()) return "ended";
+  if (now >= run.startsAt.getTime() - joinWindowMs) return "joinable";
+  return "countdown";
+}
+
+/** Earliest session currently inside its join window, or null. */
+export function getJoinableSession<T extends SessionSlotLike>(
+  slots: T[],
+  opts?: { joinWindowMs?: number; now?: Date },
+): SessionRun<T> | null {
+  for (const run of groupSlotsIntoRuns(slots)) {
+    if (getSessionJoinState(run, opts) === "joinable") return run;
+  }
+  return null;
+}
+
+/**
+ * The session that is live or next up, else the most recent past one. Used by
+ * surfaces that must render *a* session even outside the join window.
+ */
+export function getCurrentOrNextSession<T extends SessionSlotLike>(
+  slots: T[],
+  now: Date = new Date(),
+): SessionRun<T> | null {
+  const runs = groupSlotsIntoRuns(slots);
+  if (runs.length === 0) return null;
+  return (
+    runs.find((run) => run.endsAt.getTime() >= now.getTime()) ??
+    runs[runs.length - 1]
+  );
+}
+
+/**
+ * Anchor row of the earliest joinable session — the row the Stream call is
+ * keyed to. Returns a row rather than the run because every caller feeds it
+ * straight to `getOrCreateAppointmentMeeting` (#1061).
+ */
+export function getJoinableSlot<T extends SessionSlotLike>(
   slots: T[],
   opts?: { joinWindowMs?: number; now?: Date },
 ): T | null {
-  const sorted = [...slots].sort(
-    (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
-  );
-  for (const slot of sorted) {
-    if (getSlotJoinState(slot, opts) === "joinable") return slot;
-  }
-  return null;
+  return getJoinableSession(slots, opts)?.anchor ?? null;
 }
 
 function sessionEnd(session: SessionVM): number {

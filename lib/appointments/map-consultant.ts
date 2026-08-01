@@ -8,16 +8,15 @@
 
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
+import { sessionsOfAppointment } from "./sessions-of";
 import { getAnchorTime, isSessionOver } from "./slots";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
-  toSessionVM,
   type AppointmentVM,
   type PersonVM,
-  type SessionVM,
 } from "./view-model";
 
 /* Structural inputs — mirror ScheduledTrial / UnscheduledClass /
@@ -177,12 +176,6 @@ function collaboratorRoleOf(
   return null;
 }
 
-function sessionsOf(appointment: TAppointment): SessionVM[] {
-  return (appointment.slotsOfAppointment ?? []).map((slot) =>
-    toSessionVM({ ...slot, appointmentId: appointment.id }),
-  );
-}
-
 function firstSlotTime(appointment: TAppointment): number {
   const slot = appointment.slotsOfAppointment?.[0];
   return slot ? toDate(slot.startsAt).getTime() : Infinity;
@@ -196,7 +189,9 @@ function nextActionableChild(
     (a, b) => firstSlotTime(a) - firstSlotTime(b),
   );
   return (
-    sorted.find((c) => sessionsOf(c).some((s) => !isSessionOver(s, now))) ??
+    sorted.find((c) =>
+      sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
+    ) ??
     sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
     sorted[0]
   );
@@ -207,7 +202,7 @@ function mapSingle(
   consultantId: string,
   now: Date,
 ): AppointmentVM {
-  const sessions = sortSessions(sessionsOf(appointment));
+  const sessions = sortSessions(sessionsOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment);
   return {
     id: `appointment-${appointment.id}`,
@@ -237,13 +232,15 @@ function mapGroup(
   now: Date,
 ): AppointmentVM {
   const first = children[0];
-  const sessions = sortSessions(children.flatMap((c) => sessionsOf(c)));
+  const sessions = sortSessions(
+    children.flatMap((c) => sessionsOfAppointment(c)),
+  );
   const { title, counterpart, status } = eventFacts(first);
   const withSlots = children.filter(
     (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
   );
   const completed = withSlots.filter((c) =>
-    sessionsOf(c).every((s) => isSessionOver(s, now)),
+    sessionsOfAppointment(c).every((s) => isSessionOver(s, now)),
   ).length;
   const target = nextActionableChild(children, now);
   const groupId =
@@ -281,14 +278,18 @@ function mapTrial(
   consultantId: string,
   now: Date,
 ): AppointmentVM {
-  const sessions = sortSessions(
-    (t.appointment?.slotsOfAppointment ?? []).map((slot) =>
-      toSessionVM({
-        ...slot,
-        isTentative: false,
-        appointmentId: t.appointment?.id ?? null,
-      }),
-    ),
+  // A trial's rows are shown as confirmed regardless of the placeholder flag,
+  // so the override is applied BEFORE grouping — the grouper splits a run on a
+  // change of `isTentative`, and masking afterwards would leave the split.
+  const sessions = sessionsOfAppointment(
+    t.appointment
+      ? {
+          id: t.appointment.id,
+          slotsOfAppointment: (t.appointment.slotsOfAppointment ?? []).map(
+            (slot) => ({ ...slot, isTentative: false }),
+          ),
+        }
+      : null,
   );
   const status = normalizeStatus(t.status);
   return {
@@ -413,7 +414,9 @@ export function mapConsultantAppointments(
     ...unscheduledClasses.map((c) => mapUnscheduledClass(c, consultantId, now)),
   );
   vms.push(
-    ...unscheduledWebinars.map((w) => mapUnscheduledWebinar(w, consultantId, now)),
+    ...unscheduledWebinars.map((w) =>
+      mapUnscheduledWebinar(w, consultantId, now),
+    ),
   );
   return vms;
 }

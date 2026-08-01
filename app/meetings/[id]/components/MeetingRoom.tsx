@@ -17,7 +17,15 @@ import {
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
-import { Users, LayoutList, Grid3X3, Monitor, X, Phone } from "lucide-react";
+import {
+  Users,
+  LayoutList,
+  Grid3X3,
+  Monitor,
+  X,
+  Phone,
+  MoreVertical,
+} from "lucide-react";
 
 import {
   DropdownMenu,
@@ -30,6 +38,12 @@ import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { useMeetingRecording } from "../hooks/useMeetingRecording";
+import {
+  sessionHeading,
+  useSessionClock,
+  useSessionInfo,
+} from "../session-info";
+import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
@@ -55,6 +69,64 @@ const layoutOptions = [
   { value: "speaker-left", label: "Speaker (Left)", icon: Monitor },
   { value: "speaker-right", label: "Speaker (Right)", icon: Monitor },
 ];
+
+/**
+ * The clock pill, isolated.
+ *
+ * `useSessionClock` ticks once a second for the whole session. Called from the
+ * top of MeetingRoom it re-rendered the entire video layout on every tick,
+ * including the many ticks whose output is identical. Only these twenty-odd
+ * nodes actually change, so only they subscribe.
+ */
+function SessionClockPill({
+  startsAt,
+  endsAt,
+}: {
+  startsAt: Date | null;
+  endsAt: Date | null;
+}) {
+  const clock = useSessionClock(startsAt, endsAt);
+  if (!clock.elapsed) return null;
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-auto flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 backdrop-blur-sm",
+        clock.phase === "overrunning"
+          ? "border-amber-500/40 bg-amber-500/10"
+          : "border-zinc-800 bg-zinc-900/80",
+      )}
+    >
+      <div
+        className={cn(
+          "h-2 w-2 shrink-0 rounded-full",
+          clock.phase === "overrunning"
+            ? "bg-amber-400"
+            : "animate-pulse bg-white",
+        )}
+      />
+      {/* What remains leads; the clock since the start is context
+                beneath it and now says which one it is. Two unlabelled
+                durations side by side read as contradicting each other. */}
+      <span
+        className={cn(
+          "text-sm font-medium",
+          clock.phase === "overrunning" ? "text-amber-200" : "text-white",
+        )}
+      >
+        {clock.status}
+      </span>
+      <span
+        className={cn(
+          "hidden text-xs tabular-nums sm:inline",
+          clock.phase === "overrunning" ? "text-amber-300/80" : "text-zinc-500",
+        )}
+      >
+        {clock.elapsedLabel}
+      </span>
+    </div>
+  );
+}
 
 const MeetingRoom = () => {
   const searchParams = useSearchParams();
@@ -85,15 +157,12 @@ const MeetingRoom = () => {
   const { useCallCustomData } = useCallStateHooks();
   const custom = useCallCustomData();
 
-  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is on
-  // (the ids stamped into the call's custom data), not the singular UserRole,
-  // which is wrong for a dual-profile user booked as a learner into someone
-  // else's session. Role fallback for legacy calls created before the stamp.
-  const consultantUserId = custom?.consultantUserId as string | undefined;
+  const info = useSessionInfo();
+
+  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is
+  // on. `isHost` comes from useSessionInfo, which owns the one definition.
   const consulteeUserId = custom?.consulteeUserId as string | undefined;
-  const isHost = consultantUserId
-    ? session?.user?.id === consultantUserId
-    : session?.user?.role === "CONSULTANT";
+  const isHost = info.isHost;
   const isGuest = consulteeUserId
     ? session?.user?.id === consulteeUserId
     : session?.user?.role === "CONSULTEE";
@@ -132,33 +201,19 @@ const MeetingRoom = () => {
     return "/";
   };
 
-  // Cleanup media streams and navigate - ensures audio/video stops before navigation
+  // Release the hardware before navigating. The teardown is shared with the
+  // page unmount and the end-call path so every exit behaves the same way, and
+  // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
     try {
-      console.log("Starting media cleanup before navigation...");
-
-      // Disable media streams first to stop audio/video
-      await call?.camera.disable();
-      await call?.microphone.disable();
-
-      // Disable screen share if active
-      if (call?.screenShare?.state?.status === "enabled") {
-        await call?.screenShare.disable();
-      }
-
-      console.log("Media streams disabled");
-
-      // Leave the call if still connected
-      if (call?.state.callingState !== CallingState.LEFT) {
-        await call?.leave();
-        console.log("Left call successfully");
-      }
+      await leaveCallAndReleaseMedia(call);
     } catch (error) {
-      console.warn("Error during cleanup:", error);
+      console.error("Error releasing media while leaving call:", error);
+    } finally {
+      // In `finally`: a teardown that rejects must not be the reason the user
+      // is left sitting on the call screen.
+      router.push(targetUrl);
     }
-
-    // Navigate after cleanup
-    router.push(targetUrl);
   };
 
   const handleRejoinCall = async () => {
@@ -276,10 +331,10 @@ const MeetingRoom = () => {
                   <RecordCallButton />
                 ))}
 
-              {/* Leave Call Button */}
+              {/* Leave — the only red control in the bar, and the only exit
+                  reachable in one click. */}
               <button
                 onClick={async () => {
-                  console.log("Participant leaving call");
                   await cleanupAndNavigate(getDashboardUrl());
                 }}
                 className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
@@ -351,45 +406,85 @@ const MeetingRoom = () => {
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
               {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
-              {isHost &&
-                meetingSessionId &&
-                recordingEnabled && (
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                    showOnlyIndicator={true}
-                  />
-                )}
+              {isHost && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
 
-              {/* End Call Button - Only for Consultant */}
-              {!isPersonalRoom && <EndCallButton />}
+              {/* Ending for EVERYONE lives behind this menu, and nowhere in
+                  the bar itself. It used to be the widest, highest-contrast
+                  element on the screen, sitting beside the ordinary hang-up —
+                  two destructive actions a thumb's width apart, one of which
+                  cannot be undone by the people it happens to. Reaching it now
+                  takes a deliberate second step, and it still needs the
+                  press-and-hold inside. */}
+              {!isPersonalRoom && isHost && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                      title="Session options"
+                    >
+                      <MoreVertical className="w-5 h-5 text-white" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-72 bg-zinc-900 border-zinc-800 p-3 rounded-xl"
+                    sideOffset={12}
+                  >
+                    <p className="text-sm font-medium text-white">
+                      End for everyone
+                    </p>
+                    <p className="mt-1 mb-3 text-xs text-zinc-400">
+                      Disconnects every participant and closes the room. Leaving
+                      instead only removes you.
+                    </p>
+                    <EndCallButton />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
 
               {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
-              {isGuest &&
-                meetingSessionId &&
-                recordingEnabled && (
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                    showOnlyIndicator={true}
-                  />
-                )}
+              {isGuest && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
             </div>
           </div>
         </div>
 
-        {/* Meeting Info Badge */}
-        <div className="fixed top-4 left-4 z-40 max-w-[calc(100vw-2rem)]">
-          <div className="flex items-center gap-2 px-3 py-2 bg-zinc-900/80 backdrop-blur-sm rounded-lg border border-zinc-800">
-            <div className="w-2 h-2 shrink-0 bg-white rounded-full animate-pulse" />
-            <span className="min-w-0 truncate text-sm font-medium text-white">
-              {call?.state.custom?.title || "Meeting"}
-            </span>
-            <span className="shrink-0 text-xs text-zinc-500">
-              • {participantCount} participant
-              {participantCount !== 1 ? "s" : ""}
-            </span>
+        {/* Header. The title was the appointment type in caps repeated from
+            the lobby; it now names the person, with the type demoted to the
+            supporting line. The session clock sits opposite it, because until
+            now nothing on this screen said how long was left. */}
+        {/* Below the participants sidebar (z-40) and its backdrop (z-30): the
+            header sits later in the DOM, so at equal stacking it painted over
+            the panel's own heading and close control. */}
+        <div className="pointer-events-none fixed inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
+          <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-white">
+                {sessionHeading(info)}
+              </p>
+              <p className="truncate text-xs text-zinc-500">
+                {[
+                  info.typeLabel,
+                  `${participantCount} participant${participantCount !== 1 ? "s" : ""}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
           </div>
+
+          <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
         </div>
       </section>
     </StreamVideoErrorBoundary>
