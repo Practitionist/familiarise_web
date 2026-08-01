@@ -20,6 +20,41 @@ Every time slot in the system is a **30-minute atomic unit**.
 | 3 hours   | 6     |
 | 4 hours   | 8     |
 
+## Sessions Versus Slot Rows
+
+The arithmetic above has an invariant hiding inside it that is worth stating on its own, because everything downstream of booking depends on it.
+
+> A **session** is N **contiguous** slot rows on one appointment. A slot row is not a session. Any surface that treats one row as one session is wrong.
+
+A one-hour consultation is two rows, a four-hour consultation is eight, and in both cases the customer booked exactly one meeting. The rows are a storage detail of the allocator, not something a user ever asked for or should ever be shown.
+
+### `groupSlotsIntoRuns` Is the Single Definition
+
+`groupSlotsIntoRuns` in `lib/appointments/slots.ts` is the one place that decides what counts as a session. Any surface that needs to answer "which rows make up this session?" must call it rather than walking the rows itself. It encodes four rules, in this order.
+
+1. Bucket the rows by `appointmentId`, so two different bookings can never merge. A row with no appointment becomes its own bucket rather than pooling with every other orphan.
+2. Sort each bucket by start time, because the rows arrive from Prisma and from API payloads in no guaranteed order.
+3. Split the bucket wherever `prev.endsAt !== next.startsAt`, so a gap between two sittings ends the run.
+4. Split it again wherever `isTentative` changes, because an unallocated placeholder is not part of the confirmed session sitting next to it.
+
+Rows whose `completionStatus` is `CANCELLED` or `RESCHEDULED` are dropped before any of this happens. They can never be joined, and leaving them in would let a dead row bridge two runs that are not actually contiguous.
+
+The run's first row is its **anchor**, and it is the only row anything may be keyed to.
+
+### Why the Walk Exists Rather Than Keying on `appointmentId`
+
+One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it is already violated in two real places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment, and the webinar reschedule described in #1071 moves only `slotsOfAppointment[0]`, which strands the remaining rows on a different day.
+
+If sessions were keyed on `appointmentId` alone, both of those cases would collapse unrelated sessions into one shared video room. That is a cross-session privacy leak rather than a cosmetic defect, so the contiguity walk is load-bearing and must not be simplified away.
+
+### What Follows From a Run
+
+Three things derive from runs and never from individual rows.
+
+- **Room identity.** The Stream call is keyed to `slot-<anchorSlotId>`, so both sides of a booking resolve the same room from whichever row their surface happened to hand over. Keying on the clicked row is #1061: a one-hour booking had capacity for two rooms and the two parties could each sit alone in one.
+- **Join state.** The join window, and the check for a call the host has already ended, are both measured over `[run.startsAt, run.endsAt]`. Measured per row, a two-hour class stops being joinable thirty minutes in.
+- **The session count and label.** A four-hour booking is one session running 12:30 to 16:30, not eight half-hour sessions of which the list shows the first. The same applies to "sessions this week", progress text, and anything else that counts.
+
 ## Week Boundaries (Sunday-Saturday)
 
 All week-based calculations use **Sunday as the first day** of the week.

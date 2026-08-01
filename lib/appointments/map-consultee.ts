@@ -16,16 +16,15 @@ import type {
   TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { deriveBucket } from "./bucket";
+import { sessionsOfAppointment } from "./sessions-of";
 import { getAnchorTime, isSessionOver } from "./slots";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
   sortSessions,
   toDate,
-  toSessionVM,
   type AppointmentVM,
   type PersonVM,
-  type SessionVM,
   type SlotLike,
 } from "./view-model";
 
@@ -72,19 +71,6 @@ function actionableSlots(slots: SlotLike[], now: Date): SlotLike[] {
     );
 }
 
-function sessionsOf(
-  appointment:
-    | { id: string; slotsOfAppointment?: SlotLike[] }
-    | null
-    | undefined,
-): SessionVM[] {
-  return sortSessions(
-    (appointment?.slotsOfAppointment ?? []).map((slot) =>
-      toSessionVM({ ...slot, appointmentId: appointment?.id ?? null }),
-    ),
-  );
-}
-
 /** Group progress in calculateSessionProgress semantics: only slot-carrying
  *  child appointments are sessions; completed = all its slots elapsed. */
 function groupProgress(
@@ -94,10 +80,10 @@ function groupProgress(
   const withSlots = children.filter(
     (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
   );
+  // Per SESSION, not per row: a four-hour booking is not three-quarters
+  // complete an hour in.
   const completed = withSlots.filter((c) =>
-    (c.slotsOfAppointment ?? []).every((slot) =>
-      isSessionOver(toSessionVM(slot), now),
-    ),
+    sessionsOfAppointment(c).every((s) => isSessionOver(s, now)),
   ).length;
   return { total: withSlots.length, completed };
 }
@@ -118,9 +104,7 @@ function nextActionableChild<
   });
   return (
     sorted.find((c) =>
-      (c.slotsOfAppointment ?? []).some(
-        (slot) => !isSessionOver(toSessionVM(slot), now),
-      ),
+      sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
     ) ??
     sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
     sorted[0]
@@ -128,7 +112,7 @@ function nextActionableChild<
 }
 
 function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
-  const sessions = sessionsOf(c.appointment);
+  const sessions = sessionsOfAppointment(c.appointment);
   const status = normalizeStatus(c.status?.toString());
   return {
     id: `consultation-${c.id}`,
@@ -157,7 +141,9 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
 
 function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
   const children = s.appointments ?? [];
-  const sessions = sortSessions(children.flatMap((child) => sessionsOf(child)));
+  const sessions = sortSessions(
+    children.flatMap((child) => sessionsOfAppointment(child)),
+  );
   const status = normalizeStatus(s.status?.toString());
   const target = nextActionableChild(children, now);
   return {
@@ -190,7 +176,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
 }
 
 function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
-  const sessions = sessionsOf(w.appointment);
+  const sessions = sessionsOfAppointment(w.appointment);
   const status = normalizeStatus(w.status?.toString());
   return {
     id: `webinar-${w.id}`,
@@ -219,7 +205,9 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
 
 function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
   const children = c.appointments ?? [];
-  const sessions = sortSessions(children.flatMap((child) => sessionsOf(child)));
+  const sessions = sortSessions(
+    children.flatMap((child) => sessionsOfAppointment(child)),
+  );
   const status = normalizeStatus(c.status?.toString());
   const target = nextActionableChild(children, now);
   return {
@@ -252,7 +240,7 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
 }
 
 function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
-  const sessions = sessionsOf(t.appointment);
+  const sessions = sessionsOfAppointment(t.appointment);
   const status = normalizeStatus(t.status);
   return {
     id: `trial-${t.id}`,
