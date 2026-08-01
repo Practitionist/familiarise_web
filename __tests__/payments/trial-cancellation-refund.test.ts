@@ -72,6 +72,8 @@ const USER_ID = "user-1";
 const paidTrial = {
   id: PAYMENT_ID,
   amount: BigInt(100_000),
+  refunds: [],
+  disputes: [],
 };
 
 function appointmentStartingInHours(hours: number) {
@@ -188,6 +190,32 @@ describe("refundCancelledTrial", () => {
 
     // The learner is not penalised for a decision that wasn't theirs.
     expect(consultant!.refundPct).toBeGreaterThan(consultee!.refundPct);
+  });
+
+  it("clamps to what is still refundable", async () => {
+    // The same shape as the cancel route and the seat refund: a percentage of
+    // the gross overshoots a payment that has already given some back, the
+    // operation rejects the WHOLE request, and the catch turns that into
+    // "refunded 0" — so the buyer loses the remainder instead of receiving it.
+    mockPaymentFindFirst.mockResolvedValue({
+      ...paidTrial,
+      refunds: [{ amountPaise: 70_000, status: "SUCCEEDED" }],
+    });
+    mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));
+    mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 30_000 });
+
+    const result = await refundCancelledTrial({
+      trialId: TRIAL_ID,
+      appointmentId: APPOINTMENT_ID,
+      paymentId: PAYMENT_ID,
+      initiatedByUserId: USER_ID,
+      isConsultantInitiated: true,
+    });
+
+    expect(mockRefundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 30_000 }),
+    );
+    expect(result?.amountRefundedPaise).toBe(30_000);
   });
 
   it("leaves the cancellation standing when the gateway fails", async () => {

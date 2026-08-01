@@ -16,7 +16,7 @@ import {
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -562,9 +562,12 @@ async function issueFullRefund(
   summary: BulkCancelSummary,
 ) {
   try {
-    const r = await refundPayment({
+    // #1003 — via the rail-aware front door, not refundPayment directly: an
+    // org-funded seat carries a synthetic intent that died on UNKNOWN_GATEWAY,
+    // so moderation silently reversed nothing for org-sponsored bookings.
+    const r = await refundBookingPayment({
       paymentId,
-      // amountPaise omitted → refundPayment refunds the full refundable balance
+      // amountPaise omitted → the full refundable balance
       reason: "moderation (100% — platform-initiated cancellation)",
       initiatedByUserId,
     });

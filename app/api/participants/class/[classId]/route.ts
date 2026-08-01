@@ -6,6 +6,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -167,6 +168,21 @@ export async function DELETE(
       select: { id: true },
     });
 
+    // #1003 — nothing to remove means nothing to refund. Without this the
+    // handler committed an empty transaction and still called the seat refund,
+    // which looks the payment up by user + event rather than by what was
+    // actually released — so repeat clicks and stale tabs each raised an ops
+    // page for a removal that never happened.
+    //
+    // 200, not 404: DELETE is idempotent and "this person is off the roster"
+    // is the requested end state either way. A 404 made the second click read
+    // as a failure to the roster client, which throws on any non-ok response —
+    // so it showed "Failed to remove participant" and never invalidated the
+    // query, leaving the removed row on screen.
+    if (userSlots.length === 0) {
+      return NextResponse.json({ removed: false, refund: null });
+    }
+
     // One atomic batch — sequential awaits paid a DB round trip per slot
     // and could partially remove a participant on mid-loop failure.
     await prisma.$transaction(
@@ -182,7 +198,17 @@ export async function DELETE(
       ),
     );
 
-    return new NextResponse(null, { status: 204 });
+    // #1003 — the seat was paid for. Removing the attendee without returning
+    // the fee let the organiser keep money for a session they just barred the
+    // buyer from. Post-commit and non-throwing: the removal stands either way.
+    const refund = await refundRemovedAttendeeSeat({
+      kind: "class",
+      eventId: classId,
+      attendeeUserId: userId,
+      initiatedByUserId: session.user.id,
+    });
+
+    return NextResponse.json({ removed: true, refund });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -26,7 +26,16 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     $transaction: jest.fn(),
-    appointment: { findUnique: jest.fn() },
+    // #1006 — cancel resolves the refund facts across the WHOLE booking, so it
+    // reads every appointment of the parent request, not just the one it was
+    // handed. #1003 — group-event cancel reads the attendee roster off the
+    // payments to notify them. Both default to empty here; the refund paths
+    // have their own suites.
+    appointment: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    payment: { findMany: jest.fn().mockResolvedValue([]) },
     slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
