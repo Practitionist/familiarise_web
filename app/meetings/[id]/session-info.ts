@@ -127,10 +127,21 @@ export type SessionPhase =
 
 export interface SessionClock {
   phase: SessionPhase;
-  /** One already-worded line: "Starts in 6 min", "12 min over". */
+  /**
+   * The one line worth leading with: "Starts in 6 min", "1 hr 19 min left",
+   * "12 min over". In a booked session what remains is what a consultant acts
+   * on — whether to wrap up, whether there is room for one more topic —
+   * so this is the pill's headline and elapsed time is context beneath it.
+   */
   status: string | null;
   /** Time on the clock since the session started, "MM:SS" or "H:MM:SS". */
   elapsed: string | null;
+  /**
+   * `elapsed` with the word that says what it is. The in-call pill showed a
+   * bare "2:41:12" beside a labelled "1 hr 19 min left", and two unexplained
+   * durations side by side read as contradicting each other.
+   */
+  elapsedLabel: string | null;
   /** "48 min left" against the BOOKED end, null once past it. */
   remaining: string | null;
 }
@@ -157,13 +168,19 @@ function minutesLabel(ms: number): string {
   return rest === 0 ? `${hours} hr` : `${hours} hr ${rest} min`;
 }
 
-function readClock(
+export function readClock(
   startsAt: Date | null,
   endsAt: Date | null,
   now: Date,
 ): SessionClock {
   if (!startsAt) {
-    return { phase: "unknown", status: null, elapsed: null, remaining: null };
+    return {
+      phase: "unknown",
+      status: null,
+      elapsed: null,
+      elapsedLabel: null,
+      remaining: null,
+    };
   }
 
   const sinceStart = now.getTime() - startsAt.getTime();
@@ -175,6 +192,7 @@ function readClock(
       phase: untilStart <= STARTING_SOON_MS ? "starting-soon" : "early",
       status: `Starts in ${minutesLabel(untilStart)}`,
       elapsed: null,
+      elapsedLabel: null,
       remaining: null,
     };
   }
@@ -188,6 +206,7 @@ function readClock(
       phase: "overrunning",
       status: `${minutesLabel(-untilEnd)} over`,
       elapsed,
+      elapsedLabel: `${elapsed} elapsed`,
       remaining: null,
     };
   }
@@ -197,6 +216,7 @@ function readClock(
     phase: "in-progress",
     status: remaining ?? "In progress",
     elapsed,
+    elapsedLabel: `${elapsed} elapsed`,
     remaining,
   };
 }

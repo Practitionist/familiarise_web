@@ -40,6 +40,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ExitMeetingButton } from "./ExitMeetingButton";
 
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
@@ -316,15 +323,13 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       </button>
 
       <button
-        onClick={() => setShowSettings(!showSettings)}
+        onClick={() => setShowSettings(true)}
         aria-label="Audio and video settings"
-        aria-expanded={showSettings}
+        aria-haspopup="dialog"
         className={cn(
           "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900",
-          showSettings
-            ? "bg-white text-zinc-900"
-            : "bg-white/10 text-white hover:bg-white/20",
+          "bg-white/10 text-white hover:bg-white/20",
         )}
       >
         <Settings className="w-5 h-5" />
@@ -337,7 +342,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       {/* Background pattern */}
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMyMjIiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
-      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-6xl items-center">
+      <div className="relative z-10 mx-auto w-full max-w-6xl">
+        {/* #1067 — the route had no exit but the browser Back button. */}
+        <ExitMeetingButton className="-ml-3" />
+      </div>
+
+      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-6xl items-center">
         {/*
           The preview used to sit in a narrow max-w-lg column, so it was small
           and cropped. It is now the subject: a full-width 16:9 frame in the
@@ -387,15 +397,6 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
                 </div>
               )}
             </div>
-
-            {showSettings && (
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <p className="mb-3 text-sm font-medium text-zinc-400">
-                  Audio &amp; video settings
-                </p>
-                <DeviceSelector />
-              </div>
-            )}
           </div>
 
           {/* Session details + the primary action */}
@@ -488,6 +489,21 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
           </div>
         </div>
       </div>
+
+      {/*
+        Was an inline block under the controls, so on a short viewport the
+        device lists ran off the bottom of the page and the lower options were
+        unreachable. DialogContent is portalled, caps itself at 90dvh and
+        scrolls internally, and brings Esc/outside-click/focus-trap with it.
+      */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Audio &amp; video settings</DialogTitle>
+          </DialogHeader>
+          <DeviceSelector />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -38,7 +38,11 @@ import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { useMeetingRecording } from "../hooks/useMeetingRecording";
-import { sessionHeading, useSessionClock, useSessionInfo } from "../session-info";
+import {
+  sessionHeading,
+  useSessionClock,
+  useSessionInfo,
+} from "../session-info";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
@@ -343,15 +347,13 @@ const MeetingRoom = () => {
               {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
 
               {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
-              {isHost &&
-                meetingSessionId &&
-                recordingEnabled && (
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                    showOnlyIndicator={true}
-                  />
-                )}
+              {isHost && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
 
               {/* Ending for EVERYONE lives behind this menu, and nowhere in
                   the bar itself. It used to be the widest, highest-contrast
@@ -388,15 +390,13 @@ const MeetingRoom = () => {
               )}
 
               {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
-              {isGuest &&
-                meetingSessionId &&
-                recordingEnabled && (
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                    showOnlyIndicator={true}
-                  />
-                )}
+              {isGuest && meetingSessionId && recordingEnabled && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyIndicator={true}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -439,18 +439,28 @@ const MeetingRoom = () => {
                     : "animate-pulse bg-white",
                 )}
               />
-              <span className="text-sm font-medium tabular-nums text-white">
-                {clock.elapsed}
+              {/* What remains leads; the clock since the start is context
+                  beneath it and now says which one it is. Two unlabelled
+                  durations side by side read as contradicting each other. */}
+              <span
+                className={cn(
+                  "text-sm font-medium",
+                  clock.phase === "overrunning"
+                    ? "text-amber-200"
+                    : "text-white",
+                )}
+              >
+                {clock.status}
               </span>
               <span
                 className={cn(
-                  "hidden text-xs sm:inline",
+                  "hidden text-xs tabular-nums sm:inline",
                   clock.phase === "overrunning"
-                    ? "text-amber-300"
+                    ? "text-amber-300/80"
                     : "text-zinc-500",
                 )}
               >
-                {clock.phase === "overrunning" ? clock.status : clock.remaining}
+                {clock.elapsedLabel}
               </span>
             </div>
           )}

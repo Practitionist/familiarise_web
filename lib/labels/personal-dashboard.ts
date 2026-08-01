@@ -39,6 +39,29 @@ export function resolvePersonalDashboardHref(
   return null;
 }
 
+/**
+ * Where "back to my appointments" goes for a given user (#1067).
+ *
+ * The priority deliberately differs from `resolvePersonalDashboardHref`: an
+ * org workspace wins there, but it has no appointments surface at all, so
+ * sending someone leaving a meeting to a route that does not exist would be
+ * worse than the browser Back button they had before. Consultant still wins
+ * over consultee for the same reason as above — someone who both delivers and
+ * consumes is far more likely to have been hosting.
+ *
+ * Falls back to whatever home the user does have, and finally to `/dashboard`,
+ * so this never returns null: the lobby always needs somewhere to go.
+ */
+export function resolveAppointmentsHref(user: PersonalProfileIds): string {
+  if (user.consultantProfileId) {
+    return `/dashboard/consultant/${user.consultantProfileId}/appointments`;
+  }
+  if (user.consulteeProfileId) {
+    return `/dashboard/consultee/${user.consulteeProfileId}/appointments`;
+  }
+  return resolvePersonalDashboardHref(user) ?? "/dashboard";
+}
+
 export type PersonalFacetKind = "org-workspace" | "consultant" | "consultee";
 
 export interface PersonalFacet {
