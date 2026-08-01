@@ -35,6 +35,7 @@ import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancy
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import {
   applyCreditsToPayment,
   getUserCredits,
@@ -1542,6 +1543,10 @@ export async function handleSubscriptionCheckout(
       bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
+      // #1076 — caps bucket on the consultant's days, not the column default.
+      schedulingTimezone: resolveSchedulingTimezone(
+        plan.consultantProfile?.user?.timezone,
+      ),
     },
   });
 
