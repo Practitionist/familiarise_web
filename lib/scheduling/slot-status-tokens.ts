@@ -160,9 +160,19 @@ export const SLOT_STATUS_TOKENS: Record<SlotStatusKey, SlotStatusToken> = (
  * stylesheet, where `.border-transparent` is emitted last, not by the order
  * they were concatenated. Unavailable cells therefore lost their outline
  * altogether and read as absent rather than merely faint (#1064).
+ *
+ * No `disabled:opacity-50` either. EVERY unavailable cell is disabled, so a
+ * blanket disabled fade painted `bg-slate-200` at half strength over a white
+ * card — near enough to `slate-100` to reproduce, at render time, the exact
+ * near-white this file's `unavailable` comment records as reverted. The legend
+ * swatch is not a disabled control, so the legend showed the true colour while
+ * the grid showed half of it. `disabled:pointer-events-none` stays: not being
+ * clickable is the part that was actually wanted. Where a fade IS meant —
+ * past cells — `renderTimeCell` and the `faded` option append an explicit
+ * `opacity-*`, which is deliberate and unaffected.
  */
 export const SLOT_CELL_BASE_CLASS =
-  "h-8 w-full relative transition-colors duration-75 ease-in-out border rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none disabled:opacity-50";
+  "h-8 w-full relative transition-colors duration-75 ease-in-out border rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none";
 
 /**
  * The full class string for one grid cell.
