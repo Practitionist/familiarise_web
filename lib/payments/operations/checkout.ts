@@ -3114,7 +3114,7 @@ export async function handleCheckout(
       (error instanceof Error && error.message.includes("already in progress"));
     const isConsulteeDoubleBook =
       error instanceof Error &&
-      error.message.includes("already have a session booked");
+      error.message.toLowerCase().includes("already have a session booked");
     reportSentryError(error, {
       subsystem: "payments",
       expected: isModeledLockRace || isConsulteeDoubleBook,
