@@ -308,7 +308,9 @@ export function MeetingRoomSkeleton() {
  * Week heatmap / slot calendar grid.
  * Matches UnifiedCalendar week layout: time gutter + 7 day columns.
  */
-export function CalendarGridSkeleton({ className }: { className?: string }) {
+export function CalendarGridSkeleton({
+  className,
+}: Readonly<{ className?: string }>) {
   return (
     <div
       className={
