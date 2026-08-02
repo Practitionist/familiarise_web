@@ -118,10 +118,11 @@ sponsor orgs.
 | `/enterprise/team-training` | Licensed-seat / cohort training narrative |
 | `/enterprise/corporate-mentorship` | Credit-pool / sponsored 1:1 mentorship narrative |
 
-Navbar: **Enterprise** mega dropdown (overview, program pages, org directory
-filters including `?type=EXPERT_NETWORK`, Talk to sales). Footer mirrors the
-program links. Homepage `EnterpriseSection` primary CTA → `/enterprise`.
-Chrome: dark-hero routes registered in `lib/navigation/public-chrome.ts`.
+Navbar: **Enterprise** list dropdown (overview, program pages, Talk to sales).
+Org directory filters (`?type=EXPERT_NETWORK` etc.) stay under Explore →
+Organisations. Footer mirrors the program links. Homepage `EnterpriseSection`
+primary CTA → `/enterprise`. Chrome: dark-hero routes registered in
+`lib/navigation/public-chrome.ts`.
 
 ## Public org pages
 

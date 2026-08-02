@@ -105,9 +105,9 @@ Header:
 
 > **Shipped (2026-08):** The live bar is
 > `[Logo] Explore ▼  Solutions ▼  Resources ▼  Enterprise ▼  Pricing  [Sign in]`.
-> **Enterprise** is a mega dropdown covering `/enterprise` overview, team training,
-> corporate mentorship, org directory filters (`?type=EXPERT_NETWORK` etc.), and
-> Talk to sales — not `/solutions/enterprise`. Solutions is B2C use cases only.
+> **Enterprise** is a list dropdown covering `/enterprise` overview, team training,
+> corporate mentorship, and Talk to sales — not `/solutions/enterprise`. Org
+> directory filters stay under Explore → Organisations. Solutions is B2C only.
 > The tables below are the original 2026-02 design draft and are partly stale —
 > prefer `components/Navbar.tsx` + `components/Footer.tsx` as the source of truth.
 
@@ -160,9 +160,6 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | Overview               | `/enterprise` | **Live** |
 | Team training          | `/enterprise/team-training` | **Live** |
 | Corporate mentorship   | `/enterprise/corporate-mentorship` | **Live** |
-| All organisations      | `/explore/enterprise/organisations` | **Live** |
-| Expert networks        | `/explore/enterprise/organisations?type=EXPERT_NETWORK` | **Live** |
-| Learning institutions  | `/explore/enterprise/organisations?type=LEARNING_INSTITUTION` | **Live** |
 | Talk to sales          | `/contactus` | **Live** |
 
 ### Resources Dropdown

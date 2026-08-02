@@ -226,29 +226,6 @@ const ENTERPRISE_COLUMNS: NavColumn[] = [
         description: "Credit pools for 1:1 expert sessions",
         icon: Users,
       },
-    ],
-  },
-  {
-    heading: "Discover",
-    items: [
-      {
-        label: "All organisations",
-        href: "/explore/enterprise/organisations",
-        description: "Public expert networks and institutions",
-        icon: Building2,
-      },
-      {
-        label: "Expert networks",
-        href: "/explore/enterprise/organisations?type=EXPERT_NETWORK",
-        description: "Filter the directory to expert networks",
-        icon: Users,
-      },
-      {
-        label: "Learning institutions",
-        href: "/explore/enterprise/organisations?type=LEARNING_INSTITUTION",
-        description: "Universities and research institutes",
-        icon: GraduationCap,
-      },
       {
         label: "Talk to sales",
         href: "/contactus",
@@ -309,8 +286,8 @@ const NAV_GROUPS: NavDropdownGroup[] = [
   // Single B2C column — list panel, not a half-empty mega.
   { label: "Solutions", variant: "list", columns: SOLUTIONS_COLUMNS },
   { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
-  // B2B product + directory filters (Expert networks uses ?type=).
-  { label: "Enterprise", variant: "mega", columns: ENTERPRISE_COLUMNS },
+  // B2B programs only — org directory lives under Explore → Organisations.
+  { label: "Enterprise", variant: "list", columns: ENTERPRISE_COLUMNS },
 ];
 
 // ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
