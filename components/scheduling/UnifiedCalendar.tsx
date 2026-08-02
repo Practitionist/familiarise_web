@@ -41,7 +41,7 @@ import {
   countSundayWeeksInclusive,
   validateDayBasedConsecutiveSlots,
 } from "@/lib/scheduling/calendarUtils";
-import { CalendarGridSkeleton } from "@/components/loading/PageSkeletons";
+import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import { useEventSlotAllocation } from "@/hooks/scheduling/useSlotAllocation";
 import type { AllocationResponse } from "@/lib/scheduling/allocationService";

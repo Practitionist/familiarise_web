@@ -61,16 +61,28 @@ function ExpertResultsImpl({
   const grouped = groupConsultantsByDomain(consultants);
   const showEmpty = consultants.length === 0 && !isLoading && !isRefetching;
 
+  // Initial load: show card-grid anatomy instead of a spinner overlay.
+  if ((isLoading || isRefetching) && consultants.length === 0) {
+    return (
+      <div className="mt-8 min-h-[400px] space-y-6">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="h-36 animate-pulse rounded-xl bg-muted"
+          />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-8 min-h-[400px] relative">
-      {/* Loading overlay — sits on top of stale results to preserve scroll. */}
-      {(isLoading || isRefetching) && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-2xl">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-4 border-muted border-t-foreground rounded-full animate-spin" />
-            <p className="text-muted-foreground text-sm">Finding experts...</p>
-          </div>
-        </div>
+      {/* Soft refetch veil — keep stale results visible (no spinner CLS). */}
+      {isRefetching && consultants.length > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 z-10 rounded-2xl bg-background/40"
+          aria-hidden
+        />
       )}
 
       {groupByDomainId ? (
@@ -136,11 +148,13 @@ function ExpertResultsImpl({
       <div ref={sentinelRef} aria-hidden="true" />
 
       {isLoadingMore && (
-        <div className="flex justify-center py-8">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 border-3 border-muted border-t-foreground rounded-full animate-spin" />
-            <span className="text-muted-foreground text-sm">Loading more...</span>
-          </div>
+        <div className="space-y-4 py-6">
+          {[1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-xl bg-muted"
+            />
+          ))}
         </div>
       )}
     </div>
