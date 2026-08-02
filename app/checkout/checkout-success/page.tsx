@@ -5,6 +5,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CheckoutResultSkeleton } from "@/components/loading/PageSkeletons";
 import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
 interface PaymentDetails {
   paymentIntent: string;
@@ -274,13 +275,7 @@ function CheckoutSuccessContent() {
 
 export default function CheckoutSuccessPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-muted">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground"></div>
-        </div>
-      }
-    >
+    <Suspense fallback={<CheckoutResultSkeleton />}>
       <CheckoutSuccessContent />
     </Suspense>
   );
