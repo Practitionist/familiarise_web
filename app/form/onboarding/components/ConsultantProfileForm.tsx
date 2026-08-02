@@ -188,11 +188,13 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="text-muted-foreground">Loading form data...</p>
-        </div>
+      <div className="space-y-4 p-2 sm:p-4" aria-busy="true" aria-label="Loading form data">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="space-y-2">
+            <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+            <div className="h-11 w-full animate-pulse rounded-lg bg-muted" />
+          </div>
+        ))}
       </div>
     );
   }

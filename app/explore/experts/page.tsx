@@ -111,9 +111,24 @@ export default async function ExploreExperts() {
 
       <Suspense
         fallback={
-          <div className="flex items-center justify-center py-32">
-            <div className="w-8 h-8 border-3 border-muted border-t-foreground rounded-full animate-spin" />
-          </div>
+          <section className="mx-auto max-w-[1600px] space-y-6 px-4 py-10 md:px-8 lg:px-12">
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-10 w-28 animate-pulse rounded-full bg-muted"
+                />
+              ))}
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-56 animate-pulse rounded-xl bg-muted"
+                />
+              ))}
+            </div>
+          </section>
         }
       >
         <ExpertsInteractiveContent
