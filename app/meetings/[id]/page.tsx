@@ -9,7 +9,7 @@ import {
   leaveCallAndReleaseMedia,
   stopLocalTracks,
 } from "@/lib/stream/media-teardown";
-import { MeetingRoomSkeleton } from "@/components/loading/PageSkeletons";
+import { MeetingRoomSkeleton } from "./MeetingRoomSkeleton";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";

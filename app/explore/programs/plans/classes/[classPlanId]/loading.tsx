@@ -1,4 +1,4 @@
-import { PlanDetailSkeleton } from "@/components/loading/PageSkeletons";
+import { PlanDetailSkeleton } from "../../PlanDetailSkeleton";
 
 export default function Loading() {
   return <PlanDetailSkeleton />;

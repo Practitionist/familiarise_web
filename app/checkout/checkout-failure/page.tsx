@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckoutResultSkeleton } from "@/components/loading/PageSkeletons";
+import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { XCircle, RefreshCw, ArrowLeft, MessageCircle } from "lucide-react";
 
 function CheckoutFailureContent() {

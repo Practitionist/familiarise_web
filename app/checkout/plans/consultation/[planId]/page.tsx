@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
-import { CheckoutPlanSkeleton } from "@/components/loading/PageSkeletons";
+import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { fetchReviews } from "@/lib/user";
 import {
   CheckoutInput,

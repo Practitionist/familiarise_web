@@ -1,4 +1,4 @@
-import { CheckoutPlanSkeleton } from "@/components/loading/PageSkeletons";
+import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 
 export default function Loading() {
   return <CheckoutPlanSkeleton />;
