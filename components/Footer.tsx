@@ -26,10 +26,9 @@ interface FooterLink {
   external?: boolean;
 }
 
-// Mirrors the Navbar's IA (Explore / Solutions / Company / Legal). Users who
-// miss something in the nav look for it in the footer, so the two disagreeing
-// costs clicks. Programs and Organisations were previously unreachable from
-// here entirely.
+// Mirrors the Navbar's IA (Explore / Solutions / Enterprise / Company / Legal).
+// Users who miss something in the nav look for it in the footer, so the two
+// disagreeing costs clicks.
 const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
   {
     heading: "Explore",
@@ -50,7 +49,18 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Early-career pros", href: "/use-cases/early-career" },
       { label: "Career switchers", href: "/use-cases/career-switchers" },
       { label: "Long-term mentorship", href: "/use-cases/mentorship" },
-      { label: "For teams", href: "/contactus" },
+    ],
+  },
+  {
+    heading: "Enterprise",
+    links: [
+      { label: "Overview", href: "/enterprise" },
+      { label: "Team training", href: "/enterprise/team-training" },
+      {
+        label: "Corporate mentorship",
+        href: "/enterprise/corporate-mentorship",
+      },
+      { label: "Talk to sales", href: "/contactus" },
     ],
   },
   {
@@ -234,7 +244,7 @@ const Footer: React.FC = () => {
 
       {/* Main Footer Content */}
       <div className="container mx-auto px-4 md:px-6 py-16 md:py-20 relative z-10">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-10">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-8 lg:gap-10">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
             <Link href="/" className="inline-block mb-6">

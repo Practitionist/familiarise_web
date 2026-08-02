@@ -103,10 +103,19 @@ Header:
 
 ## Our Navigation Structure
 
+> **Shipped (2026-08):** The live bar is
+> `[Logo] Explore ▼  Solutions ▼  Resources ▼  Pricing  [Enterprise]  [Sign in]`.
+> **Enterprise** is a dedicated outline CTA → [`/enterprise`](../../../app/enterprise/page.tsx)
+> (not `/solutions/enterprise`). Solutions is B2C use cases only; team training and
+> corporate mentorship live under `/enterprise/*`. Explore → Organisations remains
+> the public host-org directory. The tables below are the original 2026-02 design
+> draft and are partly stale — prefer `components/Navbar.tsx` + `components/Footer.tsx`
+> as the source of truth for labels and hrefs.
+
 **Decision: Full mega-menu, with coming-soon items displayed but non-clickable.**
 
 ```
-[Logo]  Platform ▼   Solutions ▼   Resources ▼   Pricing   [Login]  [Find an Expert]  [For Enterprise]
+[Logo]  Explore ▼   Solutions ▼   Resources ▼   Pricing   [Enterprise]  [Sign in]
 ```
 
 All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon" which are displayed but greyed out / tagged with a "Coming Soon" badge and are non-clickable.
@@ -162,7 +171,9 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | Pricing                     | `/pricing`              | **Live** (clickable) |
 | Login                       | `/login`                | **Live** (clickable) |
 | Find an Expert (CTA button) | `/explore/experts`      | **Live** (clickable) |
-| For Enterprise (CTA button) | `/solutions/enterprise` | Coming Soon          |
+| Enterprise (CTA button)     | `/enterprise`           | **Live** (clickable) |
+| Team training               | `/enterprise/team-training` | **Live**         |
+| Corporate mentorship        | `/enterprise/corporate-mentorship` | **Live** |
 
 ---
 
@@ -174,7 +185,8 @@ Existing reusable pages that belong in the footer (not the navbar):
 | ------------- | -------------------------------------------------------------- |
 | **Legal**     | Privacy Policy, Terms of Service, Cookie Policy, Refund Policy |
 | **Platform**  | Browse Experts, Browse Programs, Pricing, How It Works         |
-| **Solutions** | For Individuals, For Teams, For Enterprise                     |
+| **Solutions** | College students, Early-career, Career switchers, Mentorship   |
+| **Enterprise**| Overview (`/enterprise`), Team training, Corporate mentorship, Talk to sales |
 | **Resources** | Blog, Success Stories, Help Center, Community                  |
 | **Company**   | About Us, Contact, Become a Consultant                         |
 | **Domains**   | (Programmatic SEO links to domain/category pages)              |

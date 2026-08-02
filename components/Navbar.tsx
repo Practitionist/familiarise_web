@@ -171,9 +171,8 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   },
 ];
 
-// "For Businesses" used to be a one-item dropdown whose only item was disabled
-// — a menu that could only ever go to /contactus. Folded in here as a column so
-// the B2B path is visible without spending a top-level slot on it.
+// B2C use cases only. Organisation / B2B lives behind the dedicated Enterprise
+// CTA → /enterprise so Solutions stays a consumer menu without Soon pills.
 const SOLUTIONS_COLUMNS: NavColumn[] = [
   {
     heading: "By goal",
@@ -201,31 +200,6 @@ const SOLUTIONS_COLUMNS: NavColumn[] = [
         href: "/use-cases/mentorship",
         description: "Ongoing guidance from industry experts",
         icon: UserCheck,
-      },
-    ],
-  },
-  {
-    heading: "For teams",
-    items: [
-      {
-        label: "Team training",
-        href: "/contactus",
-        description: "Upskill a whole team with vetted experts",
-        icon: Building2,
-        disabled: true,
-      },
-      {
-        label: "Corporate mentorship",
-        href: "/contactus",
-        description: "Structured mentorship programs for staff",
-        icon: Users,
-        disabled: true,
-      },
-      {
-        label: "Talk to us",
-        href: "/contactus",
-        description: "Tell us what your organisation needs",
-        icon: Mail,
       },
     ],
   },
@@ -278,7 +252,8 @@ const NAV_GROUPS: NavDropdownGroup[] = [
     columns: EXPLORE_COLUMNS,
     categoryChips: EXPLORE_CATEGORIES,
   },
-  { label: "Solutions", variant: "mega", columns: SOLUTIONS_COLUMNS },
+  // Single B2C column — list panel, not a half-empty mega.
+  { label: "Solutions", variant: "list", columns: SOLUTIONS_COLUMNS },
   { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
 ];
 
@@ -641,6 +616,21 @@ const Navbar = () => {
 
             {/* Desktop Auth / CTA Buttons */}
             <div className="hidden lg:flex items-center gap-3">
+              {/* Dedicated B2B CTA — not a mega menu; mirrors MentorCruise "For businesses". */}
+              <Link href="/enterprise">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`font-medium ${
+                    showDarkStyle
+                      ? "border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                      : "border-border text-foreground hover:bg-muted"
+                  }`}
+                >
+                  Enterprise
+                </Button>
+              </Link>
+
               {/* Currency Selector */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -696,9 +686,6 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                /* No marketing CTAs in the bar — discovery is reachable from
-                   the Explore menu, and the supply-side CTA lives in the
-                   landing hero. Sign in is the only action here. */
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigation("/auth/signin")}
@@ -868,6 +855,15 @@ const Navbar = () => {
                   onClick={closeMenu}
                 >
                   <span className="font-medium">Pricing</span>
+                </Link>
+
+                <Link
+                  href="/enterprise"
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-white border border-zinc-700 hover:bg-zinc-800 transition-colors mt-2"
+                  onClick={closeMenu}
+                >
+                  <Building2 className="w-4 h-4 text-zinc-400" />
+                  <span className="font-medium">Enterprise</span>
                 </Link>
 
                 {/* Mobile Currency Selector */}
