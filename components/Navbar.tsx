@@ -171,8 +171,7 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   },
 ];
 
-// B2C use cases only. Organisation / B2B lives behind the dedicated Enterprise
-// CTA → /enterprise so Solutions stays a consumer menu without Soon pills.
+// B2C use cases only. B2B lives in the Enterprise dropdown.
 const SOLUTIONS_COLUMNS: NavColumn[] = [
   {
     heading: "By goal",
@@ -200,6 +199,61 @@ const SOLUTIONS_COLUMNS: NavColumn[] = [
         href: "/use-cases/mentorship",
         description: "Ongoing guidance from industry experts",
         icon: UserCheck,
+      },
+    ],
+  },
+];
+
+const ENTERPRISE_COLUMNS: NavColumn[] = [
+  {
+    heading: "Programs",
+    items: [
+      {
+        label: "Overview",
+        href: "/enterprise",
+        description: "Familiarise for organisations",
+        icon: Building2,
+      },
+      {
+        label: "Team training",
+        href: "/enterprise/team-training",
+        description: "Licensed seats for a whole cohort",
+        icon: GraduationCap,
+      },
+      {
+        label: "Corporate mentorship",
+        href: "/enterprise/corporate-mentorship",
+        description: "Credit pools for 1:1 expert sessions",
+        icon: Users,
+      },
+    ],
+  },
+  {
+    heading: "Discover",
+    items: [
+      {
+        label: "All organisations",
+        href: "/explore/enterprise/organisations",
+        description: "Public expert networks and institutions",
+        icon: Building2,
+      },
+      {
+        label: "Expert networks",
+        href: "/explore/enterprise/organisations?type=EXPERT_NETWORK",
+        description: "Filter the directory to expert networks",
+        icon: Users,
+      },
+      {
+        label: "Learning institutions",
+        href: "/explore/enterprise/organisations?type=LEARNING_INSTITUTION",
+        description: "Universities and research institutes",
+        icon: GraduationCap,
+      },
+      {
+        label: "Talk to sales",
+        href: "/contactus",
+        description: "Tell us what your organisation needs",
+        icon: Mail,
       },
     ],
   },
@@ -255,6 +309,8 @@ const NAV_GROUPS: NavDropdownGroup[] = [
   // Single B2C column — list panel, not a half-empty mega.
   { label: "Solutions", variant: "list", columns: SOLUTIONS_COLUMNS },
   { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
+  // B2B product + directory filters (Expert networks uses ?type=).
+  { label: "Enterprise", variant: "mega", columns: ENTERPRISE_COLUMNS },
 ];
 
 // ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
@@ -616,21 +672,6 @@ const Navbar = () => {
 
             {/* Desktop Auth / CTA Buttons */}
             <div className="hidden lg:flex items-center gap-3">
-              {/* Dedicated B2B CTA — not a mega menu; mirrors MentorCruise "For businesses". */}
-              <Link href="/enterprise">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={`font-medium ${
-                    showDarkStyle
-                      ? "border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
-                      : "border-border text-foreground hover:bg-muted"
-                  }`}
-                >
-                  Enterprise
-                </Button>
-              </Link>
-
               {/* Currency Selector */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -855,15 +896,6 @@ const Navbar = () => {
                   onClick={closeMenu}
                 >
                   <span className="font-medium">Pricing</span>
-                </Link>
-
-                <Link
-                  href="/enterprise"
-                  className="flex items-center gap-3 px-4 py-3 rounded-xl text-white border border-zinc-700 hover:bg-zinc-800 transition-colors mt-2"
-                  onClick={closeMenu}
-                >
-                  <Building2 className="w-4 h-4 text-zinc-400" />
-                  <span className="font-medium">Enterprise</span>
                 </Link>
 
                 {/* Mobile Currency Selector */}

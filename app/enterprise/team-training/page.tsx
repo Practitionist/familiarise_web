@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 import EnterprisePageLayout from "../_components/EnterprisePageLayout";
 import {
-  EnterpriseCapabilities,
+  EnterpriseComparison,
   EnterpriseFaqs,
-  EnterpriseHowItWorks,
+  EnterpriseVerticalTimeline,
 } from "../_components/EnterpriseSections";
 
 export const metadata: Metadata = {
@@ -76,54 +76,55 @@ export default function TeamTrainingPage() {
         reassurance: "Sales-assisted setup for Indian organisations on INR.",
       }}
     >
-      <EnterpriseCapabilities
-        eyebrow="Why seats"
-        title="When a flat cohort beats a shared budget"
-        intro="Choose licensed seats when a defined group should have equal access for the cycle — not when a few power users would drain a pool."
-        features={[
-          {
-            icon: "users",
-            title: "Predictable coverage",
-            description:
-              "Finance knows how many people are covered; managers know who can book without a special approval each time.",
-          },
-          {
-            icon: "graduation",
-            title: "Cohort upskilling",
-            description:
-              "Ideal for graduate batches, new-manager ramps, or a team rotating through the same learning themes.",
-          },
-          {
-            icon: "briefcase",
-            title: "Same marketplace supply",
-            description:
-              "Learners book real Familiarise experts — the sponsorship layer sits under the booking, not beside it.",
-          },
-          {
-            icon: "fileCheck",
-            title: "Procurement-friendly",
-            description:
-              "Contract and program configuration lock once live so mid-cycle changes stay auditable.",
-          },
-        ]}
+      <EnterpriseComparison
+        eyebrow="Seats vs credits"
+        title="When licensed seats are the right call"
+        intro="Equal access for a defined cohort — not a shared pool a few power users can drain."
+        left={{
+          label: "This page",
+          title: "Team training",
+          points: [
+            "Predictable seat count for finance",
+            "Every assigned learner has the same access",
+            "Ideal for graduate batches and new-manager ramps",
+            "Overage rules lock with the contract",
+          ],
+          href: "/contactus",
+          ctaLabel: "Talk to sales",
+        }}
+        right={{
+          label: "Alternative",
+          title: "Corporate mentorship",
+          points: [
+            "Shared credit or wallet budget",
+            "Usage can vary widely by role",
+            "Staff choose experts as demand appears",
+            "Better when only some people book heavily",
+          ],
+          href: "/enterprise/corporate-mentorship",
+          ctaLabel: "Compare mentorship",
+        }}
       />
 
-      <EnterpriseHowItWorks
+      <EnterpriseVerticalTimeline
         eyebrow="Rollout"
         title="From seat count to first booking"
-        intro="Three steps from the first sales call to a learner on a sponsored session."
+        intro="A single vertical path — not another three-up card row."
         steps={[
           {
+            label: "Step 1",
             title: "Scope the cohort",
             description:
               "Seats, domains, and which session types the license covers for the cycle.",
           },
           {
+            label: "Step 2",
             title: "Assign learners",
             description:
               "Owners and managers invite members and attach them to the licensed-seat program.",
           },
           {
+            label: "Step 3",
             title: "Book under the org",
             description:
               "Assigned learners book as usual; funding resolves through the organisation program.",

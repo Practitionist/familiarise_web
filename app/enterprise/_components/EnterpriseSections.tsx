@@ -381,6 +381,174 @@ export function EnterpriseHowItWorks({
   );
 }
 
+/** Vertical spine — used on team-training so rollout doesn't mirror the 3-up cards. */
+export function EnterpriseVerticalTimeline({
+  eyebrow,
+  title,
+  intro,
+  steps,
+}: {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  steps: { label: string; title: string; description: string }[];
+}) {
+  return (
+    <section className="py-16 md:py-24 bg-muted">
+      <div className="container mx-auto px-4 md:px-6 max-w-3xl">
+        <SectionHeading eyebrow={eyebrow} title={title} intro={intro} align="left" />
+        <ol className="relative space-y-0 border-l border-border ml-3 md:ml-4">
+          {steps.map((step, i) => (
+            <motion.li
+              key={step.title}
+              {...fadeUp}
+              transition={{ duration: 0.4, delay: i * 0.08 }}
+              className="relative pl-8 md:pl-10 pb-10 last:pb-0"
+            >
+              <span
+                aria-hidden
+                className="absolute -left-2 top-1.5 h-4 w-4 rounded-full border-2 border-foreground bg-background"
+              />
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1">
+                {step.label}
+              </p>
+              <h3 className="font-semibold text-foreground mb-1.5">
+                {step.title}
+              </h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {step.description}
+              </p>
+            </motion.li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+/** Alternating rows — used on corporate-mentorship instead of a 2×2 card grid. */
+export function EnterpriseAlternatingRows({
+  eyebrow,
+  title,
+  intro,
+  rows,
+}: {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  rows: {
+    icon: EnterpriseIcon;
+    title: string;
+    description: string;
+  }[];
+}) {
+  return (
+    <section className="py-16 md:py-24 bg-card">
+      <div className="container mx-auto px-4 md:px-6 max-w-5xl">
+        <SectionHeading eyebrow={eyebrow} title={title} intro={intro} />
+        <div className="space-y-8 md:space-y-12">
+          {rows.map((row, i) => {
+            const Icon = ENTERPRISE_ICONS[row.icon];
+            const reverse = i % 2 === 1;
+            return (
+              <motion.div
+                key={row.title}
+                {...fadeUp}
+                transition={{ duration: 0.4, delay: i * 0.06 }}
+                className={`flex flex-col md:flex-row gap-6 md:gap-10 items-center ${
+                  reverse ? "md:flex-row-reverse" : ""
+                }`}
+              >
+                <div className="w-full md:w-2/5 rounded-2xl border border-border bg-muted p-8 flex items-center justify-center min-h-[140px]">
+                  <Icon className="w-12 h-12 text-muted-foreground" />
+                </div>
+                <div className="w-full md:w-3/5">
+                  <h3 className="text-fluid-xl font-semibold text-foreground mb-2">
+                    {row.title}
+                  </h3>
+                  <p className="text-muted-foreground leading-relaxed">
+                    {row.description}
+                  </p>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Two-column contrast table — used on team-training vs mentorship. */
+export function EnterpriseComparison({
+  eyebrow,
+  title,
+  intro,
+  left,
+  right,
+}: {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  left: {
+    label: string;
+    title: string;
+    points: string[];
+    href: string;
+    ctaLabel: string;
+  };
+  right: {
+    label: string;
+    title: string;
+    points: string[];
+    href: string;
+    ctaLabel: string;
+  };
+}) {
+  return (
+    <section className="py-16 md:py-24 bg-card">
+      <div className="container mx-auto px-4 md:px-6 max-w-5xl">
+        <SectionHeading eyebrow={eyebrow} title={title} intro={intro} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:gap-0 rounded-2xl border border-border overflow-hidden">
+          {[left, right].map((col, i) => (
+            <motion.div
+              key={col.title}
+              {...fadeUp}
+              transition={{ duration: 0.4, delay: i * 0.08 }}
+              className={`p-6 md:p-8 ${
+                i === 0
+                  ? "bg-muted border-b md:border-b-0 md:border-r border-border"
+                  : "bg-background"
+              }`}
+            >
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                {col.label}
+              </p>
+              <h3 className="text-fluid-xl font-semibold text-foreground mb-4">
+                {col.title}
+              </h3>
+              <ul className="space-y-3 mb-6">
+                {col.points.map((point) => (
+                  <li key={point} className="flex gap-2 text-sm text-muted-foreground">
+                    <Check className="w-4 h-4 text-foreground shrink-0 mt-0.5" />
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button variant={i === 0 ? "default" : "outline"} asChild>
+                <Link href={col.href}>
+                  {col.ctaLabel}
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Link>
+              </Button>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function EnterpriseFaqs({
   eyebrow,
   title,

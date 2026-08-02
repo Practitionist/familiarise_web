@@ -118,8 +118,9 @@ sponsor orgs.
 | `/enterprise/team-training` | Licensed-seat / cohort training narrative |
 | `/enterprise/corporate-mentorship` | Credit-pool / sponsored 1:1 mentorship narrative |
 
-Navbar: dedicated **Enterprise** CTA → `/enterprise`. Footer mirrors the same
-links. Homepage `EnterpriseSection` primary CTA also points at `/enterprise`.
+Navbar: **Enterprise** mega dropdown (overview, program pages, org directory
+filters including `?type=EXPERT_NETWORK`, Talk to sales). Footer mirrors the
+program links. Homepage `EnterpriseSection` primary CTA → `/enterprise`.
 Chrome: dark-hero routes registered in `lib/navigation/public-chrome.ts`.
 
 ## Public org pages

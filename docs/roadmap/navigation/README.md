@@ -104,18 +104,17 @@ Header:
 ## Our Navigation Structure
 
 > **Shipped (2026-08):** The live bar is
-> `[Logo] Explore ▼  Solutions ▼  Resources ▼  Pricing  [Enterprise]  [Sign in]`.
-> **Enterprise** is a dedicated outline CTA → [`/enterprise`](../../../app/enterprise/page.tsx)
-> (not `/solutions/enterprise`). Solutions is B2C use cases only; team training and
-> corporate mentorship live under `/enterprise/*`. Explore → Organisations remains
-> the public host-org directory. The tables below are the original 2026-02 design
-> draft and are partly stale — prefer `components/Navbar.tsx` + `components/Footer.tsx`
-> as the source of truth for labels and hrefs.
+> `[Logo] Explore ▼  Solutions ▼  Resources ▼  Enterprise ▼  Pricing  [Sign in]`.
+> **Enterprise** is a mega dropdown covering `/enterprise` overview, team training,
+> corporate mentorship, org directory filters (`?type=EXPERT_NETWORK` etc.), and
+> Talk to sales — not `/solutions/enterprise`. Solutions is B2C use cases only.
+> The tables below are the original 2026-02 design draft and are partly stale —
+> prefer `components/Navbar.tsx` + `components/Footer.tsx` as the source of truth.
 
 **Decision: Full mega-menu, with coming-soon items displayed but non-clickable.**
 
-```
-[Logo]  Explore ▼   Solutions ▼   Resources ▼   Pricing   [Enterprise]  [Sign in]
+```text
+[Logo]  Explore ▼   Solutions ▼   Resources ▼   Enterprise ▼   Pricing   [Sign in]
 ```
 
 All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon" which are displayed but greyed out / tagged with a "Coming Soon" badge and are non-clickable.
@@ -141,19 +140,30 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | How It Works       | `/how-it-works`     | Coming Soon (non-clickable) |
 | Features           | `/features`         | Coming Soon                 |
 
-### Solutions Dropdown
+### Solutions Dropdown (historical draft — see shipped note above)
 
 | Item                 | Link                              | Status      |
 | -------------------- | --------------------------------- | ----------- |
 | **By Audience**      |                                   |             |
 | For Individuals      | `/solutions/individuals`          | Coming Soon |
 | For Teams            | `/solutions/teams`                | Coming Soon |
-| For Enterprise       | `/solutions/enterprise`           | Coming Soon |
 | **By Use Case**      |                                   |             |
 | Career Transitions   | `/use-cases/career-transitions`   | Coming Soon |
 | Technical Mentorship | `/use-cases/technical-mentorship` | Coming Soon |
 | Business Strategy    | `/use-cases/business-strategy`    | Coming Soon |
 | Leadership Coaching  | `/use-cases/leadership-coaching`  | Coming Soon |
+
+### Enterprise Dropdown (shipped)
+
+| Item                   | Link | Status |
+| ---------------------- | ---- | ------ |
+| Overview               | `/enterprise` | **Live** |
+| Team training          | `/enterprise/team-training` | **Live** |
+| Corporate mentorship   | `/enterprise/corporate-mentorship` | **Live** |
+| All organisations      | `/explore/enterprise/organisations` | **Live** |
+| Expert networks        | `/explore/enterprise/organisations?type=EXPERT_NETWORK` | **Live** |
+| Learning institutions  | `/explore/enterprise/organisations?type=LEARNING_INSTITUTION` | **Live** |
+| Talk to sales          | `/contactus` | **Live** |
 
 ### Resources Dropdown
 
@@ -171,9 +181,7 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | Pricing                     | `/pricing`              | **Live** (clickable) |
 | Login                       | `/login`                | **Live** (clickable) |
 | Find an Expert (CTA button) | `/explore/experts`      | **Live** (clickable) |
-| Enterprise (CTA button)     | `/enterprise`           | **Live** (clickable) |
-| Team training               | `/enterprise/team-training` | **Live**         |
-| Corporate mentorship        | `/enterprise/corporate-mentorship` | **Live** |
+| Enterprise (dropdown)       | see Enterprise Dropdown table | **Live** |
 
 ---
 

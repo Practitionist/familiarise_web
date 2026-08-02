@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import EnterprisePageLayout from "../_components/EnterprisePageLayout";
 import {
-  EnterpriseCapabilities,
+  EnterpriseAlternatingRows,
   EnterpriseFaqs,
   EnterpriseHowItWorks,
 } from "../_components/EnterpriseSections";
@@ -76,11 +76,11 @@ export default function CorporateMentorshipPage() {
         reassurance: "Sales-assisted setup for Indian organisations on INR.",
       }}
     >
-      <EnterpriseCapabilities
+      <EnterpriseAlternatingRows
         eyebrow="Why credits"
         title="When a shared budget beats equal seats"
-        intro="Credit pools fit organisations where a few people book heavily and others lightly — you fund demand, not empty seats."
-        features={[
+        intro="Fund demand, not empty seats — laid out as a narrative, not another feature grid."
+        rows={[
           {
             icon: "wallet",
             title: "Budget you can see",

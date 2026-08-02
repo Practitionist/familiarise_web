@@ -83,41 +83,7 @@ export default function EnterpriseLandingPage() {
           "Design-partner onboarding for Indian organisations on INR contracts.",
       }}
     >
-      <EnterpriseCapabilities
-        eyebrow="What you get"
-        title="Built for how organisations actually buy learning"
-        intro="The same expert marketplace your people already trust — with sponsorship, programs, and procurement rails on top."
-        features={[
-          {
-            icon: "users",
-            title: "Team training",
-            description:
-              "Licensed seats cover a cohort so every assigned learner can book without individual expensing.",
-            href: "/enterprise/team-training",
-          },
-          {
-            icon: "briefcase",
-            title: "Corporate mentorship",
-            description:
-              "Credit pools let staff choose 1:1 sessions with vetted experts while you control the budget.",
-            href: "/enterprise/corporate-mentorship",
-          },
-          {
-            icon: "fileCheck",
-            title: "Invoicing for procurement",
-            description:
-              "Purchase orders, GST-compliant organisation invoices, and Net terms — not a corporate card and a pile of receipts.",
-          },
-          {
-            icon: "shield",
-            title: "Host expert networks",
-            description:
-              "Agencies and institutions that already run experts can appear in the public organisations directory. Talk to us about hosting.",
-            href: "/explore/enterprise/organisations",
-          },
-        ]}
-      />
-
+      {/* Paths first — the landing's job is to fork the two sponsor products. */}
       <EnterprisePaths
         eyebrow="Choose a path"
         title="Two sponsor programs that match how teams learn"
@@ -163,6 +129,41 @@ export default function EnterpriseLandingPage() {
             title: "Your people book",
             description:
               "Staff book experts as usual — the organisation funds the session through the program, not their personal card.",
+          },
+        ]}
+      />
+
+      <EnterpriseCapabilities
+        eyebrow="Also included"
+        title="Procurement and discovery rails"
+        intro="Beyond the two program shapes — billing and marketplace discovery your ops team will ask about."
+        features={[
+          {
+            icon: "fileCheck",
+            title: "Invoicing for procurement",
+            description:
+              "Purchase orders, GST-compliant organisation invoices, and Net terms — not a corporate card and a pile of receipts.",
+          },
+          {
+            icon: "shield",
+            title: "Host expert networks",
+            description:
+              "Agencies and institutions that already run experts appear in the public directory when they opt in.",
+            href: "/explore/enterprise/organisations?type=EXPERT_NETWORK",
+          },
+          {
+            icon: "users",
+            title: "Team training",
+            description:
+              "Licensed seats so every assigned learner can book without individual expensing.",
+            href: "/enterprise/team-training",
+          },
+          {
+            icon: "briefcase",
+            title: "Corporate mentorship",
+            description:
+              "Credit pools so staff choose 1:1 experts while you control the budget.",
+            href: "/enterprise/corporate-mentorship",
           },
         ]}
       />
