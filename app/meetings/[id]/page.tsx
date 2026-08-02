@@ -3,12 +3,13 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { StreamCall, StreamTheme } from "@stream-io/video-react-sdk";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 
 import {
   leaveCallAndReleaseMedia,
   stopLocalTracks,
 } from "@/lib/stream/media-teardown";
+import { MeetingRoomSkeleton } from "@/components/loading/PageSkeletons";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";
@@ -89,20 +90,9 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  // Loading states
+  // Loading states — lobby anatomy matches MeetingSetup to avoid spinner flash
   if (isSessionPending || isValidatingAccess || isCallLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="mt-4 text-lg">
-          {isSessionPending
-            ? "Checking authentication..."
-            : isValidatingAccess
-              ? "Validating access..."
-              : "Loading meeting..."}
-        </p>
-      </div>
-    );
+    return <MeetingRoomSkeleton />;
   }
 
   // Not logged in
