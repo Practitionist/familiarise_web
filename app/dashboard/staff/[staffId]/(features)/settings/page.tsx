@@ -27,6 +27,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { NotificationPreferencesPanel } from "@/components/notifications";
+import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   CookiePreference,
   NotificationPreference,
@@ -275,11 +276,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
 
   // Render loading/error states
   if (isPending || (Boolean(data) && !staffData)) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        Loading...
-      </div>
-    );
+    return <SettingsSkeleton />;
   }
   if (isError && !data) {
     return (

@@ -6,9 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AnalyticsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   RefreshCw,
-  Loader2,
   BarChart3,
   Ticket,
   Users,
@@ -63,11 +63,7 @@ export default function StaffMetricsPage() {
   const metrics = data;
 
   if (isPending) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <AnalyticsSkeleton />;
   }
 
   if (isError && !metrics) {
