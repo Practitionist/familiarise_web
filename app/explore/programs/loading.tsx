@@ -1,4 +1,4 @@
-import { ProgramsExploreSkeleton } from "@/components/loading/PageSkeletons";
+import { ProgramsExploreSkeleton } from "./ProgramsExploreSkeleton";
 
 export default function Loading() {
   return <ProgramsExploreSkeleton />;

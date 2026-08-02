@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Ticket,
   Users,
@@ -20,7 +22,6 @@ import {
   TrendingUp,
   ArrowRight,
   Bell,
-  Loader2,
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
@@ -130,6 +131,11 @@ export default function HomePageClient({
 
   const loading = isLoading || isFetching;
 
+  // Match route HomeSkeleton — avoid Loader2 flash after soft-nav.
+  if (isLoading && !stats) {
+    return <HomeSkeleton />;
+  }
+
   // Don't render zeros + "No recent tickets" on a failed fetch — that reads
   // as a healthy-but-empty queue and hides the operational failure. Only
   // when there's no cached payload to fall back on.
@@ -228,10 +234,10 @@ export default function HomePageClient({
         {loading && !stats
           ? Array.from({ length: 4 }).map((_, i) => (
               <Card key={i}>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-center h-24">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  </div>
+                <CardContent className="space-y-3 p-6">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-3 w-20" />
                 </CardContent>
               </Card>
             ))
@@ -279,8 +285,10 @@ export default function HomePageClient({
           </CardHeader>
           <CardContent>
             {loading && !stats ? (
-              <div className="flex items-center justify-center h-48">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-16 w-full rounded-lg" />
+                ))}
               </div>
             ) : !stats?.recentTickets || stats.recentTickets.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">

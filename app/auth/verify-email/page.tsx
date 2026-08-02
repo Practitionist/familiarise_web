@@ -8,16 +8,11 @@ import { sendVerificationEmail, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { AuthCardSkeleton } from "../AuthCardSkeleton";
 
 export default function VerifyEmail() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
-        </div>
-      }
-    >
+    <Suspense fallback={<AuthCardSkeleton />}>
       <VerifyEmailContent />
     </Suspense>
   );
@@ -94,16 +89,7 @@ function VerifyEmailContent() {
   };
 
   if (isPending || session?.user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <div className="text-center text-white">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-4" />
-          <p className="text-sm text-zinc-400">
-            {session?.user ? "Email verified — redirecting…" : "Loading…"}
-          </p>
-        </div>
-      </div>
-    );
+    return <AuthCardSkeleton />;
   }
 
   return (

@@ -1,4 +1,4 @@
-import { CheckoutResultSkeleton } from "@/components/loading/PageSkeletons";
+import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 
 export default function Loading() {
   return <CheckoutResultSkeleton />;

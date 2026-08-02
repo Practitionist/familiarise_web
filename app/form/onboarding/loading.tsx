@@ -1,4 +1,4 @@
-import { OnboardingWizardSkeleton } from "@/components/loading/PageSkeletons";
+import { OnboardingWizardSkeleton } from "./OnboardingWizardSkeleton";
 
 export default function Loading() {
   return <OnboardingWizardSkeleton />;

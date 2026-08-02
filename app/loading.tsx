@@ -1,4 +1,4 @@
-import { LandingHeroSkeleton } from "@/components/loading/PageSkeletons";
+import { LandingHeroSkeleton } from "@/components/home/LandingHeroSkeleton";
 
 export default function Loading() {
   return <LandingHeroSkeleton />;

@@ -10,6 +10,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   getInitialCustomSlots,
   getInitialFormData,
@@ -519,16 +520,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   };
 
   if (isContentLoading || timezoneLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="flex flex-col items-center text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mb-4" />
-          <p className="text-zinc-500">
-            {timezoneLoading ? "Detecting timezone..." : "Loading settings..."}
-          </p>
-        </div>
-      </div>
-    );
+    return <SettingsSkeleton />;
   }
 
   if (contentError && domains.length === 0) {
