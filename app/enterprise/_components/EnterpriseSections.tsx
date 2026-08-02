@@ -387,12 +387,12 @@ export function EnterpriseVerticalTimeline({
   title,
   intro,
   steps,
-}: {
+}: Readonly<{
   eyebrow: string;
   title: string;
   intro: string;
   steps: { label: string; title: string; description: string }[];
-}) {
+}>) {
   return (
     <section className="py-16 md:py-24 bg-muted">
       <div className="container mx-auto px-4 md:px-6 max-w-3xl">
@@ -432,7 +432,7 @@ export function EnterpriseAlternatingRows({
   title,
   intro,
   rows,
-}: {
+}: Readonly<{
   eyebrow: string;
   title: string;
   intro: string;
@@ -441,7 +441,7 @@ export function EnterpriseAlternatingRows({
     title: string;
     description: string;
   }[];
-}) {
+}>) {
   return (
     <section className="py-16 md:py-24 bg-card">
       <div className="container mx-auto px-4 md:px-6 max-w-5xl">
@@ -486,7 +486,7 @@ export function EnterpriseComparison({
   intro,
   left,
   right,
-}: {
+}: Readonly<{
   eyebrow: string;
   title: string;
   intro: string;
@@ -504,7 +504,7 @@ export function EnterpriseComparison({
     href: string;
     ctaLabel: string;
   };
-}) {
+}>) {
   return (
     <section className="py-16 md:py-24 bg-card">
       <div className="container mx-auto px-4 md:px-6 max-w-5xl">

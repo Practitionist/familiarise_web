@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ReadonlyParams } from "@/lib/explore/filter-codec";
+import { shouldSkipUrlHydrate } from "@/lib/explore/url-hydrate-skip";
 
 const URL_SYNC_DEBOUNCE_MS = 300;
 
@@ -64,17 +65,22 @@ export function useUrlSyncedFilters<T>({
     // keeps the lint rule happy without changing identity across renders.
   }, [defaults]);
 
-  // Skip the next inbound URL→state sync when we just wrote the URL ourselves
-  // (replaceState still notifies `useSearchParams` in Next 15).
-  const skipHydrateFromUrl = useRef(false);
+  // Exact query string we last wrote via replaceState (normalized). Null when
+  // no self-write is awaiting an echo through `useSearchParams`.
+  const pendingWrittenQs = useRef<string | null>(null);
 
   useEffect(() => {
-    if (skipHydrateFromUrl.current) {
-      skipHydrateFromUrl.current = false;
-      return;
-    }
+    // Normalize through the same codec we write with so param order / encoding
+    // cannot false-mismatch a self-write.
+    const incomingQs = toSearchParams(fromSearchParams(searchParams));
+    const { skip, nextPending } = shouldSkipUrlHydrate(
+      pendingWrittenQs.current,
+      incomingQs,
+    );
+    pendingWrittenQs.current = nextPending;
+    if (skip) return;
     setFilters(fromSearchParams(searchParams));
-  }, [searchParams, fromSearchParams]);
+  }, [searchParams, fromSearchParams, toSearchParams]);
 
   const urlSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -86,7 +92,7 @@ export function useUrlSyncedFilters<T>({
       const target = `${basePath}${qs ? `?${qs}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search + hash;
       if (target !== current) {
-        skipHydrateFromUrl.current = true;
+        pendingWrittenQs.current = qs;
         window.history.replaceState(window.history.state, "", target);
       }
     }, URL_SYNC_DEBOUNCE_MS);
