@@ -11,7 +11,6 @@ import {
   Shield,
   Users,
   Wallet,
-  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -23,6 +22,23 @@ import {
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
+/**
+ * Page data lives in server components so each route can export `metadata`, and
+ * component references cannot cross that boundary — so pages name an icon and
+ * this client module resolves it. (Same pattern as app/use-cases/UseCaseSections.)
+ */
+export const ENTERPRISE_ICONS = {
+  users: Users,
+  briefcase: Briefcase,
+  fileCheck: FileCheck,
+  shield: Shield,
+  graduation: GraduationCap,
+  wallet: Wallet,
+  building: Building2,
+} as const;
+
+export type EnterpriseIcon = keyof typeof ENTERPRISE_ICONS;
 
 const fadeUp = {
   initial: { opacity: 0, y: 20 },
@@ -53,7 +69,7 @@ export interface EnterpriseHeroData {
 }
 
 export interface EnterpriseFeature {
-  icon: LucideIcon;
+  icon: EnterpriseIcon;
   title: string;
   description: string;
   href?: string;
@@ -65,7 +81,7 @@ export interface EnterprisePath {
   description: string;
   href: string;
   ctaLabel: string;
-  icon: LucideIcon;
+  icon: EnterpriseIcon;
 }
 
 export interface EnterpriseFaq {
@@ -223,7 +239,7 @@ export function EnterpriseCapabilities({
         <SectionHeading eyebrow={eyebrow} title={title} intro={intro} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {features.map((feature, i) => {
-            const Icon = feature.icon;
+            const Icon = ENTERPRISE_ICONS[feature.icon];
             const body = (
               <>
                 <div className="w-11 h-11 rounded-xl bg-muted flex items-center justify-center shrink-0">
@@ -287,7 +303,7 @@ export function EnterprisePaths({
         <SectionHeading eyebrow={eyebrow} title={title} intro={intro} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {paths.map((path, i) => {
-            const Icon = path.icon;
+            const Icon = ENTERPRISE_ICONS[path.icon];
             return (
               <motion.div
                 key={path.title}
@@ -467,14 +483,3 @@ export function EnterpriseClosing({
     </section>
   );
 }
-
-/** Icons shared by page data modules (server components cannot pass components). */
-export const ENTERPRISE_ICONS = {
-  users: Users,
-  briefcase: Briefcase,
-  fileCheck: FileCheck,
-  shield: Shield,
-  graduation: GraduationCap,
-  wallet: Wallet,
-  building: Building2,
-} as const;

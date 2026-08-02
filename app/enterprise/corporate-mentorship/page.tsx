@@ -5,7 +5,6 @@ import {
   EnterpriseCapabilities,
   EnterpriseFaqs,
   EnterpriseHowItWorks,
-  ENTERPRISE_ICONS,
 } from "../_components/EnterpriseSections";
 
 export const metadata: Metadata = {
@@ -83,25 +82,25 @@ export default function CorporateMentorshipPage() {
         intro="Credit pools fit organisations where a few people book heavily and others lightly — you fund demand, not empty seats."
         features={[
           {
-            icon: ENTERPRISE_ICONS.wallet,
+            icon: "wallet",
             title: "Budget you can see",
             description:
               "Top up a wallet or invoice against the program; learners draw down as they book, with alerts before the pool runs dry.",
           },
           {
-            icon: ENTERPRISE_ICONS.briefcase,
+            icon: "briefcase",
             title: "Choice without chaos",
             description:
               "Staff pick experts for their role — career, technical depth, leadership — under one organisational sponsor.",
           },
           {
-            icon: ENTERPRISE_ICONS.users,
+            icon: "users",
             title: "Assignment control",
             description:
               "Managers decide who is eligible. Unassigned staff stay on personal bookings; assigned staff use the org program.",
           },
           {
-            icon: ENTERPRISE_ICONS.fileCheck,
+            icon: "fileCheck",
             title: "Procurement path",
             description:
               "Invoice funding and PO matching for teams that cannot put learning on a personal card.",

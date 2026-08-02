@@ -5,7 +5,6 @@ import {
   EnterpriseCapabilities,
   EnterpriseFaqs,
   EnterpriseHowItWorks,
-  ENTERPRISE_ICONS,
 } from "../_components/EnterpriseSections";
 
 export const metadata: Metadata = {
@@ -83,25 +82,25 @@ export default function TeamTrainingPage() {
         intro="Choose licensed seats when a defined group should have equal access for the cycle — not when a few power users would drain a pool."
         features={[
           {
-            icon: ENTERPRISE_ICONS.users,
+            icon: "users",
             title: "Predictable coverage",
             description:
               "Finance knows how many people are covered; managers know who can book without a special approval each time.",
           },
           {
-            icon: ENTERPRISE_ICONS.graduation,
+            icon: "graduation",
             title: "Cohort upskilling",
             description:
               "Ideal for graduate batches, new-manager ramps, or a team rotating through the same learning themes.",
           },
           {
-            icon: ENTERPRISE_ICONS.briefcase,
+            icon: "briefcase",
             title: "Same marketplace supply",
             description:
               "Learners book real Familiarise experts — the sponsorship layer sits under the booking, not beside it.",
           },
           {
-            icon: ENTERPRISE_ICONS.fileCheck,
+            icon: "fileCheck",
             title: "Procurement-friendly",
             description:
               "Contract and program configuration lock once live so mid-cycle changes stay auditable.",

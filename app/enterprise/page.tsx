@@ -6,7 +6,6 @@ import {
   EnterpriseFaqs,
   EnterpriseHowItWorks,
   EnterprisePaths,
-  ENTERPRISE_ICONS,
 } from "./_components/EnterpriseSections";
 
 export const metadata: Metadata = {
@@ -90,27 +89,27 @@ export default function EnterpriseLandingPage() {
         intro="The same expert marketplace your people already trust — with sponsorship, programs, and procurement rails on top."
         features={[
           {
-            icon: ENTERPRISE_ICONS.users,
+            icon: "users",
             title: "Team training",
             description:
               "Licensed seats cover a cohort so every assigned learner can book without individual expensing.",
             href: "/enterprise/team-training",
           },
           {
-            icon: ENTERPRISE_ICONS.briefcase,
+            icon: "briefcase",
             title: "Corporate mentorship",
             description:
               "Credit pools let staff choose 1:1 sessions with vetted experts while you control the budget.",
             href: "/enterprise/corporate-mentorship",
           },
           {
-            icon: ENTERPRISE_ICONS.fileCheck,
+            icon: "fileCheck",
             title: "Invoicing for procurement",
             description:
               "Purchase orders, GST-compliant organisation invoices, and Net terms — not a corporate card and a pile of receipts.",
           },
           {
-            icon: ENTERPRISE_ICONS.shield,
+            icon: "shield",
             title: "Host expert networks",
             description:
               "Agencies and institutions that already run experts can appear in the public organisations directory. Talk to us about hosting.",
@@ -131,7 +130,7 @@ export default function EnterpriseLandingPage() {
               "Flat-fee seats for a defined cohort — ideal when a whole team needs structured access for a cycle.",
             href: "/enterprise/team-training",
             ctaLabel: "See team training",
-            icon: ENTERPRISE_ICONS.graduation,
+            icon: "graduation",
           },
           {
             eyebrow: "Credit pool",
@@ -140,7 +139,7 @@ export default function EnterpriseLandingPage() {
               "A shared budget your people draw down as they book 1:1 mentorship — ideal when demand is uneven across roles.",
             href: "/enterprise/corporate-mentorship",
             ctaLabel: "See corporate mentorship",
-            icon: ENTERPRISE_ICONS.wallet,
+            icon: "wallet",
           },
         ]}
       />
