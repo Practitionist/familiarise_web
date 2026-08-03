@@ -61,54 +61,70 @@ const liveConsultantWhere = {
 // ---------------------------------------------------------------------------
 
 /**
- * Trending rank step 1: load every marketplace plan's last-30-day slot ids
- * and sort by count IN MEMORY. That scan is O(all plans × recent slots) per
- * call — with React.cache alone it ran once per REQUEST, so 1000 concurrent
- * explore loads each paid it. unstable_cache shares one computation across
- * requests for 60s; the cached value is just the FULL ranked id array
- * (callers slice to their limit — passing limit as an arg would key separate
- * cache entries per limit, each paying the scan). Staleness is harmless —
- * trending order changing 60s late is invisible.
+ * Trending rank step 1: last-30-day slot count per plan.
+ *
+ * ORM read + JS tally (no raw SQL). The earlier shape nested classes →
+ * appointments → slots under every marketplace plan, so the cost scaled with
+ * plans × their whole slot history. Instead read the two sides independently:
+ * the discoverable plan ids, and only slots created in the window. The tally is
+ * a single pass over that bounded set. Plans with no recent activity keep a
+ * count of 0 and stay in the ranking — dropping them empties the Trending row
+ * in a quiet window.
+ *
+ * The scan is shared across requests for 60s via unstable_cache; the cached
+ * value is the FULL ranked id array (callers slice — passing limit as an arg
+ * would key separate entries). Staleness is harmless: trending order changing
+ * 60s late is invisible.
  */
+/** Slot window shared by both plan families. */
+const recentSlotWindow = () => {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  return { deletedAt: null, createdAt: { gte: thirtyDaysAgo } } as const;
+};
+
+/**
+ * Tally plan ids, then order plans by that count. Plans absent from the tally
+ * score 0 and keep their place — dropping them empties the Trending row.
+ */
+function rankPlansByCount(
+  plans: { id: string; createdAt: Date }[],
+  planIds: (string | null | undefined)[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const id of planIds) {
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return plans
+    .sort(
+      (a, b) =>
+        (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) ||
+        b.createdAt.getTime() - a.createdAt.getTime(),
+    )
+    .map((p) => p.id);
+}
+
 const getTrendingClassPlanIds = unstable_cache(
   async (): Promise<string[]> => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const ranked = await prisma.classPlan.findMany({
-      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-      select: {
-        id: true,
-        classes: {
-          select: {
-            appointments: {
-              select: {
-                slotsOfAppointment: {
-                  where: { createdAt: { gte: thirtyDaysAgo } },
-                  select: { id: true },
-                },
-              },
-            },
-          },
+    const [plans, slots] = await Promise.all([
+      prisma.classPlan.findMany({
+        where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
+        select: { id: true, createdAt: true },
+      }),
+      prisma.slotOfAppointment.findMany({
+        where: {
+          ...recentSlotWindow(),
+          appointment: { deletedAt: null, classId: { not: null } },
         },
-      },
-    });
-
-    return ranked
-      .map((p) => ({
-        id: p.id,
-        count: p.classes.reduce(
-          (sum, cls) =>
-            sum +
-            cls.appointments.reduce(
-              (s, apt) => s + apt.slotsOfAppointment.length,
-              0,
-            ),
-          0,
-        ),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .map((r) => r.id);
+        select: {
+          appointment: { select: { class: { select: { classPlanId: true } } } },
+        },
+      }),
+    ]);
+    return rankPlansByCount(
+      plans,
+      slots.map((s) => s.appointment?.class?.classPlanId),
+    );
   },
   ["trending-class-plan-ids"],
   { revalidate: 60 },
@@ -116,38 +132,27 @@ const getTrendingClassPlanIds = unstable_cache(
 
 const getTrendingWebinarPlanIds = unstable_cache(
   async (): Promise<string[]> => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const ranked = await prisma.webinarPlan.findMany({
-      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-      select: {
-        id: true,
-        webinars: {
-          select: {
-            appointment: {
-              select: {
-                slotsOfAppointment: {
-                  where: { createdAt: { gte: thirtyDaysAgo } },
-                  select: { id: true },
-                },
-              },
-            },
+    const [plans, slots] = await Promise.all([
+      prisma.webinarPlan.findMany({
+        where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
+        select: { id: true, createdAt: true },
+      }),
+      prisma.slotOfAppointment.findMany({
+        where: {
+          ...recentSlotWindow(),
+          appointment: { deletedAt: null, webinarId: { not: null } },
+        },
+        select: {
+          appointment: {
+            select: { webinar: { select: { webinarPlanId: true } } },
           },
         },
-      },
-    });
-
-    return ranked
-      .map((p) => ({
-        id: p.id,
-        count: p.webinars.reduce(
-          (sum, w) => sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
-          0,
-        ),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .map((r) => r.id);
+      }),
+    ]);
+    return rankPlansByCount(
+      plans,
+      slots.map((s) => s.appointment?.webinar?.webinarPlanId),
+    );
   },
   ["trending-webinar-plan-ids"],
   { revalidate: 60 },

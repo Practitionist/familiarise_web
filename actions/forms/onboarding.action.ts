@@ -68,7 +68,11 @@ export async function updateOnboardingInformationAction(
   }
 
   // Use the central processing function
-  return await processOnboardingData(userId, body);
+  // No cookie-cache refresh here: requireOnboarded() reads force-fresh, so it
+  // already sees onboardingCompleted / profile ids. A refresh would also be the
+  // wrong tool — getSession reads the CALLER's headers, and this action lets an
+  // ADMIN/STAFF update someone else, whose session it could not refresh anyway.
+  return processOnboardingData(userId, body);
 }
 // #endregion
 

@@ -16,21 +16,78 @@ import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import React, { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
-import ConsultantProfessionalStep from "./components/ConsultantProfessionalStep";
-import ConsultantAgreementAndVerificationStep from "./components/ConsultantAgreementAndVerificationStep";
-import ConsultantReviewForm from "./components/ConsultantReviewForm";
-import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
-import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
-import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
+// Step 0 stays eager — every user sees Personal Info first.
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
-import StaffAgreementForm from "./components/StaffAgreementForm";
-import StaffProfileForm from "./components/StaffProfileForm";
-import StaffReviewForm from "./components/StaffReviewForm";
-import { CreateOrganizationWizard } from "@/components/organization/create-wizard/Wizard";
+
+// Later steps + org wizard are code-split so the initial onboarding chunk
+// does not pay for schedule UI, review forms, or the create-org wizard.
+//
+// Every split step needs `loading` — next/dynamic renders null while the chunk
+// downloads, so without it pressing Next collapses the card to zero height and
+// reads as a frozen app on a slow connection. The options object is repeated
+// inline rather than hoisted to a shared const because SWC statically analyses
+// it: a variable fails the build with "next/dynamic options must be an object
+// literal".
+function StepLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[240px]">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+      <span className="sr-only">Loading this step…</span>
+    </div>
+  );
+}
+
+const ConsultantPreferredScheduleForm = dynamic(
+  () => import("./components/ConsultantPreferredScheduleForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsultantProfessionalStep = dynamic(
+  () => import("./components/ConsultantProfessionalStep"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsultantAgreementAndVerificationStep = dynamic(
+  () => import("./components/ConsultantAgreementAndVerificationStep"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsultantReviewForm = dynamic(
+  () => import("./components/ConsultantReviewForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsulteeAgreementForm = dynamic(
+  () => import("./components/ConsulteeAgreementForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsulteeProfileForm = dynamic(
+  () => import("./components/ConsulteeProfileForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const ConsulteeReviewForm = dynamic(
+  () => import("./components/ConsulteeReviewForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const StaffAgreementForm = dynamic(
+  () => import("./components/StaffAgreementForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const StaffProfileForm = dynamic(
+  () => import("./components/StaffProfileForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const StaffReviewForm = dynamic(
+  () => import("./components/StaffReviewForm"),
+  { ssr: false, loading: () => <StepLoading /> },
+);
+const CreateOrganizationWizard = dynamic(
+  () =>
+    import("@/components/organization/create-wizard/Wizard").then((m) => ({
+      default: m.CreateOrganizationWizard,
+    })),
+  { ssr: false, loading: () => <StepLoading /> },
+);
 
 // Step labels for progress indicator
 const STEP_LABELS = {
@@ -352,7 +409,7 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as Parameters<typeof StaffProfileForm>[0]["initialData"]}
+                initialData={formData}
               />
             );
           default:
@@ -373,7 +430,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof ConsulteeAgreementForm>[0]["formData"]}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -381,7 +438,7 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as Parameters<typeof StaffAgreementForm>[0]["initialData"]}
+                initialData={formData}
               />
             );
           default:
@@ -402,7 +459,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof ConsulteeReviewForm>[0]["formData"]}
+                formData={formData}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -411,7 +468,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof StaffReviewForm>[0]["formData"]}
+                formData={formData}
                 onGoToStep={handleGoToStep}
               />
             );

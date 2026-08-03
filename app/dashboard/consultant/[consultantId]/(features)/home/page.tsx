@@ -26,12 +26,12 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // the VIEWER's memberships, which are not the profile owner's, so it would
   // answer a question nobody asked. Failure is non-fatal — the card is
   // supplementary and the page must not 500 because a count timed out.
-  let needsYou: NeedsYouSummary | null = null;
-  if (!access.isInspecting) {
-    needsYou = await getNeedsYouSummary(access.userId, consultantId).catch(
-      () => null,
-    );
-  }
+  //
+  // Run NeedsYou in parallel with the dashboard prefetch — they share no
+  // dependency and sequential awaits previously paid two full TTFB chains.
+  const needsYouPromise: Promise<NeedsYouSummary | null> = access.isInspecting
+    ? Promise.resolve(null)
+    : getNeedsYouSummary(access.userId, consultantId).catch(() => null);
 
   // #890 — SSR prefetch the dashboard so the client useQuery hydrates
   // without a fetch waterfall. Key MUST match
@@ -40,11 +40,14 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // only), so there is a single deterministic payload to prefetch.
   // allSettled so a read failure degrades to a client-side fetch rather
   // than crashing the route.
-  await Promise.allSettled([
-    queryClient.prefetchQuery({
-      queryKey: ["consultant-dashboard", consultantId],
-      queryFn: () => getConsultantDashboard(consultantId),
-    }),
+  const [, needsYou] = await Promise.all([
+    Promise.allSettled([
+      queryClient.prefetchQuery({
+        queryKey: ["consultant-dashboard", consultantId],
+        queryFn: () => getConsultantDashboard(consultantId),
+      }),
+    ]),
+    needsYouPromise,
   ]);
 
   return (

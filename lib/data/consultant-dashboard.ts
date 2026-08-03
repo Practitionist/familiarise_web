@@ -29,14 +29,80 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 // Prisma Query Types - Derived from actual query shape for type safety
 // =============================================================================
 
+/** Home widgets only need identity + avatar; omit phone/role from the graph. */
 const userSelectFields = {
   id: true,
   name: true,
   email: true,
   image: true,
-  role: true,
-  phone: true,
 } as const;
+
+/** Approvals list only needs the requester display name. */
+const pendingUserSelect = {
+  id: true,
+  name: true,
+  image: true,
+} as const;
+
+/** Home surfaces a handful of cards — history lives on /appointments. */
+const HOME_APPOINTMENTS_TAKE = 20;
+const HOME_PENDING_TAKE = 20;
+
+/**
+ * Every appointment this consultant owns or collaborates on. Shared by the
+ * Home display read and the active-clients count so the two can never drift.
+ */
+const consultantAppointmentScope = (consultantProfileId: string) =>
+  ({
+    OR: [
+      {
+        consultation: {
+          consultationPlan: { consultantProfileId },
+          status: "APPROVED" as const,
+        },
+      },
+      {
+        subscription: {
+          subscriptionPlan: { consultantProfileId },
+          status: "APPROVED" as const,
+        },
+      },
+      {
+        webinar: {
+          webinarPlan: { consultantProfileId },
+          status: "SCHEDULED" as const,
+        },
+      },
+      {
+        // Collaborated webinars (co-host, moderator, etc.)
+        webinar: {
+          webinarPlan: {
+            collaborators: {
+              some: { consultantProfileId, status: "ACCEPTED" as const },
+            },
+          },
+          status: "SCHEDULED" as const,
+        },
+      },
+      {
+        class: {
+          classPlan: { consultantProfileId },
+          status: "SCHEDULED" as const,
+        },
+      },
+      {
+        // Collaborated classes (co-instructor, TA, etc.)
+        class: {
+          classPlan: {
+            collaborators: {
+              some: { consultantProfileId, status: "ACCEPTED" as const },
+            },
+          },
+          status: "SCHEDULED" as const,
+        },
+      },
+    ],
+  }) satisfies Prisma.AppointmentWhereInput;
 
 const appointmentInclude = {
   slotsOfAppointment: {
@@ -162,74 +228,23 @@ const appointmentInclude = {
   },
 } satisfies Prisma.AppointmentInclude;
 
-const consultationInclude = {
-  consultationPlan: {
-    include: {
-      consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
-    },
-  },
+/** Pending-approvals widget only needs id + requester name + requestedAt. */
+const pendingConsultationInclude = {
   requestedBy: {
     include: {
       user: {
-        select: userSelectFields,
+        select: pendingUserSelect,
       },
-    },
-  },
-  appointment: {
-    include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-        orderBy: {
-          startsAt: "asc" as const,
-        },
-      },
-      payment: true,
     },
   },
 } satisfies Prisma.ConsultationInclude;
 
-const subscriptionInclude = {
-  subscriptionPlan: {
-    include: {
-      consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-          domain: true,
-          subDomains: true,
-          tags: true,
-        },
-      },
-    },
-  },
+const pendingSubscriptionInclude = {
   requestedBy: {
     include: {
       user: {
-        select: userSelectFields,
+        select: pendingUserSelect,
       },
-    },
-  },
-  appointments: {
-    include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
-      payment: true,
     },
   },
 } satisfies Prisma.SubscriptionInclude;
@@ -243,12 +258,12 @@ type DashboardAppointment = Prisma.Result<
 >;
 type DashboardConsultation = Prisma.Result<
   typeof prisma.consultation,
-  { include: typeof consultationInclude },
+  { include: typeof pendingConsultationInclude },
   "findFirstOrThrow"
 >;
 type DashboardSubscription = Prisma.Result<
   typeof prisma.subscription,
-  { include: typeof subscriptionInclude },
+  { include: typeof pendingSubscriptionInclude },
   "findFirstOrThrow"
 >;
 
@@ -323,12 +338,46 @@ export async function getConsultantDashboard(
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
+  // Which appointments Home actually shows. Appointment has no top-level start
+  // column, so a plain `orderBy: createdAt` + `take` truncated on the wrong key:
+  // a consultant who booked next month a fortnight ago and then took a burst of
+  // bookings for last week got 20 rows that were all in the past, and both the
+  // Today and Upcoming widgets rendered empty. Rank on the slot table instead —
+  // it has @@index([startsAt, endsAt]) — and keep only the soonest ids. Slots
+  // are per-appointment, so over-fetch before deduping to ids.
+  //
+  // Anchor on endsAt >= start of today, NOT on a lower bound in the past:
+  // ordering ascending from 90 days ago returns the OLDEST slots in the window,
+  // which reproduces the empty-widget bug in a new disguise. Using endsAt keeps
+  // a session that started earlier today and is still running.
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
+  const soonestSlots = await prisma.slotOfAppointment.findMany({
+    where: {
+      deletedAt: null,
+      endsAt: { gte: startOfToday },
+      appointment: consultantAppointmentScope(consultantProfileId),
+    },
+    select: { appointmentId: true },
+    orderBy: { startsAt: "asc" },
+    take: HOME_APPOINTMENTS_TAKE * 5,
+  });
+  const homeAppointmentIds = [
+    ...new Set(soonestSlots.map((s) => s.appointmentId)),
+  ].slice(0, HOME_APPOINTMENTS_TAKE);
+
   // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
   // This eliminates network overhead and reduces response time significantly
   const [
     appointmentsRaw,
+    activeBookRows,
     pendingConsultations,
     pendingSubscriptions,
+    pendingConsultationCount,
+    pendingSubscriptionCount,
     recentActivities,
     earningsThisMonth,
     earningsLastMonth,
@@ -340,72 +389,39 @@ export async function getConsultantDashboard(
   ] = await Promise.all([
     // Fetch approved appointments for consultations, subscriptions, webinars, and classes
     prisma.appointment.findMany({
+      where: { id: { in: homeAppointmentIds } },
+      include: appointmentInclude,
+    }),
+    // Active clients / programs are counted over the consultant's whole active
+    // book, not the handful of rows Home renders. Deriving them from the
+    // display array meant the Financial Summary card under-reported for anyone
+    // with more appointments than the page shows. Ids only — no include graph.
+    prisma.appointment.findMany({
       where: {
-        // TTFB bound: Home only renders today/upcoming widgets, so cap
-        // to appointments with a recent-or-future slot. Full history lives
-        // on the dedicated /appointments page (separate endpoint).
-        slotsOfAppointment: { some: { startsAt: { gte: ninetyDaysAgo } } },
-        OR: [
+        ...consultantAppointmentScope(consultantProfileId),
+        AND: [
           {
-            consultation: {
-              consultationPlan: { consultantProfileId },
-              status: "APPROVED",
+            slotsOfAppointment: {
+              some: { deletedAt: null, startsAt: { gte: ninetyDaysAgo } },
             },
           },
           {
-            subscription: {
-              subscriptionPlan: { consultantProfileId },
-              status: "APPROVED",
-            },
-          },
-          {
-            webinar: {
-              webinarPlan: { consultantProfileId },
-              status: "SCHEDULED",
-            },
-          },
-          {
-            // Collaborated webinars (co-host, moderator, etc.)
-            webinar: {
-              webinarPlan: {
-                collaborators: {
-                  some: {
-                    consultantProfileId,
-                    status: "ACCEPTED",
-                  },
-                },
+            slotsOfAppointment: {
+              some: {
+                deletedAt: null,
+                completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
               },
-              status: "SCHEDULED",
-            },
-          },
-          {
-            class: {
-              classPlan: { consultantProfileId },
-              status: "SCHEDULED",
-            },
-          },
-          {
-            // Collaborated classes (co-instructor, TA, etc.)
-            class: {
-              classPlan: {
-                collaborators: {
-                  some: {
-                    consultantProfileId,
-                    status: "ACCEPTED",
-                  },
-                },
-              },
-              status: "SCHEDULED",
             },
           },
         ],
       },
-      include: appointmentInclude,
-      // No top-level start field on Appointment (slots carry startsAt),
-      // so order by createdAt to make `take` deterministic; the JS
-      // sortedAppointments step re-sorts by slot startsAt afterwards.
-      orderBy: { createdAt: "desc" },
-      take: 200,
+      select: {
+        consultation: { select: { requestedBy: { select: { id: true } } } },
+        subscription: {
+          select: { id: true, requestedBy: { select: { id: true } } },
+        },
+        class: { select: { id: true } },
+      },
     }),
     // Fetch pending consultations
     prisma.consultation.findMany({
@@ -420,11 +436,11 @@ export async function getConsultantDashboard(
         // a 90-day-old PENDING request is stale.
         requestedAt: { gte: ninetyDaysAgo },
       },
-      include: consultationInclude,
+      include: pendingConsultationInclude,
       orderBy: {
         requestedAt: "desc",
       },
-      take: 200,
+      take: HOME_PENDING_TAKE,
     }),
     // Fetch pending subscriptions
     prisma.subscription.findMany({
@@ -437,11 +453,31 @@ export async function getConsultantDashboard(
         // a 90-day-old PENDING request is stale.
         requestedAt: { gte: ninetyDaysAgo },
       },
-      include: subscriptionInclude,
+      include: pendingSubscriptionInclude,
       orderBy: {
         requestedAt: "desc",
       },
-      take: 200,
+      take: HOME_PENDING_TAKE,
+    }),
+    // The approvals badge is a total, not a list length. Counting the capped
+    // list made it disagree with NeedsYou — which counts properly — on the very
+    // same screen once a consultant had more pending requests than the cap.
+    //
+    // Deliberately unbounded by date, unlike the list above. NeedsYou counts
+    // every pending request regardless of age, and these two numbers render
+    // inches apart, so matching its definition is what stops them contradicting
+    // each other. The 90-day bound stays on the list, which is only a preview.
+    prisma.consultation.count({
+      where: {
+        consultationPlan: { consultantProfile: { id: consultantProfileId } },
+        status: "PENDING",
+      },
+    }),
+    prisma.subscription.count({
+      where: {
+        subscriptionPlan: { consultantProfileId },
+        status: "PENDING",
+      },
     }),
     // Fetch recent activities
     prisma.activityLog.findMany({
@@ -669,6 +705,10 @@ export async function getConsultantDashboard(
     time: formatTime(approval.requestedAt),
   }));
 
+  // Total pending requests, independent of how many the widget lists.
+  const pendingRequestsCount =
+    pendingConsultationCount + pendingSubscriptionCount;
+
   // Transform activities for display
   const activities = recentActivities.map((activity) => ({
     id: activity.id,
@@ -735,17 +775,13 @@ export async function getConsultantDashboard(
   const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
   const payoutEligible = readyEarningsVal >= payoutMinimum;
 
-  // Active clients + programs: single pass over sorted appointments
+  // Active clients + programs: single pass over the full active book. The
+  // query already excludes fully completed/cancelled appointments, so every
+  // row here counts.
   const activeClientIds = new Set<string>();
   const activeSubIds = new Set<string>();
   const activeClassIds = new Set<string>();
-  for (const apt of sortedAppointments) {
-    const isCompleted = apt.slotsOfAppointment.every(
-      (s) =>
-        s.completionStatus === "COMPLETED" ||
-        s.completionStatus === "CANCELLED",
-    );
-    if (isCompleted) continue;
+  for (const apt of activeBookRows) {
     const consulteeId =
       apt.consultation?.requestedBy?.id ?? apt.subscription?.requestedBy?.id;
     if (consulteeId) activeClientIds.add(consulteeId);
@@ -775,6 +811,7 @@ export async function getConsultantDashboard(
     appointments: transformedAppointments,
     activities,
     approvals,
+    pendingRequestsCount,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,
