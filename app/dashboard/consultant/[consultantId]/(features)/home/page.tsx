@@ -15,12 +15,51 @@ type PageProps = {
   params: Promise<{ consultantId: string }>;
 };
 
+// The page stays FIRST in this file on purpose. The suspended sections below
+// hold the reads, and __tests__/security/personal-dashboard-ssr-ownership.test.ts
+// asserts the ownership guard appears ahead of them in source order. Runtime
+// ordering is guaranteed regardless — the guard is awaited before the JSX
+// naming those sections is returned, so neither can start early — but keeping
+// the source in the same order keeps that invariant cheap to verify.
+export default async function HomePage({ params }: Readonly<PageProps>) {
+  const { consultantId } = await params;
+  // Ownership is enforced HERE, not by the layout: the layout is a client
+  // component, so its check runs after this server render has already read
+  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
+  //
+  // This await deliberately stays OUTSIDE the Suspense boundaries. It is the
+  // authorization gate, and streaming chrome before it resolves would paint
+  // dashboard shell for someone who is about to be redirected.
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
+
+  // Everything below streams. Measured before this change: the first byte
+  // already arrived at ~0.4s, but the response did not complete until ~4.9s
+  // and FCP landed at 6.2s, because the page awaited every query before
+  // returning any JSX. The queries are unchanged — they just no longer gate
+  // the shell.
+  return (
+    <>
+      {/* fallback={null}, not a skeleton: NeedsYouCard renders nothing for a
+          consultant with no org contexts, so a placeholder would flash a card
+          that then vanishes. */}
+      {!access.isInspecting && (
+        <Suspense fallback={null}>
+          <NeedsYouSection userId={access.userId} consultantId={consultantId} />
+        </Suspense>
+      )}
+      <Suspense fallback={<HomeSkeleton />}>
+        <DashboardSection consultantId={consultantId} />
+      </Suspense>
+    </>
+  );
+}
+
 /**
- * Cross-context roll-up (ADR 19's sanctioned "derived read"). Skipped when an
- * ADMIN/STAFF is inspecting someone else's dashboard: the summary keys off the
- * VIEWER's memberships, which are not the profile owner's, so it would answer a
- * question nobody asked. Failure is non-fatal — the card is supplementary and
- * the page must not 500 because a count timed out.
+ * Cross-context roll-up (ADR 19's sanctioned "derived read"). Rendered only for
+ * the profile owner: the summary keys off the VIEWER's memberships, which are
+ * not the owner's when an ADMIN/STAFF inspects, so it would answer a question
+ * nobody asked. Failure is non-fatal — the card is supplementary and the page
+ * must not 500 because a count timed out.
  */
 async function NeedsYouSection({
   userId,
@@ -44,8 +83,8 @@ async function NeedsYouSection({
  * filters by consultantProfileId only), so there is a single deterministic
  * payload to prefetch.
  *
- * The prefetch and the dehydrate must stay together in this component: dehydrate
- * only captures what the client has already resolved, so hoisting either half
+ * The prefetch and the dehydrate must stay together in this component:
+ * dehydrate only captures what has already resolved, so hoisting either half
  * back into the page would serialize an empty cache.
  */
 async function DashboardSection({
@@ -65,37 +104,5 @@ async function DashboardSection({
     <HydrationBoundary state={dehydrate(queryClient)}>
       <HomePageClient consultantId={consultantId} />
     </HydrationBoundary>
-  );
-}
-
-export default async function HomePage({ params }: Readonly<PageProps>) {
-  const { consultantId } = await params;
-  // Ownership is enforced HERE, not by the layout: the layout is a client
-  // component, so its check runs after this server render has already read
-  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  //
-  // This await deliberately stays OUTSIDE the Suspense boundaries. It is the
-  // authorization gate, and streaming a shell before it resolves would paint
-  // dashboard chrome for someone who is about to be redirected.
-  const access = await requirePersonalProfileAccess("consultant", consultantId);
-
-  // Everything below streams. Measured before this change: first byte already
-  // arrived at ~0.4s, but the response did not complete until ~4.9s and FCP
-  // landed at 6.2s, because the page awaited every query before returning any
-  // JSX. The queries are unchanged — they just no longer block the shell.
-  return (
-    <>
-      {/* fallback={null}, not a skeleton: NeedsYouCard renders nothing for a
-          consultant with no org contexts, so a placeholder would flash a card
-          that then vanishes. */}
-      {!access.isInspecting && (
-        <Suspense fallback={null}>
-          <NeedsYouSection userId={access.userId} consultantId={consultantId} />
-        </Suspense>
-      )}
-      <Suspense fallback={<HomeSkeleton />}>
-        <DashboardSection consultantId={consultantId} />
-      </Suspense>
-    </>
   );
 }
