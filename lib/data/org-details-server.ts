@@ -1,39 +1,13 @@
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { flattenOrgDetails, type OrgDetailsResponse } from "@/types/org-details";
+import { orgDetailsInclude } from "@/lib/data/org-details-include";
 
 /**
  * The org-details include, shared by GET /api/organizations/[orgId] and the
  * server-side seed below so the two cannot drift.
  */
-export const orgDetailsInclude = {
-      billingAccount: {
-        select: {
-          id: true,
-          fundingSource: true,
-          currency: true,
-          walletBalance: true,
-          creditLimit: true,
-        },
-      },
-      payoutAccount: {
-        select: {
-          id: true,
-          status: true,
-          accountNumberLast4: true,
-          bankName: true,
-        },
-      },
-      _count: {
-        select: {
-          memberships: true,
-          contracts: true,
-          invoices: true,
-          purchaseOrders: true,
-          auditLogs: true,
-        },
-      },
-} as const;
+
 
 /**
  * Server-side org details, shaped exactly like what the client caches.
