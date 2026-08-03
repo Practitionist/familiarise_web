@@ -73,8 +73,8 @@ export function UrlTabs({
       // page 3 — or on an empty page, if it has fewer.
       params.delete("page");
       const qs = params.toString();
-      const target = `${pathname}${qs ? `?${qs}` : ""}`;
-      const current = `${window.location.pathname}${window.location.search}`;
+      const target = qs ? pathname + "?" + qs : pathname;
+      const current = window.location.pathname + window.location.search;
       if (target !== current) {
         window.history.replaceState(window.history.state, "", target);
       }

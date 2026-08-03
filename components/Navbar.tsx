@@ -729,8 +729,11 @@ const Navbar = () => {
           every public page via the root navbar for enter/exit polish. */}
       {isOpen && (
           <>
-            {/* Backdrop */}
-            <div
+            {/* Backdrop — native button so keyboard/AT get a real interactive
+                control (Sonar typescript:S6848 / S1082). */}
+            <button
+              type="button"
+              aria-label="Close menu"
               className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden animate-in fade-in duration-150"
               onClick={closeMenu}
             />

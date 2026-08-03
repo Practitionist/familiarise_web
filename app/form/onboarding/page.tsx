@@ -393,7 +393,8 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as Parameters<typeof StaffProfileForm>[0]["initialData"]}
+                // Dynamic imports widen to ComponentType; keep the runtime shape.
+                initialData={formData as Partial<OnboardingFormData>}
               />
             );
           default:
@@ -414,7 +415,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof ConsulteeAgreementForm>[0]["formData"]}
+                formData={formData as Partial<OnboardingFormData>}
               />
             );
           case "STAFF":
@@ -422,7 +423,7 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as Parameters<typeof StaffAgreementForm>[0]["initialData"]}
+                initialData={formData as Partial<OnboardingFormData>}
               />
             );
           default:
@@ -443,7 +444,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof ConsulteeReviewForm>[0]["formData"]}
+                formData={formData as Partial<OnboardingFormData>}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -452,7 +453,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Parameters<typeof StaffReviewForm>[0]["formData"]}
+                formData={formData as Partial<OnboardingFormData>}
                 onGoToStep={handleGoToStep}
               />
             );
