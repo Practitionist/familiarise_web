@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import { useSession } from "next-auth/react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
@@ -29,8 +28,9 @@ const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
  * org context instead of bouncing them to `/dashboard/consultee/...`.
  *
  * Reschedule still deep-links to the personal consultee reschedule heatmap
- * (no org-native picker yet); the adapter gets `consulteeId` from the session
- * because this URL has `orgId`, not `consulteeId`.
+ * (no org-native picker yet). `consulteeId` is passed from the SSR page
+ * (already loaded for the participation check) because this URL has `orgId`,
+ * not `consulteeId`.
  *
  * `role="consultee"` because this page is the ATTENDING side. An EXPERT
  * delivering org sessions manages them from Requests and their own tree; the
@@ -40,11 +40,13 @@ const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
 export default function DetailPageClient({
   orgId,
   appointmentId,
-}: Readonly<{ orgId: string; appointmentId: string }>) {
-  const { data: session } = useSession();
-  const base = useConsulteeAppointmentsAdapter({
-    consulteeId: session?.user?.consulteeProfileId ?? undefined,
-  });
+  consulteeId,
+}: Readonly<{
+  orgId: string;
+  appointmentId: string;
+  consulteeId: string;
+}>) {
+  const base = useConsulteeAppointmentsAdapter({ consulteeId });
 
   const adapter = useMemo(
     () => ({

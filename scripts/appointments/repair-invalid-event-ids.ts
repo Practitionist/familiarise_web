@@ -8,9 +8,9 @@
  *   CONFIRM_INVALID_EVENT_ID_REPAIR=yes
  *   --apply
  *
- * NEVER run --apply against production. Prints a masked DATABASE_URL host
- * and refuses unless the host looks like a preview/branch/local target or
- * ALLOW_SHARED_DB_REPAIR=1 is set.
+ * NEVER run --apply against production. Refuses unless the configured DB
+ * host looks like a preview/branch/local target or ALLOW_SHARED_DB_REPAIR=1
+ * is set. Does not print connection strings (Sonar tssecurity:S8689).
  *
  * Usage:
  *   npx tsx scripts/appointments/repair-invalid-event-ids.ts
@@ -22,22 +22,24 @@ import prisma from "@/lib/prisma";
 
 type Row = { id: string; label: string };
 
-function maskDatabaseUrl(url: string | undefined): string {
-  if (!url) return "(unset)";
-  return url.replace(/\/\/[^@]*@/, "//***@/");
-}
-
-function hostLooksDisposable(url: string | undefined): boolean {
+/** True when the configured DB looks disposable — never logs the URL. */
+function databaseLooksDisposable(): boolean {
+  if (process.env.ALLOW_SHARED_DB_REPAIR === "1") return true;
+  const url = process.env.DATABASE_URL;
   if (!url) return false;
-  const lower = url.toLowerCase();
-  return (
-    lower.includes("localhost") ||
-    lower.includes("127.0.0.1") ||
-    lower.includes("preview") ||
-    lower.includes("branch") ||
-    lower.includes("staging") ||
-    process.env.ALLOW_SHARED_DB_REPAIR === "1"
-  );
+  // Parse host only; never stringify credentials into logs.
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.includes("preview") ||
+      host.includes("branch") ||
+      host.includes("staging")
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function collectInvalid(): Promise<Row[]> {
@@ -89,9 +91,10 @@ async function collectInvalid(): Promise<Row[]> {
 
 async function main() {
   const apply = process.argv.includes("--apply");
-  const dbUrl = process.env.DATABASE_URL;
 
-  console.log("DATABASE_URL host:", maskDatabaseUrl(dbUrl));
+  console.log(
+    process.env.DATABASE_URL ? "DATABASE_URL: configured" : "DATABASE_URL: unset",
+  );
   console.log(
     apply
       ? "Mode: APPLY (destructive delete of invalid-id rows)"
@@ -105,7 +108,7 @@ async function main() {
       );
       process.exit(1);
     }
-    if (!hostLooksDisposable(dbUrl)) {
+    if (!databaseLooksDisposable()) {
       console.error(
         "Refusing --apply: DATABASE_URL does not look like a preview/local DB.",
       );

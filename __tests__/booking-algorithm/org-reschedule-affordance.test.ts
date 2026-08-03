@@ -9,19 +9,26 @@ import path from "node:path";
 const root = process.cwd();
 
 describe("org appointment detail Reschedule affordance", () => {
-  it("passes consulteeId override into the shared adapter", () => {
-    const src = readFileSync(
+  it("passes SSR consulteeId into the shared adapter", () => {
+    const client = readFileSync(
       path.join(
         root,
         "app/dashboard/organization/[orgId]/appointments/[appointmentId]/DetailPageClient.tsx",
       ),
       "utf8",
     );
-    expect(src).toContain("useConsulteeAppointmentsAdapter({");
-    expect(src).toContain("consulteeProfileId");
+    const page = readFileSync(
+      path.join(
+        root,
+        "app/dashboard/organization/[orgId]/appointments/[appointmentId]/page.tsx",
+      ),
+      "utf8",
+    );
+    expect(client).toContain("useConsulteeAppointmentsAdapter({ consulteeId })");
+    expect(page).toContain("consulteeId={profile.id}");
     // Stay under org for detail navigation; reschedule still deep-links out.
-    expect(src).toContain("detailHref");
-    expect(src).toContain("/dashboard/organization/${orgId}/appointments/");
+    expect(client).toContain("detailHref");
+    expect(client).toContain("/dashboard/organization/${orgId}/appointments/");
   });
 
   it("adapter accepts an optional consulteeId and falls back to params/session", () => {
