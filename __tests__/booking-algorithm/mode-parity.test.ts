@@ -39,6 +39,17 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+// Pin the clock so Aug 2026 fixtures stay "future" vs `new Date()` past-slot
+// guards in AllocationAlgorithms — otherwise CI fails once wall-clock catches
+// up (as of 2026-08-03 09:00Z the first fixture day is already past).
+beforeAll(() => {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+  jest.setSystemTime(new Date("2026-07-20T12:00:00.000Z"));
+});
+afterAll(() => {
+  jest.useRealTimers();
+});
+
 /** Availability grid: `hoursPerDay` hours of 30-min slots per day for every
  * day in [start, days). Times chosen to include the IST/UTC boundary. */
 function makeAvailabilityGrid(
@@ -60,7 +71,7 @@ function makeAvailabilityGrid(
   return slots;
 }
 
-const FUTURE_SUNDAY = "2026-08-02T09:00:00.000Z"; // Sunday, comfortably future
+const FUTURE_SUNDAY = "2026-08-02T09:00:00.000Z"; // Sunday, relative to pinned clock
 
 describe("auto-allocate output passes manual validation (UTC bucketing)", () => {
   it.each([
