@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
 
@@ -183,10 +184,13 @@ export default function InviteAcceptPage({
           )}
         </CardHeader>
         <CardContent>
-          {/* Session or preview still loading — single spinner */}
+          {/* Session or preview still loading — match card anatomy */}
           {(preview.phase === "loading" || isPending) && (
-            <div className="flex items-center justify-center py-6">
-              <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+            <div className="space-y-3 py-2" aria-busy="true">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-11 w-full rounded-lg" />
+              <Skeleton className="h-11 w-full rounded-lg" />
             </div>
           )}
 

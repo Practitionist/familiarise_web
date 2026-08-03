@@ -42,10 +42,17 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     //   away mid-stream (react-server-dom-webpack). (FAMILIARISE_WEB-E)
     // - "func ... not found" / inpage.js — injected browser wallet extensions
     //   throwing inside their own provider bridge on our pages. (FAMILIARISE_WEB-F)
+    // - "Object Not Found Matching Id" — CefSharp / Outlook Safe Links bots
+    //   rejecting non-Error promises while scanning our pages. (FAMILIARISE_WEB-Y)
     // Do NOT add the Prisma pooler-timeout strings here: route-level fail-open
     // already degrades them to breadcrumbs, and they must stay visible so a NEW
     // unprotected route surfacing them is still detectable. (#932)
-    ignoreErrors: ["Connection closed.", /func .* not found/, /inpage\.js/],
+    ignoreErrors: [
+      "Connection closed.",
+      /func .* not found/,
+      /inpage\.js/,
+      /Object Not Found Matching Id/i,
+    ],
 
     // Events whose top stack frame originates in an injected extension script
     // are never our code — drop them regardless of message.

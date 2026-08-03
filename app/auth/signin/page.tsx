@@ -12,16 +12,11 @@ import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
+import { AuthFormSkeleton } from "../AuthFormSkeleton";
 
 export default function SignIn() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
-        </div>
-      }
-    >
+    <Suspense fallback={<AuthFormSkeleton />}>
       <SignInContent />
     </Suspense>
   );
@@ -77,11 +72,7 @@ function SignInContent() {
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
-      </div>
-    );
+    return <AuthFormSkeleton />;
   }
 
   // If already logged in, show redirecting message

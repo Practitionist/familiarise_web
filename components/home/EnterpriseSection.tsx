@@ -86,8 +86,8 @@ export function EnterpriseSection() {
             className="w-full sm:w-auto bg-white text-zinc-900 hover:bg-zinc-200"
             asChild
           >
-            <Link href="/contactus">
-              Talk to us
+            <Link href="/enterprise">
+              Explore Enterprise
               <ArrowRight className="w-4 h-4 ml-2" />
             </Link>
           </Button>

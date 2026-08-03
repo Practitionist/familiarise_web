@@ -27,6 +27,7 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -131,7 +132,7 @@ export default function EventParticipantsPage() {
     });
   };
 
-  if (isLoading) return <div>Loading...</div>;
+  if (isLoading) return <TableSkeleton />;
   if (error) return <div>Error loading event data</div>;
 
   const event = data?.webinarEvent ?? data?.classEvent;

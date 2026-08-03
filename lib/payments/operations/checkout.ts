@@ -3026,6 +3026,7 @@ export async function handleCheckout(
         "ended",
         "not been scheduled",
         "already have a pending or active subscription",
+        "already have a session booked", // consultee double-book (FAMILIARISE_WEB-P)
         "overlapping dates",
         "insufficient credits",
         "session cap", // ProgramAssignmentLimitError-derived message, above
@@ -3073,6 +3074,7 @@ export async function handleCheckout(
           "ended",
           "not been scheduled",
           "already have a pending or active subscription",
+          "already have a session booked", // consultee double-book (FAMILIARISE_WEB-P)
           "overlapping dates",
           "insufficient credits",
         ];
@@ -3094,8 +3096,9 @@ export async function handleCheckout(
     // calculateAmountAndValidate/acquireCheckoutLock/revalidateInsideLock
     // (steps 1-3, above the STEP-5 try/catch that already reports) which
     // otherwise reach here uncaptured. Lock contention is a modelled,
-    // expected race between two concurrent checkouts; anything else here is
-    // unclassified and reported as a fault by default.
+    // expected race between two concurrent checkouts; consultee double-book
+    // from revalidateInsideLock is the same class of rejection (FAMILIARISE_WEB-P).
+    // Anything else here is unclassified and reported as a fault by default.
     const isLockContention =
       error instanceof Error &&
       (error.message.includes("currently checking out") ||
@@ -3109,7 +3112,13 @@ export async function handleCheckout(
     const isModeledLockRace =
       isLockContention ||
       (error instanceof Error && error.message.includes("already in progress"));
-    reportSentryError(error, { subsystem: "payments", expected: isModeledLockRace });
+    const isConsulteeDoubleBook =
+      error instanceof Error &&
+      error.message.toLowerCase().includes("already have a session booked");
+    reportSentryError(error, {
+      subsystem: "payments",
+      expected: isModeledLockRace || isConsulteeDoubleBook,
+    });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {
       throw new Error(

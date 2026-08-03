@@ -41,6 +41,7 @@ import {
   countSundayWeeksInclusive,
   validateDayBasedConsecutiveSlots,
 } from "@/lib/scheduling/calendarUtils";
+import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import { useEventSlotAllocation } from "@/hooks/scheduling/useSlotAllocation";
 import type { AllocationResponse } from "@/lib/scheduling/allocationService";
@@ -1215,14 +1216,9 @@ export function UnifiedCalendar({
     );
   }, [currentDate, getSlotStatusForInterval]);
 
-  // Loading state
+  // Loading state — keep week-grid anatomy to avoid spinner → calendar CLS
   if (loading) {
-    return (
-      <div className={`flex items-center justify-center p-8 ${className}`}>
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-        <span className="ml-2">Loading calendar...</span>
-      </div>
-    );
+    return <CalendarGridSkeleton className={className} />;
   }
 
   // Error state

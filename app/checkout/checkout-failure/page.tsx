@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { XCircle, RefreshCw, ArrowLeft, MessageCircle } from "lucide-react";
 
 function CheckoutFailureContent() {
@@ -173,13 +174,7 @@ function CheckoutFailureContent() {
 
 export default function CheckoutFailurePage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-muted">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-foreground"></div>
-        </div>
-      }
-    >
+    <Suspense fallback={<CheckoutResultSkeleton />}>
       <CheckoutFailureContent />
     </Suspense>
   );

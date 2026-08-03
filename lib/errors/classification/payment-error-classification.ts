@@ -59,6 +59,11 @@ export const BUSINESS_ERROR_PATTERNS: ReadonlyArray<{
   { pattern: "has not been scheduled", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "currently booking", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "currently checking out", errorType: ErrorTypes.AVAILABILITY },
+  // Consultee double-book (FAMILIARISE_WEB-P) — message has no "slot" substring.
+  {
+    pattern: "already have a session booked",
+    errorType: ErrorTypes.AVAILABILITY,
+  },
   { pattern: "slot", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "availability", errorType: ErrorTypes.AVAILABILITY },
   { pattern: "capacity", errorType: ErrorTypes.AVAILABILITY },

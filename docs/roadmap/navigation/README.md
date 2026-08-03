@@ -103,10 +103,18 @@ Header:
 
 ## Our Navigation Structure
 
+> **Shipped (2026-08):** The live bar is
+> `[Logo] Explore ▼  Solutions ▼  Resources ▼  Enterprise ▼  Pricing  [Sign in]`.
+> **Enterprise** is a list dropdown covering `/enterprise` overview, team training,
+> corporate mentorship, and Talk to sales — not `/solutions/enterprise`. Org
+> directory filters stay under Explore → Organisations. Solutions is B2C only.
+> The tables below are the original 2026-02 design draft and are partly stale —
+> prefer `components/Navbar.tsx` + `components/Footer.tsx` as the source of truth.
+
 **Decision: Full mega-menu, with coming-soon items displayed but non-clickable.**
 
-```
-[Logo]  Platform ▼   Solutions ▼   Resources ▼   Pricing   [Login]  [Find an Expert]  [For Enterprise]
+```text
+[Logo]  Explore ▼   Solutions ▼   Resources ▼   Enterprise ▼   Pricing   [Sign in]
 ```
 
 All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon" which are displayed but greyed out / tagged with a "Coming Soon" badge and are non-clickable.
@@ -132,19 +140,27 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | How It Works       | `/how-it-works`     | Coming Soon (non-clickable) |
 | Features           | `/features`         | Coming Soon                 |
 
-### Solutions Dropdown
+### Solutions Dropdown (historical draft — see shipped note above)
 
 | Item                 | Link                              | Status      |
 | -------------------- | --------------------------------- | ----------- |
 | **By Audience**      |                                   |             |
 | For Individuals      | `/solutions/individuals`          | Coming Soon |
 | For Teams            | `/solutions/teams`                | Coming Soon |
-| For Enterprise       | `/solutions/enterprise`           | Coming Soon |
 | **By Use Case**      |                                   |             |
 | Career Transitions   | `/use-cases/career-transitions`   | Coming Soon |
 | Technical Mentorship | `/use-cases/technical-mentorship` | Coming Soon |
 | Business Strategy    | `/use-cases/business-strategy`    | Coming Soon |
 | Leadership Coaching  | `/use-cases/leadership-coaching`  | Coming Soon |
+
+### Enterprise Dropdown (shipped)
+
+| Item                   | Link | Status |
+| ---------------------- | ---- | ------ |
+| Overview               | `/enterprise` | **Live** |
+| Team training          | `/enterprise/team-training` | **Live** |
+| Corporate mentorship   | `/enterprise/corporate-mentorship` | **Live** |
+| Talk to sales          | `/contactus` | **Live** |
 
 ### Resources Dropdown
 
@@ -162,7 +178,7 @@ All items are clickable and navigate to a page, EXCEPT items marked "Coming Soon
 | Pricing                     | `/pricing`              | **Live** (clickable) |
 | Login                       | `/login`                | **Live** (clickable) |
 | Find an Expert (CTA button) | `/explore/experts`      | **Live** (clickable) |
-| For Enterprise (CTA button) | `/solutions/enterprise` | Coming Soon          |
+| Enterprise (dropdown)       | see Enterprise Dropdown table | **Live** |
 
 ---
 
@@ -174,7 +190,8 @@ Existing reusable pages that belong in the footer (not the navbar):
 | ------------- | -------------------------------------------------------------- |
 | **Legal**     | Privacy Policy, Terms of Service, Cookie Policy, Refund Policy |
 | **Platform**  | Browse Experts, Browse Programs, Pricing, How It Works         |
-| **Solutions** | For Individuals, For Teams, For Enterprise                     |
+| **Solutions** | College students, Early-career, Career switchers, Mentorship   |
+| **Enterprise**| Overview (`/enterprise`), Team training, Corporate mentorship, Talk to sales |
 | **Resources** | Blog, Success Stories, Help Center, Community                  |
 | **Company**   | About Us, Contact, Become a Consultant                         |
 | **Domains**   | (Programmatic SEO links to domain/category pages)              |

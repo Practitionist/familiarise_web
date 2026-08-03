@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
+import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { fetchReviews } from "@/lib/user";
 import {
   SearchParams,
@@ -426,11 +427,7 @@ export default function ClassCheckoutPage({
   }, [planData]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-muted">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-foreground"></div>
-      </div>
-    );
+    return <CheckoutPlanSkeleton />;
   }
 
   if (error) {
