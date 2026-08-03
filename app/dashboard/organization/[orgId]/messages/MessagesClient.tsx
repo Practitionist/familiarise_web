@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 
 import { ChatLayout } from "@/components/chat/ChatLayout";
+import { StreamChatScope } from "@/components/stream/StreamChatScope";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
 import { useStreamConnection } from "@/providers/StreamProvider";
 
@@ -38,5 +39,9 @@ export function MessagesClient() {
     );
   }
 
-  return <ChatLayout />;
+  return (
+    <StreamChatScope>
+      <ChatLayout />
+    </StreamChatScope>
+  );
 }

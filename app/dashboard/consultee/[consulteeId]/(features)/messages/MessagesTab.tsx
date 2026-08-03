@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
 import { useStreamConnection } from "@/providers/StreamProvider";
+import { StreamChatScope } from "@/components/stream/StreamChatScope";
 
 /**
  * Full-bleed chat surface: cancels PageScaffold padding and fills the
@@ -20,7 +21,9 @@ export default function MessagesTab() {
       {error ? (
         <ChatUnavailable description={error} onRetry={retryConnection} />
       ) : chatConnected ? (
-        <ChatLayout />
+        <StreamChatScope>
+          <ChatLayout />
+        </StreamChatScope>
       ) : (
         <div className="flex h-full items-center justify-center text-muted-foreground">
           <Loader2 className="mr-2 h-6 w-6 animate-spin" />
