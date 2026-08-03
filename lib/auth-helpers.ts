@@ -18,18 +18,18 @@ import {
  * Requires API authentication and returns the session or an error response.
  * Use this at the start of protected API route handlers.
  *
- * Reads force-fresh by default. `session.user.role` comes from the cookie
- * payload, so a cached read honours role demotion up to 5 minutes late — and
- * ~86 call sites branch on that role directly (e.g. the ADMIN gate on DELETE
- * /api/bookings/subscriptions/[id]). Opt into `{ fresh: false }` only for a
- * route that reads no role and no ban-sensitive field.
+ * Always reads force-fresh, and there is deliberately no opt-out. Session
+ * revocation is invisible to a cached read, and `session.user.role` comes from
+ * the cookie payload — ~86 call sites branch on that role directly (e.g. the
+ * ADMIN gate on DELETE /api/bookings/subscriptions/[id]), so a stale read
+ * honours a demotion up to 5 minutes late. The cookie cache would save roughly
+ * one query in four anyway, because customSession re-runs its enrichment on
+ * every call regardless.
  */
-export async function requireApiAuth(options?: {
-  fresh?: boolean;
-}): Promise<
+export async function requireApiAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(options?.fresh !== false);
+  const session = await getSession(true);
   if (!session?.user?.id) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
@@ -66,7 +66,7 @@ export function isPrivileged(role: string | undefined | null): boolean {
 export async function requireAdminAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth({ fresh: true });
+  const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
   if (auth.session.user.role !== "ADMIN") {
     return {
@@ -92,7 +92,7 @@ export async function requireAdminAuth(): Promise<
 export async function requireStaffAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth({ fresh: true });
+  const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
   if (auth.session.user.role !== "STAFF") {
     return {
@@ -116,7 +116,7 @@ export async function requireStaffAuth(): Promise<
 export async function requirePrivilegedAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth({ fresh: true });
+  const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
   if (!isPrivileged(auth.session.user.role)) {
     return {
@@ -147,7 +147,7 @@ export async function requireBackofficeSurface(
 ): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth({ fresh: true });
+  const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
 
   const role = auth.session.user.role as UserRole | undefined;
@@ -392,8 +392,7 @@ export async function requireOrgAccess(
     requireActive,
   } = options;
 
-  // Org capability gates often precede money / membership mutations.
-  const auth = await requireApiAuth({ fresh: true });
+  const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
 
   // Pull the billingAccount alongside the org so fundingSource gates

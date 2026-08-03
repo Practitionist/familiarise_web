@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
@@ -61,36 +61,61 @@ const liveConsultantWhere = {
 // ---------------------------------------------------------------------------
 
 /**
- * Trending rank step 1: SQL aggregate of last-30-day slots per plan.
+ * Trending rank step 1: last-30-day slot count per plan.
  *
- * Previously pulled every marketplace plan with nested slots into Node and
- * sorted in memory (O(all plans × recent slots)). That scan is shared across
- * requests for 60s via unstable_cache; the cached value is the FULL ranked id
- * array (callers slice — passing limit as an arg would key separate entries).
- * Staleness is harmless — trending order changing 60s late is invisible.
+ * ORM read + JS tally (no raw SQL). The earlier shape nested classes →
+ * appointments → slots under every marketplace plan, so the cost scaled with
+ * plans × their whole slot history. Instead read the two sides independently:
+ * the discoverable plan ids, and only slots created in the window. The tally is
+ * a single pass over that bounded set. Plans with no recent activity keep a
+ * count of 0 and stay in the ranking — dropping them empties the Trending row
+ * in a quiet window.
+ *
+ * The scan is shared across requests for 60s via unstable_cache; the cached
+ * value is the FULL ranked id array (callers slice — passing limit as an arg
+ * would key separate entries). Staleness is harmless: trending order changing
+ * 60s late is invisible.
  */
+const thirtyDaysBefore = (now: Date) => {
+  const d = new Date(now);
+  d.setDate(d.getDate() - 30);
+  return d;
+};
+
 const getTrendingClassPlanIds = unstable_cache(
   async (): Promise<string[]> => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgo = thirtyDaysBefore(new Date());
 
-    const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-      SELECT cp.id
-      FROM "ClassPlan" cp
-      LEFT JOIN "Class" c ON c."classPlanId" = cp.id
-      LEFT JOIN "Appointment" a ON a."classId" = c.id AND a."deletedAt" IS NULL
-      LEFT JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
-        AND soa."deletedAt" IS NULL
-        AND soa."createdAt" >= ${thirtyDaysAgo}
-      LEFT JOIN "ConsultantProfile" cons ON cons.id = cp."consultantProfileId"
-      WHERE cp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
-        AND cp."archivedAt" IS NULL
-        AND (cp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
-      GROUP BY cp.id
-      ORDER BY COUNT(soa.id) DESC, cp."createdAt" DESC
-    `);
+    const [plans, recentSlots] = await Promise.all([
+      prisma.classPlan.findMany({
+        where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
+        select: { id: true, createdAt: true },
+      }),
+      prisma.slotOfAppointment.findMany({
+        where: {
+          deletedAt: null,
+          createdAt: { gte: thirtyDaysAgo },
+          appointment: { deletedAt: null, classId: { not: null } },
+        },
+        select: {
+          appointment: { select: { class: { select: { classPlanId: true } } } },
+        },
+      }),
+    ]);
 
-    return ranked.map((r) => r.id);
+    const counts = new Map<string, number>();
+    for (const slot of recentSlots) {
+      const planId = slot.appointment?.class?.classPlanId;
+      if (planId) counts.set(planId, (counts.get(planId) ?? 0) + 1);
+    }
+
+    return plans
+      .sort(
+        (a, b) =>
+          (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) ||
+          b.createdAt.getTime() - a.createdAt.getTime(),
+      )
+      .map((p) => p.id);
   },
   ["trending-class-plan-ids"],
   { revalidate: 60 },
@@ -98,26 +123,40 @@ const getTrendingClassPlanIds = unstable_cache(
 
 const getTrendingWebinarPlanIds = unstable_cache(
   async (): Promise<string[]> => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgo = thirtyDaysBefore(new Date());
 
-    const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
-      SELECT wp.id
-      FROM "WebinarPlan" wp
-      LEFT JOIN "Webinar" w ON w."webinarPlanId" = wp.id
-      LEFT JOIN "Appointment" a ON a."webinarId" = w.id AND a."deletedAt" IS NULL
-      LEFT JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
-        AND soa."deletedAt" IS NULL
-        AND soa."createdAt" >= ${thirtyDaysAgo}
-      LEFT JOIN "ConsultantProfile" cons ON cons.id = wp."consultantProfileId"
-      WHERE wp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
-        AND wp."archivedAt" IS NULL
-        AND (wp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
-      GROUP BY wp.id
-      ORDER BY COUNT(soa.id) DESC, wp."createdAt" DESC
-    `);
+    const [plans, recentSlots] = await Promise.all([
+      prisma.webinarPlan.findMany({
+        where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
+        select: { id: true, createdAt: true },
+      }),
+      prisma.slotOfAppointment.findMany({
+        where: {
+          deletedAt: null,
+          createdAt: { gte: thirtyDaysAgo },
+          appointment: { deletedAt: null, webinarId: { not: null } },
+        },
+        select: {
+          appointment: {
+            select: { webinar: { select: { webinarPlanId: true } } },
+          },
+        },
+      }),
+    ]);
 
-    return ranked.map((r) => r.id);
+    const counts = new Map<string, number>();
+    for (const slot of recentSlots) {
+      const planId = slot.appointment?.webinar?.webinarPlanId;
+      if (planId) counts.set(planId, (counts.get(planId) ?? 0) + 1);
+    }
+
+    return plans
+      .sort(
+        (a, b) =>
+          (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) ||
+          b.createdAt.getTime() - a.createdAt.getTime(),
+      )
+      .map((p) => p.id);
   },
   ["trending-webinar-plan-ids"],
   { revalidate: 60 },

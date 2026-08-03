@@ -28,7 +28,10 @@ import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
 //
 // Every split step needs `loading` — next/dynamic renders null while the chunk
 // downloads, so without it pressing Next collapses the card to zero height and
-// reads as a frozen app on a slow connection.
+// reads as a frozen app on a slow connection. The options object is repeated
+// inline rather than hoisted to a shared const because SWC statically analyses
+// it: a variable fails the build with "next/dynamic options must be an object
+// literal".
 function StepLoading() {
   return (
     <div className="flex items-center justify-center min-h-[240px]">
@@ -38,54 +41,52 @@ function StepLoading() {
   );
 }
 
-const stepChunk = { ssr: false, loading: () => <StepLoading /> } as const;
-
 const ConsultantPreferredScheduleForm = dynamic(
   () => import("./components/ConsultantPreferredScheduleForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsultantProfessionalStep = dynamic(
   () => import("./components/ConsultantProfessionalStep"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsultantAgreementAndVerificationStep = dynamic(
   () => import("./components/ConsultantAgreementAndVerificationStep"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsultantReviewForm = dynamic(
   () => import("./components/ConsultantReviewForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsulteeAgreementForm = dynamic(
   () => import("./components/ConsulteeAgreementForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsulteeProfileForm = dynamic(
   () => import("./components/ConsulteeProfileForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const ConsulteeReviewForm = dynamic(
   () => import("./components/ConsulteeReviewForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const StaffAgreementForm = dynamic(
   () => import("./components/StaffAgreementForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const StaffProfileForm = dynamic(
   () => import("./components/StaffProfileForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const StaffReviewForm = dynamic(
   () => import("./components/StaffReviewForm"),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 const CreateOrganizationWizard = dynamic(
   () =>
     import("@/components/organization/create-wizard/Wizard").then((m) => ({
       default: m.CreateOrganizationWizard,
     })),
-  stepChunk,
+  { ssr: false, loading: () => <StepLoading /> },
 );
 
 // Step labels for progress indicator
