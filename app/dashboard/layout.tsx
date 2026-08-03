@@ -6,6 +6,7 @@ import {
 import { requireOnboarded } from "@/lib/auth-guard";
 import { getUserDetails } from "@/lib/data/user-details";
 import { toPlain } from "@/lib/data/serialize";
+import { ServerUserIdProvider } from "@/components/dashboard/ServerUserId";
 
 /**
  * Seeds the query that both personal dashboard layouts gate their render on.
@@ -58,8 +59,10 @@ export default async function DashboardLayout({
     .catch(() => undefined);
 
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      {children}
-    </HydrationBoundary>
+    <ServerUserIdProvider userId={session.user.id}>
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        {children}
+      </HydrationBoundary>
+    </ServerUserIdProvider>
   );
 }
