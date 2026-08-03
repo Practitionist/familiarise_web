@@ -255,7 +255,7 @@ export async function fetchExpertsMetadata() {
       .then((rows) =>
         Array.from(new Set(rows.flatMap((r) => r.languages)))
           .filter(Boolean)
-          .sort(),
+          .sort((a, b) => a.localeCompare(b)),
       ),
     // Available companies (from verified consultants' work experiences)
     prisma.workExperience

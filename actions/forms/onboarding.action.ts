@@ -68,13 +68,11 @@ export async function updateOnboardingInformationAction(
   }
 
   // Use the central processing function
-  const result = await processOnboardingData(userId, body);
-  // Refresh Better Auth cookie cache so requireOnboarded() (cookie-cached
-  // layout gate) sees onboardingCompleted / profile ids immediately.
-  if (result.success) {
-    await getSession(true);
-  }
-  return result;
+  // No cookie-cache refresh here: requireOnboarded() reads force-fresh, so it
+  // already sees onboardingCompleted / profile ids. A refresh would also be the
+  // wrong tool — getSession reads the CALLER's headers, and this action lets an
+  // ADMIN/STAFF update someone else, whose session it could not refresh anyway.
+  return processOnboardingData(userId, body);
 }
 // #endregion
 
@@ -139,8 +137,6 @@ export async function setOnboardingRoleAction(
     },
   });
 
-  // Refresh cookie cache so subsequent layout/API reads see the new role.
-  await getSession(true);
   return { success: true };
 }
 
@@ -167,8 +163,5 @@ export async function completeOrgWorkspaceOnboardingAction(
     data: { onboardingCompleted: true },
   });
 
-  // Refresh cookie cache so /dashboard requireOnboarded() does not bounce
-  // back to onboarding on a stale onboardingCompleted=false cookie.
-  await getSession(true);
   return { success: true };
 }

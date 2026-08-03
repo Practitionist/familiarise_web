@@ -345,10 +345,20 @@ export async function getConsultantDashboard(
   // Today and Upcoming widgets rendered empty. Rank on the slot table instead —
   // it has @@index([startsAt, endsAt]) — and keep only the soonest ids. Slots
   // are per-appointment, so over-fetch before deduping to ids.
+  //
+  // Anchor on endsAt >= start of today, NOT on a lower bound in the past:
+  // ordering ascending from 90 days ago returns the OLDEST slots in the window,
+  // which reproduces the empty-widget bug in a new disguise. Using endsAt keeps
+  // a session that started earlier today and is still running.
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
   const soonestSlots = await prisma.slotOfAppointment.findMany({
     where: {
       deletedAt: null,
-      startsAt: { gte: ninetyDaysAgo },
+      endsAt: { gte: startOfToday },
       appointment: consultantAppointmentScope(consultantProfileId),
     },
     select: { appointmentId: true },
@@ -390,10 +400,17 @@ export async function getConsultantDashboard(
       where: {
         ...consultantAppointmentScope(consultantProfileId),
         AND: [
-          { slotsOfAppointment: { some: { startsAt: { gte: ninetyDaysAgo } } } },
           {
             slotsOfAppointment: {
-              some: { completionStatus: { notIn: ["COMPLETED", "CANCELLED"] } },
+              some: { deletedAt: null, startsAt: { gte: ninetyDaysAgo } },
+            },
+          },
+          {
+            slotsOfAppointment: {
+              some: {
+                deletedAt: null,
+                completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
+              },
             },
           },
         ],
@@ -445,18 +462,21 @@ export async function getConsultantDashboard(
     // The approvals badge is a total, not a list length. Counting the capped
     // list made it disagree with NeedsYou — which counts properly — on the very
     // same screen once a consultant had more pending requests than the cap.
+    //
+    // Deliberately unbounded by date, unlike the list above. NeedsYou counts
+    // every pending request regardless of age, and these two numbers render
+    // inches apart, so matching its definition is what stops them contradicting
+    // each other. The 90-day bound stays on the list, which is only a preview.
     prisma.consultation.count({
       where: {
         consultationPlan: { consultantProfile: { id: consultantProfileId } },
         status: "PENDING",
-        requestedAt: { gte: ninetyDaysAgo },
       },
     }),
     prisma.subscription.count({
       where: {
         subscriptionPlan: { consultantProfileId },
         status: "PENDING",
-        requestedAt: { gte: ninetyDaysAgo },
       },
     }),
     // Fetch recent activities
