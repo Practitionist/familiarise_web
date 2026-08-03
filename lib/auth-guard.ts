@@ -45,10 +45,24 @@ function isFullyOnboarded(user: SessionUser): boolean {
 /**
  * Require an authenticated session. Redirects to sign-in if no session.
  * Returns the validated session (never null).
+ *
+ * Force-fresh for the same reason as requireOnboarded below: this guard covers
+ * /settings, /profile and all of /dashboard/org-workspace (including billing),
+ * and a cookie-cached read cannot see a session that was revoked, erased under
+ * DPDP, or signed out from another device — those delete the session row, which
+ * only a fresh lookup consults. It costs those routes one session read; that is
+ * the intended trade.
  */
 export async function requireAuth() {
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) {
+    redirectWithCookieCleanup();
+  }
+  // Mirrors requireApiAuth's #693 check. `banned` is rebuilt by customSession on
+  // every call, so it stays accurate even in the window where ban-time session
+  // deletion has not landed yet — worth checking explicitly rather than relying
+  // on row deletion alone.
+  if (session.user.banned === true) {
     redirectWithCookieCleanup();
   }
   return session;
