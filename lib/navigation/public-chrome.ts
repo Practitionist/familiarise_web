@@ -40,6 +40,10 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/use-cases/early-career",
   "/use-cases/career-switchers",
   "/use-cases/mentorship",
+  // Enterprise marketing pages share the dark-hero chrome.
+  "/enterprise",
+  "/enterprise/team-training",
+  "/enterprise/corporate-mentorship",
 ] as const;
 
 /**

@@ -171,9 +171,7 @@ const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   },
 ];
 
-// "For Businesses" used to be a one-item dropdown whose only item was disabled
-// — a menu that could only ever go to /contactus. Folded in here as a column so
-// the B2B path is visible without spending a top-level slot on it.
+// B2C use cases only. B2B lives in the Enterprise dropdown.
 const SOLUTIONS_COLUMNS: NavColumn[] = [
   {
     heading: "By goal",
@@ -204,25 +202,32 @@ const SOLUTIONS_COLUMNS: NavColumn[] = [
       },
     ],
   },
+];
+
+const ENTERPRISE_COLUMNS: NavColumn[] = [
   {
-    heading: "For teams",
+    heading: "Programs",
     items: [
       {
-        label: "Team training",
-        href: "/contactus",
-        description: "Upskill a whole team with vetted experts",
+        label: "Overview",
+        href: "/enterprise",
+        description: "Familiarise for organisations",
         icon: Building2,
-        disabled: true,
+      },
+      {
+        label: "Team training",
+        href: "/enterprise/team-training",
+        description: "Licensed seats for a whole cohort",
+        icon: GraduationCap,
       },
       {
         label: "Corporate mentorship",
-        href: "/contactus",
-        description: "Structured mentorship programs for staff",
+        href: "/enterprise/corporate-mentorship",
+        description: "Credit pools for 1:1 expert sessions",
         icon: Users,
-        disabled: true,
       },
       {
-        label: "Talk to us",
+        label: "Talk to sales",
         href: "/contactus",
         description: "Tell us what your organisation needs",
         icon: Mail,
@@ -278,8 +283,11 @@ const NAV_GROUPS: NavDropdownGroup[] = [
     columns: EXPLORE_COLUMNS,
     categoryChips: EXPLORE_CATEGORIES,
   },
-  { label: "Solutions", variant: "mega", columns: SOLUTIONS_COLUMNS },
+  // Single B2C column — list panel, not a half-empty mega.
+  { label: "Solutions", variant: "list", columns: SOLUTIONS_COLUMNS },
   { label: "Resources", variant: "list", columns: RESOURCE_COLUMNS },
+  // B2B programs only — org directory lives under Explore → Organisations.
+  { label: "Enterprise", variant: "list", columns: ENTERPRISE_COLUMNS },
 ];
 
 // ─── Dropdown Panel (Desktop) ────────────────────────────────────────────────
@@ -696,9 +704,6 @@ const Navbar = () => {
                   </Button>
                 </div>
               ) : (
-                /* No marketing CTAs in the bar — discovery is reachable from
-                   the Explore menu, and the supply-side CTA lives in the
-                   landing hero. Sign in is the only action here. */
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigation("/auth/signin")}

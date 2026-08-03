@@ -3,7 +3,7 @@ title: Public pages and discovery
 band: 30-programs-and-lifecycle
 audience: sde1
 status: live
-last-reviewed: 2026-07-31
+last-reviewed: 2026-08-03
 ---
 
 # Public pages and discovery
@@ -105,6 +105,24 @@ constant composed into every public plan-list `where`. Routing all four
 per-type surfaces through one constant is the deliberate choice — a dropped
 filter on any one of them would be a private-catalog leak, so there's exactly
 one place to audit.
+
+## Enterprise marketing pages (sales + education)
+
+Separate from marketplace discovery: public marketing routes that explain the
+sponsor product and route buyers to sales. These do **not** list private
+sponsor orgs.
+
+| Route | Role |
+|---|---|
+| `/enterprise` | B2B landing — Familiarise Enterprise overview |
+| `/enterprise/team-training` | Licensed-seat / cohort training narrative |
+| `/enterprise/corporate-mentorship` | Credit-pool / sponsored 1:1 mentorship narrative |
+
+Navbar: **Enterprise** list dropdown (overview, program pages, Talk to sales).
+Org directory filters (`?type=EXPERT_NETWORK` etc.) stay under Explore →
+Organisations. Footer mirrors the program links. Homepage `EnterpriseSection`
+primary CTA → `/enterprise`. Chrome: dark-hero routes registered in
+`lib/navigation/public-chrome.ts`.
 
 ## Public org pages
 
