@@ -49,6 +49,7 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
       { label: "Early-career pros", href: "/use-cases/early-career" },
       { label: "Career switchers", href: "/use-cases/career-switchers" },
       { label: "Long-term mentorship", href: "/use-cases/mentorship" },
+      { label: "Founders", href: "/use-cases/founders" },
     ],
   },
   {

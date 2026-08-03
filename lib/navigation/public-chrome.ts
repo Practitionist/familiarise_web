@@ -35,11 +35,12 @@ export const TRANSPARENT_HERO_ROUTES = [
   "/explore/programs",
   "/explore/community",
   "/explore/enterprise/organisations",
-  // The four persona pages open on the same full-bleed dark hero.
+  // The five persona pages open on the same full-bleed dark hero.
   "/use-cases/college-students",
   "/use-cases/early-career",
   "/use-cases/career-switchers",
   "/use-cases/mentorship",
+  "/use-cases/founders",
   // Enterprise marketing pages share the dark-hero chrome.
   "/enterprise",
   "/enterprise/team-training",
