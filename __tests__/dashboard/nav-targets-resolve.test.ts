@@ -105,10 +105,8 @@ describe("org nav targets resolve", () => {
 describe("personal + workspace nav targets resolve", () => {
   const TREES: Array<[string, string, string]> = [
     [
-      // The nav lives in the client shell; layout.tsx is now the server wrapper
-      // that hydrates its query. Same split org-workspace already uses below.
       "consultant",
-      "consultant/[consultantId]/ConsultantDashboardShell.tsx",
+      "consultant/[consultantId]/layout.tsx",
       "consultant/[consultantId]/(features)",
     ],
     [
