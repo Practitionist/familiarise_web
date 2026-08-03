@@ -15,6 +15,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { orgDetailsInclude } from "@/lib/data/org-details-server";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -96,34 +97,9 @@ export async function GET(
 
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    include: {
-      billingAccount: {
-        select: {
-          id: true,
-          fundingSource: true,
-          currency: true,
-          walletBalance: true,
-          creditLimit: true,
-        },
-      },
-      payoutAccount: {
-        select: {
-          id: true,
-          status: true,
-          accountNumberLast4: true,
-          bankName: true,
-        },
-      },
-      _count: {
-        select: {
-          memberships: true,
-          contracts: true,
-          invoices: true,
-          purchaseOrders: true,
-          auditLogs: true,
-        },
-      },
-    },
+    // Shared with the server-side seed in lib/data/org-details-server.ts so
+    // the route and the prefetch cannot drift apart.
+    include: orgDetailsInclude,
   });
   if (!org) {
     return NextResponse.json(

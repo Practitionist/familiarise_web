@@ -12,7 +12,9 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const SHELL_SOURCES = [
   "components/dashboard/PersonalDashboardShell.tsx",
   "components/dashboard/OperatorDashboardShell.tsx",
-  "app/dashboard/organization/[orgId]/layout.tsx",
+  // The org shell is the client component; layout.tsx is the server wrapper
+  // that only seeds the org-details query and renders no chrome.
+  "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
   "app/dashboard/org-workspace/[orgWorkspaceId]/OrgWorkspaceShell.tsx",
   "app/dashboard/organization/(switcher)/layout.tsx",
 ] as const;
@@ -65,6 +67,12 @@ describe("dashboard shell overflow contract", () => {
     (rel) => {
       const src = read(rel);
       const root = extractShellRoot(src);
+      // extractShellRoot returns "" on a miss, so a shell that moved to another
+      // file would otherwise fail as a confusing string mismatch rather than a
+      // missing root. Fail loudly on the real cause instead.
+      if (root === "") {
+        throw new Error(`no h-screen-maintenance shell root found in ${rel}`);
+      }
       expect(root).toContain("h-screen-maintenance");
       expect(root).toContain("overflow-hidden");
 
