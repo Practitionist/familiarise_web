@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Inbox } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
@@ -13,12 +13,6 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 export default function HomePageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  const queryClient = useQueryClient();
-
-  // Read consultant name from the cached profile (already fetched by layout)
-  const consultantProfile = queryClient.getQueryData<{ user?: { name?: string } }>(["consultant-data", consultantId]);
-  const consultantName = consultantProfile?.user?.name;
-
   // Use the centralized query configuration with optimized settings for immediate rendering
   const dashboardQuery = {
     ...createConsultantQueries(consultantId).dashboard,
@@ -37,7 +31,8 @@ export default function HomePageClient({
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {
-    return <HomeSkeleton />;
+    // Header is owned by the server page now — see its comment on FCP.
+    return <HomeSkeleton withHeader={false} />;
   }
 
   if (error && !dashboardData) {
@@ -83,7 +78,6 @@ export default function HomePageClient({
       <HomeTab
         appointments={dashboardData.appointments}
         consultantId={consultantId}
-        consultantName={consultantName}
         pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
         performanceSnapshot={dashboardData.performanceSnapshot}
         financialSummary={dashboardData.financialSummary}

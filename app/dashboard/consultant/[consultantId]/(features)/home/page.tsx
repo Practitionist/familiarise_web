@@ -6,7 +6,9 @@ import {
 } from "@tanstack/react-query";
 import HomePageClient from "./HomePageClient";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { NeedsYouCard } from "@/components/dashboard/NeedsYouCard";
+import { getSession } from "@/lib/auth-server";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { getNeedsYouSummary } from "@/lib/data/needs-you";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
@@ -32,6 +34,17 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // dashboard shell for someone who is about to be redirected.
   const access = await requirePersonalProfileAccess("consultant", consultantId);
 
+  // Free: requirePersonalProfileAccess above already resolved this exact call,
+  // and getSession is React.cache'd per render, so both share one entry.
+  const session = await getSession(true);
+  // An ADMIN/STAFF inspecting someone else's dashboard would otherwise be
+  // greeted by their OWN name, since the session is the viewer's. The owner's
+  // name lives in the layout's cached profile, which is not available here
+  // without another round trip — so inspectors get a neutral title instead.
+  const firstName = access.isInspecting
+    ? null
+    : session?.user?.name?.split(" ")[0];
+
   // Everything below streams. Measured before this change: the first byte
   // already arrived at ~0.4s, but the response did not complete until ~4.9s
   // and FCP landed at 6.2s, because the page awaited every query before
@@ -39,6 +52,13 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // the shell.
   return (
     <>
+      {/* Real text, rendered server-side outside every boundary. A skeleton
+          cannot trigger FCP — it has no text, image or SVG — which is why the
+          first pass moved the shell to 458ms and left FCP at ~6s anyway. */}
+      <DashboardHeader
+        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
+        subtitle="Here's what's happening with your appointments today"
+      />
       {/* fallback={null}, not a skeleton: NeedsYouCard renders nothing for a
           consultant with no org contexts, so a placeholder would flash a card
           that then vanishes. */}
@@ -47,7 +67,7 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
           <NeedsYouSection userId={access.userId} consultantId={consultantId} />
         </Suspense>
       )}
-      <Suspense fallback={<HomeSkeleton />}>
+      <Suspense fallback={<HomeSkeleton withHeader={false} />}>
         <DashboardSection consultantId={consultantId} />
       </Suspense>
     </>
