@@ -160,20 +160,30 @@ const nextConfig = {
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     webpackMemoryOptimizations: true,
+    // Only packages Next does NOT already optimize by default. Its built-in
+    // list covers lucide-react, recharts and date-fns among others, so listing
+    // those was inert config that read as if it were doing something.
+    // https://nextjs.org/docs/app/api-reference/config/next-config-js/optimizePackageImports
     optimizePackageImports: [
-      "lucide-react",
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "recharts",
-      "date-fns",
       "@radix-ui/react-icons",
+      // Imported by components/notifications/NotificationInbox.tsx and not in
+      // the default list.
+      "@novu/react",
+      "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
     staleTimes: { dynamic: 30, static: 180 },
   },
 
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
+  // NOTE: date-fns is now 4.1.0 and ships an exports map, so this is likely a
+  // leftover from the v2/v3 era — and transpiling a package may defeat Next's
+  // built-in optimizePackageImports handling for it (45 files import date-fns).
+  // Left in place deliberately: the claim above is unverified either way, and
+  // confirming it needs `npm run build:analyze`, not reasoning.
   transpilePackages: ["date-fns"],
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
