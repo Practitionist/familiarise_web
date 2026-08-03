@@ -13,6 +13,7 @@ import {
 } from "@/lib/data/manage-timings-target";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { buildManageTimingsSubject } from "@/lib/scheduling/manage-timings-subject";
+import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { ManageTimingsClient } from "./ManageTimingsClient";
 
@@ -118,6 +119,11 @@ export default async function ManageTimingsPage({
     target.completedSessions,
     target.groupTotalSessions,
   );
+
+  // Allocate APIs require UUID/CUID event ids. Hand-crafted mock PKs (legal
+  // Prisma String @ids) would 400 on save — fail closed here instead of
+  // mounting a picker that cannot submit.
+  if (!isEventIdFormat(resolved.subject.eventId)) notFound();
 
   const backHref = `/dashboard/consultant/${consultantId}/appointments`;
 

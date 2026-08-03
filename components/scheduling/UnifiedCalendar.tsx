@@ -382,6 +382,12 @@ export interface UnifiedCalendarProps {
    * never touches either again.
    */
   focus?: SlotPickerFocus;
+  /**
+   * When true, SafeUnifiedCalendar shows the consultant legend (Selected /
+   * Being moved / This booking). Defaults from mode === "allocate"; reschedule
+   * propose surfaces set this explicitly while staying in select mode.
+   */
+  showConsultantLegend?: boolean;
 }
 
 export function UnifiedCalendar({

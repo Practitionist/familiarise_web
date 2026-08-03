@@ -175,6 +175,14 @@ export const allocationFailed = (reason: string): AllocationToast => ({
   description: reason,
 });
 
+/** Client-side gate when the event PK is not UUID/CUID (mock/hand-crafted rows). */
+export const invalidEventId = (): AllocationToast => ({
+  variant: "destructive",
+  title: "Couldn't save timings",
+  description:
+    "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+});
+
 /** 409 — another tab or teammate already allocated this request. "Session"
  * is deliberately avoided here: it means a bookable session everywhere else
  * in this dialog. */
