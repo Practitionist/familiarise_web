@@ -68,7 +68,13 @@ export async function updateOnboardingInformationAction(
   }
 
   // Use the central processing function
-  return await processOnboardingData(userId, body);
+  const result = await processOnboardingData(userId, body);
+  // Refresh Better Auth cookie cache so requireOnboarded() (cookie-cached
+  // layout gate) sees onboardingCompleted / profile ids immediately.
+  if (result.success) {
+    await getSession(true);
+  }
+  return result;
 }
 // #endregion
 
@@ -133,6 +139,8 @@ export async function setOnboardingRoleAction(
     },
   });
 
+  // Refresh cookie cache so subsequent layout/API reads see the new role.
+  await getSession(true);
   return { success: true };
 }
 
@@ -159,5 +167,8 @@ export async function completeOrgWorkspaceOnboardingAction(
     data: { onboardingCompleted: true },
   });
 
+  // Refresh cookie cache so /dashboard requireOnboarded() does not bounce
+  // back to onboarding on a stale onboardingCompleted=false cookie.
+  await getSession(true);
   return { success: true };
 }

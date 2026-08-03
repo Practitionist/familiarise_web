@@ -16,21 +16,62 @@ import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import React, { useEffect, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
-import ConsultantProfessionalStep from "./components/ConsultantProfessionalStep";
-import ConsultantAgreementAndVerificationStep from "./components/ConsultantAgreementAndVerificationStep";
-import ConsultantReviewForm from "./components/ConsultantReviewForm";
-import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
-import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
-import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
+// Step 0 stays eager — every user sees Personal Info first.
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
-import StaffAgreementForm from "./components/StaffAgreementForm";
-import StaffProfileForm from "./components/StaffProfileForm";
-import StaffReviewForm from "./components/StaffReviewForm";
-import { CreateOrganizationWizard } from "@/components/organization/create-wizard/Wizard";
+
+// Later steps + org wizard are code-split so the initial onboarding chunk
+// does not pay for schedule UI, review forms, or the create-org wizard.
+const ConsultantPreferredScheduleForm = dynamic(
+  () => import("./components/ConsultantPreferredScheduleForm"),
+  { ssr: false },
+);
+const ConsultantProfessionalStep = dynamic(
+  () => import("./components/ConsultantProfessionalStep"),
+  { ssr: false },
+);
+const ConsultantAgreementAndVerificationStep = dynamic(
+  () => import("./components/ConsultantAgreementAndVerificationStep"),
+  { ssr: false },
+);
+const ConsultantReviewForm = dynamic(
+  () => import("./components/ConsultantReviewForm"),
+  { ssr: false },
+);
+const ConsulteeAgreementForm = dynamic(
+  () => import("./components/ConsulteeAgreementForm"),
+  { ssr: false },
+);
+const ConsulteeProfileForm = dynamic(
+  () => import("./components/ConsulteeProfileForm"),
+  { ssr: false },
+);
+const ConsulteeReviewForm = dynamic(
+  () => import("./components/ConsulteeReviewForm"),
+  { ssr: false },
+);
+const StaffAgreementForm = dynamic(
+  () => import("./components/StaffAgreementForm"),
+  { ssr: false },
+);
+const StaffProfileForm = dynamic(
+  () => import("./components/StaffProfileForm"),
+  { ssr: false },
+);
+const StaffReviewForm = dynamic(
+  () => import("./components/StaffReviewForm"),
+  { ssr: false },
+);
+const CreateOrganizationWizard = dynamic(
+  () =>
+    import("@/components/organization/create-wizard/Wizard").then((m) => ({
+      default: m.CreateOrganizationWizard,
+    })),
+  { ssr: false },
+);
 
 // Step labels for progress indicator
 const STEP_LABELS = {

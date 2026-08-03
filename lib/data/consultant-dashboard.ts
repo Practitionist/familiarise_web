@@ -29,14 +29,24 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 // Prisma Query Types - Derived from actual query shape for type safety
 // =============================================================================
 
+/** Home widgets only need identity + avatar; omit phone/role from the graph. */
 const userSelectFields = {
   id: true,
   name: true,
   email: true,
   image: true,
-  role: true,
-  phone: true,
 } as const;
+
+/** Approvals list only needs the requester display name. */
+const pendingUserSelect = {
+  id: true,
+  name: true,
+  image: true,
+} as const;
+
+/** Home surfaces a handful of cards — history lives on /appointments. */
+const HOME_APPOINTMENTS_TAKE = 20;
+const HOME_PENDING_TAKE = 20;
 
 const appointmentInclude = {
   slotsOfAppointment: {
@@ -162,74 +172,23 @@ const appointmentInclude = {
   },
 } satisfies Prisma.AppointmentInclude;
 
-const consultationInclude = {
-  consultationPlan: {
-    include: {
-      consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
-    },
-  },
+/** Pending-approvals widget only needs id + requester name + requestedAt. */
+const pendingConsultationInclude = {
   requestedBy: {
     include: {
       user: {
-        select: userSelectFields,
+        select: pendingUserSelect,
       },
-    },
-  },
-  appointment: {
-    include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-        orderBy: {
-          startsAt: "asc" as const,
-        },
-      },
-      payment: true,
     },
   },
 } satisfies Prisma.ConsultationInclude;
 
-const subscriptionInclude = {
-  subscriptionPlan: {
-    include: {
-      consultantProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-          domain: true,
-          subDomains: true,
-          tags: true,
-        },
-      },
-    },
-  },
+const pendingSubscriptionInclude = {
   requestedBy: {
     include: {
       user: {
-        select: userSelectFields,
+        select: pendingUserSelect,
       },
-    },
-  },
-  appointments: {
-    include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
-      payment: true,
     },
   },
 } satisfies Prisma.SubscriptionInclude;
@@ -243,12 +202,12 @@ type DashboardAppointment = Prisma.Result<
 >;
 type DashboardConsultation = Prisma.Result<
   typeof prisma.consultation,
-  { include: typeof consultationInclude },
+  { include: typeof pendingConsultationInclude },
   "findFirstOrThrow"
 >;
 type DashboardSubscription = Prisma.Result<
   typeof prisma.subscription,
-  { include: typeof subscriptionInclude },
+  { include: typeof pendingSubscriptionInclude },
   "findFirstOrThrow"
 >;
 
@@ -405,7 +364,7 @@ export async function getConsultantDashboard(
       // so order by createdAt to make `take` deterministic; the JS
       // sortedAppointments step re-sorts by slot startsAt afterwards.
       orderBy: { createdAt: "desc" },
-      take: 200,
+      take: HOME_APPOINTMENTS_TAKE,
     }),
     // Fetch pending consultations
     prisma.consultation.findMany({
@@ -420,11 +379,11 @@ export async function getConsultantDashboard(
         // a 90-day-old PENDING request is stale.
         requestedAt: { gte: ninetyDaysAgo },
       },
-      include: consultationInclude,
+      include: pendingConsultationInclude,
       orderBy: {
         requestedAt: "desc",
       },
-      take: 200,
+      take: HOME_PENDING_TAKE,
     }),
     // Fetch pending subscriptions
     prisma.subscription.findMany({
@@ -437,11 +396,11 @@ export async function getConsultantDashboard(
         // a 90-day-old PENDING request is stale.
         requestedAt: { gte: ninetyDaysAgo },
       },
-      include: subscriptionInclude,
+      include: pendingSubscriptionInclude,
       orderBy: {
         requestedAt: "desc",
       },
-      take: 200,
+      take: HOME_PENDING_TAKE,
     }),
     // Fetch recent activities
     prisma.activityLog.findMany({

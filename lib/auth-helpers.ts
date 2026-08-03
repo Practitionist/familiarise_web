@@ -17,11 +17,17 @@ import {
 /**
  * Requires API authentication and returns the session or an error response.
  * Use this at the start of protected API route handlers.
+ *
+ * Defaults to the Better Auth cookie cache for read-heavy dashboard APIs.
+ * Pass `{ fresh: true }` (or call getSession(true) directly) for money /
+ * authz / ban-sensitive mutations that must not trust a stale cookie cache.
  */
-export async function requireApiAuth(): Promise<
+export async function requireApiAuth(options?: {
+  fresh?: boolean;
+}): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(true);
+  const session = await getSession(options?.fresh === true);
   if (!session?.user?.id) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
@@ -58,7 +64,7 @@ export function isPrivileged(role: string | undefined | null): boolean {
 export async function requireAdminAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ fresh: true });
   if (auth.error) return { error: auth.error };
   if (auth.session.user.role !== "ADMIN") {
     return {
@@ -84,7 +90,7 @@ export async function requireAdminAuth(): Promise<
 export async function requireStaffAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ fresh: true });
   if (auth.error) return { error: auth.error };
   if (auth.session.user.role !== "STAFF") {
     return {
@@ -108,7 +114,7 @@ export async function requireStaffAuth(): Promise<
 export async function requirePrivilegedAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ fresh: true });
   if (auth.error) return { error: auth.error };
   if (!isPrivileged(auth.session.user.role)) {
     return {
@@ -139,7 +145,7 @@ export async function requireBackofficeSurface(
 ): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ fresh: true });
   if (auth.error) return { error: auth.error };
 
   const role = auth.session.user.role as UserRole | undefined;
@@ -384,7 +390,8 @@ export async function requireOrgAccess(
     requireActive,
   } = options;
 
-  const auth = await requireApiAuth();
+  // Org capability gates often precede money / membership mutations.
+  const auth = await requireApiAuth({ fresh: true });
   if (auth.error) return { error: auth.error };
 
   // Pull the billingAccount alongside the org so fundingSource gates

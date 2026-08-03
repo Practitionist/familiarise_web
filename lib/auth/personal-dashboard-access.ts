@@ -55,7 +55,10 @@ export async function requirePersonalProfileAccess(
   kind: PersonalProfileKind,
   profileId: string,
 ): Promise<PersonalProfileAccess> {
-  const session = await getSession(true);
+  // Cookie-cached session is fine here: the parent dashboard layout already
+  // gated onboarded, and ownership is re-checked via prisma.user below.
+  // Shares React.cache with requireOnboarded() in the same RSC request.
+  const session = await getSession();
   if (!session?.user?.id) redirect("/auth/signin");
 
   // Mirrors requireApiAuth's #693 check: ban-time session deletion covers the

@@ -80,10 +80,15 @@ async function onboardingRedirectTarget(
 /**
  * Require an authenticated AND fully onboarded user.
  * Redirects to sign-in if no session, to onboarding if not completed or
- * profile is missing. Uses disableCookieCache to avoid stale values.
+ * profile is missing.
+ *
+ * Uses the Better Auth cookie cache (5 min) for steady-state layout gates so
+ * soft-nav between dashboard pages does not re-run customSession Prisma work
+ * on every request. Force-fresh with getSession(true) at onboarding/mutation
+ * boundaries (see requireNotOnboarded and onboarding actions).
  */
 export async function requireOnboarded() {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     redirectWithCookieCleanup();
   }

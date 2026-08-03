@@ -254,13 +254,20 @@ export async function getConsultantAppointments(
     whereClause.AND = [...existingAnd, { OR: statusFilters }];
   }
 
+  const listUserSelect = {
+    id: true,
+    name: true,
+    email: true,
+    image: true,
+  } as const;
+
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
       slotsOfAppointment: {
         orderBy: { startsAt: "asc" },
         include: {
-          user: true,
+          user: { select: listUserSelect },
           meetingSession: {
             select: { id: true, endedAt: true },
           },
@@ -272,14 +279,14 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: listUserSelect },
             },
           },
         },
@@ -291,14 +298,14 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: listUserSelect },
             },
           },
           schedulingPeriodStartsAt: true,
@@ -315,7 +322,7 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
               collaborators: {
@@ -344,7 +351,7 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
               collaborators: {
