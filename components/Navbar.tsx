@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
   Menu,
@@ -347,22 +346,16 @@ function DesktopDropdownPanel({
   const panelGrid = isWide ? "grid-cols-3" : "grid-cols-2";
 
   return (
-    <motion.div
+    <div
       id={panelId}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.15 }}
       // Mega panels centre on the VIEWPORT (fixed), list panels on their
       // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
       // reads as badly misaligned.
       //
       // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
-      // motion.div writes an inline `transform` for its y animation, which
-      // beats Tailwind's translate class, so the -50% shift was silently
-      // dropped and the panel sat half a viewport to the right. Margin centring
-      // can't be clobbered by a transform.
-      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
+      // a transform-based centre fights other transforms. Margin centring
+      // can't be clobbered.
+      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 ${
         isMega
           ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
           : `absolute top-full mt-2 ${panelWidth}`
@@ -420,7 +413,7 @@ function DesktopDropdownPanel({
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -508,15 +501,13 @@ function DesktopNavItem({
           className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
         />
       </button>
-      <AnimatePresence>
-        {open && (
-          <DesktopDropdownPanel
-            group={group}
-            panelId={panelId}
-            onClose={() => setOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {open && (
+        <DesktopDropdownPanel
+          group={group}
+          panelId={panelId}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -734,26 +725,19 @@ const Navbar = () => {
         </div>
       </nav>
 
-      {/* Mobile Drawer */}
-      <AnimatePresence>
-        {isOpen && (
+      {/* Mobile Drawer — CSS transitions only; framer-motion was pulled into
+          every public page via the root navbar for enter/exit polish. */}
+      {isOpen && (
           <>
             {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden"
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden animate-in fade-in duration-150"
               onClick={closeMenu}
             />
 
             {/* Drawer */}
-            <motion.div
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left"
+            <div
+              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left animate-in slide-in-from-left duration-300"
             >
               {/* Drawer Header */}
               <div className="flex justify-between items-center p-5 border-b border-zinc-800">
@@ -936,10 +920,9 @@ const Navbar = () => {
                   </Button>
                 )}
               </div>
-            </motion.div>
+            </div>
           </>
         )}
-      </AnimatePresence>
     </>
   );
 };

@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
@@ -61,54 +61,37 @@ const liveConsultantWhere = {
 // ---------------------------------------------------------------------------
 
 /**
- * Trending rank step 1: load every marketplace plan's last-30-day slot ids
- * and sort by count IN MEMORY. That scan is O(all plans × recent slots) per
- * call — with React.cache alone it ran once per REQUEST, so 1000 concurrent
- * explore loads each paid it. unstable_cache shares one computation across
- * requests for 60s; the cached value is just the FULL ranked id array
- * (callers slice to their limit — passing limit as an arg would key separate
- * cache entries per limit, each paying the scan). Staleness is harmless —
- * trending order changing 60s late is invisible.
+ * Trending rank step 1: SQL aggregate of last-30-day slots per plan.
+ *
+ * Previously pulled every marketplace plan with nested slots into Node and
+ * sorted in memory (O(all plans × recent slots)). That scan is shared across
+ * requests for 60s via unstable_cache; the cached value is the FULL ranked id
+ * array (callers slice — passing limit as an arg would key separate entries).
+ * Staleness is harmless — trending order changing 60s late is invisible.
  */
 const getTrendingClassPlanIds = unstable_cache(
   async (): Promise<string[]> => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const ranked = await prisma.classPlan.findMany({
-      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-      select: {
-        id: true,
-        classes: {
-          select: {
-            appointments: {
-              select: {
-                slotsOfAppointment: {
-                  where: { createdAt: { gte: thirtyDaysAgo } },
-                  select: { id: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT cp.id
+      FROM "ClassPlan" cp
+      INNER JOIN "Class" c ON c."classPlanId" = cp.id
+      INNER JOIN "Appointment" a ON a."classId" = c.id
+      INNER JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+      LEFT JOIN "ConsultantProfile" cons ON cons.id = cp."consultantProfileId"
+      WHERE cp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
+        AND cp."archivedAt" IS NULL
+        AND (cp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
+        AND a."deletedAt" IS NULL
+        AND soa."deletedAt" IS NULL
+        AND soa."createdAt" >= ${thirtyDaysAgo}
+      GROUP BY cp.id
+      ORDER BY COUNT(soa.id) DESC
+    `);
 
-    return ranked
-      .map((p) => ({
-        id: p.id,
-        count: p.classes.reduce(
-          (sum, cls) =>
-            sum +
-            cls.appointments.reduce(
-              (s, apt) => s + apt.slotsOfAppointment.length,
-              0,
-            ),
-          0,
-        ),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .map((r) => r.id);
+    return ranked.map((r) => r.id);
   },
   ["trending-class-plan-ids"],
   { revalidate: 60 },
@@ -119,35 +102,24 @@ const getTrendingWebinarPlanIds = unstable_cache(
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const ranked = await prisma.webinarPlan.findMany({
-      where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726 — no ORG_ONLY in curated feed
-      select: {
-        id: true,
-        webinars: {
-          select: {
-            appointment: {
-              select: {
-                slotsOfAppointment: {
-                  where: { createdAt: { gte: thirtyDaysAgo } },
-                  select: { id: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT wp.id
+      FROM "WebinarPlan" wp
+      INNER JOIN "Webinar" w ON w."webinarPlanId" = wp.id
+      INNER JOIN "Appointment" a ON a."webinarId" = w.id
+      INNER JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+      LEFT JOIN "ConsultantProfile" cons ON cons.id = wp."consultantProfileId"
+      WHERE wp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
+        AND wp."archivedAt" IS NULL
+        AND (wp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
+        AND a."deletedAt" IS NULL
+        AND soa."deletedAt" IS NULL
+        AND soa."createdAt" >= ${thirtyDaysAgo}
+      GROUP BY wp.id
+      ORDER BY COUNT(soa.id) DESC
+    `);
 
-    return ranked
-      .map((p) => ({
-        id: p.id,
-        count: p.webinars.reduce(
-          (sum, w) => sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
-          0,
-        ),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .map((r) => r.id);
+    return ranked.map((r) => r.id);
   },
   ["trending-webinar-plan-ids"],
   { revalidate: 60 },

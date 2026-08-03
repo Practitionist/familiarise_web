@@ -1,7 +1,12 @@
 "use client";
 
-import { createContext, useContext } from "react";
-import dynamic from "next/dynamic";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ComponentType,
+} from "react";
 
 // Re-export the logout helper from the SDK-free module so existing importers of
 // `disconnectStreamClients` from this path keep working unchanged. Callers that
@@ -51,52 +56,41 @@ export interface StreamProviderProps {
   enableVideo?: boolean;
 }
 
-// Loading strategy (deliberate, per-scenario — NOT blanket lazy):
-//
-//  • SDK code-split (lazy chunk): YES. The Stream SDK is heavy and the dashboard
-//    LANDING route is always /home, which renders no chat/video UI. Splitting the
-//    SDK + its two stylesheets into a chunk keeps them out of /home's synchronous
-//    bundle, so /home parses/paints without paying for the SDK up front.
-//
-//  • When does that chunk actually load? On dashboard routes the provider is
-//    mounted by the LAYOUT, so the chunk begins downloading on /home too — but
-//    IN PARALLEL, off the critical bundle, not blocking first paint. This is the
-//    right call (deferred/parallel, not "only when chat opens") because the
-//    consultant sidebar shows a chat-unread badge on every route incl. /home,
-//    which needs the chat client connected. Gating the whole provider behind
-//    "user opened chat" would break that badge. The actual connect (websocket)
-//    is further deferred to requestIdleCallback inside the impl (see #248 there).
-//
-//  • ssr:false: the SDK is browser-only (websockets/WebRTC); SSR-ing it is wasted
-//    server work and hydration mismatch risk.
-//
-// Children are rendered through the impl, which renders them DIRECTLY even before
-// connection completes (it no longer blocks on a spinner until connected). During
-// the brief chunk-download window the fallback below shows — this is strictly
-// shorter than the previous behavior, which blocked children until BOTH clients
-// finished their websocket handshake.
-function StreamProviderLoading() {
-  return (
-    <div className="flex items-center justify-center min-h-[200px]">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary" />
-    </div>
-  );
-}
-
-const LazyStreamProviderImpl = dynamic(
-  () => import("@/providers/StreamProviderImpl"),
-  { ssr: false, loading: () => <StreamProviderLoading /> },
-);
-
 /**
- * SDK-free shell. Renders children through the lazily-loaded implementation,
- * which provides the chat/video contexts + connection lifecycle once its chunk
- * loads. The impl renders children directly even before connection completes;
- * video consumers already guard a null client, and chat consumers only render on
- * the chat route (under <Chat>).
+ * SDK-free shell. Always paints `children` immediately, then upgrades to the
+ * Stream SDK impl once its chunk loads.
+ *
+ * Why not `next/dynamic` with a loading spinner: that fallback *replaced*
+ * children during chunk download, so every dashboard route (including /home)
+ * blocked on the Stream bundle. The unread badge + Join still need the layout
+ * to mount this provider (singleton connect), but they must not gate first
+ * paint. Websocket connect itself stays deferred to requestIdleCallback inside
+ * the impl (#248).
  */
 const StreamProvider = (props: StreamProviderProps) => {
-  return <LazyStreamProviderImpl {...props} />;
+  const [Impl, setImpl] = useState<ComponentType<StreamProviderProps> | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/providers/StreamProviderImpl").then((mod) => {
+      if (!cancelled) setImpl(() => mod.default);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!Impl) {
+    return (
+      <StreamConnectionContext.Provider value={DEFAULT_CONNECTION_STATE}>
+        {props.children}
+      </StreamConnectionContext.Provider>
+    );
+  }
+
+  return <Impl {...props} />;
 };
 
 export default StreamProvider;
