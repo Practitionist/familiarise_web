@@ -3,6 +3,7 @@
 import {
   updateOnboardingInformationAction,
   setOnboardingRoleAction,
+  resetOnboardingRoleAction,
   completeOrgWorkspaceOnboardingAction,
 } from "@/actions/forms/onboarding.action";
 import {
@@ -18,7 +19,7 @@ import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import React, { useEffect, useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
+import type { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // Step 0 stays eager — every user sees Personal Info first.
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
@@ -89,27 +90,214 @@ const CreateOrganizationWizard = dynamic(
   { ssr: false, loading: () => <StepLoading /> },
 );
 
-// Step labels for progress indicator
-const STEP_LABELS = {
+// ---------------------------------------------------------------------------
+// Step registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything a step can need from the shell. The five step forms were written
+ * independently and take different props (`onNext`/`initialData` vs
+ * `onSubmit`/`formData`/`onGoToStep`), so each entry adapts this context to its
+ * own component instead of a single prop contract being forced on all of them.
+ */
+interface OnboardingStepContext {
+  formData: Partial<OnboardingFormData>;
+  userId?: string;
+  onNext: (data: Partial<OnboardingFormData>) => Promise<void>;
+  onBack: () => void;
+  onSubmit: (data: Partial<OnboardingFormData>) => Promise<void>;
+  onGoToStep: (targetStep: number) => void;
+  onExitOrgWizard: () => void;
+}
+
+interface OnboardingStep {
+  /** Shown in the progress stepper and as the card title. */
+  label: string;
+  render: (ctx: OnboardingStepContext) => React.ReactNode;
+  /** Needs more horizontal room than the default 3xl card. */
+  wide?: boolean;
+  /**
+   * Step paints its own full-page chrome, so the shell (header, stepper, card)
+   * steps aside entirely rather than nesting one stepper inside another.
+   */
+  fullBleed?: boolean;
+}
+
+// Roles come from the onboarding schema's discriminated union rather than a
+// hand-written list, so adding a branch there fails to compile here until it
+// declares its steps.
+type OnboardingRole = z.infer<typeof OnboardingFormDataSchema>["role"];
+
+// Shared across every role: step 0 is where the role is picked, so it cannot be
+// role-specific.
+const personalInfoStep: OnboardingStep = {
+  label: "Personal Info",
+  render: (ctx) => (
+    <PersonalInfoAndRoleForm onNext={ctx.onNext} initialData={ctx.formData} />
+  ),
+};
+
+/**
+ * The onboarding flow, per role. Order in the array IS the step order — indices
+ * are never written down anywhere, which is what lets ORG_WORKSPACE be a normal
+ * two-entry flow instead of a special case bolted onto the step machine.
+ */
+const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   CONSULTANT: [
-    "Personal Info",
-    "Professional Profile",
-    "Availability",
-    "Agreement & Verification",
-    "Review",
+    personalInfoStep,
+    {
+      label: "Professional Profile",
+      render: (ctx) => (
+        <ConsultantProfessionalStep
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          initialData={ctx.formData}
+          personalInfo={{
+            name: ctx.formData.name ?? "",
+            email: ctx.formData.email ?? "",
+            phone: ctx.formData.phone,
+            address: ctx.formData.address,
+            onlineStatus: ctx.formData.onlineStatus ?? false,
+            timezone: ctx.formData.timezone,
+            onboardingCompleted: ctx.formData.onboardingCompleted ?? false,
+            role: ctx.formData.role ?? "CONSULTANT",
+            emailVerified: ctx.formData.emailVerified,
+            image: ctx.formData.image,
+          }}
+        />
+      ),
+    },
+    {
+      label: "Availability",
+      // The weekly slot grid does not fit the default card width.
+      wide: true,
+      render: (ctx) => (
+        <ConsultantPreferredScheduleForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          initialData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Agreement & Verification",
+      render: (ctx) => (
+        <ConsultantAgreementAndVerificationStep
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Review",
+      render: (ctx) => (
+        <ConsultantReviewForm
+          onSubmit={ctx.onSubmit}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+          onGoToStep={ctx.onGoToStep}
+        />
+      ),
+    },
   ],
-  CONSULTEE: ["Personal Info", "Profile", "Agreement", "Review"],
+  CONSULTEE: [
+    personalInfoStep,
+    {
+      label: "Profile",
+      render: (ctx) => (
+        <ConsulteeProfileForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          initialData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Agreement",
+      render: (ctx) => (
+        <ConsulteeAgreementForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Review",
+      render: (ctx) => (
+        <ConsulteeReviewForm
+          onSubmit={ctx.onSubmit}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+          onGoToStep={ctx.onGoToStep}
+        />
+      ),
+    },
+  ],
   STAFF: [
-    "Personal Info",
-    "Role Details",
-    "Agreement",
-    "Review",
+    personalInfoStep,
+    {
+      label: "Role Details",
+      render: (ctx) => (
+        <StaffProfileForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          initialData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Agreement",
+      render: (ctx) => (
+        <StaffAgreementForm
+          onNext={ctx.onNext}
+          onBack={ctx.onBack}
+          initialData={ctx.formData}
+        />
+      ),
+    },
+    {
+      label: "Review",
+      render: (ctx) => (
+        <StaffReviewForm
+          onSubmit={ctx.onSubmit}
+          onBack={ctx.onBack}
+          formData={ctx.formData}
+          onGoToStep={ctx.onGoToStep}
+        />
+      ),
+    },
   ],
-  // ORG_WORKSPACE: the onboarding shell only owns "Personal Info". Once the
-  // role is committed, the shared CreateOrganizationWizard (stepper +
-  // cards) takes over the remainder — its own progress bar shows the
-  // 5-6 wizard steps, so we don't duplicate them here.
-  ORG_WORKSPACE: ["Personal Info"],
+  ORG_WORKSPACE: [
+    personalInfoStep,
+    {
+      label: "Create Organization",
+      // The shared wizard owns the remaining 5-6 screens (Org Info → Review)
+      // and ships its own stepper and cards, so the onboarding shell would
+      // otherwise render a stepper inside a stepper.
+      fullBleed: true,
+      render: (ctx) => (
+        // #863 — hostOrgsEnabled defaults to false here (host capability
+        // hidden), which is the honest state while ENABLE_HOST_ORGS is off.
+        // This is a client component with no server parent to read the flag;
+        // TODO(#863): thread the server flag when host orgs launch (e.g. a
+        // server action or a server shell).
+        <CreateOrganizationWizard
+          onCancel={ctx.onExitOrgWizard}
+          afterLaunch={async () => {
+            const userId = ctx.userId;
+            if (!userId) return;
+            await completeOrgWorkspaceOnboardingAction(userId);
+          }}
+        />
+      ),
+    },
+  ],
+  // ADMIN exists in the onboarding schema union but is not self-selectable
+  // (the role picker does not offer it and `setOnboardingRoleAction`'s
+  // allowlist rejects it), so there are no admin step forms to register.
+  ADMIN: [personalInfoStep],
 };
 
 const MultiStepForm: React.FC = () => {
@@ -142,17 +330,6 @@ const MultiStepForm: React.FC = () => {
       .catch(() => {});
   }, [session?.user?.id]);
 
-  const methods = useForm<OnboardingFormData>({
-    mode: "onChange",
-    defaultValues: {
-      name: "",
-      email: "",
-      onlineStatus: false,
-      onboardingCompleted: false,
-      role: "CONSULTEE",
-    } satisfies Partial<OnboardingFormData>,
-  });
-
   const handleNext = async (stepData: Partial<OnboardingFormData>) => {
     // Merge new data first so the async role-flip below reads the
     // freshest values (React setState batching would otherwise give us
@@ -169,12 +346,11 @@ const MultiStepForm: React.FC = () => {
     }
     setFormData(merged);
 
-    // ORG_WORKSPACE handoff: the onboarding shell only owns step 0. When the
-    // user completes Personal Info we commit their role on the User row
-    // so step 1's `POST /api/organizations` authorizes — the API gate
-    // requires `UserRole === "ORG_WORKSPACE"` and the signup default is
-    // CONSULTEE. The shared wizard then takes over for the remaining
-    // steps. Any other role keeps using this page's step machine.
+    // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
+    // their role on the User row so the wizard step's
+    // `POST /api/organizations` authorizes — the API gate requires
+    // `UserRole === "ORG_WORKSPACE"` and the signup default is CONSULTEE.
+    // Backing out of the wizard reverts it (see `handleExitOrgWizard`).
     if (step === 0 && merged.role === "ORG_WORKSPACE") {
       const userId = session?.user?.id;
       if (!userId) {
@@ -214,6 +390,20 @@ const MultiStepForm: React.FC = () => {
 
   const handleGoToStep = (targetStep: number) => {
     setStep(targetStep);
+  };
+
+  // Backing out of the create-org wizard must also undo the role we committed
+  // on the way in, otherwise a user who changes their mind is left on
+  // ORG_WORKSPACE with `onboardingCompleted: false` — able to create orgs
+  // without ever having finished onboarding. Best-effort and fire-and-forget:
+  // returning to step 0 is the user-visible action, and the server no-ops
+  // unless the handoff is still provisional. Re-picking ORG_WORKSPACE
+  // re-commits the role through `handleNext`.
+  const handleExitOrgWizard = () => {
+    setStep(0);
+    const userId = session?.user?.id;
+    if (!userId) return;
+    void resetOnboardingRoleAction(userId);
   };
 
   const handleSubmit = async (data: Partial<OnboardingFormData>) => {
@@ -368,292 +558,151 @@ const MultiStepForm: React.FC = () => {
     }
   };
 
-  const renderFormStep = () => {
-    switch (step) {
-      case 0:
-        return (
-          <PersonalInfoAndRoleForm onNext={handleNext} initialData={formData} />
-        );
-      case 1:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantProfessionalStep
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-                personalInfo={{
-                  name: formData.name ?? "",
-                  email: formData.email ?? "",
-                  phone: formData.phone,
-                  address: formData.address,
-                  onlineStatus: formData.onlineStatus ?? false,
-                  timezone: formData.timezone,
-                  onboardingCompleted: formData.onboardingCompleted ?? false,
-                  role: formData.role ?? "CONSULTANT",
-                  emailVerified: formData.emailVerified,
-                  image: formData.image,
-                }}
-              />
-            );
-          case "CONSULTEE":
-            return (
-              <ConsulteeProfileForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          case "STAFF":
-            return (
-              <StaffProfileForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 2:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantPreferredScheduleForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          case "CONSULTEE":
-            return (
-              <ConsulteeAgreementForm
-                onNext={handleNext}
-                onBack={handleBack}
-                formData={formData}
-              />
-            );
-          case "STAFF":
-            return (
-              <StaffAgreementForm
-                onNext={handleNext}
-                onBack={handleBack}
-                initialData={formData}
-              />
-            );
-          default:
-            return null;
-        }
-      case 3:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantAgreementAndVerificationStep
-                onNext={handleNext}
-                onBack={handleBack}
-                formData={formData}
-              />
-            );
-          case "CONSULTEE":
-            return (
-              <ConsulteeReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
-                onGoToStep={handleGoToStep}
-              />
-            );
-          case "STAFF":
-            return (
-              <StaffReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
-                onGoToStep={handleGoToStep}
-              />
-            );
-          default:
-            return null;
-        }
-      case 4:
-        switch (formData.role) {
-          case "CONSULTANT":
-            return (
-              <ConsultantReviewForm
-                onSubmit={handleSubmit}
-                onBack={handleBack}
-                formData={formData}
-                onGoToStep={handleGoToStep}
-              />
-            );
-          default:
-            return null;
-        }
-      default:
-        return null;
-    }
+  // `role` is only trustworthy once step 0 has been submitted; before that (and
+  // for anything the registry does not cover) the consultee flow is the
+  // default, as it was when the labels lived in their own map.
+  const currentRole: OnboardingRole =
+    formData.role && formData.role in ONBOARDING_STEPS
+      ? (formData.role as OnboardingRole)
+      : "CONSULTEE";
+  const steps = ONBOARDING_STEPS[currentRole];
+  const totalSteps = steps.length;
+  const activeStep = steps[step];
+
+  const stepContext: OnboardingStepContext = {
+    formData,
+    userId: session?.user?.id,
+    onNext: handleNext,
+    onBack: handleBack,
+    onSubmit: handleSubmit,
+    onGoToStep: handleGoToStep,
+    onExitOrgWizard: handleExitOrgWizard,
   };
 
-  // Get step labels based on role
-  const currentRole = formData.role || "CONSULTEE";
-  const stepLabels =
-    currentRole in STEP_LABELS
-      ? STEP_LABELS[currentRole as keyof typeof STEP_LABELS]
-      : STEP_LABELS.CONSULTEE;
-  const totalSteps = stepLabels.length;
-
-  // Use wider layout for steps that need more horizontal space
-  const wideLayoutSteps = ["Availability"];
-  const useWideLayout = wideLayoutSteps.includes(stepLabels[step]);
-
-  // ORG_WORKSPACE handoff: after Personal Info commits the role, render the
-  // shared create-org wizard instead of this page's shell. The wizard
-  // owns the remaining 5-6 steps (Org Info → Review) and has its own
-  // stepper; afterLaunch flips `user.onboardingCompleted = true` so the
-  // user lands on their new org's home fully onboarded.
-  if (currentRole === "ORG_WORKSPACE" && step > 0) {
-    const userId = session?.user?.id;
-    // #863 — hostOrgsEnabled defaults to false here (host capability hidden),
-    // which is the honest state while ENABLE_HOST_ORGS is off. This is a client
-    // component with no server parent to read the flag; TODO(#863): thread the
-    // server flag when host orgs launch (e.g. a server action or a server shell).
-    return (
-      <CreateOrganizationWizard
-        onCancel={() => setStep(0)}
-        afterLaunch={async () => {
-          if (!userId) return;
-          await completeOrgWorkspaceOnboardingAction(userId);
-        }}
-      />
-    );
+  if (activeStep?.fullBleed) {
+    return <>{activeStep.render(stepContext)}</>;
   }
 
   return (
-    <FormProvider {...methods}>
-      <div className="min-h-screen bg-gradient-to-b from-muted to-background dark:from-gray-900 dark:to-gray-950">
-        {/* Header */}
-        <header className="border-b bg-card/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <svg
-                  className="w-5 h-5 text-primary-foreground"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M13 10V3L4 14h7v7l9-11h-7z"
-                  />
-                </svg>
-              </div>
-              <span className="text-xl font-semibold truncate">Familiarise</span>
-            </div>
-            <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-              <span className="text-sm text-muted-foreground">
-                Step {step + 1} of {totalSteps}
-              </span>
-              <button
-                onClick={() =>
-                  signOut({
-                    fetchOptions: {
-                      onSuccess: () => {
-                        window.location.href = "/";
-                      },
-                    },
-                  })
-                }
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                title="Sign out"
+    <div className="min-h-screen bg-gradient-to-b from-muted to-background dark:from-gray-900 dark:to-gray-950">
+      {/* Header */}
+      <header className="border-b bg-card/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+              <svg
+                className="w-5 h-5 text-primary-foreground"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </button>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
+              </svg>
             </div>
+            <span className="text-xl font-semibold truncate">Familiarise</span>
           </div>
-        </header>
+          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+            <span className="text-sm text-muted-foreground">
+              Step {step + 1} of {totalSteps}
+            </span>
+            <button
+              onClick={() =>
+                signOut({
+                  fetchOptions: {
+                    onSuccess: () => {
+                      window.location.href = "/";
+                    },
+                  },
+                })
+              }
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
 
-        {/* Main Content */}
-        <main
-          className={`container mx-auto px-4 py-8 ${useWideLayout ? "max-w-[80%]" : "max-w-3xl"}`}
-        >
-          {/* Progress Stepper */}
-          <div className="flex items-start justify-between mb-8">
-            {stepLabels.map((label, index) => (
-              <React.Fragment key={label}>
-                {/* Step circle + label */}
-                <div className="flex flex-col items-center">
-                  <div
-                    className={cn(
-                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all",
-                      index < step &&
-                        "bg-primary border-primary text-primary-foreground",
-                      index === step &&
-                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20",
-                      index > step &&
-                        "border-muted-foreground/30 text-muted-foreground",
-                    )}
-                  >
-                    {index < step ? (
-                      <Check className="w-4 h-4" />
-                    ) : (
-                      index + 1
-                    )}
-                  </div>
-                  <span
-                    className={cn(
-                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
-                      index <= step
-                        ? "text-primary font-medium"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {label}
-                  </span>
+      {/* Main Content */}
+      <main
+        className={`container mx-auto px-4 py-8 ${activeStep?.wide ? "max-w-[80%]" : "max-w-3xl"}`}
+      >
+        {/* Progress Stepper */}
+        <div className="flex items-start justify-between mb-8">
+          {steps.map(({ label }, index) => (
+            <React.Fragment key={label}>
+              {/* Step circle + label */}
+              <div className="flex flex-col items-center">
+                <div
+                  className={cn(
+                    "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all",
+                    index < step &&
+                      "bg-primary border-primary text-primary-foreground",
+                    index === step &&
+                      "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20",
+                    index > step &&
+                      "border-muted-foreground/30 text-muted-foreground",
+                  )}
+                >
+                  {index < step ? <Check className="w-4 h-4" /> : index + 1}
                 </div>
-                {/* Connector line */}
-                {index < stepLabels.length - 1 && (
-                  <div
-                    className={cn(
-                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
-                      index < step
-                        ? "bg-primary"
-                        : "bg-muted-foreground/20",
-                    )}
-                  />
-                )}
-              </React.Fragment>
-            ))}
-          </div>
+                <span
+                  className={cn(
+                    "text-xs mt-1.5 text-center max-w-[80px] truncate",
+                    index <= step
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
+              </div>
+              {/* Connector line */}
+              {index < steps.length - 1 && (
+                <div
+                  className={cn(
+                    "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
+                    index < step ? "bg-primary" : "bg-muted-foreground/20",
+                  )}
+                />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
 
-          {/* Form Card */}
-          <Card className="shadow-lg">
-            <CardHeader className="text-center pb-2">
-              <CardTitle className="text-fluid-2xl tracking-tight">
-                {step === 0 ? "Welcome! Let's get started" : stepLabels[step]}
-              </CardTitle>
-              <p className="text-muted-foreground text-sm mt-1">
-                {step === 0
-                  ? "Tell us a bit about yourself. You can always update this later."
-                  : "Complete the information below to continue."}
-              </p>
-            </CardHeader>
-            <CardContent className="pt-6">{renderFormStep()}</CardContent>
-          </Card>
+        {/* Form Card */}
+        <Card className="shadow-lg">
+          <CardHeader className="text-center pb-2">
+            <CardTitle className="text-fluid-2xl tracking-tight">
+              {step === 0 ? "Welcome! Let's get started" : activeStep?.label}
+            </CardTitle>
+            <p className="text-muted-foreground text-sm mt-1">
+              {step === 0
+                ? "Tell us a bit about yourself. You can always update this later."
+                : "Complete the information below to continue."}
+            </p>
+          </CardHeader>
+          <CardContent className="pt-6">
+            {activeStep?.render(stepContext)}
+          </CardContent>
+        </Card>
 
-          {/* Help Text */}
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Need help?{" "}
-            <a href="/support" className="text-primary hover:underline">
-              Contact support
-            </a>
-          </p>
-        </main>
-      </div>
-    </FormProvider>
+        {/* Help Text */}
+        <p className="text-center text-sm text-muted-foreground mt-6">
+          Need help?{" "}
+          <a href="/support" className="text-primary hover:underline">
+            Contact support
+          </a>
+        </p>
+      </main>
+    </div>
   );
 };
 
