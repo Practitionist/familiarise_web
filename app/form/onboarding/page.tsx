@@ -393,8 +393,8 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
-                // Dynamic imports widen to ComponentType; keep the runtime shape.
-                initialData={formData as Partial<OnboardingFormData>}
+                // Dynamic imports lose prop types; role branch guarantees shape.
+                initialData={formData as never}
               />
             );
           default:
@@ -415,7 +415,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData as Partial<OnboardingFormData>}
+                formData={formData as never}
               />
             );
           case "STAFF":
@@ -423,7 +423,7 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as Partial<OnboardingFormData>}
+                initialData={formData as never}
               />
             );
           default:
@@ -444,7 +444,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Partial<OnboardingFormData>}
+                formData={formData as never}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -453,7 +453,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as Partial<OnboardingFormData>}
+                formData={formData as never}
                 onGoToStep={handleGoToStep}
               />
             );
