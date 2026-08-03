@@ -39,6 +39,7 @@ import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { getEffectiveUserId } from "@/utils/auth";
+import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { UserProvider } from "./UserContext";
@@ -179,7 +180,11 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
-  const userId = getEffectiveUserId(session);
+  // Fall back to the server-resolved id: useSession() is still pending during
+  // SSR, so without this the query key below is ["user-details", undefined] and
+  // the server seed in app/dashboard/layout.tsx can never be read (#1105).
+  const serverUserId = useServerUserId();
+  const userId = getEffectiveUserId(session) ?? serverUserId;
 
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();
