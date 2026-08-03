@@ -24,10 +24,20 @@ import {
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
 
-// Stream behind the (now static) layout's instant skeleton instead of prerendering
-// at build — the static layout makes loading.tsx prefetchable, and force-dynamic
-// keeps the curated data fresh + off the build-time cross-region DB connect. (#932)
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. Nothing here is per-viewer — the root layout reads no
+// session (the Navbar is a client component on useSession()), and every section
+// below renders the same curated marketing data for signed-in and anonymous
+// visitors alike — so one cached HTML document is correct for everyone.
+//
+// This does NOT reintroduce the build-time cross-region DB connect that #932
+// avoided: revalidation happens on a request in the deployed region, never
+// during `next build`, so please don't "fix" this back to force-dynamic.
+//
+// 5 minutes: the underlying reads are already unstable_cache'd at 120-600s
+// (lib/data/home.ts), so this mostly saves the render, not the query. A newly
+// featured expert or review appears within one window, which is fine for a
+// curated marketing surface.
+export const revalidate = 300;
 
 // Each section reads independently; a transient pooler timeout (cross-region cold
 // connect, #932) in any one degrades that section to empty rather than throwing

@@ -10,9 +10,20 @@ import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader"
 import { ConsultantUnavailable } from "./components/ConsultantUnavailable";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
-// Per-visitor detail page: stream behind the static layout's instant skeleton,
-// never prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR per consultantId, not force-dynamic. The cache key is the expert being
+// viewed, never the viewer: this page reads no session, and the layout above it
+// reads none either. Real-time bookability is NOT in this HTML — the client
+// fetches /api/slots/availability-with-allocation on mount, so a cached
+// document can't show a stale "free" slot.
+//
+// Still not prerendered at build (#932) — with no generateStaticParams, each
+// slug renders on first request in the deployed region and is then reused.
+//
+// 2 minutes: uncached today (lib/data/consultant-detail.ts is only React.cache,
+// i.e. per-request), so this is the largest win here, but the page carries the
+// expert's own profile edits and availability template and they should not
+// watch their changes sit stale for long.
+export const revalidate = 120;
 
 type Params = Promise<{ consultantId: string }>;
 

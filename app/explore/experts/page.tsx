@@ -12,8 +12,18 @@ import {
   fallbackOnTransientDbError,
 } from "@/lib/data/fail-open";
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. This listing reads no session and takes no
+// searchParams (filtering happens in the client component below), so the
+// rendered HTML is identical for every visitor and safe to share.
+//
+// Still not prerendered at build — revalidation runs on a request in the
+// deployed region, so the build-time cross-region DB connect #932 removed
+// stays removed.
+//
+// 5 minutes to match getExpertsMetadata's own unstable_cache window
+// (lib/data/explore-experts.ts): the page can't be fresher than its data, so a
+// shorter interval would only re-render the same cached rows.
+export const revalidate = 300;
 
 function HeroSection({
   totalConsultants,

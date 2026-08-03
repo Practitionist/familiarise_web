@@ -14,8 +14,17 @@ import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
 } from "./OrganisationsInteractiveContent";
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. The directory reads no session and no searchParams
+// (filtering is client-side in OrganisationsInteractiveContent), and it lists
+// only `isPublic` ACTIVE orgs, so every visitor is entitled to the same HTML.
+//
+// Still not prerendered at build (#932) — revalidation happens on a request in
+// the deployed region.
+//
+// 5 minutes: unlike the expert reads this one has no unstable_cache layer, so
+// the interval is the only thing between visitors and the DB. Org listings turn
+// over on the order of days; five minutes of staleness is invisible.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Explore Organisations | Familiarise",

@@ -36,9 +36,21 @@ const PUBLIC_PLAN_CARD_SELECT = {
 } as const;
 
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-// (Replaces the prior `revalidate = 60`, inert while the layout forced dynamic.)
-export const dynamic = "force-dynamic";
+// ISR per orgSlug, not force-dynamic — restoring the `revalidate` this file
+// used to carry, now that the root layout is genuinely static (#932) so the
+// value is no longer inert. The cache key is the org being viewed, never the
+// viewer: no session is read here or in any layout above, and the query is
+// already scoped to `isPublic` ACTIVE orgs, so the HTML is public by
+// construction.
+//
+// Not prerendered at build either — with no generateStaticParams each slug
+// renders on first request in the deployed region.
+//
+// 2 minutes rather than the 5 used on the directory index: this is the surface
+// that links straight into checkout-bound plan pages, and the plan lists are
+// gated by eventPlanDiscoverableWhere(). A withdrawn plan lingering in cached
+// HTML is a dead-end click, so keep that window tight.
+export const revalidate = 120;
 
 // React.cache so generateMetadata() and the page body share one query per request
 // instead of running this heavy org read twice (more visible now it's per-request).
