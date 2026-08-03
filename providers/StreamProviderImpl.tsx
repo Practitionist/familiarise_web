@@ -12,8 +12,7 @@
 
 import { useCallback, useEffect, useState, useRef } from "react";
 import { StreamChat } from "stream-chat";
-import { Chat } from "stream-chat-react";
-import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
+import { StreamVideoClient } from "@stream-io/video-react-sdk";
 import {
   chatTokenProvider,
   tokenProvider,
@@ -23,12 +22,18 @@ import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.actio
 import { useUserData } from "@/hooks/useUserData";
 import { mapRoleToStream } from "@/lib/user";
 import { streamLogger } from "@/lib/stream-logger";
-import StreamErrorBoundary from "@/components/stream/StreamErrorBoundary";
-import {
-  StreamConnectionContext,
-  type StreamConnectionState,
-  type StreamProviderProps,
-} from "@/providers/StreamProvider";
+import { setStreamConnection } from "@/lib/stream/connection-store";
+
+/**
+ * The connector takes no `children`. It renders nothing and publishes the
+ * connection to the store instead — see lib/stream/connection-store.ts for why
+ * (SSR of the dashboard subtree, and the remount storm).
+ */
+export interface StreamConnectorProps {
+  userId: string;
+  enableChat?: boolean;
+  enableVideo?: boolean;
+}
 // Shared module-level client refs now live in an SDK-free module so SDK-free
 // callers can disconnect on logout without linking the Stream SDK. #248
 import {
@@ -71,11 +76,10 @@ interface SettledStreamClients {
 }
 
 const StreamProviderImpl = ({
-  children,
   userId,
   enableChat = true,
   enableVideo = true,
-}: StreamProviderProps) => {
+}: StreamConnectorProps) => {
   const [clients, setClients] = useState<SettledStreamClients | null>(null);
   const [chatConnected, setChatConnected] = useState(false);
   const [videoConnected, setVideoConnected] = useState(false);
@@ -84,7 +88,7 @@ const StreamProviderImpl = ({
   // We need BOTH a ref and state for retry count: the ref (connectionAttemptsRef)
   // is used inside setTimeout/async closures where state would be stale, while
   // this state variable drives re-renders so the UI shows the correct attempt count.
-  const [retryCount, setRetryCount] = useState(0);
+  const [, setRetryCount] = useState(0);
 
   // Use ref for connection attempts to avoid stale closures in retry logic
   const connectionAttemptsRef = useRef(0);
@@ -493,72 +497,32 @@ const StreamProviderImpl = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userDetails?.id, isLoading, connectServices]);
 
-  // Connection state for context
-  const connectionState: StreamConnectionState = {
-    chatConnected,
-    videoConnected,
-    isConnecting,
-    error,
-    retryConnection,
-  };
+  // Publish to the store rather than wrapping children. The wrapper set used to
+  // be derived here — `children` → `<StreamVideo>` → `<Chat>` — which changed
+  // the element type at that position once the sockets settled and remounted
+  // the whole dashboard (#248). The SDK contexts are now mounted by the
+  // surfaces that consume them; this component only reports state.
+  useEffect(() => {
+    setStreamConnection({
+      clients,
+      chatConnected,
+      videoConnected,
+      isConnecting,
+      error,
+    });
+  }, [clients, chatConnected, videoConnected, isConnecting, error]);
 
-  // #248: do NOT block children render on connection. Previously this returned
-  // a full-screen spinner until both clients connected, which gated the entire
-  // dashboard route (incl. home) behind the Stream connect-storm. We now always
-  // render children immediately; the Stream context providers wrap them once the
-  // clients are ready, and the video/chat consumers already guard a null client.
+  // The shell exposes `retryConnection` without importing the SDK bundle, so it
+  // asks for a retry by event rather than by calling into here directly.
+  useEffect(() => {
+    const onRetry = () => retryConnection();
+    window.addEventListener("stream:retry-connection", onRetry);
+    return () => window.removeEventListener("stream:retry-connection", onRetry);
+  }, [retryConnection]);
 
-  // The wrapper set is derived from ONE settled value and nested in a fixed
-  // order — Chat outside, StreamVideo inside — so the shape here is a pure
-  // function of `clients` rather than of which socket won the race. In the
-  // normal case that means exactly one shape change for the whole session:
-  // unwrapped while connecting, then wrapped once both connects settle.
-  //
-  // A connect that genuinely FAILS still costs a second change if a later retry
-  // succeeds. That is accepted: it is a degraded path, the retry loop is capped
-  // at 5 attempts, and withholding the client that did connect would break the
-  // sidebar's chat-unread badge on every route (#248).
-  let content = children;
-
-  if (clients?.video) {
-    content = <StreamVideo client={clients.video}>{content}</StreamVideo>;
-  }
-
-  if (clients?.chat) {
-    content = <Chat client={clients.chat}>{content}</Chat>;
-  }
-
-  // The connection-failed banner renders alongside children (not in place of
-  // them) so the underlying route stays usable while Stream retries/recovers.
-  return (
-    <StreamErrorBoundary
-      onError={(error, errorInfo) => {
-        streamLogger.error("Stream Provider Error", error, {
-          componentStack: errorInfo.componentStack,
-        });
-        setError(error.message);
-      }}
-      enableRetry={true}
-    >
-      <StreamConnectionContext.Provider value={connectionState}>
-        {error && retryCount >= 5 && (
-          <div className="flex flex-col items-center justify-center p-4">
-            <div className="text-red-600 text-center">
-              <h3 className="font-semibold mb-2">Connection Failed</h3>
-              <p className="text-sm mb-4">{error}</p>
-              <button
-                onClick={retryConnection}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Retry Connection
-              </button>
-            </div>
-          </div>
-        )}
-        {content}
-      </StreamConnectionContext.Provider>
-    </StreamErrorBoundary>
-  );
+  // Renders nothing: it is a sibling of `children`, not a wrapper. Consumers
+  // read connection state from the context in providers/StreamProvider.tsx.
+  return null;
 };
 
 export default StreamProviderImpl;
