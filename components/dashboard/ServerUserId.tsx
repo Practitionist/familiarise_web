@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 
 /**
  * The session user's id, resolved on the SERVER and handed to the client
@@ -20,19 +20,56 @@ import { createContext, useContext } from "react";
  * Identity only — never authorization. The guards still resolve the session
  * themselves; this exists so the FIRST render can name the right query key.
  */
-const ServerUserIdContext = createContext<string | undefined>(undefined);
+/**
+ * Facts the SERVER already knows about the session, for client code whose first
+ * render would otherwise have to wait on `useSession()`.
+ *
+ * `userId` fixes the query keys (see above). `role` and `firstOrgId` fix the
+ * ORG SCOPE segment: `useOrgScope` derives it from `useSession()` too, so during
+ * SSR it always resolved to `personal` while the server pages computed `all` for
+ * org members / admins / staff — a guaranteed prefetch-key miss on every
+ * hydration, then a second key flip once the session landed.
+ */
+export interface ServerSessionFacts {
+  userId: string | undefined;
+  role: string | undefined;
+  firstOrgId: string | null;
+}
+
+const EMPTY: ServerSessionFacts = {
+  userId: undefined,
+  role: undefined,
+  firstOrgId: null,
+};
+
+const ServerSessionFactsContext = createContext<ServerSessionFacts>(EMPTY);
 
 export function ServerUserIdProvider({
   userId,
+  role,
+  firstOrgId = null,
   children,
-}: Readonly<{ userId: string | undefined; children: React.ReactNode }>) {
+}: Readonly<{
+  userId: string | undefined;
+  role?: string | undefined;
+  firstOrgId?: string | null;
+  children: React.ReactNode;
+}>) {
+  const value = useMemo(
+    () => ({ userId, role, firstOrgId }),
+    [userId, role, firstOrgId],
+  );
   return (
-    <ServerUserIdContext.Provider value={userId}>
+    <ServerSessionFactsContext.Provider value={value}>
       {children}
-    </ServerUserIdContext.Provider>
+    </ServerSessionFactsContext.Provider>
   );
 }
 
 export function useServerUserId(): string | undefined {
-  return useContext(ServerUserIdContext);
+  return useContext(ServerSessionFactsContext).userId;
+}
+
+export function useServerSessionFacts(): ServerSessionFacts {
+  return useContext(ServerSessionFactsContext);
 }

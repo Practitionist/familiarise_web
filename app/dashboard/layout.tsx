@@ -59,7 +59,13 @@ export default async function DashboardLayout({
     .catch(() => undefined);
 
   return (
-    <ServerUserIdProvider userId={session.user.id}>
+    <ServerUserIdProvider
+      userId={session.user.id}
+      role={session.user.role}
+      firstOrgId={
+        session.user.organizationMemberships?.[0]?.organizationId ?? null
+      }
+    >
       <HydrationBoundary state={dehydrate(queryClient)}>
         {children}
       </HydrationBoundary>
