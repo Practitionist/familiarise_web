@@ -80,15 +80,18 @@ async function onboardingRedirectTarget(
 /**
  * Require an authenticated AND fully onboarded user.
  * Redirects to sign-in if no session, to onboarding if not completed or
- * profile is missing.
+ * profile is missing. Uses disableCookieCache to avoid stale values.
  *
- * Uses the Better Auth cookie cache (5 min) for steady-state layout gates so
- * soft-nav between dashboard pages does not re-run customSession Prisma work
- * on every request. Force-fresh with getSession(true) at onboarding/mutation
- * boundaries (see requireNotOnboarded and onboarding actions).
+ * Do NOT switch this to the cookie cache. This guard has no `banned` check of
+ * its own — it catches bans, DPDP erasure and revoked sessions only because the
+ * forced read finds no session row. A 5-minute cookie cache would keep those
+ * users inside /dashboard/admin, /checkout and /settings. The cache would also
+ * buy almost nothing: customSession re-runs its Prisma enrichment on every
+ * getSession call regardless, so the cache skips one query out of ~4. The
+ * per-render dedupe that actually helps is getSession's React.cache.
  */
 export async function requireOnboarded() {
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) {
     redirectWithCookieCleanup();
   }

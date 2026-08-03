@@ -77,18 +77,17 @@ const getTrendingClassPlanIds = unstable_cache(
     const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT cp.id
       FROM "ClassPlan" cp
-      INNER JOIN "Class" c ON c."classPlanId" = cp.id
-      INNER JOIN "Appointment" a ON a."classId" = c.id
-      INNER JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+      LEFT JOIN "Class" c ON c."classPlanId" = cp.id
+      LEFT JOIN "Appointment" a ON a."classId" = c.id AND a."deletedAt" IS NULL
+      LEFT JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+        AND soa."deletedAt" IS NULL
+        AND soa."createdAt" >= ${thirtyDaysAgo}
       LEFT JOIN "ConsultantProfile" cons ON cons.id = cp."consultantProfileId"
       WHERE cp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
         AND cp."archivedAt" IS NULL
         AND (cp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
-        AND a."deletedAt" IS NULL
-        AND soa."deletedAt" IS NULL
-        AND soa."createdAt" >= ${thirtyDaysAgo}
       GROUP BY cp.id
-      ORDER BY COUNT(soa.id) DESC
+      ORDER BY COUNT(soa.id) DESC, cp."createdAt" DESC
     `);
 
     return ranked.map((r) => r.id);
@@ -105,18 +104,17 @@ const getTrendingWebinarPlanIds = unstable_cache(
     const ranked = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT wp.id
       FROM "WebinarPlan" wp
-      INNER JOIN "Webinar" w ON w."webinarPlanId" = wp.id
-      INNER JOIN "Appointment" a ON a."webinarId" = w.id
-      INNER JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+      LEFT JOIN "Webinar" w ON w."webinarPlanId" = wp.id
+      LEFT JOIN "Appointment" a ON a."webinarId" = w.id AND a."deletedAt" IS NULL
+      LEFT JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+        AND soa."deletedAt" IS NULL
+        AND soa."createdAt" >= ${thirtyDaysAgo}
       LEFT JOIN "ConsultantProfile" cons ON cons.id = wp."consultantProfileId"
       WHERE wp.visibility IN ('PUBLIC', 'ORG_AND_PUBLIC')
         AND wp."archivedAt" IS NULL
         AND (wp."consultantProfileId" IS NULL OR cons."deletedAt" IS NULL)
-        AND a."deletedAt" IS NULL
-        AND soa."deletedAt" IS NULL
-        AND soa."createdAt" >= ${thirtyDaysAgo}
       GROUP BY wp.id
-      ORDER BY COUNT(soa.id) DESC
+      ORDER BY COUNT(soa.id) DESC, wp."createdAt" DESC
     `);
 
     return ranked.map((r) => r.id);

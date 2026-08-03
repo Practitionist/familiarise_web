@@ -61,6 +61,8 @@ export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
   activities: TConsultantActivity[];
   approvals: TConsultantApproval[];
+  /** Total pending requests — `approvals` is a capped preview, so don't count it. */
+  pendingRequestsCount: number;
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
 }

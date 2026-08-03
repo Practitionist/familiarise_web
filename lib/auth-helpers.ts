@@ -18,16 +18,18 @@ import {
  * Requires API authentication and returns the session or an error response.
  * Use this at the start of protected API route handlers.
  *
- * Defaults to the Better Auth cookie cache for read-heavy dashboard APIs.
- * Pass `{ fresh: true }` (or call getSession(true) directly) for money /
- * authz / ban-sensitive mutations that must not trust a stale cookie cache.
+ * Reads force-fresh by default. `session.user.role` comes from the cookie
+ * payload, so a cached read honours role demotion up to 5 minutes late — and
+ * ~86 call sites branch on that role directly (e.g. the ADMIN gate on DELETE
+ * /api/bookings/subscriptions/[id]). Opt into `{ fresh: false }` only for a
+ * route that reads no role and no ban-sensitive field.
  */
 export async function requireApiAuth(options?: {
   fresh?: boolean;
 }): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(options?.fresh === true);
+  const session = await getSession(options?.fresh !== false);
   if (!session?.user?.id) {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),

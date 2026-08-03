@@ -1,5 +1,6 @@
 // schemas/user.ts
 import { z } from "zod";
+import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
 
 // #region Enums
@@ -29,12 +30,10 @@ export const BudgetPreferenceEnum = z.enum([
 
 export const SessionTypeEnum = z.enum(["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"]);
 
-export const UserRoleEnum = z.enum([
-  "CONSULTANT",
-  "CONSULTEE",
-  "ADMIN",
-  "STAFF",
-]);
+// Derived from Prisma, not hand-listed: this drifted when ORG_WORKSPACE landed,
+// which made Partial<OnboardingFormData> unassignable to every step-form prop
+// type in app/form/onboarding and forced a chain of casts at the call sites.
+export const UserRoleEnum = z.nativeEnum(UserRole);
 
 export const ScheduleTypeEnum = z.enum(["WEEKLY", "CUSTOM"]);
 

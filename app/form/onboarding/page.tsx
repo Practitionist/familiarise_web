@@ -25,52 +25,67 @@ import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
 
 // Later steps + org wizard are code-split so the initial onboarding chunk
 // does not pay for schedule UI, review forms, or the create-org wizard.
+//
+// Every split step needs `loading` — next/dynamic renders null while the chunk
+// downloads, so without it pressing Next collapses the card to zero height and
+// reads as a frozen app on a slow connection.
+function StepLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[240px]">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+      <span className="sr-only">Loading this step…</span>
+    </div>
+  );
+}
+
+const stepChunk = { ssr: false, loading: () => <StepLoading /> } as const;
+
 const ConsultantPreferredScheduleForm = dynamic(
   () => import("./components/ConsultantPreferredScheduleForm"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsultantProfessionalStep = dynamic(
   () => import("./components/ConsultantProfessionalStep"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsultantAgreementAndVerificationStep = dynamic(
   () => import("./components/ConsultantAgreementAndVerificationStep"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsultantReviewForm = dynamic(
   () => import("./components/ConsultantReviewForm"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsulteeAgreementForm = dynamic(
   () => import("./components/ConsulteeAgreementForm"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsulteeProfileForm = dynamic(
   () => import("./components/ConsulteeProfileForm"),
-  { ssr: false },
+  stepChunk,
 );
 const ConsulteeReviewForm = dynamic(
   () => import("./components/ConsulteeReviewForm"),
-  { ssr: false },
+  stepChunk,
 );
 const StaffAgreementForm = dynamic(
   () => import("./components/StaffAgreementForm"),
-  { ssr: false },
+  stepChunk,
 );
 const StaffProfileForm = dynamic(
   () => import("./components/StaffProfileForm"),
-  { ssr: false },
+  stepChunk,
 );
 const StaffReviewForm = dynamic(
   () => import("./components/StaffReviewForm"),
-  { ssr: false },
+  stepChunk,
 );
 const CreateOrganizationWizard = dynamic(
   () =>
     import("@/components/organization/create-wizard/Wizard").then((m) => ({
       default: m.CreateOrganizationWizard,
     })),
-  { ssr: false },
+  stepChunk,
 );
 
 // Step labels for progress indicator
@@ -393,8 +408,7 @@ const MultiStepForm: React.FC = () => {
               <StaffProfileForm
                 onNext={handleNext}
                 onBack={handleBack}
-                // Dynamic imports lose prop types; role branch guarantees shape.
-                initialData={formData as never}
+                initialData={formData}
               />
             );
           default:
@@ -415,7 +429,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                formData={formData as never}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -423,7 +437,7 @@ const MultiStepForm: React.FC = () => {
               <StaffAgreementForm
                 onNext={handleNext}
                 onBack={handleBack}
-                initialData={formData as never}
+                initialData={formData}
               />
             );
           default:
@@ -444,7 +458,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as never}
+                formData={formData}
                 onGoToStep={handleGoToStep}
               />
             );
@@ -453,7 +467,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                formData={formData as never}
+                formData={formData}
                 onGoToStep={handleGoToStep}
               />
             );
