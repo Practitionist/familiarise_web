@@ -39,6 +39,16 @@ describe("dashboard shell overflow contract", () => {
     expect(block).not.toContain("100vh");
   });
 
+  it("dashboard layout mounts a document scroll lock", () => {
+    const layout = read("app/dashboard/layout.tsx");
+    const lock = read("components/dashboard/DashboardScrollLock.tsx");
+    const css = read("app/globals.css");
+    expect(layout).toContain("DashboardScrollLock");
+    expect(lock).toContain("dashboard-scroll-locked");
+    expect(css).toContain("html.dashboard-scroll-locked");
+    expect(css).toContain("overflow: hidden");
+  });
+
   it("HelpSkeleton does not nest min-h-screen inside the shell", () => {
     const src = read("components/dashboard/DashboardSkeletons.tsx");
     const start = src.indexOf("export function HelpSkeleton");

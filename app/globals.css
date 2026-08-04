@@ -184,6 +184,29 @@
     height: calc(100dvh - var(--maintenance-banner-height, 0px));
   }
 
+  /*
+   * Dashboard document scroll lock — see DashboardScrollLock.tsx.
+   * Beats body.min-h-screen from the root layout so the window cannot
+   * scroll past the viewport-sized shell into empty white space.
+   */
+  html.dashboard-scroll-locked,
+  html.dashboard-scroll-locked body {
+    overflow: hidden;
+    height: 100%;
+    max-height: 100dvh;
+  }
+
+  html.dashboard-scroll-locked body {
+    /* Tailwind min-h-screen on <body> must not re-open a document scrollport */
+    min-height: 0;
+  }
+
+  html.dashboard-scroll-locked body > .flex-1 {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
   /* Safe area inset utilities */
   .safe-top {
     padding-top: env(safe-area-inset-top, 0px);
