@@ -613,12 +613,14 @@ export function CollapsibleSidebar({
 }
 
 /**
- * Loading skeleton that matches {@link CollapsibleSidebar}'s visual footprint.
+ * Full-page loading skeleton that matches {@link CollapsibleSidebar}'s
+ * visual footprint (sidebar + content column).
  *
- * Render this while user/session data is still loading so the layout doesn't
- * flash between states. Used by both the admin and staff dashboard layouts —
- * keep it DRY with the real sidebar's classes so the width and background
- * stay aligned when the real component mounts.
+ * Use only as a *layout* fallback — when the shell itself has not mounted
+ * yet (e.g. admin/staff/org client layouts before session data). Do NOT use
+ * inside a segment `loading.tsx` whose parent layout already renders a
+ * shell; that nests a second `h-screen-maintenance` viewport. For those
+ * routes use a content-only skeleton such as `PageSkeleton`.
  */
 export function CollapsibleSidebarSkeleton() {
   return (
