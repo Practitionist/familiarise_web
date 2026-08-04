@@ -622,9 +622,9 @@ export function CollapsibleSidebar({
  */
 export function CollapsibleSidebarSkeleton() {
   return (
-    <div className="flex h-screen-maintenance bg-muted">
+    <div className="flex h-screen-maintenance overflow-hidden bg-muted">
       {/* Sidebar skeleton — mirrors the expanded w-64 layout */}
-      <aside className="w-64 border-r border-border bg-card p-4">
+      <aside className="h-full w-64 border-r border-border bg-card p-4">
         <Skeleton className="h-8 w-32 mb-6" />
         <div className="space-y-2">
           {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -633,7 +633,7 @@ export function CollapsibleSidebarSkeleton() {
         </div>
       </aside>
       {/* Main content skeleton */}
-      <main className="flex-1 p-6">
+      <main className="min-h-0 flex-1 p-6">
         <Skeleton className="h-8 w-64 mb-4" />
         <Skeleton className="h-48 w-full rounded-xl" />
       </main>

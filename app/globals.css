@@ -181,7 +181,7 @@
   }
 
   .h-screen-maintenance {
-    height: calc(100vh - var(--maintenance-banner-height, 0px));
+    height: calc(100dvh - var(--maintenance-banner-height, 0px));
   }
 
   /* Safe area inset utilities */
