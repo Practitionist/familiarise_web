@@ -64,6 +64,27 @@ describe("auth-broadcast remembered state", () => {
     expect(readAuthedIdentity()).toBeNull();
   });
 
+  it("clears the previous identity when the replacement write throws", () => {
+    writeAuthedFlag(true, IDENTITY);
+    const original = Storage.prototype.setItem;
+    const spy = jest
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key: string, value: string) {
+        if (key === "familiarise.auth_identity") {
+          throw new Error("QuotaExceededError");
+        }
+        original.call(this, key, value);
+      });
+    try {
+      writeAuthedFlag(true, { name: "Someone Else", image: null });
+    } finally {
+      spy.mockRestore();
+    }
+    // A failed write must not leave the previous account's identity behind.
+    expect(readAuthedIdentity()).toBeNull();
+    expect(readAuthedFlag()).toBe(false);
+  });
+
   it("tolerates a corrupt or partial identity payload", () => {
     localStorage.setItem("familiarise.auth_authed", "true");
     localStorage.setItem("familiarise.auth_identity", "{not json");

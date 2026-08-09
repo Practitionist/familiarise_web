@@ -71,14 +71,24 @@ export function writeAuthedFlag(
 ): void {
   if (typeof window === "undefined") return;
   try {
+    // Clear before writing, never after: if the replacement write throws
+    // (quota, Safari private mode) a clear-last order would leave the PREVIOUS
+    // account's identity sitting next to a true flag, and the next pending
+    // session would paint their name and avatar.
+    localStorage.removeItem(AUTHED_IDENTITY_KEY);
     localStorage.setItem(AUTHED_FLAG_KEY, authed ? "true" : "false");
     if (authed && identity) {
       localStorage.setItem(AUTHED_IDENTITY_KEY, JSON.stringify(identity));
-    } else {
-      localStorage.removeItem(AUTHED_IDENTITY_KEY);
     }
   } catch {
-    // best-effort — ignore
+    // Best-effort, but the invariant is not optional. Fall back to the
+    // signed-out shape, which costs a skeleton frame and leaks nothing.
+    try {
+      localStorage.removeItem(AUTHED_IDENTITY_KEY);
+      localStorage.setItem(AUTHED_FLAG_KEY, "false");
+    } catch {
+      // Storage is unavailable outright, so nothing was ever cached.
+    }
   }
 }
 
