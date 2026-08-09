@@ -16,8 +16,8 @@ import { moneyResultExtensions } from "./prisma-extensions";
 // 1123: on a newly created function instance the loop stalls for 24.9–25.3s, the
 // 3s connect budget fires at ~26s, and the retry immediately after connects in
 // 327–340ms. The database was never the slow part. Nothing configurable here
-// changes that number — see #1120. What helps is not invoking the function at all
-// (ISR cache hits) and retrying once past the stall (lib/data/fail-open.ts).
+// changes that number — see #1120 and #1124. The one lever that reliably helps is
+// not invoking the function at all, because an ISR cache hit pays no stall.
 const pgTimeoutMs = (name: string, fallback: number): number => {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
