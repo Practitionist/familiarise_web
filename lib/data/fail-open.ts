@@ -1,7 +1,7 @@
 /**
  * Fail-open helper for read-only list queries on public surfaces (explore pages).
  *
- * Returns `[]` ONLY for the transient DB-read-timeout class — the cold-query case
+ * Degrades ONLY for the transient DB-read-timeout class — the cold-query case
  * (pg connect/query budget, pool timeout) these pages must survive — and RETHROWS
  * everything else (mapper/serialization regressions, logic bugs) so real defects
  * still surface to the error boundary + Sentry rather than rendering an empty
@@ -15,11 +15,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
-// Degrading is right at request time and wrong at build time. The public explore
-// routes are prerendered during `next build`, so a transient pooler failure there
-// would bake an empty-but-valid page into the static HTML and serve it to everyone
-// for a whole revalidate window — a silent, uncatchable regression. Failing the
-// build instead is loud, retryable, and costs nothing but a re-run. (#932)
+// A transient pooler failure during `next build` would bake an empty-but-valid
+// page into static HTML and serve it to everyone for a whole revalidate window.
+// Failing the build instead is loud, retryable, and costs nothing but a re-run.
+// The build also gets a longer retry ladder than the request path. (#932)
 //
 // Next sets NEXT_PHASE to this constant for the duration of a production build
 // (next/dist/build/index.js), and never at request time on the deployed server.
