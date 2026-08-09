@@ -85,9 +85,11 @@ describe("org nav targets resolve", () => {
     // Guards the list above against drift: if someone adds a nav item and
     // forgets to add it here, this fails rather than silently under-testing.
     const layout = readFileSync(
-      join(APP, "organization/[orgId]/layout.tsx"),
+      join(APP, "organization/[orgId]/OrgDashboardShell.tsx"),
       "utf8",
     ) as string;
+    // Nav lives in OrgDashboardShell; layout.tsx is the server wrapper that seeds
+    // the org-details query. Same split org-workspace already uses.
     // Loose on purpose: items are written both multi-line and inline
     // (`{ name: "Overview", icon: Home, path: "home" }`), and MOBILE_TABS
     // repeats a subset — dedupe handles the overlap.
@@ -163,7 +165,7 @@ describe("no redundant group nesting", () => {
   it.each([
     ["consultant", "consultant/[consultantId]/layout.tsx"],
     ["consultee", "consultee/[consulteeId]/layout.tsx"],
-    ["organization", "organization/[orgId]/layout.tsx"],
+    ["organization", "organization/[orgId]/OrgDashboardShell.tsx"],
   ])("%s sidebar has no label that equals a lone item name", (_name, rel) => {
     const src = readFileSync(join(APP, rel), "utf8");
 
