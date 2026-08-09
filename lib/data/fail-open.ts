@@ -65,6 +65,11 @@ const REQUEST_RETRY_DELAYS_MS = [250];
 /**
  * Retries a read on the transient-timeout class only. A mapper bug fails
  * identically every time and must surface immediately, so it is rethrown at once.
+ *
+ * Safe to wrap a `React.cache`d reader: `cache` memoizes fulfilled results but
+ * NOT a rejection, so the retry really re-runs the query rather than replaying the
+ * failure. Verified against the React that Next 15.5.15 vendors
+ * (19.2.0-canary-0bdb9206), both for a thrown error and a rejected promise.
  */
 export async function withTransientRetry<T>(read: () => Promise<T>): Promise<T> {
   const delays = isProductionBuild()
@@ -134,10 +139,11 @@ export function emptyOnTransientDbError(
 
 /**
  * Object-shaped sibling of {@link emptyOnTransientDbError}: returns `fallback`
- * for the transient-timeout class and RETHROWS everything else. For non-list
- * reads whose page can still render with a degraded value — the experts-page
- * metadata bundle (empty filters + marketing hero defaults) or a detail page's
- * `generateMetadata` (a generic title beats a 500 with no error boundary).
+ * for the transient-timeout class and RETHROWS everything else. For a non-list
+ * read on a `force-dynamic` route or a Route Handler whose response can still be
+ * useful with a degraded value. It has no call site today — every former one was
+ * on a route that is ISR now (#1119) — and is kept as the object-shaped half of
+ * the pair rather than deleted and re-added at the next dynamic surface.
  */
 export function fallbackOnTransientDbError<T>(
   context: string,
