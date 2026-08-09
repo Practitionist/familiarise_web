@@ -8,11 +8,17 @@ import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
  * Server-side data access for the landing page.
  *
  * Wrapped in unstable_cache so the curated landing-page reads are served from the
- * Next data cache (cross-request, cross-instance on Netlify) instead of opening a
- * cross-region pooled connection on every request — the root layout's session read
- * forces these pages dynamic, so page-level ISR can't apply and the cache has to
- * live at the data layer. Bounded staleness is fine for a marketing surface; the
+ * Next data cache (cross-request, cross-instance on Netlify — the adapter backs the
+ * handler with a regional blob store) instead of opening a cross-region pooled
+ * connection on every request. Bounded staleness is fine for a marketing surface; the
  * consumers don't read the rows' Date fields, so cache serialization is safe (#932).
+ *
+ * These windows are deliberately the SAME as `/`'s route-level revalidate. Next
+ * resolves a route's revalidate to the minimum of its segment value and every data
+ * cache entry read while rendering it, so a shorter window here would silently cap
+ * the page's ISR interval — which is exactly why the landing page was regenerating
+ * every 2 minutes while its own config asked for longer. Freshness comes from the
+ * on-demand purges at the write sites, not from a short interval.
  */
 
 export const getHomeExperts = unstable_cache(
@@ -65,7 +71,7 @@ export const getHomeExperts = unstable_cache(
     return toPlain(consultants);
   },
   ["home-experts"],
-  { revalidate: 120, tags: ["experts", "home"] },
+  { revalidate: 3600, tags: ["experts", "home"] },
 );
 
 export const getHomeReviews = unstable_cache(
@@ -97,7 +103,7 @@ export const getHomeReviews = unstable_cache(
     return toPlain(reviews);
   },
   ["home-reviews"],
-  { revalidate: 120, tags: ["reviews", "home"] },
+  { revalidate: 3600, tags: ["reviews", "home"] },
 );
 
 export const getHomeImages = unstable_cache(
@@ -109,5 +115,5 @@ export const getHomeImages = unstable_cache(
     return images || [];
   },
   ["home-images"],
-  { revalidate: 600, tags: ["home-images"] },
+  { revalidate: 3600, tags: ["home-images"] },
 );

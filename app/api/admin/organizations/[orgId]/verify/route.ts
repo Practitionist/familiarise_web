@@ -14,6 +14,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
+import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   IllegalTransitionError,
@@ -177,6 +178,11 @@ export async function POST(
       // updateMany returns no row — re-read in-tx for the response body.
       return tx.organization.findUniqueOrThrow({ where: { id: orgId } });
     });
+
+    // ACTIVE is half the public gate: VERIFY/REACTIVATE put the org into the
+    // directory, SUSPEND/DEACTIVATE take it out. (REJECT only stamps sub-state
+    // and leaves the org PENDING, so it never reaches here.)
+    purgeOrgSurfaces(updated.slug);
 
     return NextResponse.json({ organization: updated });
   } catch (err) {

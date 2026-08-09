@@ -10,6 +10,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { recomputeConsultantRating } from "@/lib/reviews";
+import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { UpdateReviewSchema } from "@/schemas/feedbacks";
 
@@ -122,6 +123,8 @@ export async function PUT(
       ),
     );
 
+    purgeReviewSurfaces(review.consultantProfileId);
+
     return NextResponse.json(updatedReview, { status: 200 });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
@@ -178,6 +181,8 @@ export async function DELETE(
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
+
+    purgeReviewSurfaces(review.consultantProfileId);
 
     return NextResponse.json(
       { message: "Review deleted successfully" },

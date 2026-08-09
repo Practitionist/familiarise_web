@@ -7,6 +7,7 @@ import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
+import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
   hasCompletedBookingWith,
@@ -196,6 +197,11 @@ export async function POST(req: NextRequest) {
       planTitle: undefined,
       dashboardUrl: "/dashboard/consultant/reviews",
     });
+
+    // Reviews are the landing page's testimonials and they move the expert's
+    // denormalized rating, which orders the directory — both surfaces are stale
+    // until purged, and the landing page's window is an hour.
+    purgeReviewSurfaces(newReview.consultantProfileId);
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {

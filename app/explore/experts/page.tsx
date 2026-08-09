@@ -10,19 +10,27 @@ import {
 import {
   emptyOnTransientDbError,
   fallbackOnTransientDbError,
+  withBuildTimeRetry,
 } from "@/lib/data/fail-open";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
 // rendered HTML is identical for every visitor and safe to share.
 //
-// Still not prerendered at build — revalidation runs on a request in the
-// deployed region, so the build-time cross-region DB connect #932 removed
-// stays removed.
+// force-dynamic made this route uncacheable at the CDN (Next sends dynamic pages
+// `private, no-store`), so every visitor paid a cross-region cold DB round trip.
+// Prerendered HTML is served off the CDN with no function invocation.
 //
-// 5 minutes to match getExpertsMetadata's own unstable_cache window
-// (lib/data/explore-experts.ts): the page can't be fresher than its data, so a
-// shorter interval would only re-render the same cached rows.
+// This route IS prerendered during `next build`, which is exactly the read #932
+// saw fail on a cold cross-region pooler connect. That is guarded rather than
+// avoided: fail-open rethrows during the build phase (lib/data/fail-open.ts), so
+// a flaky build fails loudly instead of shipping an empty experts directory.
+//
+// 5 minutes, matched by the unstable_cache windows on the reads below so the
+// declared interval is the effective one — Next resolves a route's revalidate to
+// the MINIMUM of the segment value and every data-cache entry read during the
+// render, so a shorter window underneath would silently win. New and updated
+// profiles purge this path on demand at the write sites.
 export const revalidate = 300;
 
 function HeroSection({
@@ -96,16 +104,16 @@ export default async function ExploreExperts() {
   // the pg query budget) renders an empty row instead of erroring the whole page.
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      getExpertsMetadata().catch(
+      withBuildTimeRetry(getExpertsMetadata).catch(
         fallbackOnTransientDbError("experts metadata", EMPTY_EXPERTS_METADATA),
       ),
-      getCuratedExperts("rating", 5).catch(
+      withBuildTimeRetry(() => getCuratedExperts("rating", 5)).catch(
         emptyOnTransientDbError("featured experts"),
       ),
-      getCuratedExperts("trending", 8).catch(
+      withBuildTimeRetry(() => getCuratedExperts("trending", 8)).catch(
         emptyOnTransientDbError("trending experts"),
       ),
-      getCuratedExperts("newest", 8).catch(
+      withBuildTimeRetry(() => getCuratedExperts("newest", 8)).catch(
         emptyOnTransientDbError("newest experts"),
       ),
     ]);
