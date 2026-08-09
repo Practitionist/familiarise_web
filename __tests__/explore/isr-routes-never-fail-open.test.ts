@@ -52,7 +52,13 @@ const degrades = (src: string) => /perRequest/.test(src);
 // NOTHING cannot report what it swallowed, to Sentry or anywhere else. Binding
 // the error is the floor. `catch (e) {` passes; `catch {` does not. `.catch(fn)`
 // is untouched — that is a call, not a clause.
-const hasBareCatch = (src: string) => /(?:^|[^.\w])catch\s*\{/.test(src);
+//
+// Comments are matched between `catch` and `{` because `\s` alone does not, and
+// `catch /* why */ {` is both legal and exactly what someone reaches for when
+// explaining why a swallow is fine. A guard a comment can switch off is worse
+// than no guard, because it still reads as coverage.
+const hasBareCatch = (src: string) =>
+  /(?:^|[^.\w])catch\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*\{/.test(src);
 
 describe("#1119 — a cacheable route must never fail open", () => {
   it("finds the route files it is supposed to be guarding", () => {
@@ -88,9 +94,16 @@ describe("#1119 — a cacheable route must never fail open", () => {
     // so silently, which is the exact failure mode this whole file exists for.
     expect(hasBareCatch("try { x() } catch { return [] }")).toBe(true);
     expect(hasBareCatch("try { x() } catch{return null}")).toBe(true);
-    expect(hasBareCatch("try { x() } catch (err) { report(err); return [] }")).toBe(
-      false,
-    );
+    // A comment between the clause and its body must not hide it.
+    expect(
+      hasBareCatch("try { x() } catch /* transient only */ { return [] }"),
+    ).toBe(true);
+    expect(
+      hasBareCatch("try { x() } catch\n  // safe, see #123\n{ return [] }"),
+    ).toBe(true);
+    expect(
+      hasBareCatch("try { x() } catch (err) { report(err); return [] }"),
+    ).toBe(false);
     // A `.catch(handler)` call is the sanctioned form and must not be flagged.
     expect(hasBareCatch("read().catch(emptyOnTransientDbError('x'))")).toBe(
       false,
