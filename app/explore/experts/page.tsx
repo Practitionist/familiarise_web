@@ -10,7 +10,7 @@ import {
 import {
   emptyOnTransientDbError,
   fallbackOnTransientDbError,
-  withBuildTimeRetry,
+  withTransientRetry,
 } from "@/lib/data/fail-open";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
@@ -104,16 +104,16 @@ export default async function ExploreExperts() {
   // the pg query budget) renders an empty row instead of erroring the whole page.
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      withBuildTimeRetry(getExpertsMetadata).catch(
+      withTransientRetry(getExpertsMetadata).catch(
         fallbackOnTransientDbError("experts metadata", EMPTY_EXPERTS_METADATA),
       ),
-      withBuildTimeRetry(() => getCuratedExperts("rating", 5)).catch(
+      withTransientRetry(() => getCuratedExperts("rating", 5)).catch(
         emptyOnTransientDbError("featured experts"),
       ),
-      withBuildTimeRetry(() => getCuratedExperts("trending", 8)).catch(
+      withTransientRetry(() => getCuratedExperts("trending", 8)).catch(
         emptyOnTransientDbError("trending experts"),
       ),
-      withBuildTimeRetry(() => getCuratedExperts("newest", 8)).catch(
+      withTransientRetry(() => getCuratedExperts("newest", 8)).catch(
         emptyOnTransientDbError("newest experts"),
       ),
     ]);

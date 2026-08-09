@@ -17,6 +17,7 @@ let invocations = 0;
 export async function GET() {
   const invocation = ++invocations;
   const t0 = Date.now();
+  const processUptimeMs = Math.round(process.uptime() * 1000);
 
   // Event-loop lag: if a 3s pg timer fires at 30s, the loop was stalled.
   let maxLagMs = 0;
@@ -26,6 +27,15 @@ export async function GET() {
     maxLagMs = Math.max(maxLagMs, now - last - 50);
     last = now;
   }, 50);
+
+  // Phase A: 400ms of pure idle awaiting, no database. Separates a general
+  // cold-instance CPU stall from one caused by first Prisma use.
+  const idleStart = Date.now();
+  while (Date.now() - idleStart < 400) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const idleLagMs = maxLagMs;
+  const idlePhaseMs = Date.now() - idleStart;
 
   const attempts: Array<{ ms: number; ok: boolean; err?: string }> = [];
   for (let i = 0; i < 3; i++) {
@@ -50,8 +60,11 @@ export async function GET() {
     {
       instanceId: INSTANCE_ID,
       instanceAgeMs: t0 - INSTANCE_BOOTED_AT,
+      processUptimeMs,
       invocation,
       totalMs: Date.now() - t0,
+      idlePhaseMs,
+      idleLagMs,
       maxLagMs,
       attempts,
       env: {

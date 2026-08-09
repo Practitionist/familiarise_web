@@ -1,8 +1,8 @@
 /**
- * The public explore routes are prerendered during `next build`, so a transient
- * pooler timeout there would bake an empty page into static HTML and serve it to
- * every visitor for a whole revalidate window. These helpers must therefore fail
- * OPEN at request time and CLOSED during the build. (#932)
+ * Fail-open is only safe where the degraded result reaches the ONE request that
+ * hit the failure. Build output and the ISR/durable cache are both persisted and
+ * replayed to every later visitor, so degrading is opt-in per call site
+ * (`perRequest`) and everything else fails CLOSED. (#932, #1119)
  */
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
@@ -10,7 +10,7 @@ import {
   emptyOnTransientDbError,
   fallbackOnTransientDbError,
   isTransientDbError,
-  withBuildTimeRetry,
+  withTransientRetry,
 } from "@/lib/data/fail-open";
 
 const transient = Object.assign(new Error("pool timeout"), { code: "P2024" });
@@ -35,45 +35,83 @@ describe("fail-open transient classification", () => {
   });
 });
 
-describe("request phase (fail open)", () => {
+describe("cacheable render (fail closed by default)", () => {
   beforeEach(() => setBuildPhase(false));
 
-  it("emptyOnTransientDbError degrades a transient error to []", () => {
-    expect(emptyOnTransientDbError("ctx")(transient)).toEqual([]);
-  });
-
-  it("fallbackOnTransientDbError degrades a transient error to the fallback", () => {
-    expect(fallbackOnTransientDbError("ctx", { total: 0 })(transient)).toEqual({
-      total: 0,
-    });
-  });
-
-  it("still rethrows non-transient errors", () => {
-    expect(() => emptyOnTransientDbError("ctx")(real)).toThrow(real);
-    expect(() => fallbackOnTransientDbError("ctx", null)(real)).toThrow(real);
-  });
-});
-
-describe("production build phase (fail closed)", () => {
-  beforeEach(() => setBuildPhase(true));
-
-  it("emptyOnTransientDbError rethrows rather than baking an empty page", () => {
+  // The #1119 regression guard: without `perRequest`, a transient failure must
+  // NOT become a 200 that Netlify writes into the durable cache.
+  it("emptyOnTransientDbError rethrows when the call site is not per-request", () => {
     expect(() => emptyOnTransientDbError("ctx")(transient)).toThrow(transient);
   });
 
-  it("fallbackOnTransientDbError rethrows rather than baking a fallback page", () => {
+  it("fallbackOnTransientDbError rethrows when the call site is not per-request", () => {
     expect(() => fallbackOnTransientDbError("ctx", null)(transient)).toThrow(
       transient,
     );
   });
 });
 
-describe("withBuildTimeRetry", () => {
-  it("does not retry at request time — one attempt, error propagates", async () => {
+describe("per-request render (fail open)", () => {
+  beforeEach(() => setBuildPhase(false));
+
+  it("emptyOnTransientDbError degrades a transient error to []", () => {
+    expect(
+      emptyOnTransientDbError("ctx", { perRequest: true })(transient),
+    ).toEqual([]);
+  });
+
+  it("fallbackOnTransientDbError degrades a transient error to the fallback", () => {
+    expect(
+      fallbackOnTransientDbError(
+        "ctx",
+        { total: 0 },
+        { perRequest: true },
+      )(transient),
+    ).toEqual({ total: 0 });
+  });
+
+  it("still rethrows non-transient errors", () => {
+    expect(() =>
+      emptyOnTransientDbError("ctx", { perRequest: true })(real),
+    ).toThrow(real);
+    expect(() =>
+      fallbackOnTransientDbError("ctx", null, { perRequest: true })(real),
+    ).toThrow(real);
+  });
+});
+
+describe("production build phase (fail closed even when opted in)", () => {
+  beforeEach(() => setBuildPhase(true));
+
+  it("emptyOnTransientDbError rethrows rather than baking an empty page", () => {
+    expect(() =>
+      emptyOnTransientDbError("ctx", { perRequest: true })(transient),
+    ).toThrow(transient);
+  });
+
+  it("fallbackOnTransientDbError rethrows rather than baking a fallback page", () => {
+    expect(() =>
+      fallbackOnTransientDbError("ctx", null, { perRequest: true })(transient),
+    ).toThrow(transient);
+  });
+});
+
+describe("withTransientRetry", () => {
+  it("retries once at request time and succeeds on the second attempt", async () => {
+    setBuildPhase(false);
+    const read = jest
+      .fn()
+      .mockRejectedValueOnce(transient)
+      .mockResolvedValue("ok");
+    await expect(withTransientRetry(read)).resolves.toBe("ok");
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after one request-time retry so a saturated pooler surfaces fast", async () => {
     setBuildPhase(false);
     const read = jest.fn().mockRejectedValue(transient);
-    await expect(withBuildTimeRetry(read)).rejects.toThrow(transient);
-    expect(read).toHaveBeenCalledTimes(1);
+    await expect(withTransientRetry(read)).rejects.toThrow(transient);
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
   it("retries a transient failure during the build and succeeds", async () => {
@@ -82,21 +120,21 @@ describe("withBuildTimeRetry", () => {
       .fn()
       .mockRejectedValueOnce(transient)
       .mockResolvedValue("ok");
-    await expect(withBuildTimeRetry(read)).resolves.toBe("ok");
+    await expect(withTransientRetry(read)).resolves.toBe("ok");
     expect(read).toHaveBeenCalledTimes(2);
   });
 
-  it("gives up after the configured attempts and fails the build", async () => {
+  it("gives up after the configured build attempts and fails the build", async () => {
     setBuildPhase(true);
     const read = jest.fn().mockRejectedValue(transient);
-    await expect(withBuildTimeRetry(read)).rejects.toThrow(transient);
+    await expect(withTransientRetry(read)).rejects.toThrow(transient);
     expect(read).toHaveBeenCalledTimes(3);
   });
 
-  it("does not retry a non-transient error during the build", async () => {
-    setBuildPhase(true);
+  it("does not retry a non-transient error", async () => {
+    setBuildPhase(false);
     const read = jest.fn().mockRejectedValue(real);
-    await expect(withBuildTimeRetry(read)).rejects.toThrow(real);
+    await expect(withTransientRetry(read)).rejects.toThrow(real);
     expect(read).toHaveBeenCalledTimes(1);
   });
 });

@@ -19,7 +19,7 @@ import { SatisfiedTestimonial } from "@/app/explore/experts/components/Satisfied
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
 import {
   emptyOnTransientDbError,
-  withBuildTimeRetry,
+  withTransientRetry,
 } from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
@@ -54,14 +54,14 @@ export const revalidate = 3600;
 // connect, #932) in any one degrades that section to empty rather than throwing
 // past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await withBuildTimeRetry(getHomeImages).catch(
+  const images = await withTransientRetry(getHomeImages).catch(
     emptyOnTransientDbError("home images"),
   );
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await withBuildTimeRetry(getHomeExperts).catch(
+  const experts = await withTransientRetry(getHomeExperts).catch(
     emptyOnTransientDbError("home experts"),
   );
   // Hide the section rather than render an empty marquee under its headers when
@@ -72,7 +72,7 @@ async function FeaturedExpertsLoader() {
 }
 
 async function ReviewsLoader() {
-  const reviews = await withBuildTimeRetry(getHomeReviews).catch(
+  const reviews = await withTransientRetry(getHomeReviews).catch(
     emptyOnTransientDbError("home reviews"),
   );
   if (reviews.length === 0) return null;

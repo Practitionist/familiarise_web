@@ -8,10 +8,9 @@
  * section. The transient case is reported to Sentry (warning) so a recurrence of
  * the cold-query / schema-drift condition stays alertable. (#925, #929 review.)
  *
- * Fail-open applies at REQUEST time only. During `next build` every helper here
- * rethrows, because a degraded render that gets prerendered is served to every
- * visitor until the next revalidation instead of just to the one request that hit
- * the timeout.
+ * Fail-open applies only where the degraded result reaches the ONE request that
+ * hit the failure. It is opt-in per call site via `perRequest`, and the default
+ * is to rethrow — see {@link mayDegrade}.
  */
 import * as Sentry from "@sentry/nextjs";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
@@ -28,36 +27,59 @@ function isProductionBuild(): boolean {
   return process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD;
 }
 
+export type FailOpenOptions = {
+  /**
+   * Set this ONLY where the render is genuinely per-request — a route that
+   * exports `dynamic = "force-dynamic"`, or a Route Handler. Leave it unset on
+   * anything with a `revalidate` export.
+   */
+  perRequest?: boolean;
+};
+
+// The build-phase guard was never the whole story. Since #1110 the explore
+// routes are ISR, so a 200 carrying a degraded body is written to the Netlify
+// durable cache and replayed to every visitor for the rest of the revalidate
+// window — measured: one such render was served back at 0.3s with a climbing
+// `age`, so the broken page became the FAST one and nothing looked wrong. Build
+// output and the ISR cache are the same hazard: a render that is persisted and
+// replayed must never carry a swallowed failure. Rethrowing instead costs the
+// one unlucky visitor a 500, writes nothing to the cache, and leaves any
+// previously cached good copy in place for everyone else. (#1119)
+function mayDegrade(options?: FailOpenOptions): boolean {
+  return Boolean(options?.perRequest) && !isProductionBuild();
+}
+
 // #932 was a COLD cross-region pooler connect, so the first attempt is far more
-// likely to fail than the second. Retrying only during the build keeps request-path
-// latency untouched while converting the most likely build failure into a success.
-// Build-phase only, so the extra wall-clock is paid once per deploy, not per visitor.
+// likely to fail than the second. The build can afford a long ladder because the
+// wall-clock is paid once per deploy rather than once per visitor.
 const BUILD_RETRY_DELAYS_MS = [500, 2000];
 
+// The request path now retries too, which the earlier build-only shape ruled out
+// on the assumption that the first failure meant the pooler was unreachable.
+// Measured on a preview (#1120): the connect that "timed out" was a casualty of a
+// ~25s event-loop stall on a newly created instance, and the very next attempt
+// connected in 327ms and 340ms. So the retry is close to free exactly when it
+// fires, and it is what turns a degraded render back into a real one. One attempt
+// only — a genuinely saturated pooler must still surface quickly. (#1119, #1120)
+const REQUEST_RETRY_DELAYS_MS = [250];
+
 /**
- * Wraps a read so it is retried during `next build` only. Returns the reader
- * untouched at request time — the fail-open path below already handles that case,
- * and a retry there would add latency to a page that is about to degrade anyway.
+ * Retries a read on the transient-timeout class only. A mapper bug fails
+ * identically every time and must surface immediately, so it is rethrown at once.
  */
-export async function withBuildTimeRetry<T>(read: () => Promise<T>): Promise<T> {
-  if (!isProductionBuild()) return read();
+export async function withTransientRetry<T>(read: () => Promise<T>): Promise<T> {
+  const delays = isProductionBuild()
+    ? BUILD_RETRY_DELAYS_MS
+    : REQUEST_RETRY_DELAYS_MS;
 
   let lastError: unknown;
-  for (let attempt = 0; attempt <= BUILD_RETRY_DELAYS_MS.length; attempt++) {
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
     try {
       return await read();
     } catch (err) {
       lastError = err;
-      // Only the transient class is worth retrying; a mapper bug fails identically
-      // every time and should surface immediately.
-      if (!isTransientDbError(err) || attempt === BUILD_RETRY_DELAYS_MS.length) {
-        throw err;
-      }
-      console.warn(
-        `[fail-open] transient DB error during build, retrying in ${BUILD_RETRY_DELAYS_MS[attempt]}ms:`,
-        err instanceof Error ? err.message : String(err),
-      );
-      await new Promise((r) => setTimeout(r, BUILD_RETRY_DELAYS_MS[attempt]));
+      if (!isTransientDbError(err) || attempt === delays.length) throw err;
+      await new Promise((r) => setTimeout(r, delays[attempt]));
     }
   }
   throw lastError;
@@ -99,11 +121,13 @@ export function reportTransient(
   });
 }
 
-export function emptyOnTransientDbError(context: string) {
+export function emptyOnTransientDbError(
+  context: string,
+  options?: FailOpenOptions,
+) {
   return (err: unknown): never[] => {
     if (!isTransientDbError(err)) throw err;
-    // Never bake a degraded render into a prerendered page — see isProductionBuild.
-    if (isProductionBuild()) throw err;
+    if (!mayDegrade(options)) throw err;
     reportTransient(context, err);
     return [];
   };
@@ -116,11 +140,14 @@ export function emptyOnTransientDbError(context: string) {
  * metadata bundle (empty filters + marketing hero defaults) or a detail page's
  * `generateMetadata` (a generic title beats a 500 with no error boundary).
  */
-export function fallbackOnTransientDbError<T>(context: string, fallback: T) {
+export function fallbackOnTransientDbError<T>(
+  context: string,
+  fallback: T,
+  options?: FailOpenOptions,
+) {
   return (err: unknown): T => {
     if (!isTransientDbError(err)) throw err;
-    // Never bake a degraded render into a prerendered page — see isProductionBuild.
-    if (isProductionBuild()) throw err;
+    if (!mayDegrade(options)) throw err;
     reportTransient(context, err);
     return fallback;
   };

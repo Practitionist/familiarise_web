@@ -10,7 +10,7 @@ import {
 } from "@/lib/data/explore-organisations";
 import {
   fallbackOnTransientDbError,
-  withBuildTimeRetry,
+  withTransientRetry,
 } from "@/lib/data/fail-open";
 
 import OrganisationsInteractiveContent, {
@@ -52,10 +52,10 @@ async function OrganisationsDirectory() {
   // Both reads degrade rather than crash the page on a transient pooler
   // timeout (cross-region cold connect, #932).
   const [meta, firstPage] = await Promise.all([
-    withBuildTimeRetry(getOrganisationsMetadata).catch(
+    withTransientRetry(getOrganisationsMetadata).catch(
       fallbackOnTransientDbError("org directory metadata", EMPTY_METADATA),
     ),
-    withBuildTimeRetry(() =>
+    withTransientRetry(() =>
       getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS),
     ).catch(
       fallbackOnTransientDbError("org directory page", {

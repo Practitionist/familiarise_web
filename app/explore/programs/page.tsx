@@ -56,15 +56,19 @@ export default async function ExplorePrograms() {
     levels,
   ] = await Promise.all([
     getCuratedPrograms("all", "trending", 8).catch(
-      emptyOnTransientDbError("trending programs"),
+      emptyOnTransientDbError("trending programs", { perRequest: true }),
     ),
     getCuratedPrograms("all", "newest", 8).catch(
-      emptyOnTransientDbError("newest programs"),
+      emptyOnTransientDbError("newest programs", { perRequest: true }),
     ),
-    getTopicsWithCount("all").catch(emptyOnTransientDbError("topics")),
+    getTopicsWithCount("all").catch(
+      emptyOnTransientDbError("topics", { perRequest: true }),
+    ),
     fetchProgramStats(),
     getViewerOrgs(),
-    getCachedProgramLevels().catch(emptyOnTransientDbError("program levels")),
+    getCachedProgramLevels().catch(
+      emptyOnTransientDbError("program levels", { perRequest: true }),
+    ),
   ]);
 
   return (
