@@ -78,6 +78,10 @@ export function buildRescheduleSubject(
     title: string;
     typeLabel: BookingTypeLabel;
     sessionDurationInHours?: number;
+    /** Consultation/Subscription/Webinar/Class id for "This booking" /
+     * "Being moved" paint. Absent for Trial (no event-slots fetch). */
+    eventType?: SlotPickerSubject["eventType"];
+    eventId?: string;
   } | null => {
     switch (appointment.appointmentType) {
       case "CONSULTATION": {
@@ -91,6 +95,8 @@ export function buildRescheduleSubject(
           title: plan?.title ?? "Consultation",
           typeLabel: "Consultation",
           sessionDurationInHours: plan?.durationInHours,
+          eventType: "consultation",
+          eventId: appointment.consultation?.id ?? undefined,
         };
       }
       case "SUBSCRIPTION": {
@@ -104,6 +110,8 @@ export function buildRescheduleSubject(
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
           sessionDurationInHours: plan?.sessionDurationInHours,
+          eventType: "subscription",
+          eventId: appointment.subscription?.id ?? undefined,
         };
       }
       case "WEBINAR": {
@@ -114,6 +122,8 @@ export function buildRescheduleSubject(
           title: plan?.title ?? "Webinar",
           typeLabel: "Webinar",
           sessionDurationInHours: plan?.durationInHours,
+          eventType: "webinar",
+          eventId: appointment.webinar?.id ?? undefined,
         };
       }
       case "CLASS": {
@@ -124,6 +134,8 @@ export function buildRescheduleSubject(
           title: plan?.title ?? "Class",
           typeLabel: "Class",
           sessionDurationInHours: plan?.sessionDurationInHours ?? undefined,
+          eventType: "class",
+          eventId: appointment.class?.id ?? undefined,
         };
       }
       case "TRIAL": {
@@ -137,6 +149,8 @@ export function buildRescheduleSubject(
           title: plan?.title ?? "Trial session",
           typeLabel: "Trial",
           sessionDurationInHours: plan?.sessionDurationInHours,
+          // Trial has no allocate/event-slots endpoint — availability only.
+          eventType: "consultation",
         };
       }
       default:
@@ -145,6 +159,8 @@ export function buildRescheduleSubject(
   })();
 
   if (!resolved?.consultantProfileId) return null;
+
+  const slots = liveFutureSlots(detail);
 
   return {
     title: resolved.title,
@@ -156,11 +172,11 @@ export function buildRescheduleSubject(
     consulteeName: resolved.consulteeName,
     subject: {
       consultantProfileId: resolved.consultantProfileId,
-      // Availability only, keyed to no event: a reschedule asks "when is this
-      // consultant free", not "how does this plan allocate". The picker has
-      // drawn it this way since it lived in the dialog; the event-shaped
-      // fetches belong to the allocate surface.
-      eventType: "consultation",
+      // Real eventType + eventId so fetchEventSlots paints "This booking" /
+      // "Being moved". Availability still comes from the consultant grid; the
+      // reschedule submit goes to the appointment reschedule API, not allocate.
+      eventType: resolved.eventType ?? "consultation",
+      eventId: resolved.eventId,
       counterpartUserId: resolved.consulteeUserId,
       // Both, deliberately: the grid reads `durationInHours` for the
       // consultation shape it is drawing and `sessionDurationInHours` for the
@@ -169,7 +185,10 @@ export function buildRescheduleSubject(
       // configured" and fall back to an hour.
       durationInHours: resolved.sessionDurationInHours,
       sessionDurationInHours: resolved.sessionDurationInHours,
-      slots: liveFutureSlots(detail),
+      slots,
+      // Tentative sessions mean a move is already in flight — pin the count
+      // for allocate-path stale-tab guards if this subject is reused there.
+      hasReleasedSlots: slots.some((slot) => slot.isTentative),
     },
   };
 }
