@@ -66,6 +66,11 @@ const REQUEST_RETRY_DELAYS_MS = [250];
  * Retries a read on the transient-timeout class only. A mapper bug fails
  * identically every time and must surface immediately, so it is rethrown at once.
  *
+ * The catch below rethrows everything non-transient on the spot, so Next's
+ * control-flow signals (`notFound`, `redirect`) pass straight through and no
+ * `unstable_rethrow` guard is needed — none of their messages can match the
+ * transient regex.
+ *
  * Safe to wrap a `React.cache`d reader: `cache` memoizes fulfilled results but
  * NOT a rejection, so the retry really re-runs the query rather than replaying the
  * failure. Verified against the React that Next 15.5.15 vendors
