@@ -458,6 +458,58 @@ export const auth = betterAuth({
         sessionGeneration?: number | null;
       };
 
+      // SSO enforcement: mark sessions that bypassed SSO for enforced
+      // domains. Read-time defense-in-depth; the primary gate is in
+      // `databaseHooks.session.create.before` (above). Keeping a single
+      // enforcement path via the shared `lookupEnforcedOrg` helper
+      // means credential-signin and read-time reconciliation can't
+      // disagree on who counts as "enforced" — historically this was
+      // issue #673.
+      //
+      // An account satisfies enforcement only if `account.providerId`
+      // matches one of the `ssoProvider.providerId` rows registered
+      // for the enforcing org. Checking against `providerId != "credential"`
+      // is NOT enough — that would treat a personal Google or GitHub
+      // OAuth account as a valid SSO sign-in, bypassing the policy.
+      //
+      // Started here rather than awaited at its old position further down: it
+      // needs only `user.email` / `user.id`, reads a disjoint set of tables
+      // (OrgDomainClaim, OrganizationSSOSettings, SsoProvider, Account) and
+      // writes nothing, so it shares no data with the reads below and only ever
+      // cost sequencing. Overlapping it takes a whole cross-region wave
+      // (Netlify ap-southeast-1 -> Supabase ap-south-1) off EVERY authenticated
+      // request. It resolves rather than rejects — the try/catch is inside — so
+      // an early throw below can never surface as an unhandled rejection.
+      const ssoEnforcementFailedPromise: Promise<boolean> = (async () => {
+        try {
+          const email = user.email;
+          const domain = email?.split("@")[1]?.toLowerCase();
+          if (!domain) return false;
+          const enforced = await lookupEnforcedOrg(prisma, domain);
+          // `lookupEnforcedOrg` returns null when enforcement doesn't
+          // apply (unverified claim, inactive org, allowlist mismatch,
+          // enforceSSO=false). It also returns an empty
+          // `registeredProviderIds` array when the org has flipped
+          // enforceSSO on but hasn't added a provider yet — fail-open
+          // there, matching `shouldRejectSession`'s behaviour, so a
+          // half-configured org doesn't flag every session as failed.
+          if (!enforced || enforced.registeredProviderIds.length === 0) {
+            return false;
+          }
+          const linkedViaSSO = await prisma.account.findFirst({
+            where: {
+              userId: user.id,
+              providerId: { in: enforced.registeredProviderIds },
+            },
+            select: { id: true },
+          });
+          return !linkedViaSSO;
+        } catch {
+          // non-fatal — don't break session
+          return false;
+        }
+      })();
+
       // Read the user's current session-generation marker + the
       // profile FKs we'll need below for any bareMembers JIT auto-join.
       //
@@ -577,33 +629,41 @@ export const auth = betterAuth({
       }
 
       // Load active org memberships so OrgSwitcher + checkout can render
-      // without an extra roundtrip.
-      const memberships = await prisma.membership.findMany({
-        where: { status: "ACTIVE", userId: user.id },
-        select: {
-          role: true,
-          organizationId: true,
-          departmentLabel: true,
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              brandingProfile: { select: { logo: true } },
-              status: true,
-              canSponsor: true,
-              canHost: true,
-              billingAccount: {
-                select: {
-                  id: true,
-                  fundingSource: true,
-                  walletBalance: true,
+      // without an extra roundtrip. This one genuinely depends on the JIT
+      // auto-join above — that loop CREATES the rows it reads — so it stays
+      // sequential. Only the SSO check, which shares no data with it, folds
+      // into the same wave.
+      const [memberships, ssoEnforcementFailed] = await Promise.all([
+        prisma.membership.findMany({
+          where: { status: "ACTIVE", userId: user.id },
+          select: {
+            role: true,
+            organizationId: true,
+            departmentLabel: true,
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                brandingProfile: { select: { logo: true } },
+                status: true,
+                canSponsor: true,
+                canHost: true,
+                billingAccount: {
+                  select: {
+                    id: true,
+                    fundingSource: true,
+                    walletBalance: true,
+                  },
                 },
               },
             },
           },
-        },
-      });
+        }),
+        // Rejects only if `membership.findMany` does; the SSO promise always
+        // resolves, so `Promise.all`'s fail-fast cannot change error semantics.
+        ssoEnforcementFailedPromise,
+      ]);
 
       // Shape returned on every session. The session is hot — every
       // authenticated request reads it — so we keep the payload flat
@@ -627,47 +687,6 @@ export const auth = betterAuth({
           fundingSource: m.organization.billingAccount?.fundingSource ?? null,
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
         }));
-
-      // SSO enforcement: mark sessions that bypassed SSO for enforced
-      // domains. Read-time defense-in-depth; the primary gate is in
-      // `databaseHooks.session.create.before` (above). Keeping a single
-      // enforcement path via the shared `lookupEnforcedOrg` helper
-      // means credential-signin and read-time reconciliation can't
-      // disagree on who counts as "enforced" — historically this was
-      // issue #673.
-      //
-      // An account satisfies enforcement only if `account.providerId`
-      // matches one of the `ssoProvider.providerId` rows registered
-      // for the enforcing org. Checking against `providerId != "credential"`
-      // is NOT enough — that would treat a personal Google or GitHub
-      // OAuth account as a valid SSO sign-in, bypassing the policy.
-      let ssoEnforcementFailed = false;
-      try {
-        const email = user.email;
-        const domain = email?.split("@")[1]?.toLowerCase();
-        if (domain) {
-          const enforced = await lookupEnforcedOrg(prisma, domain);
-          // `lookupEnforcedOrg` returns null when enforcement doesn't
-          // apply (unverified claim, inactive org, allowlist mismatch,
-          // enforceSSO=false). It also returns an empty
-          // `registeredProviderIds` array when the org has flipped
-          // enforceSSO on but hasn't added a provider yet — fail-open
-          // there, matching `shouldRejectSession`'s behaviour, so a
-          // half-configured org doesn't flag every session as failed.
-          if (enforced && enforced.registeredProviderIds.length > 0) {
-            const linkedViaSSO = await prisma.account.findFirst({
-              where: {
-                userId: user.id,
-                providerId: { in: enforced.registeredProviderIds },
-              },
-              select: { id: true },
-            });
-            if (!linkedViaSSO) ssoEnforcementFailed = true;
-          }
-        }
-      } catch {
-        // non-fatal — don't break session
-      }
 
       return {
         user: {

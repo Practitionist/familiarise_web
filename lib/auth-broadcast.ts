@@ -22,6 +22,14 @@ export type AuthSyncMessage = { type: "login" | "logout" };
 // no longer fires a synthetic broadcast that spams peer-tab refetches.
 const AUTHED_FLAG_KEY = "familiarise.auth_authed";
 
+// Display-only identity for the remembered shape, so the navbar can paint the
+// real avatar and name on the first frame instead of a silhouette. Deliberately
+// name + image ONLY: no id, no email, no role, no org. Nothing here may ever be
+// used as an authorization signal — see `hooks/useRememberedAuth.ts`.
+const AUTHED_IDENTITY_KEY = "familiarise.auth_identity";
+
+export type AuthIdentity = { name: string | null; image: string | null };
+
 export function readAuthedFlag(): boolean | null {
   if (typeof window === "undefined") return null;
   try {
@@ -32,13 +40,51 @@ export function readAuthedFlag(): boolean | null {
   }
 }
 
-export function writeAuthedFlag(authed: boolean): void {
+export function readAuthedIdentity(): AuthIdentity | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(AUTHED_IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const { name, image } = parsed as Partial<AuthIdentity>;
+    return {
+      name: typeof name === "string" ? name : null,
+      image: typeof image === "string" ? image : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Single choke point for the remembered auth state. Writing `false` ALWAYS
+ * removes the cached identity, so a shared or public device can never retain
+ * the previous user's name and avatar: the flag and the identity cannot
+ * disagree by construction. Every sign-out path in the app reaches this via the
+ * wrapped `signOut` in `lib/auth-client.ts`, and `AuthSyncProvider` calls it
+ * again on every resolved-null session.
+ */
+export function writeAuthedFlag(
+  authed: boolean,
+  identity?: AuthIdentity | null,
+): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(AUTHED_FLAG_KEY, authed ? "true" : "false");
+    if (authed && identity) {
+      localStorage.setItem(AUTHED_IDENTITY_KEY, JSON.stringify(identity));
+    } else {
+      localStorage.removeItem(AUTHED_IDENTITY_KEY);
+    }
   } catch {
     // best-effort — ignore
   }
+}
+
+/** Sign-out-facing alias; the clear is the point, so say so at the call site. */
+export function forgetAuthState(): void {
+  writeAuthedFlag(false);
 }
 
 export function postAuthSync(message: AuthSyncMessage): void {
