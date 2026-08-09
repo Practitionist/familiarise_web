@@ -298,7 +298,7 @@ export function SettingsSkeleton() {
 // Help skeleton
 export function HelpSkeleton() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="w-full bg-background">
       <div className="w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <div className="space-y-6 sm:space-y-10">
           {/* Header */}

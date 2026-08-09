@@ -27,6 +27,11 @@ const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
  * overridden, so navigating within the detail view keeps the member inside the
  * org context instead of bouncing them to `/dashboard/consultee/...`.
  *
+ * Reschedule still deep-links to the personal consultee reschedule heatmap
+ * (no org-native picker yet). `consulteeId` is passed from the SSR page
+ * (already loaded for the participation check) because this URL has `orgId`,
+ * not `consulteeId`.
+ *
  * `role="consultee"` because this page is the ATTENDING side. An EXPERT
  * delivering org sessions manages them from Requests and their own tree; the
  * two roles want different actions on the same row, and conflating them behind
@@ -35,8 +40,13 @@ const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
 export default function DetailPageClient({
   orgId,
   appointmentId,
-}: Readonly<{ orgId: string; appointmentId: string }>) {
-  const base = useConsulteeAppointmentsAdapter();
+  consulteeId,
+}: Readonly<{
+  orgId: string;
+  appointmentId: string;
+  consulteeId: string;
+}>) {
+  const base = useConsulteeAppointmentsAdapter({ consulteeId });
 
   const adapter = useMemo(
     () => ({

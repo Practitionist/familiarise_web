@@ -140,27 +140,31 @@ export const validationRequestSchema = z.object({
  * - UUID events: Consultation (@default(uuid()))
  * - CUID events: Subscription, Webinar, Class (all @default(cuid()))
  * - CUID plans: ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan
+ *
+ * Keep `isEventIdFormat` in sync — SSR timings gates and the allocate client
+ * reuse that helper so a bad mock PK fails closed before the Zod 400 toast.
  */
+/** UUID format: 8-4-4-4-12 hexadecimal characters */
+const EVENT_ID_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** CUIDv1 (Prisma <5): 'c' + 24 chars = 25 total; CUIDv2: letter + 23 = 24 */
+const EVENT_ID_CUID_RE = /^[a-z][a-z0-9]{23,24}$/;
+
+/** Same rule as `eventIdSchema`, for SSR/client guards without throwing. */
+export function isEventIdFormat(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return EVENT_ID_UUID_RE.test(id) || EVENT_ID_CUID_RE.test(id);
+}
+
+export const EVENT_ID_INVALID_MESSAGE =
+  "Event ID must be a valid UUID or CUID format (received invalid format)";
+
 export const eventIdSchema = z
   .string()
   .min(1, { message: "Event ID is required" })
-  .refine(
-    (id) => {
-      // UUID format: 8-4-4-4-12 hexadecimal characters
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      // CUID format: lowercase letter + 23-24 lowercase alphanumeric chars
-      // CUIDv1 (Prisma <5): 'c' + 24 chars = 25 total
-      // CUIDv2 (Prisma 5+): letter + 23 chars = 24 total
-      const cuidRegex = /^[a-z][a-z0-9]{23,24}$/;
-
-      return uuidRegex.test(id) || cuidRegex.test(id);
-    },
-    {
-      message:
-        "Event ID must be a valid UUID or CUID format (received invalid format)",
-    },
-  );
+  .refine((id) => isEventIdFormat(id), {
+    message: EVENT_ID_INVALID_MESSAGE,
+  });
 
 /**
  * PAGINATION SCHEMA

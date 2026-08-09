@@ -110,13 +110,23 @@ const KIND_TO_REPORT_TYPE: Record<
   CLASS: "CLASS",
 };
 
-export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
+/**
+ * @param options.consulteeId — Override when the URL has no `[consulteeId]`
+ *   (org appointment detail). Falls back to the route param, then the session.
+ */
+export function useConsulteeAppointmentsAdapter(options?: {
+  consulteeId?: string;
+}): AppointmentActionAdapter {
   const router = useRouter();
   const { toast } = useToast();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
-  const consulteeId = params?.consulteeId;
+  const consulteeId =
+    options?.consulteeId ||
+    params?.consulteeId ||
+    session?.user?.consulteeProfileId ||
+    undefined;
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);

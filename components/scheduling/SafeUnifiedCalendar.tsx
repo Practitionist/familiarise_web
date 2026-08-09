@@ -45,15 +45,13 @@ export function SafeUnifiedCalendar({
       <div className={cn("flex min-h-0 flex-col gap-3", className)}>
         {/* Above the grid, not below: a key you can only reach by scrolling
             past the thing it explains is backwards, and on a laptop it sat
-            below the fold entirely (#1064). A buyer picking a time has no use
-            for "This booking" or "Being moved" — those name states of an
-            allocation they are not doing, and one of them refers to a slot
-            the picker does not even display. Follows `mode` for the same
-            reason includeAppointmentDetails does: "allocate" is the
-            consultant's surface, everything else is a buyer's. */}
+            below the fold entirely (#1064). Buyers have no use for "This
+            booking" / "Being moved"; consultants do on allocate AND on
+            reschedule-propose (select mode with event context). Prefer the
+            explicit prop; fall back to mode === "allocate". */}
         <SlotStatusLegend
           keys={
-            props.mode === "allocate"
+            (props.showConsultantLegend ?? props.mode === "allocate")
               ? CONSULTANT_LEGEND_KEYS
               : BUYER_LEGEND_KEYS
           }
