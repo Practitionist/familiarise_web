@@ -13,11 +13,15 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 export default function HomePageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  // Use the centralized query configuration with optimized settings for immediate rendering
+  // The factory's staleTime (2 min) is deliberately NOT overridden here. This
+  // used to force `staleTime: 0` under a comment about showing stale data
+  // immediately, which is not what staleTime does: it marks the server-prefetched
+  // cache entry stale on mount, so the client refetched
+  // GET /api/dashboard/consultant/[id] straight after hydration and recomputed
+  // the identical payload the page had just dehydrated — doubling every query
+  // behind it. Harmless before #890 seeded the cache; pure waste after. (#1121)
   const dashboardQuery = {
     ...createConsultantQueries(consultantId).dashboard,
-    // Show stale data immediately while fetching in background
-    staleTime: 0,
     refetchOnWindowFocus: false,
   };
   const {

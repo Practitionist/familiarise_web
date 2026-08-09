@@ -229,10 +229,14 @@ export async function getOrganisationsPage(
     ]);
     total = count;
     // Named `pageRows`, not `page` — that would shadow the `page` parameter.
-    const pageRows = await prisma.organization.findMany({
-      where: { id: { in: rankedIds } },
-      select: orgListSelect,
-    });
+    // Empty-`in` guard: a page past the end of the ranking, or a filter set
+    // nothing matches, otherwise round trips for `IN (NULL)`. (#1121)
+    const pageRows = rankedIds.length
+      ? await prisma.organization.findMany({
+          where: { id: { in: rankedIds } },
+          select: orgListSelect,
+        })
+      : [];
     // findMany ignores the id order, so restore the ranking.
     const order = new Map(rankedIds.map((id, index) => [id, index]));
     rows = pageRows.sort(

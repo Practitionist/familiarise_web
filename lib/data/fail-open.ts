@@ -91,9 +91,11 @@ export async function withBuildTimeRetry<T>(read: () => Promise<T>): Promise<T> 
       if (!isTransientDbError(err) || attempt === BUILD_RETRY_DELAYS_MS.length) {
         throw err;
       }
-      // Visible in the CI build log — `removeConsole` strips this in the deployed
-      // function but not during `next build`, so a build that burned time retrying
-      // does not look identical to one that did not.
+      // Visible in the CI build log, so a build that burned time retrying does
+      // not look identical to one that did not. Build-only by construction — the
+      // early return above means this loop never runs at request time — which is
+      // why it was the one console.warn that worked even while `removeConsole`
+      // was deleting the rest of them (#1122).
       console.warn(
         `[fail-open] transient DB error during build, retrying in ${BUILD_RETRY_DELAYS_MS[attempt]}ms:`,
         err instanceof Error ? err.message : String(err),
@@ -117,7 +119,10 @@ export function isTransientDbError(err: unknown): boolean {
 }
 
 // Report a degraded read without re-raising it: a server-log line plus a Sentry
-// breadcrumb — NOT a captured event. The transient pooler-timeout class is a
+// breadcrumb — NOT a captured event. The log line only started reaching the
+// deployed function log with #1122; before that this was breadcrumb-only in
+// production, which is worth knowing when reading back an old incident. The
+// transient pooler-timeout class is a
 // known, tracked condition (cross-region latency, #932), so firing a Sentry
 // warning *issue* per degradation only floods the dashboard (and multiplies as
 // more read paths adopt fail-open). The breadcrumb keeps the context attached to
@@ -156,9 +161,10 @@ export function emptyOnTransientDbError(
  * Object-shaped sibling of {@link emptyOnTransientDbError}: returns `fallback`
  * for the transient-timeout class and RETHROWS everything else. For a non-list
  * read on a `force-dynamic` route or a Route Handler whose response can still be
- * useful with a degraded value. It has no call site today — every former one was
- * on a route that is ISR now (#1119) — and is kept as the object-shaped half of
- * the pair rather than deleted and re-added at the next dynamic surface.
+ * useful with a degraded value. Used by /explore/programs for the hero stats and
+ * the viewer's org badges, both of which replaced hand-rolled `catch { return
+ * placeholder }` blocks that swallowed every error class rather than the
+ * transient one (#1125).
  */
 export function fallbackOnTransientDbError<T>(
   context: string,

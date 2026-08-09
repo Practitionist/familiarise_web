@@ -41,6 +41,19 @@ const isForceDynamic = (src: string) =>
   /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/.test(src);
 const degrades = (src: string) => /perRequest/.test(src);
 
+// `degrades` above only sees degradation that goes through lib/data/fail-open.ts,
+// because `perRequest` is the helper's opt-in flag. A hand-written
+// `catch { return [] }` is the same hazard on a cacheable route and contains no
+// such token — that blind spot is #1125, and two live examples were found in
+// /explore/programs while reviewing #1123.
+//
+// The invariant pinned instead is narrower and sharper than "returns a
+// placeholder", which is not reliably detectable from source: a catch that binds
+// NOTHING cannot report what it swallowed, to Sentry or anywhere else. Binding
+// the error is the floor. `catch (e) {` passes; `catch {` does not. `.catch(fn)`
+// is untouched — that is a call, not a clause.
+const hasBareCatch = (src: string) => /(?:^|[^.\w])catch\s*\{/.test(src);
+
 describe("#1119 — a cacheable route must never fail open", () => {
   it("finds the route files it is supposed to be guarding", () => {
     // Guards against the walk silently matching nothing and passing vacuously.
@@ -64,6 +77,29 @@ describe("#1119 — a cacheable route must never fail open", () => {
           !isForceDynamic(f.src) &&
           !f.rel.endsWith("route.ts"),
       )
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the bare-catch detector matches the shape it claims to (#1125)", () => {
+    // Anchored on fixtures rather than on real files on purpose. The obvious
+    // anchor — "some route in the repo has a bare catch" — decays into a vacuous
+    // pass the moment the sweep in #1125 removes the last one, and it would do
+    // so silently, which is the exact failure mode this whole file exists for.
+    expect(hasBareCatch("try { x() } catch { return [] }")).toBe(true);
+    expect(hasBareCatch("try { x() } catch{return null}")).toBe(true);
+    expect(hasBareCatch("try { x() } catch (err) { report(err); return [] }")).toBe(
+      false,
+    );
+    // A `.catch(handler)` call is the sanctioned form and must not be flagged.
+    expect(hasBareCatch("read().catch(emptyOnTransientDbError('x'))")).toBe(
+      false,
+    );
+  });
+
+  it("no cacheable route swallows an error it cannot report (#1125)", () => {
+    const offenders = files
+      .filter((f) => isCacheable(f.src) && hasBareCatch(f.src))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
   });

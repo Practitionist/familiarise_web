@@ -100,9 +100,23 @@ function makeClient() {
         : [{ level: "query", emit: "event" }, "error"],
   });
 
+  // One line per instance boot, so the budgets this file computes are READABLE
+  // from `netlify logs` instead of inferred from source. #1120 and #1124 both
+  // burned time arguing about which values were live; this settles it. It is a
+  // console.warn on purpose — `warn` is excluded from removeConsole (#1122), and
+  // Sentry.logger would send it to Sentry rather than to the function log, which
+  // is where someone reading a 30s invocation is actually looking.
+  console.warn(
+    `[Prisma:INIT] connect=${PG_CONNECT_TIMEOUT_MS}ms query=${PG_QUERY_TIMEOUT_MS}ms ` +
+      `poolMax=${process.env.PG_POOL_MAX ?? "default"} slowQuery=${SLOW_QUERY_MS}ms ` +
+      `buildPhase=${IS_NEXT_BUILD}`,
+  );
+
   // #696 / nav-perf Phase 3 — warn on queries over the threshold so missing
-  // indexes and N+1s are visible without full query logging. console.warn
-  // matches the lib/ convention (lib/redis.ts, lib/maintenance-cron.ts).
+  // indexes and N+1s are visible without full query logging. Sentry.logger, not
+  // console: a slow query is an alertable trend, and the "lib/ convention" this
+  // comment used to cite (lib/redis.ts, lib/maintenance-cron.ts) was console.warn
+  // that production silently deleted anyway. See #1122.
   base.$on("query", (e) => {
     if (e.duration > SLOW_QUERY_MS) {
       Sentry.logger.warn(

@@ -59,7 +59,17 @@ export async function GET() {
       reportTransient("announcements read", error, {
         subsystem: "notifications",
       });
-      return NextResponse.json({ success: true, data: [] });
+      // `no-store` on the degraded branch only, matching
+      // app/api/user/consultants/route.ts. Not load-bearing today — the success
+      // path sets no cache header and Next 15 leaves Route Handlers uncached —
+      // but the two siblings disagreed and this is the safe half of the
+      // disagreement. Whoever adds an s-maxage to the success path should not
+      // have to also remember that a cached empty banner outlives the outage
+      // that caused it. (#1125)
+      return NextResponse.json(
+        { success: true, data: [] },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

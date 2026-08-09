@@ -387,11 +387,25 @@ export async function getConsultantDashboard(
     netEarningsAgg,
     readyEarningsAgg,
   ] = await Promise.all([
-    // Fetch approved appointments for consultations, subscriptions, webinars, and classes
-    prisma.appointment.findMany({
-      where: { id: { in: homeAppointmentIds } },
-      include: appointmentInclude,
-    }),
+    // Fetch approved appointments for consultations, subscriptions, webinars, and classes.
+    // Guarded because Prisma emits `IN (NULL)` for an empty list and still round
+    // trips: `appointmentInclude` carries nine nested `user` selections, each
+    // resolved as its own follow-up SELECT. Sentry FAMILIARISE_WEB-G caught the
+    // whole operation at 4,624ms in production for a guaranteed-empty result.
+    // Note WHERE that time goes, because it is not the SQL: the selects run in
+    // 63-68ms once a connection is warm, and the bulk is pg-pool.connect plus the
+    // first query behind each one — the PG_POOL_MAX=1 serialisation of #1117.
+    // Statement count is therefore the lever, and not issuing them is the
+    // cheapest possible version of that. Worst on a brand-new consultant, whose
+    // first dashboard view was the slowest one. The guard is per-query, not an
+    // early return: every other read below is consultant-scoped rather than
+    // id-scoped and must still run. (#1121)
+    homeAppointmentIds.length
+      ? prisma.appointment.findMany({
+          where: { id: { in: homeAppointmentIds } },
+          include: appointmentInclude,
+        })
+      : Promise.resolve([]),
     // Active clients / programs are counted over the consultant's whole active
     // book, not the handful of rows Home renders. Deriving them from the
     // display array meant the Financial Summary card under-reported for anyone
