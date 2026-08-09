@@ -5,7 +5,7 @@ description: Decide and verify how a Next.js App Router route renders, caches an
 
 # Next.js App Router rendering and caching on Netlify
 
-This skill encodes what was measured on this codebase during the 2026-07/08 dashboard-performance campaign, not what the framework documentation promises. Where the two disagree, the measurement is recorded and marked. Version-sensitive facts are pinned to Next 15.5.15 and the Netlify Next Runtime; re-verify them after any major upgrade.
+This skill encodes what was measured on this codebase during the 2026-07/08 dashboard-performance campaign, not what the framework documentation promises. Where the two disagree, the measurement is recorded and marked. Version-sensitive facts are pinned to Next 15.5.15 and the Netlify Next Runtime. Re-verify them after **any** change to the Next version or the Netlify adapter/runtime, not only a major one — the adapter ships independently of our releases and is not version-pinned in this repo, so its behaviour can change under a build we did not trigger. Record the exact versions alongside any new measurement you add.
 
 ## The rule that outranks everything else in this file
 
@@ -26,7 +26,7 @@ Ask what the response depends on, because that determines the strategy and nothi
 
 Two corollaries that are easy to get wrong on this codebase.
 
-A page whose data is public but whose *chrome* differs for signed-in visitors is still a static page. The auth-dependent affordance belongs in a client component or a small dynamic island, not in the page's server render. Pulling a session read into the page body to swap one button converts the whole route to dynamic and forfeits the cache.
+A page whose data is public but whose *chrome* differs for signed-in visitors is still a static page. The auth-dependent affordance belongs in a **client-only** component that resolves the session in the browser, not in the page's server render. Note that a server-rendered "dynamic island" is not an option on our pinned version: without PPR, a request-scoped read inside a `Suspense` boundary still forces the whole route dynamic — see the rejected-options section. Pulling a session read into the page body to swap one button converts the whole route to dynamic and forfeits the cache.
 
 A route parameter with unbounded cardinality must never be prerendered exhaustively at build. Returning `[]` from `generateStaticParams` means nothing is built ahead of time, each parameter renders on its first request, and the result is then cached and revalidated on the window. Confirm `dynamicParams` is left at its default of `true`, or unlisted parameters will 404 instead of rendering.
 
@@ -72,7 +72,7 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 if (process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD) throw err;
 ```
 
-`PHASE_PRODUCTION_BUILD` is verified present in `next/constants` at Next 15.5.15 with the value `phase-production-build`. Import the constant rather than hardcoding the string. Pair the guard with a bounded retry and backoff, because #932 was a *cold* connect and a single retry very likely converts a hard failure into a success.
+`PHASE_PRODUCTION_BUILD` is verified present in `next/constants` at Next 15.5.15 with the value `phase-production-build`. Import the constant rather than hardcoding the string. Pair the guard with a bounded retry and backoff, because #932 was a *cold* connect and a retry may therefore help. That it converts a hard failure into a success is untested — no measurement here exercised the retry path — so treat it as a hypothesis and measure before claiming it works.
 
 ## Step 4 — Cache headers follow the strategy, and you do not choose them
 
@@ -94,13 +94,15 @@ The Netlify Next Runtime implements Next's cache handler against Netlify Blobs, 
 
 When you need to cache a response Next would mark uncacheable, Netlify honours cache-control headers in order of specificity: `Netlify-CDN-Cache-Control` wins over `CDN-Cache-Control`, which wins over `Cache-Control`. Both `s-maxage` and `stale-while-revalidate` are supported, and `Cache-Control` and `CDN-Cache-Control` are always passed downstream so other caches can use them. Function responses are not cached by default precisely because they are dynamic, so caching them is an explicit opt-in via those headers.
 
+Only reach for that opt-in on a response that is safe to share between users. These headers target a **shared** cache, so applying them to a response whose body depends on `cookies()`, `headers()` or session state will serve one visitor's page to the next one. If the response varies by any request input, that input must appear in the cache key via `Netlify-Vary` before the override is safe; if it varies by identity, it should stay private and uncached. Note that this failure is silent and will not reproduce for the first user who loads the page.
+
 For invalidation, `revalidatePath` and `revalidateTag` both work and propagate through the durable cache. A copy cached at the CDN purely by an `s-maxage` header is a different matter: `revalidateTag` invalidates the Next server cache but the CDN keeps serving its copy until the TTL expires, so a raw CDN cache needs `Netlify-Cache-Tag` on the response and a `purgeCache({ tags })` call alongside the revalidation.
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
 ## How to verify — the only four techniques that have worked here
 
-**Read the CI build route table.** This is authoritative for every prerendering question and it settled the #1110 dispute definitively. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.
+**Read the CI build route table.** This is authoritative for *build-time* classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.
 
 **Stream the HTML and grep for markup that should be present.** Distinguish real markup (`">Members<"`) from the RSC flight payload (the bare string `Members`). If the string appears only in the payload, the content was **not** server-rendered, however much it looks present in the browser. When the bare-string count equals the markup count, there are no payload-only occurrences and the result is genuine.
 
@@ -114,7 +116,7 @@ A skeleton cannot fire First Contentful Paint. FCP requires text, an image, canv
 
 `next/dynamic` with `ssr: false` skips server rendering for the component **and all of its children**. Wrapping `{children}` in such a component removes an entire subtree from the HTML. Its options must also be an inline object literal at each call site, because SWC analyses them statically — hoisting them to a `const` passes `tsc`, ESLint and Jest and then fails the build.
 
-A client layout that returns a skeleton while its queries load returns that skeleton during SSR too, because nothing prefetched those queries on the server. The fix is to seed the query from a server component with `prefetchQuery` plus `dehydrate` and a `HydrationBoundary`. The query key must match the client's `useQuery` key exactly, and a key derived from a client hook such as `useSession()` can never match a server seed — that mismatch is invisible to `tsc` and to every test.
+A client layout that returns a skeleton while its queries load returns that skeleton during SSR too, because nothing prefetched those queries on the server. The fix is to seed the query from a server component with `prefetchQuery` plus `dehydrate` and a `HydrationBoundary`. Both sides must derive an identical key *value*. That is why seeding failed here: the client keyed on `useSession()`, which is still pending during SSR, so its key was `["user-details", undefined]` while the server seeded the real id. Passing the resolved user id down from the server — the same serialized value on both sides — is what fixes it. The mismatch is invisible to `tsc` and to every test.
 
 A `loading.tsx` creates an implicit Suspense boundary, which is what allows a layout to flush while its page is still pending.
 
@@ -132,7 +134,9 @@ This also reframes the wave-depth measurements. The finding that one `appointmen
 
 This was measured on 2026-08-09 against deploy preview 1118, anonymously, on `/explore/experts/[consultantId]` — an on-demand ISR route, so every distinct parameter forces one real server render. Forty-two cold renders were taken across four batches. Every number below is client-side `time_starttransfer` from `curl`, correlated against the Netlify function log.
 
-The headline is that the 23-second figure was misattributed. It is not cold boot, and it is not one long render. **It is the first database connect on a newly created function instance, and it costs a flat ~30 seconds whenever several new instances try to connect at the same moment.**
+The headline is that the 23-second figure was misattributed. Cold boot and render cost are both ruled out by measurement below. **What the data indicates instead is a connection-timeout path, taken when several newly created function instances open their first pooler connection at the same moment, costing a flat ~30 seconds when it fires.**
+
+Be precise about which parts of that sentence are measured. The ~30-second plateau and the bimodality are measured. That a connection is the thing timing out is read directly from `prisma:error timeout exceeded when trying to connect` logged inside the affected invocation. That the trigger is *per-new-instance* is inference from counting, because the log does not expose instance identity — see the slow-count arithmetic below.
 
 The evidence is a bimodal distribution with nothing in the middle:
 
@@ -143,7 +147,7 @@ The evidence is a bimodal distribution with nothing in the middle:
 | C | 16 concurrent | 12 already warm | 16 | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
 | D | 12 concurrent | all warm | 12 | 3.33–5.89 s, zero slow |
 
-No sample in those four batches landed between 6.8 s and 30.8 s. A distribution with a hole that wide is a timeout, not congestion.
+No sample in those four batches landed between 6.8 s and 30.8 s. A gap that wide points at a fixed timeout rather than congestion, which would fill the middle of the range instead of leaving it empty.
 
 The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log. Note that the fast mode there is 9–11 s rather than 2–3 s, because *every* instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
 
@@ -153,7 +157,9 @@ The slow-count arithmetic supports that reading directly. Batch B ran twelve req
 
 Three further facts are worth carrying forward, because each one costs an afternoon to rediscover.
 
-**One HTTP request is one function invocation.** Six concurrent requests produced exactly six `Duration:` lines, and each client timing exceeded its matching invocation duration by a near-constant 0.37 s of CDN and network overhead. The 32.23 s request maps to a single invocation of 30,113.69 ms. Nothing chains, nothing retries at the platform level, and the document request is not followed by a second billable render. Any explanation of a large TTFB that depends on a redirect chain, a middleware hop or an RSC follow-up is not what is happening here.
+**On this path, one HTTP request was one function invocation.** Six concurrent uncached `/explore/experts/[consultantId]` document requests produced exactly six `Duration:` lines, and each client timing exceeded its matching invocation duration by a near-constant 0.37 s of CDN and network overhead. The 32.23 s request maps to a single invocation of 30,113.69 ms. So for these requests nothing chained, nothing was retried by the platform, and the document request was not followed by a second billable render.
+
+Do not promote that to a platform rule — it is a statement about anonymous document requests to this route. A logged-in dashboard navigation, a route that redirects, or a client-side RSC fetch can each add invocations. What it does rule out is explaining *this* measurement by a redirect chain, a middleware hop or an RSC follow-up, because none of those appeared.
 
 **Do not plan on reading `Init Duration` here.** Netlify documents it as the cold-start discriminator, and staff describe a full Lambda-style report line — `Duration … Billed Duration … Memory Size … Max Memory Used … Init Duration …`. The Next.js server handler on this account does not emit that. Through both `netlify logs` and its historical API the line is reduced to `Duration:` and `Memory Usage:` only. A user on Netlify's own forum reports the identical absence for this same function ("I have checked my full log and I can't find any `init duration` in it"). Whether the dashboard UI shows more was not checked.
 
