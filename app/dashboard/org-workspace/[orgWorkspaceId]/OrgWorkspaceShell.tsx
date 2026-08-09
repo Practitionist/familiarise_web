@@ -115,9 +115,9 @@ export function OrgWorkspaceShell({
   const pageLabel = PAGE_LABELS[segment] ?? "Overview";
 
   return (
-    <div className="flex h-screen-maintenance bg-zinc-50 dark:bg-zinc-950">
+    <div className="flex h-screen-maintenance overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* Sidebar — hidden on mobile, visible md+ */}
-      <div className="hidden md:block shrink-0">
+      <div className="hidden h-full shrink-0 md:block">
         <CollapsibleSidebar
           items={sidebarItems}
           basePath={basePath}
@@ -138,7 +138,7 @@ export function OrgWorkspaceShell({
       </div>
 
       {/* Right panel: context bar + page content + mobile tabs */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <DashboardContextBar
           identity={{
             name: displayName,
@@ -154,7 +154,7 @@ export function OrgWorkspaceShell({
           }
         />
 
-        <main className="flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+        <main className="min-h-0 flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
           <div className="p-6">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
