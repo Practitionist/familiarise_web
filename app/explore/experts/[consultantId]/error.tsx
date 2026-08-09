@@ -5,10 +5,11 @@ import { useEffect } from "react";
 import Link from "next/link";
 
 /**
- * Segment error boundary for the expert detail page. The known cross-region
- * transient (#932) is caught upstream in page.tsx and never reaches here, so
- * anything that lands in this boundary is a genuine defect — report it and give
- * the visitor a retry instead of falling through to the global crash page.
+ * Segment error boundary for the expert detail page. Since #1119 the known
+ * cross-region transient (#932) is NO LONGER swallowed upstream — degrading gave
+ * a 200 that Netlify wrote into the durable cache and replayed to everyone — so
+ * this boundary is exactly where a pooler timeout now lands. Give the visitor a
+ * retry rather than falling through to the global crash page.
  */
 export default function ExpertProfileError({
   error,
@@ -17,8 +18,13 @@ export default function ExpertProfileError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // A server render error already reached Sentry through onRequestError
+  // (instrumentation.ts) and arrives here carrying its digest. Capturing it again
+  // would file a second issue for every one of those — and since #1119 that is now
+  // the common path, not the rare one. Only report errors that originated on the
+  // client, which have no digest.
   useEffect(() => {
-    Sentry.captureException(error);
+    if (!error.digest) Sentry.captureException(error);
   }, [error]);
 
   return (

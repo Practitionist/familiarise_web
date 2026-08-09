@@ -44,9 +44,13 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     //   throwing inside their own provider bridge on our pages. (FAMILIARISE_WEB-F)
     // - "Object Not Found Matching Id" — CefSharp / Outlook Safe Links bots
     //   rejecting non-Error promises while scanning our pages. (FAMILIARISE_WEB-Y)
-    // Do NOT add the Prisma pooler-timeout strings here: route-level fail-open
-    // already degrades them to breadcrumbs, and they must stay visible so a NEW
-    // unprotected route surfacing them is still detectable. (#932)
+    // Do NOT add the Prisma pooler-timeout strings here — but the reason changed
+    // in #1119. Route-level fail-open no longer degrades them on the public
+    // explore routes; those five now rethrow deliberately, so pooler timeouts are
+    // EXPECTED there and this filter can no longer be read as "any occurrence is a
+    // new unprotected route". Keep them unfiltered because they are the only
+    // signal that the tail in #1124 is still happening; triage them by route
+    // rather than by presence. (#932, #1119, #1124)
     ignoreErrors: [
       "Connection closed.",
       /func .* not found/,

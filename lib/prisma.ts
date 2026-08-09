@@ -6,8 +6,18 @@ import { moneyResultExtensions } from "./prisma-extensions";
 
 // A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
 // (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
-// budgets below fail fast instead, so a stuck pooler can't pin a Netlify
-// function up to its ~10s ceiling. Both env-gated (positive ms wins, else default).
+// budgets below fail fast instead. Both env-gated (positive ms wins, else default).
+//
+// These budgets do NOT bound worst-case latency, and the "3 + 6 = 9s under the
+// function ceiling" arithmetic this file used to claim has now sent two
+// investigations down the wrong path. Both are `setTimeout`s inside pg
+// (pg-pool/index.js:219 for the queue wait, pg/lib/client.js:148 for the socket),
+// so neither can fire while the event loop is blocked. Measured on deploy preview
+// 1123: on a newly created function instance the loop stalls for 24.9–25.3s, the
+// 3s connect budget fires at ~26s, and the retry immediately after connects in
+// 327–340ms. The database was never the slow part. Nothing configurable here
+// changes that number — see #1120 and #1124. The one lever that reliably helps is
+// not invoking the function at all, because an ISR cache hit pays no stall.
 const pgTimeoutMs = (name: string, fallback: number): number => {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
@@ -25,8 +35,7 @@ const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
   "PG_CONNECT_TIMEOUT_MS",
   IS_NEXT_BUILD ? 30000 : 3000,
 );
-// ~6s query budget — keeps the worst case (3s connect + 6s query = 9s) under
-// Netlify's ~10s function ceiling. query_timeout is CLIENT-SIDE and is the only
+// ~6s query budget. query_timeout is CLIENT-SIDE and is the only
 // one that bounds a query *through* the txn pooler — Supavisor silently ignores
 // the statement_timeout startup param (verified: SHOW statement_timeout stays at
 // the 2min server default). statement_timeout is set ~1s BELOW query_timeout

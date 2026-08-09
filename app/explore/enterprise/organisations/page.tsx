@@ -6,12 +6,8 @@ import {
   DEFAULT_ORGANISATION_FILTERS,
   getOrganisationsMetadata,
   getOrganisationsPage,
-  type OrganisationsMetadata,
 } from "@/lib/data/explore-organisations";
-import {
-  fallbackOnTransientDbError,
-  withBuildTimeRetry,
-} from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 
 import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
@@ -26,8 +22,8 @@ import OrganisationsInteractiveContent, {
 // list that turns over on the order of days.
 //
 // This route IS prerendered during `next build` (#932): the reads run in the
-// build environment, guarded by fail-open's build-phase rethrow so a transient
-// pooler failure fails the build instead of baking an empty directory.
+// build environment and no longer degrade at all (#1119), so a transient pooler
+// failure fails the build instead of baking an empty directory.
 //
 // 5 minutes: unlike the expert reads this one has no unstable_cache layer, so
 // the interval is the only thing between visitors and the DB. Orgs going public
@@ -40,31 +36,14 @@ export const metadata: Metadata = {
     "Discover expert networks, consulting agencies, and learning institutions on Familiarise. Browse their curated experts and programs.",
 };
 
-const EMPTY_METADATA: OrganisationsMetadata = {
-  industries: [],
-  types: [],
-  sizes: [],
-  capabilities: [],
-  total: 0,
-};
-
 async function OrganisationsDirectory() {
-  // Both reads degrade rather than crash the page on a transient pooler
-  // timeout (cross-region cold connect, #932).
+  // Both reads throw on a transient pooler timeout (cross-region cold connect,
+  // #932). They used to degrade, which was safe while this route was dynamic and
+  // is not now that it is ISR — a degraded directory would be cached and replayed
+  // to everyone (#1119).
   const [meta, firstPage] = await Promise.all([
-    withBuildTimeRetry(getOrganisationsMetadata).catch(
-      fallbackOnTransientDbError("org directory metadata", EMPTY_METADATA),
-    ),
-    withBuildTimeRetry(() =>
-      getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS),
-    ).catch(
-      fallbackOnTransientDbError("org directory page", {
-        items: [],
-        total: 0,
-        page: 1,
-        totalPages: 1,
-      }),
-    ),
+    withBuildTimeRetry(getOrganisationsMetadata),
+    withBuildTimeRetry(() => getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS)),
   ]);
 
   return (
