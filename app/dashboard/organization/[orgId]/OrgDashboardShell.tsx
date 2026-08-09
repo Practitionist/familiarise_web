@@ -161,7 +161,7 @@ function AccessDenied({ title, message }: { title: string; message: string }) {
   );
 }
 
-export default function OrgLayout({
+export default function OrgDashboardShell({
   children,
   params,
 }: {
