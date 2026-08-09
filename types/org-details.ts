@@ -70,8 +70,12 @@ export interface OrgDetailsResponse {
  * callers of `OrgDetailsResponse` should never see this.
  */
 export interface RawOrgDetailsResponse {
-  organization: Omit<OrgDetailsResponse["organization"], "fundingSource"> & {
+  organization: Omit<
+    OrgDetailsResponse["organization"],
+    "fundingSource" | "logo"
+  > & {
     billingAccount?: { fundingSource: FundingSource } | null;
+    brandingProfile?: { logo: string | null } | null;
   };
   membership: OrgDetailsResponse["membership"];
 }
@@ -91,7 +95,10 @@ export function flattenOrgDetails(
       id: raw.organization.id,
       name: raw.organization.name,
       slug: raw.organization.slug,
-      logo: raw.organization.logo,
+      // Branding lives on the OrgBrandingProfile satellite (#768 lockdown #6) —
+      // Organization itself has no logo column. Same flatten every other reader
+      // does.
+      logo: raw.organization.brandingProfile?.logo ?? null,
       status: raw.organization.status,
       canSponsor: raw.organization.canSponsor,
       canHost: raw.organization.canHost,

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   HydrationBoundary,
   QueryClient,
@@ -43,7 +44,16 @@ export default async function OrgDashboardLayout({
 
   // Swallow: a failed seed must degrade to the client fetch, never 500 the
   // whole org tree. Losing it only costs the server-rendered shell.
-  const details = await getOrgDetailsForSeed(orgId).catch(() => null);
+  // Reported, not rethrown: a silent swallow makes a transient read failure and
+  // a sustained auth/database outage look identical from the outside, since both
+  // just degrade to the client fetch.
+  const details = await getOrgDetailsForSeed(orgId).catch((err: unknown) => {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "org-dashboard-seed" }, extra: { orgId } },
+    );
+    return null;
+  });
 
   // Only seed a real read. Caching `null` is worse than not seeding: the client
   // gate reads `!org` either way, but a null cache entry also suppresses the

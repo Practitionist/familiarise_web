@@ -614,13 +614,6 @@ model Organization {
   id   String @id @default(cuid())
   name String
   slug String @unique
-  /// Org avatar. The sidebar has rendered `org.organization.logo` since the org
-  /// dashboard shipped, and `OrgDetailsResponse` has always declared it — but
-  /// the column never existed, so it silently resolved to undefined and no org
-  /// logo has ever displayed. Found while writing a typed server read: the
-  /// route returns untyped NextResponse.json, so tsc had never been asked to
-  /// compare the response against the type that describes it.
-  logo String?
 
   status    OrgStatus @default(PENDING_VERIFICATION)
   /// Optimistic-lock clock for owner-editable settings. The PATCH CASes on the
