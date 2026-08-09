@@ -1,13 +1,10 @@
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { flattenOrgDetails, type OrgDetailsResponse } from "@/types/org-details";
+import {
+  flattenOrgDetails,
+  type OrgDetailsResponse,
+} from "@/types/org-details";
 import { orgDetailsInclude } from "@/lib/data/org-details-include";
-
-/**
- * The org-details include, shared by GET /api/organizations/[orgId] and the
- * server-side seed below so the two cannot drift.
- */
-
 
 /**
  * Server-side org details, shaped exactly like what the client caches.

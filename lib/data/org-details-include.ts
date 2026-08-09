@@ -9,30 +9,30 @@
  * ships on its own and the heavy read stays where it belongs.
  */
 export const orgDetailsInclude = {
-      billingAccount: {
-        select: {
-          id: true,
-          fundingSource: true,
-          currency: true,
-          walletBalance: true,
-          creditLimit: true,
-        },
-      },
-      payoutAccount: {
-        select: {
-          id: true,
-          status: true,
-          accountNumberLast4: true,
-          bankName: true,
-        },
-      },
-      _count: {
-        select: {
-          memberships: true,
-          contracts: true,
-          invoices: true,
-          purchaseOrders: true,
-          auditLogs: true,
-        },
-      },
+  billingAccount: {
+    select: {
+      id: true,
+      fundingSource: true,
+      currency: true,
+      walletBalance: true,
+      creditLimit: true,
+    },
+  },
+  payoutAccount: {
+    select: {
+      id: true,
+      status: true,
+      accountNumberLast4: true,
+      bankName: true,
+    },
+  },
+  _count: {
+    select: {
+      memberships: true,
+      contracts: true,
+      invoices: true,
+      purchaseOrders: true,
+      auditLogs: true,
+    },
+  },
 } as const;
