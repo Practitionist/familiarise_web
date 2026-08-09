@@ -108,6 +108,8 @@ Documented adapter limitations worth remembering: pages set to the `edge` runtim
 
 **A/B two deploy previews.** Same account, same page, exactly one variable changed. This is what finally proved both real wins in this campaign, and what exposed a route returning 500 on every request that CI had called green.
 
+**Read the `Cache-Status` response header.** Netlify emits RFC 9211 `Cache-Status`, and it answers "was this response written to the durable cache" outright, which no amount of reasoning about status codes will. `"Netlify Durable"; fwd=uri-miss; stored` means it was stored; `"Netlify Durable"; hit` with a climbing `age` means it is being replayed; `"Netlify Durable"; fwd=bypass` alongside a 500 means nothing was persisted. This is the artefact that proved both the #1119 bug and its fix.
+
 **Warm the function first.** Cold measurements on this deployment span 1.9 s to 33 s on the same route, so any single cold timing is noise. Warm the instance, or take enough cold samples to see the distribution — it is bimodal, not noisy-around-a-mean, and the mean is meaningless.
 
 ## Measured facts that keep getting rediscovered
@@ -119,6 +121,8 @@ A skeleton cannot fire First Contentful Paint. FCP requires text, an image, canv
 A client layout that returns a skeleton while its queries load returns that skeleton during SSR too, because nothing prefetched those queries on the server. The fix is to seed the query from a server component with `prefetchQuery` plus `dehydrate` and a `HydrationBoundary`. Both sides must derive an identical key *value*. That is why seeding failed here: the client keyed on `useSession()`, which is still pending during SSR, so its key was `["user-details", undefined]` while the server seeded the real id. Passing the resolved user id down from the server — the same serialized value on both sides — is what fixes it. The mismatch is invisible to `tsc` and to every test.
 
 A `loading.tsx` creates an implicit Suspense boundary, which is what allows a layout to flush while its page is still pending.
+
+`React.cache` memoizes fulfilled results but **not** rejections. Retrying a `cache`d reader therefore really re-runs the query rather than replaying the failure — checked directly against the React that Next 15.5.15 vendors (`next/dist/compiled/react`, `19.2.0-canary-0bdb9206`), for a thrown error and a rejected promise alike. Note that `react` in `package.json` is 18.3.1 and its `cache` is unusable outside experimental channels, so test against the vendored copy, not the installed one.
 
 ## The database connection pool holds one client, so parallelising queries wins nothing
 
@@ -189,7 +193,7 @@ Three consequences worth carrying forward. No value of `PG_CONNECT_TIMEOUT_MS` c
 
 The function runs with `AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1024`, a V8 heap limit of 1,018 MB and 675–795 MB RSS at rest, and Lambda scales CPU with memory. That the stall is cold-instance JS/GC work at that CPU share is the obvious reading but is **inferred**, not measured. `NODE_OPTIONS=--max-old-space-size=6144` from `netlify.toml` was suspected and ruled out: `process.env.NODE_OPTIONS` is `null` inside the function, so `[build.environment]` does not reach the runtime.
 
-Do not treat the platform ceiling as a backstop either. Netlify documents 10 s by default and 26 s maximum on paid plans, yet invocations of 26.4 s to 31.9 s were logged on this Pro account. Tracked as issue #1120.
+Do not treat the platform ceiling as a backstop either. Netlify documents 10 s by default and 26 s maximum on paid plans, yet invocations of 26.4 s to 31.9 s were logged on this Pro account. The stall itself is tracked as issue #1124; #1120 is closed by #1123, which established that it is not a database problem.
 
 ### Fail-open and a cacheable response are safe alone and dangerous together
 
