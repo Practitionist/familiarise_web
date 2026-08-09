@@ -8,14 +8,31 @@ import {
   getOrganisationsPage,
   type OrganisationsMetadata,
 } from "@/lib/data/explore-organisations";
-import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import {
+  fallbackOnTransientDbError,
+  withBuildTimeRetry,
+} from "@/lib/data/fail-open";
 
 import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
 } from "./OrganisationsInteractiveContent";
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. The directory reads no session and no searchParams
+// (filtering is client-side in OrganisationsInteractiveContent), and it lists
+// only `isPublic` ACTIVE orgs, so every visitor is entitled to the same HTML.
+//
+// force-dynamic made this uncacheable at the CDN (Next sends dynamic pages
+// `private, no-store`), so every visit paid a cross-region DB round trip for a
+// list that turns over on the order of days.
+//
+// This route IS prerendered during `next build` (#932): the reads run in the
+// build environment, guarded by fail-open's build-phase rethrow so a transient
+// pooler failure fails the build instead of baking an empty directory.
+//
+// 5 minutes: unlike the expert reads this one has no unstable_cache layer, so
+// the interval is the only thing between visitors and the DB. Orgs going public
+// purge this path on demand at the write sites.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Explore Organisations | Familiarise",
@@ -35,10 +52,12 @@ async function OrganisationsDirectory() {
   // Both reads degrade rather than crash the page on a transient pooler
   // timeout (cross-region cold connect, #932).
   const [meta, firstPage] = await Promise.all([
-    getOrganisationsMetadata().catch(
+    withBuildTimeRetry(getOrganisationsMetadata).catch(
       fallbackOnTransientDbError("org directory metadata", EMPTY_METADATA),
     ),
-    getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS).catch(
+    withBuildTimeRetry(() =>
+      getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS),
+    ).catch(
       fallbackOnTransientDbError("org directory page", {
         items: [],
         total: 0,

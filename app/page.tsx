@@ -17,30 +17,51 @@ import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
-import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import {
+  emptyOnTransientDbError,
+  withBuildTimeRetry,
+} from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
 
-// Stream behind the (now static) layout's instant skeleton instead of prerendering
-// at build — the static layout makes loading.tsx prefetchable, and force-dynamic
-// keeps the curated data fresh + off the build-time cross-region DB connect. (#932)
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. Nothing here is per-viewer — the root layout reads no
+// session (the Navbar is a client component on useSession()), and every section
+// below renders the same curated marketing data for signed-in and anonymous
+// visitors alike — so one cached HTML document is correct for everyone.
+//
+// force-dynamic was actively harmful on this route: Next marks a dynamic page
+// `private, no-cache, no-store, max-age=0, must-revalidate`, which is uncacheable
+// at every CDN, so every first-time visitor paid a Netlify ap-southeast-1 ->
+// Supabase ap-south-1 round trip behind a cold function boot. Prerendered HTML is
+// served straight off the CDN with no function invocation at all, on the one page
+// where LCP matters most.
+//
+// This route IS prerendered during `next build` and its reads therefore run in
+// the build environment — the #932 risk. That is deliberate and guarded: the
+// fail-open helpers rethrow during the production build phase (lib/data/fail-open.ts)
+// so a transient pooler failure fails the build loudly instead of baking an empty
+// landing page into static HTML for a whole window.
+//
+// 1 hour: curated marketing content that changes on the order of days. Publishing
+// a featured expert or review purges this path on demand (revalidateTag/
+// revalidatePath at the write sites), so the interval is a backstop, not the SLA.
+export const revalidate = 3600;
 
 // Each section reads independently; a transient pooler timeout (cross-region cold
 // connect, #932) in any one degrades that section to empty rather than throwing
 // past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await getHomeImages().catch(
+  const images = await withBuildTimeRetry(getHomeImages).catch(
     emptyOnTransientDbError("home images"),
   );
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await getHomeExperts().catch(
+  const experts = await withBuildTimeRetry(getHomeExperts).catch(
     emptyOnTransientDbError("home experts"),
   );
   // Hide the section rather than render an empty marquee under its headers when
@@ -51,7 +72,7 @@ async function FeaturedExpertsLoader() {
 }
 
 async function ReviewsLoader() {
-  const reviews = await getHomeReviews().catch(
+  const reviews = await withBuildTimeRetry(getHomeReviews).catch(
     emptyOnTransientDbError("home reviews"),
   );
   if (reviews.length === 0) return null;
