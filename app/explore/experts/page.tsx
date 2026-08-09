@@ -6,7 +6,7 @@ import {
   getExpertsMetadata,
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
-import { withTransientRetry } from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -18,8 +18,9 @@ import { withTransientRetry } from "@/lib/data/fail-open";
 //
 // This route IS prerendered during `next build`, which is exactly the read #932
 // saw fail on a cold cross-region pooler connect. That is guarded rather than
-// avoided: fail-open rethrows during the build phase (lib/data/fail-open.ts), so
-// a flaky build fails loudly instead of shipping an empty experts directory.
+// avoided: these reads no longer degrade at all (#1119), so a flaky build fails
+// loudly instead of shipping an empty experts directory. `withBuildTimeRetry`
+// gives the build two extra attempts before it gives up.
 //
 // 5 minutes, matched by the unstable_cache windows on the reads below so the
 // declared interval is the effective one — Next resolves a route's revalidate to
@@ -100,10 +101,10 @@ export default async function ExploreExperts() {
   // expired; retry once and otherwise throw, which caches nothing (#1119).
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      withTransientRetry(getExpertsMetadata),
-      withTransientRetry(() => getCuratedExperts("rating", 5)),
-      withTransientRetry(() => getCuratedExperts("trending", 8)),
-      withTransientRetry(() => getCuratedExperts("newest", 8)),
+      withBuildTimeRetry(getExpertsMetadata),
+      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
+      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
     ]);
 
   return (

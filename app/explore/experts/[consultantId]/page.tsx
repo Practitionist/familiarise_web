@@ -7,7 +7,6 @@ import {
 import { TUserWithProfessionalBackground } from "@/types/user";
 import { ExpertProfileClient } from "./ExpertProfileClient";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
-import { withTransientRetry } from "@/lib/data/fail-open";
 
 // ISR per consultantId, not force-dynamic. The cache key is the expert being
 // viewed, never the viewer: this page reads no session, and the layout above it
@@ -43,16 +42,17 @@ export default async function ExpertProfile({
 
   // This render is cacheable, so it must never swallow a failure: a 200 carrying
   // the old "taking a moment to load" shell was written to the Netlify durable
-  // cache and replayed to everyone for the rest of the window (#1119). Retry the
-  // transient class once — measured, the attempt after a stalled connect succeeds
-  // in ~330ms (#1120) — then let anything still failing reach error.tsx, which
-  // caches nothing and leaves the previous good copy serving.
-  const [consultant, reviews] = await withTransientRetry(() =>
-    Promise.all([
-      getConsultantDetail(consultantId),
-      getConsultantReviews(consultantId),
-    ]),
-  );
+  // cache and replayed to everyone for the rest of the window (#1119). A transient
+  // pooler timeout now reaches error.tsx instead, which caches nothing.
+  //
+  // Note what that costs, because it is not free: `generateStaticParams` returns
+  // [], so a parameter being rendered for the first time has NO cached copy to
+  // fall back on and its visitor gets the error boundary. Only a *revalidation*
+  // of an already-cached profile keeps serving the last good copy.
+  const [consultant, reviews] = await Promise.all([
+    getConsultantDetail(consultantId),
+    getConsultantReviews(consultantId),
+  ]);
 
   if (!consultant || !consultant.user) {
     notFound();

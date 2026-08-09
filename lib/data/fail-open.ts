@@ -41,9 +41,17 @@ export type FailOpenOptions = {
 // window — measured: one such render was served back at 0.3s with a climbing
 // `age`, so the broken page became the FAST one and nothing looked wrong. Build
 // output and the ISR cache are the same hazard: a render that is persisted and
-// replayed must never carry a swallowed failure. Rethrowing instead costs the
-// one unlucky visitor a 500, writes nothing to the cache, and leaves any
-// previously cached good copy in place for everyone else. (#1119)
+// replayed must never carry a swallowed failure. Rethrowing instead costs the one
+// unlucky visitor a 500 and writes nothing to the cache — verified: a thrown ISR
+// render returns `Cache-Status: "Netlify Durable"; fwd=bypass` with no `stored`.
+//
+// Be precise about the consolation prize, because it does not always apply. A
+// previously cached copy DOES keep serving when a revalidation throws (verified:
+// `age` climbs past the window). But the two `[param]` routes return [] from
+// `generateStaticParams`, so a parameter rendering for the first time has no copy
+// to fall back on and its visitor simply gets the error boundary. That is the
+// majority path on those routes, and it is still the better trade than poisoning
+// the cache for everyone. (#1119)
 function mayDegrade(options?: FailOpenOptions): boolean {
   return Boolean(options?.perRequest) && !isProductionBuild();
 }
@@ -53,42 +61,44 @@ function mayDegrade(options?: FailOpenOptions): boolean {
 // wall-clock is paid once per deploy rather than once per visitor.
 const BUILD_RETRY_DELAYS_MS = [500, 2000];
 
-// The request path now retries too, which the earlier build-only shape ruled out
-// on the assumption that the first failure meant the pooler was unreachable.
-// Measured on a preview (#1120): the connect that "timed out" was a casualty of a
-// ~25s event-loop stall on a newly created instance, and the very next attempt
-// connected in 327ms and 340ms. So the retry is close to free exactly when it
-// fires, and it is what turns a degraded render back into a real one. One attempt
-// only — a genuinely saturated pooler must still surface quickly. (#1119, #1120)
-const REQUEST_RETRY_DELAYS_MS = [250];
-
 /**
- * Retries a read on the transient-timeout class only. A mapper bug fails
- * identically every time and must surface immediately, so it is rethrown at once.
+ * Wraps a read so it is retried during `next build` only. Returns the reader
+ * untouched at request time.
  *
- * The catch below rethrows everything non-transient on the spot, so Next's
- * control-flow signals (`notFound`, `redirect`) pass straight through and no
- * `unstable_rethrow` guard is needed — none of their messages can match the
- * transient regex.
- *
- * Safe to wrap a `React.cache`d reader: `cache` memoizes fulfilled results but
- * NOT a rejection, so the retry really re-runs the query rather than replaying the
- * failure. Verified against the React that Next 15.5.15 vendors
- * (19.2.0-canary-0bdb9206), both for a thrown error and a rejected promise.
+ * A request-time retry was written and REVERTED inside #1123. It looked free:
+ * the connect that "times out" is usually a casualty of a ~25s event-loop stall
+ * on a new instance (#1120), and the attempt straight after it connected in 327ms
+ * and 340ms. But the benefit only ever showed up in two diagnostic samples and
+ * could not be separated from the rethrow in the page-level A/B, while the cost is
+ * structural: retrying per read doubles the query count on the pages that issue
+ * four of them, and `PG_POOL_MAX=1` serialises those. Against a genuinely
+ * saturated pooler that pushes a render toward Netlify's function ceiling, where
+ * the response is a bare platform 500 with NO error boundary and no `Cache-Status`
+ * — strictly worse than the fast 500 the rethrow already gives. Do not reinstate
+ * it without a per-render budget and fault-injected evidence. Tracked on #1124.
  */
-export async function withTransientRetry<T>(read: () => Promise<T>): Promise<T> {
-  const delays = isProductionBuild()
-    ? BUILD_RETRY_DELAYS_MS
-    : REQUEST_RETRY_DELAYS_MS;
+export async function withBuildTimeRetry<T>(read: () => Promise<T>): Promise<T> {
+  if (!isProductionBuild()) return read();
 
   let lastError: unknown;
-  for (let attempt = 0; attempt <= delays.length; attempt++) {
+  for (let attempt = 0; attempt <= BUILD_RETRY_DELAYS_MS.length; attempt++) {
     try {
       return await read();
     } catch (err) {
       lastError = err;
-      if (!isTransientDbError(err) || attempt === delays.length) throw err;
-      await new Promise((r) => setTimeout(r, delays[attempt]));
+      // Only the transient class is worth retrying; a mapper bug fails identically
+      // every time and should surface immediately.
+      if (!isTransientDbError(err) || attempt === BUILD_RETRY_DELAYS_MS.length) {
+        throw err;
+      }
+      // Visible in the CI build log — `removeConsole` strips this in the deployed
+      // function but not during `next build`, so a build that burned time retrying
+      // does not look identical to one that did not.
+      console.warn(
+        `[fail-open] transient DB error during build, retrying in ${BUILD_RETRY_DELAYS_MS[attempt]}ms:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      await new Promise((r) => setTimeout(r, BUILD_RETRY_DELAYS_MS[attempt]));
     }
   }
   throw lastError;

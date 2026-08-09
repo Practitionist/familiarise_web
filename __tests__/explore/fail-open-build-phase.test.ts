@@ -10,7 +10,7 @@ import {
   emptyOnTransientDbError,
   fallbackOnTransientDbError,
   isTransientDbError,
-  withTransientRetry,
+  withBuildTimeRetry,
 } from "@/lib/data/fail-open";
 
 const transient = Object.assign(new Error("pool timeout"), { code: "P2024" });
@@ -96,22 +96,16 @@ describe("production build phase (fail closed even when opted in)", () => {
   });
 });
 
-describe("withTransientRetry", () => {
-  it("retries once at request time and succeeds on the second attempt", async () => {
-    setBuildPhase(false);
-    const read = jest
-      .fn()
-      .mockRejectedValueOnce(transient)
-      .mockResolvedValue("ok");
-    await expect(withTransientRetry(read)).resolves.toBe("ok");
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it("gives up after one request-time retry so a saturated pooler surfaces fast", async () => {
+describe("withBuildTimeRetry", () => {
+  // A request-time retry was tried and reverted in #1123: it doubles the query
+  // count per render under PG_POOL_MAX=1 and can push a failing render past the
+  // Netlify function ceiling, where the response is a bare platform 500 with no
+  // error boundary at all. Pin the build-only shape so it does not creep back.
+  it("does not retry at request time — one attempt, error propagates", async () => {
     setBuildPhase(false);
     const read = jest.fn().mockRejectedValue(transient);
-    await expect(withTransientRetry(read)).rejects.toThrow(transient);
-    expect(read).toHaveBeenCalledTimes(2);
+    await expect(withBuildTimeRetry(read)).rejects.toThrow(transient);
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it("retries a transient failure during the build and succeeds", async () => {
@@ -120,21 +114,28 @@ describe("withTransientRetry", () => {
       .fn()
       .mockRejectedValueOnce(transient)
       .mockResolvedValue("ok");
-    await expect(withTransientRetry(read)).resolves.toBe("ok");
+    await expect(withBuildTimeRetry(read)).resolves.toBe("ok");
     expect(read).toHaveBeenCalledTimes(2);
   });
 
   it("gives up after the configured build attempts and fails the build", async () => {
     setBuildPhase(true);
     const read = jest.fn().mockRejectedValue(transient);
-    await expect(withTransientRetry(read)).rejects.toThrow(transient);
+    await expect(withBuildTimeRetry(read)).rejects.toThrow(transient);
     expect(read).toHaveBeenCalledTimes(3);
   });
 
-  it("does not retry a non-transient error", async () => {
+  it("does not retry a non-transient error during the build", async () => {
+    setBuildPhase(true);
+    const read = jest.fn().mockRejectedValue(real);
+    await expect(withBuildTimeRetry(read)).rejects.toThrow(real);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a non-transient error at request time", async () => {
     setBuildPhase(false);
     const read = jest.fn().mockRejectedValue(real);
-    await expect(withTransientRetry(read)).rejects.toThrow(real);
+    await expect(withBuildTimeRetry(read)).rejects.toThrow(real);
     expect(read).toHaveBeenCalledTimes(1);
   });
 });

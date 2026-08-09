@@ -14,7 +14,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
-import { withTransientRetry } from "@/lib/data/fail-open";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 
 import {
@@ -202,8 +201,9 @@ export async function generateMetadata({
   // The fallback used to be a generic title on a transient timeout, which was
   // right while this route was dynamic. It is ISR now, so that degraded head
   // would be cached and replayed to everyone; a 500 that caches nothing is the
-  // better trade. Retry once instead, which is what actually recovers here (#1119).
-  const org = await withTransientRetry(() => fetchOrgBySlug(orgSlug));
+  // better trade. Left bare so it fails the same way the page body below does —
+  // they share one `React.cache`d read per request (#1119).
+  const org = await fetchOrgBySlug(orgSlug);
   if (!org) return { title: "Organisation not found" };
   return {
     title: `${org.name} — Familiarise`,

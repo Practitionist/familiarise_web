@@ -17,7 +17,7 @@ import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
-import { withTransientRetry } from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
   FeaturedExpertsSkeleton,
@@ -37,28 +37,35 @@ import {
 // where LCP matters most.
 //
 // This route IS prerendered during `next build` and its reads therefore run in
-// the build environment — the #932 risk. That is deliberate and guarded: the
-// fail-open helpers rethrow during the production build phase (lib/data/fail-open.ts)
-// so a transient pooler failure fails the build loudly instead of baking an empty
-// landing page into static HTML for a whole window.
+// the build environment — the #932 risk. That is deliberate and guarded: these
+// reads no longer degrade at all (#1119), so a transient pooler failure fails the
+// build loudly instead of baking an empty landing page into static HTML for a
+// whole window. `withBuildTimeRetry` gives the build two extra attempts first.
 //
 // 1 hour: curated marketing content that changes on the order of days. Publishing
 // a featured expert or review purges this path on demand (revalidateTag/
 // revalidatePath at the write sites), so the interval is a backstop, not the SLA.
 export const revalidate = 3600;
 
-// Each section reads independently and retries the transient pooler timeout
-// (cross-region cold connect, #932) once. A section that still fails throws past
-// its Suspense boundary rather than rendering empty, because this route is ISR and
-// an empty section would be cached and replayed for the whole window — the last
-// good copy keeps serving instead. (#1119, FAMILIARISE_WEB-A)
+// Each section reads independently. A transient pooler timeout (cross-region cold
+// connect, #932) now throws past its Suspense boundary rather than rendering the
+// section empty, because this route is ISR and an empty section would be cached
+// and replayed for the whole window (#1119).
+//
+// Be clear about the trade, because it is worse for one visitor than it used to
+// be: this replaces the entire landing page with app/error.tsx, hero and all, not
+// just the section that failed. It is the right trade only because `/` is
+// prerendered at build, so a cached copy almost always exists and a failed
+// revalidation keeps serving it. The exposed window is a regeneration with no
+// cached copy — i.e. straight after a revalidatePath purge from a write site.
+// (FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await withTransientRetry(getHomeImages);
+  const images = await withBuildTimeRetry(getHomeImages);
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await withTransientRetry(getHomeExperts);
+  const experts = await withBuildTimeRetry(getHomeExperts);
   // Hide the section rather than render an empty marquee under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
@@ -67,7 +74,7 @@ async function FeaturedExpertsLoader() {
 }
 
 async function ReviewsLoader() {
-  const reviews = await withTransientRetry(getHomeReviews);
+  const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
   return (
     <>
