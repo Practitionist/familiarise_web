@@ -50,7 +50,18 @@ export default function AuthSyncProvider() {
       postAuthSync({ type: authed ? "login" : "logout" });
     }
     previousAuthedRef.current = authed;
-    writeAuthedFlag(authed);
+    // Also the reconciliation point for the navbar's optimistic first paint:
+    // a resolved session rewrites the remembered shape in BOTH directions, and
+    // `writeAuthedFlag(false)` drops the cached identity outright.
+    writeAuthedFlag(
+      authed,
+      authed
+        ? {
+            name: session?.user?.name ?? null,
+            image: session?.user?.image ?? null,
+          }
+        : null,
+    );
   }, [isPending, session]);
 
   return null;
