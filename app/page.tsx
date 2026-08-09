@@ -17,10 +17,7 @@ import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
-import {
-  emptyOnTransientDbError,
-  withTransientRetry,
-} from "@/lib/data/fail-open";
+import { withTransientRetry } from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
   FeaturedExpertsSkeleton,
@@ -50,20 +47,18 @@ import {
 // revalidatePath at the write sites), so the interval is a backstop, not the SLA.
 export const revalidate = 3600;
 
-// Each section reads independently; a transient pooler timeout (cross-region cold
-// connect, #932) in any one degrades that section to empty rather than throwing
-// past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
+// Each section reads independently and retries the transient pooler timeout
+// (cross-region cold connect, #932) once. A section that still fails throws past
+// its Suspense boundary rather than rendering empty, because this route is ISR and
+// an empty section would be cached and replayed for the whole window — the last
+// good copy keeps serving instead. (#1119, FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await withTransientRetry(getHomeImages).catch(
-    emptyOnTransientDbError("home images"),
-  );
+  const images = await withTransientRetry(getHomeImages);
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await withTransientRetry(getHomeExperts).catch(
-    emptyOnTransientDbError("home experts"),
-  );
+  const experts = await withTransientRetry(getHomeExperts);
   // Hide the section rather than render an empty marquee under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
@@ -72,9 +67,7 @@ async function FeaturedExpertsLoader() {
 }
 
 async function ReviewsLoader() {
-  const reviews = await withTransientRetry(getHomeReviews).catch(
-    emptyOnTransientDbError("home reviews"),
-  );
+  const reviews = await withTransientRetry(getHomeReviews);
   if (reviews.length === 0) return null;
   return (
     <>

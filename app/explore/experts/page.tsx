@@ -5,13 +5,8 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
-  EMPTY_EXPERTS_METADATA,
 } from "@/lib/data/explore-experts";
-import {
-  emptyOnTransientDbError,
-  fallbackOnTransientDbError,
-  withTransientRetry,
-} from "@/lib/data/fail-open";
+import { withTransientRetry } from "@/lib/data/fail-open";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -100,22 +95,15 @@ function HeroSection({
 }
 
 export default async function ExploreExperts() {
-  // Degrade gracefully: a heavy curated read that times out (cold query brushing
-  // the pg query budget) renders an empty row instead of erroring the whole page.
+  // These used to degrade to empty rows on a transient timeout. This route is ISR,
+  // so that empty page would be cached and served to everyone until the window
+  // expired; retry once and otherwise throw, which caches nothing (#1119).
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      withTransientRetry(getExpertsMetadata).catch(
-        fallbackOnTransientDbError("experts metadata", EMPTY_EXPERTS_METADATA),
-      ),
-      withTransientRetry(() => getCuratedExperts("rating", 5)).catch(
-        emptyOnTransientDbError("featured experts"),
-      ),
-      withTransientRetry(() => getCuratedExperts("trending", 8)).catch(
-        emptyOnTransientDbError("trending experts"),
-      ),
-      withTransientRetry(() => getCuratedExperts("newest", 8)).catch(
-        emptyOnTransientDbError("newest experts"),
-      ),
+      withTransientRetry(getExpertsMetadata),
+      withTransientRetry(() => getCuratedExperts("rating", 5)),
+      withTransientRetry(() => getCuratedExperts("trending", 8)),
+      withTransientRetry(() => getCuratedExperts("newest", 8)),
     ]);
 
   return (
