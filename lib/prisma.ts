@@ -91,22 +91,6 @@ function makeClient() {
         : [{ level: "query", emit: "event" }, "error"],
   });
 
-  // #14 — this deployment's tail latency lives in a cold instance's FIRST
-  // connect, not in module boot, and the budgets above are otherwise invisible
-  // in a function log: Netlify emits only Duration and Memory Usage for this
-  // function (no Init Duration), so an investigator cannot tell a deployed 3s
-  // budget from a 30s one without re-deriving it from this file. #1120.
-  //
-  // Runs once per instance boot, not per request. console.warn rather than
-  // Sentry.logger so it lands in the Netlify function log itself — that is the
-  // log an investigator is already reading, and it is the one that was missing
-  // the number. Matches the lib/ convention (lib/redis.ts, lib/maintenance-cron.ts).
-  console.warn(
-    `[Prisma:INIT] connect=${PG_CONNECT_TIMEOUT_MS}ms query=${PG_QUERY_TIMEOUT_MS}ms ` +
-      `poolMax=${process.env.PG_POOL_MAX ?? "pg-default"} ` +
-      `phase=${process.env.NEXT_PHASE ?? "runtime"}`,
-  );
-
   // #696 / nav-perf Phase 3 — warn on queries over the threshold so missing
   // indexes and N+1s are visible without full query logging. console.warn
   // matches the lib/ convention (lib/redis.ts, lib/maintenance-cron.ts).

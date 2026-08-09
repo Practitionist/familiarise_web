@@ -143,7 +143,9 @@ The evidence is a bimodal distribution with nothing in the middle:
 | C | 16 concurrent | 12 already warm | 16 | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
 | D | 12 concurrent | all warm | 12 | 3.33–5.89 s, zero slow |
 
-No sample anywhere in the campaign landed between 6.8 s and 30.8 s. A distribution with a hole that wide is a timeout, not congestion.
+No sample in those four batches landed between 6.8 s and 30.8 s. A distribution with a hole that wide is a timeout, not congestion.
+
+The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log. Note that the fast mode there is 9–11 s rather than 2–3 s, because *every* instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
 
 Batch A settles the cold-boot question on its own: a brand-new instance rendering a real database-backed page sequentially costs about 1.9 seconds end to end. Boot is not the problem. Batch D settles the concurrency question: twelve simultaneous renders against warm instances cost 3.3–5.9 seconds and never degrade. What produces the tail is the *intersection* — a new instance that must open its first pooler connection while other new instances are doing the same.
 
@@ -156,6 +158,10 @@ Three further facts are worth carrying forward, because each one costs an aftern
 **Do not plan on reading `Init Duration` here.** Netlify documents it as the cold-start discriminator, and staff describe a full Lambda-style report line — `Duration … Billed Duration … Memory Size … Max Memory Used … Init Duration …`. The Next.js server handler on this account does not emit that. Through both `netlify logs` and its historical API the line is reduced to `Duration:` and `Memory Usage:` only. A user on Netlify's own forum reports the identical absence for this same function ("I have checked my full log and I can't find any `init duration` in it"). Whether the dashboard UI shows more was not checked.
 
 Two substitutes work instead. An invocation *start* appears as an info line with an empty message, so start and end pair by adding the duration to the start timestamp — verified exact to the millisecond. And a genuine module load prints the Better Auth pair `Social provider github is missing clientId or clientSecret` / `… facebook …`, which makes each new instance countable.
+
+**You cannot add a `console.*` line to server code and read it in production.** `next.config.mjs` sets `compiler.removeConsole: process.env.NODE_ENV === "production"`, and this strips server-side console calls too, not just client bundles. It was tested directly: a `console.warn` added at Prisma client construction produced **zero** occurrences in the function log across a deploy where two module loads were independently confirmed by the Better Auth markers in the same window. The reason third-party lines still appear is that `node_modules` is not compiled by SWC — which is exactly why Better Auth and `prisma:error` survive while our own would not.
+
+The practical consequences are worth stating plainly. Any diagnostic you add this way is inert in production while passing every local check, so it is worse than nothing. Roughly 993 `console.*` call sites already exist under `lib/` and `app/api`, all of them silently dead in production, including the ones the comment in `lib/prisma.ts` cites as "the lib/ convention" — see issue #1122. Reach for `Sentry.logger` instead, but note it ships to Sentry rather than to the function log, so it does not help anyone reading `netlify logs`.
 
 **The documented 9-second budget is not what the function actually obeys.** `lib/prisma.ts` tunes a 3 s connect plus a 6 s query budget specifically so a stuck pooler cannot pin a function to its ceiling, and no Netlify context overrides either value — verified by reading `PG_CONNECT_TIMEOUT_MS` and `PG_QUERY_TIMEOUT_MS` across all three contexts, where only `PG_POOL_MAX=1` is set. Yet a single invocation ran 30,113.69 ms and logged `prisma:error timeout exceeded when trying to connect` at t+29.78 s — roughly ten times the configured connect timeout.
 
