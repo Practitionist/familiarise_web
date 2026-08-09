@@ -12,6 +12,7 @@
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { readByIds } from "@/lib/data/read-by-ids";
 import {
   ORGANISATIONS_PER_PAGE,
   type IOrganisationFilters,
@@ -66,7 +67,9 @@ function whereFromFilters(
       { name: { contains: filters.search, mode: "insensitive" } },
       {
         brandingProfile: {
-          is: { description: { contains: filters.search, mode: "insensitive" } },
+          is: {
+            description: { contains: filters.search, mode: "insensitive" },
+          },
         },
       },
       {
@@ -229,14 +232,14 @@ export async function getOrganisationsPage(
     ]);
     total = count;
     // Named `pageRows`, not `page` — that would shadow the `page` parameter.
-    // Empty-`in` guard: a page past the end of the ranking, or a filter set
-    // nothing matches, otherwise round trips for `IN (NULL)`. (#1121)
-    const pageRows = rankedIds.length
-      ? await prisma.organization.findMany({
-          where: { id: { in: rankedIds } },
-          select: orgListSelect,
-        })
-      : [];
+    // Guarded for a page past the end of the ranking, or a filter set nothing
+    // matches — see readByIds. (#1121)
+    const pageRows = await readByIds(rankedIds, () =>
+      prisma.organization.findMany({
+        where: { id: { in: rankedIds } },
+        select: orgListSelect,
+      }),
+    );
     // findMany ignores the id order, so restore the ranking.
     const order = new Map(rankedIds.map((id, index) => [id, index]));
     rows = pageRows.sort(
