@@ -84,7 +84,7 @@ Next.js sets `Cache-Control` purely from the rendering strategy of each route. Y
 | ISR, time-based revalidation | `s-maxage={revalidate}, stale-while-revalidate={expire - revalidate}` |
 | Dynamic | `private, no-cache, no-store, max-age=0, must-revalidate` |
 
-The third row is the whole argument against `force-dynamic` on public pages: it makes them uncacheable at every CDN by construction, so each visitor pays a full origin round trip. On this deployment that is Netlify `ap-southeast-1` to Supabase `ap-south-1`, and a cold function boot was measured at 23,059 ms.
+The third row is the whole argument against `force-dynamic` on public pages: it makes them uncacheable at every CDN by construction, so each visitor pays a full origin round trip. On this deployment that is Netlify `ap-southeast-1` to Supabase `ap-south-1`, and the tail of that round trip was measured at 30–33 seconds. See "What the 23-second TTFB actually decomposes into" below — the cost is the first database connect on a new function instance, not the boot.
 
 The converse is the strongest argument for prerendering public pages: a prerendered page is served as static HTML from the edge with **no function invocation at all**, so it also sidesteps the cold start entirely on the pages where LCP matters most.
 
@@ -106,7 +106,7 @@ Documented adapter limitations worth remembering: pages set to the `edge` runtim
 
 **A/B two deploy previews.** Same account, same page, exactly one variable changed. This is what finally proved both real wins in this campaign, and what exposed a route returning 500 on every request that CI had called green.
 
-**Warm the function first.** A cold Netlify boot measured 36.5 s against 1.4 s warm on the same route. Any timing measured on a cold instance is noise.
+**Warm the function first.** Cold measurements on this deployment span 1.9 s to 33 s on the same route, so any single cold timing is noise. Warm the instance, or take enough cold samples to see the distribution — it is bimodal, not noisy-around-a-mean, and the mean is meaningless.
 
 ## Measured facts that keep getting rediscovered
 
@@ -127,6 +127,43 @@ The practical consequence is that wrapping independent Prisma reads in `Promise.
 Check `PG_POOL_MAX` before proposing any "these queries are independent, parallelise them" optimisation anywhere in this codebase. The idea is dead until the pool is widened, and widening it is a capacity question about Supabase pooler limits across concurrent function instances rather than a config tweak. It is tracked as issue #1117.
 
 This also reframes the wave-depth measurements. The finding that one `appointment.findMany` issues 30 SQL statements for 3 appointments, with summed database time of 3,108 ms exceeding wall time of 1,127 ms, is about statement count under a serialising pool as much as about cross-region round trips. That makes Prisma's `relationJoins` more promising than it first appeared, because collapsing statement count is the only lever a single connection responds to.
+
+## What the 23-second TTFB actually decomposes into
+
+This was measured on 2026-08-09 against deploy preview 1118, anonymously, on `/explore/experts/[consultantId]` — an on-demand ISR route, so every distinct parameter forces one real server render. Forty-two cold renders were taken across four batches. Every number below is client-side `time_starttransfer` from `curl`, correlated against the Netlify function log.
+
+The headline is that the 23-second figure was misattributed. It is not cold boot, and it is not one long render. **It is the first database connect on a newly created function instance, and it costs a flat ~30 seconds whenever several new instances try to connect at the same moment.**
+
+The evidence is a bimodal distribution with nothing in the middle:
+
+| Batch | Concurrency | Instance state | Samples | Result |
+|---|---|---|---|---|
+| A | 1 (strictly sequential) | new | 8 | 1.80–2.72 s, median 1.88 s, no outliers |
+| B | 12 concurrent | mostly new | 12 | six at 1.90–4.66 s, six at 30.99–33.08 s |
+| C | 16 concurrent | 12 already warm | 16 | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
+| D | 12 concurrent | all warm | 12 | 3.33–5.89 s, zero slow |
+
+No sample anywhere in the campaign landed between 6.8 s and 30.8 s. A distribution with a hole that wide is a timeout, not congestion.
+
+Batch A settles the cold-boot question on its own: a brand-new instance rendering a real database-backed page sequentially costs about 1.9 seconds end to end. Boot is not the problem. Batch D settles the concurrency question: twelve simultaneous renders against warm instances cost 3.3–5.9 seconds and never degrade. What produces the tail is the *intersection* — a new instance that must open its first pooler connection while other new instances are doing the same.
+
+The slow-count arithmetic supports that reading directly. Batch B ran twelve requests against roughly six existing instances and produced exactly six slow responses; batch C ran sixteen against the roughly twelve instances batch B had created and produced exactly four. In both cases the number of slow responses equals the number of instances that had to be created. Treat this as a strong inference rather than a proven mechanism, because instance identity is not exposed in the log.
+
+Three further facts are worth carrying forward, because each one costs an afternoon to rediscover.
+
+**One HTTP request is one function invocation.** Six concurrent requests produced exactly six `Duration:` lines, and each client timing exceeded its matching invocation duration by a near-constant 0.37 s of CDN and network overhead. The 32.23 s request maps to a single invocation of 30,113.69 ms. Nothing chains, nothing retries at the platform level, and the document request is not followed by a second billable render. Any explanation of a large TTFB that depends on a redirect chain, a middleware hop or an RSC follow-up is not what is happening here.
+
+**The `Init Duration` field does not exist in this log stream.** Netlify's own cold-start discriminator is unavailable through both `netlify logs` and its historical API; the only fields emitted are `Duration:` and `Memory Usage:`. Two usable substitutes were found instead. An invocation *start* appears as an info line with an empty message, so start and end can be paired by adding the duration to the start timestamp. And a genuine module load prints the Better Auth pair `Social provider github is missing clientId or clientSecret` / `… facebook …`, which makes each new instance countable.
+
+**The documented 9-second budget is not what the function actually obeys.** `lib/prisma.ts` tunes a 3 s connect plus a 6 s query budget specifically so a stuck pooler cannot pin a function to its ceiling, and no Netlify context overrides either value. Yet a single invocation ran 30,113.69 ms and logged `prisma:error timeout exceeded when trying to connect` at t+29.78 s — roughly ten times the configured connect timeout. Separately, invocations of 26.4 s to 31.9 s were logged on a Pro account whose documented synchronous ceiling is 26 s. Both the application budget and the platform ceiling are being exceeded, so neither can be relied on as an upper bound when reasoning about worst-case latency. This is tracked as issue #1120.
+
+### The failure this exposes: a degraded page gets cached
+
+`fallbackOnTransientDbError` correctly rethrows during `next build`, so a bad bake cannot be frozen into build output. It does **not** rethrow during an on-demand ISR render at request time, and that is a real gap rather than a theoretical one.
+
+Two of the forty-two cold renders returned HTTP 200 carrying `<h1>This profile is taking a moment to load</h1>` — the degraded `ConsultantUnavailable` shell — at 66,407 bytes against a healthy 104–114 KB. Because the response is a 200 on a cacheable route, Netlify stored it in the durable cache. Every later visitor then received the broken page **from cache in 0.3 s**, for the whole revalidate window, with no error anywhere and nothing slow left to notice.
+
+The lesson generalises past this one helper: on an ISR route, a fail-open path converts a transient database blip into a cached artefact. Fail-open and cacheable responses are safe individually and dangerous together. This is tracked as issue #1119.
 
 ## Options assessed and rejected — do not re-propose without new information
 
