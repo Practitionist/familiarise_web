@@ -13,6 +13,7 @@ import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { reportSentryError } from "@/lib/observability/report";
 import {
   sendWelcomeEmail,
   sendAccountLinkedEmail,
@@ -665,8 +666,18 @@ export const auth = betterAuth({
             if (!linkedViaSSO) ssoEnforcementFailed = true;
           }
         }
-      } catch {
-        // non-fatal — don't break session
+      } catch (error) {
+        // Still non-fatal — a session read must not 500 because a lookup
+        // blipped — but note WHICH way it fails: `ssoEnforcementFailed` stays
+        // false, so the session passes enforcement. Unlike the two fail-opens
+        // reasoned about above, that one was never a decision, and it was
+        // silent. An enforced org's policy going unenforced is exactly the
+        // event someone needs to see. (#1125)
+        reportSentryError(error, {
+          subsystem: "sso",
+          op: "customSession.enforcementRecheck",
+          extra: { userId: user.id },
+        });
       }
 
       return {

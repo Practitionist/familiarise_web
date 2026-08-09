@@ -33,6 +33,7 @@ import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { reportSentryError } from "@/lib/observability/report";
 
 interface RouteContext {
   params: Promise<{ trialId: string }>;
@@ -739,6 +740,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     console.error("Error updating trial session:", error);
+    // The refund above runs after the trial writes commit, so a failure here
+    // can leave a cancelled-but-unrefunded trial — alert on it (#1125).
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "PATCH /api/trials/[trialId]",
+      expected: false,
+      extra: { trialId },
+    });
     return NextResponse.json(
       { error: "An error occurred while updating trial session" },
       { status: 500 },
@@ -852,6 +861,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     console.error("Error cancelling trial session:", error);
+    // Same money-alert gap as PATCH: the refund runs after the trial writes
+    // commit, so a failure here can leave a cancelled-but-unrefunded trial (#1125).
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "DELETE /api/trials/[trialId]",
+      expected: false,
+      extra: { trialId },
+    });
     return NextResponse.json(
       { error: "An error occurred while cancelling trial session" },
       { status: 500 },

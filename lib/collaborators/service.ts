@@ -16,6 +16,7 @@ import {
 } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
+import { reportSentryError } from "@/lib/observability/report";
 
 type PlanType = "webinar" | "class";
 
@@ -215,7 +216,10 @@ export async function inviteCollaborator(
         });
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" }, level: "warning" },
+      );
       console.error(
         "[collaborators] Failed to send invitation notification:",
         error,
@@ -259,7 +263,10 @@ export async function respondToInvitation(
         await import("@/actions/stream/chat/channel.action");
       await createCollaboratorChannel(planType, planId);
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "stream" }, level: "warning" });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "stream" }, level: "warning" },
+      );
       console.error("Failed to create collaborator channel:", err);
     }
 
@@ -295,7 +302,10 @@ export async function respondToInvitation(
         });
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" }, level: "warning" },
+      );
       console.error(
         "[collaborators] Failed to send acceptance notification:",
         error,
@@ -332,7 +342,17 @@ export async function removeCollaborator(
       where: { id: collab.consultantProfileId },
       select: { userId: true },
     })
-    .catch(() => null);
+    .catch((error) => {
+      // A null here skips BOTH the removal notification and the Stream
+      // chat-access revocation below, leaving a removed collaborator with
+      // chat access. The update already succeeded and must not be undone (#1125).
+      reportSentryError(error, {
+        subsystem: "collaborators",
+        op: "removeCollaborator.profileLookup",
+        expected: false,
+      });
+      return null;
+    });
 
   if (profile?.userId) {
     // Notification — independent failure
@@ -353,7 +373,10 @@ export async function removeCollaborator(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" }, level: "warning" },
+      );
       console.error(
         "[collaborators] Failed to send removal notification:",
         error,
@@ -372,17 +395,48 @@ export async function removeCollaborator(
               where: { classPlanId: planId },
               select: { id: true },
             });
-      await Promise.all([
-        ...events.map((event) =>
+      // `removeUserFromEventChannel` REPORTS its own failures by returning
+      // { success: false } — it does not throw — so awaiting it without reading
+      // the result meant a failed revocation looked identical to a successful
+      // one, and the outer catch never fired. A collaborator removed from the
+      // plan kept chat access on every event, silently. (#1125)
+      const revocations = await Promise.all(
+        events.map((event) =>
           removeUserFromEventChannel(planType, event.id, profile.userId),
         ),
-        getStreamChatClient()
-          .channel("messaging", `collab-${planType}-${planId}`)
-          .removeMembers([profile.userId])
-          .catch(() => {}),
-      ]);
+      );
+      const failedEventIds = events
+        .filter((_, i) => !revocations[i]?.success)
+        .map((event) => event.id);
+      if (failedEventIds.length > 0) {
+        reportSentryError(
+          new Error(
+            `Chat access not revoked for ${failedEventIds.length} of ${events.length} ${planType} events`,
+          ),
+          {
+            subsystem: "stream",
+            op: "removeCollaborator.revokeEventChannels",
+            extra: { planId, planType, failedEventIds },
+          },
+        );
+      }
+      await getStreamChatClient()
+        .channel("messaging", `collab-${planType}-${planId}`)
+        .removeMembers([profile.userId])
+        .catch((error) => {
+          // Separate from the event channels above: this is the collaborator
+          // coordination channel, and losing it is not the same access grant.
+          reportSentryError(error, {
+            subsystem: "stream",
+            op: "removeCollaborator.revokeCollabChannel",
+            extra: { planId, planType },
+          });
+        });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" }, level: "warning" });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" }, level: "warning" },
+      );
       console.error("[collaborators] Failed to revoke Stream access:", error);
     }
   }

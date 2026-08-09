@@ -20,6 +20,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
@@ -228,8 +229,22 @@ export async function applyRateLimit(
       );
     }
     return null;
-  } catch {
-    return null; // Redis down — fail open
+  } catch (error) {
+    // Fail open is deliberate (#1125) — but a Redis outage silently disables
+    // every rate limiter in the app, so it must be reported, not swallowed.
+    //
+    // `identifier` is deliberately NOT attached. Callers key on whatever
+    // identifies the caller, and app/api/consultants/search/route.ts passes a
+    // raw client IP — which would put PII in Sentry against this project's
+    // sendDefaultPii: false. It buys nothing anyway: when Redis is down every
+    // limiter fails, so one sample's key is not diagnostic, and the captured
+    // transaction already names the route. (#1127)
+    reportSentryError(error, {
+      subsystem: "rate-limit",
+      op: "applyRateLimit",
+      expected: false,
+    });
+    return null;
   }
 }
 

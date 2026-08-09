@@ -26,6 +26,7 @@ import {
   validateAllSlotsDetailed,
 } from "@/utils/timeSlotValidation";
 import { formatSlotsForApi } from "@/utils/schedule/formatting";
+import { reportSentryError } from "@/lib/observability/report";
 import type { SlotsType } from "@/utils/schedule/types";
 import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
@@ -508,6 +509,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         description: "Your profile settings have been successfully updated.",
       });
     } catch (error) {
+      // formatSlotsForApi now throws rather than degrading, so a slot-formatting
+      // regression lands here instead of silently shipping a short or empty
+      // availability payload. Worth capturing: the consultant sees a retry toast
+      // and would otherwise be the only one who ever knew. (#1125)
+      reportSentryError(error, {
+        subsystem: "consultants",
+        op: "SettingsTab.save",
+        extra: { consultantId: consultant.id, scheduleType },
+      });
       console.error("Error updating settings:", error);
       toast({
         title: "Error",
