@@ -60,7 +60,7 @@ The build must reach Supabase. CI decodes a real `.env` before building, so it d
 
 Every Netlify context — deploy preview, branch deploy and production — shares one Supabase database. Build-time reads therefore touch production data from preview builds. This is a real consequence of choosing prerendering and belongs in any PR description that introduces it.
 
-Worst of all, a swallowed error at build time gets frozen into the output. This codebase's `fallbackOnTransientDbError` returns empty on a transient failure, which is correct at runtime and dangerous at build time, because the empty result is baked into static HTML. The blast radius is bounded by the revalidate window, since ISR regenerates, but a silent empty page is worse than a loud failure.
+Worst of all, a swallowed error at build time gets frozen into the output. This codebase's `fallbackOnTransientDbError` used to return empty on a transient failure, and the empty result was baked into static HTML. The ISR cache turned out to be the same hazard as build output, so since #1123 the helper rethrows unless a call site opts in with `perRequest` — see "Fail-open and a cacheable response" below.
 
 The guard for this is to rethrow during the build phase, converting a silent bad bake into a visible, retryable build failure:
 
@@ -84,7 +84,7 @@ Next.js sets `Cache-Control` purely from the rendering strategy of each route. Y
 | ISR, time-based revalidation | `s-maxage={revalidate}, stale-while-revalidate={expire - revalidate}` |
 | Dynamic | `private, no-cache, no-store, max-age=0, must-revalidate` |
 
-The third row is the whole argument against `force-dynamic` on public pages: it makes them uncacheable at every CDN by construction, so each visitor pays a full origin round trip. On this deployment that is Netlify `ap-southeast-1` to Supabase `ap-south-1`, and the tail of that round trip was measured at 30–33 seconds. See "What the 23-second TTFB actually decomposes into" below — the cost is the first database connect on a new function instance, not the boot.
+The third row is the whole argument against `force-dynamic` on public pages: it makes them uncacheable at every CDN by construction, so each visitor pays a full origin round trip. On this deployment that is Netlify `ap-southeast-1` to Supabase `ap-south-1`, and the tail was measured at 30–33 seconds. See "What the 23-second TTFB actually decomposes into" below — the cost is a ~24 second event-loop stall on a newly created instance, not the round trip and not the boot.
 
 The converse is the strongest argument for prerendering public pages: a prerendered page is served as static HTML from the edge with **no function invocation at all**, so it also sidesteps the cold start entirely on the pages where LCP matters most.
 
@@ -134,9 +134,9 @@ This also reframes the wave-depth measurements. The finding that one `appointmen
 
 This was measured on 2026-08-09 against deploy preview 1118, anonymously, on `/explore/experts/[consultantId]` — an on-demand ISR route, so every distinct parameter forces one real server render. Forty-two cold renders were taken across four batches. Every number below is client-side `time_starttransfer` from `curl`, correlated against the Netlify function log.
 
-The headline is that the 23-second figure was misattributed. Cold boot and render cost are both ruled out by measurement below. **What the data indicates instead is a connection-timeout path, taken when several newly created function instances open their first pooler connection at the same moment, costing a flat ~30 seconds when it fires.**
+The headline is that the 23-second figure was misattributed. Cold boot and render cost are both ruled out by measurement below.
 
-Be precise about which parts of that sentence are measured. The ~30-second plateau and the bimodality are measured. That a connection is the thing timing out is read directly from `prisma:error timeout exceeded when trying to connect` logged inside the affected invocation. That the trigger is *per-new-instance* is inference from counting, because the log does not expose instance identity — see the slow-count arithmetic below.
+**The database is not the slow part, and the ~30 seconds is a stalled event loop on a newly created function instance.** This was settled on 2026-08-09 against deploy preview 1123 by a diagnostic route that reported instance identity, `process.uptime()`, an event-loop lag probe, and per-attempt connect timings in its response body — see "The connect budget cannot be enforced" below. The earlier reading on this page, that a pooler connection was the thing timing out, was wrong: the connect error is a *casualty* of the stall, not its cause.
 
 The evidence is a bimodal distribution with nothing in the middle:
 
@@ -147,13 +147,13 @@ The evidence is a bimodal distribution with nothing in the middle:
 | C | 16 concurrent | 12 already warm | 16 | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
 | D | 12 concurrent | all warm | 12 | 3.33–5.89 s, zero slow |
 
-No sample in those four batches landed between 6.8 s and 30.8 s. A gap that wide points at a fixed timeout rather than congestion, which would fill the middle of the range instead of leaving it empty.
+No sample in those four batches landed between 6.8 s and 30.8 s. The gap is the signature of the cold-instance stall: an instance either serves normally or loses roughly 24 seconds to it, with nothing in between. The shape replicated exactly on 2026-08-09 against `dev` at 1fa94c17 — eight sequential renders at 1.79–4.94 s with no outliers, then twelve concurrent renders splitting one fast at 1.85 s, six at 30.67–32.68 s and five hard 500s at 36.3 s.
 
-The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log. Note that the fast mode there is 9–11 s rather than 2–3 s, because *every* instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
+The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log (that error is a casualty of the stall, not its cause — see below). Note that the fast mode there is 9–11 s rather than 2–3 s, because *every* instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
 
-Batch A settles the cold-boot question on its own: a brand-new instance rendering a real database-backed page sequentially costs about 1.9 seconds end to end. Boot is not the problem. Batch D settles the concurrency question: twelve simultaneous renders against warm instances cost 3.3–5.9 seconds and never degrade. What produces the tail is the *intersection* — a new instance that must open its first pooler connection while other new instances are doing the same.
+Batch A settles the cold-boot question on its own: a brand-new instance rendering a real database-backed page sequentially costs about 1.9 seconds end to end. Boot is not the problem. Batch D settles the concurrency question: twelve simultaneous renders against warm instances cost 3.3–5.9 seconds and never degrade. What produces the tail is instance creation: concurrency forces new instances, and a new instance pays the stall.
 
-The slow-count arithmetic supports that reading directly. Batch B ran twelve requests against roughly six existing instances and produced exactly six slow responses; batch C ran sixteen against the roughly twelve instances batch B had created and produced exactly four. In both cases the number of slow responses equals the number of instances that had to be created. Treat this as a strong inference rather than a proven mechanism, because instance identity is not exposed in the log.
+The slow-count arithmetic supports that reading directly. Batch B ran twelve requests against roughly six existing instances and produced exactly six slow responses; batch C ran sixteen against the roughly twelve instances batch B had created and produced exactly four. In both cases the number of slow responses equals the number of instances that had to be created. The log does not expose instance identity, which is why this was inference at the time; a diagnostic route that returned a per-instance id later confirmed it directly — every stalled sample had an instance age under 100 ms and an invocation count of 1.
 
 Three further facts are worth carrying forward, because each one costs an afternoon to rediscover.
 
@@ -169,17 +169,42 @@ Two substitutes work instead. An invocation *start* appears as an info line with
 
 The practical consequences are worth stating plainly. Any diagnostic you add this way is inert in production while passing every local check, so it is worse than nothing. Roughly 993 `console.*` call sites already exist under `lib/` and `app/api`, all of them silently dead in production, including the ones the comment in `lib/prisma.ts` cites as "the lib/ convention" — see issue #1122. Reach for `Sentry.logger` instead, but note it ships to Sentry rather than to the function log, so it does not help anyone reading `netlify logs`.
 
-**The documented 9-second budget is not what the function actually obeys.** `lib/prisma.ts` tunes a 3 s connect plus a 6 s query budget specifically so a stuck pooler cannot pin a function to its ceiling, and no Netlify context overrides either value — verified by reading `PG_CONNECT_TIMEOUT_MS` and `PG_QUERY_TIMEOUT_MS` across all three contexts, where only `PG_POOL_MAX=1` is set. Yet a single invocation ran 30,113.69 ms and logged `prisma:error timeout exceeded when trying to connect` at t+29.78 s — roughly ten times the configured connect timeout.
+### The connect budget cannot be enforced, and the reason is not the database
 
-Do not treat the platform ceiling as a backstop either. Netlify documents 10 s by default and 26 s maximum on paid plans, with no way to extend it, yet invocations of 26.4 s to 31.9 s were logged on this Pro account. The mechanism is unresolved — the `Duration` field may cover more than the billable synchronous window, or the Next server handler may not run under the standard synchronous limit. Either way, neither the application budget nor the documented ceiling bounds worst-case latency here, so do not use either as an upper bound in an argument. Tracked as issue #1120.
+`lib/prisma.ts` tunes a 3 s connect budget, and that value really is passed through to `pg.Pool` — verified in `node_modules/@prisma/adapter-pg/dist/index.mjs`, where the factory hands its config straight to `new pg.Pool(...)`, and reproduced locally, where a black-holed connect with `connectionTimeoutMillis: 3000` failed in 3,003 ms with the exact two error strings seen in production. Prisma itself does not retry: one query is one connect attempt.
 
-### The failure this exposes: a degraded page gets cached
+Yet a production invocation logged that connect timeout at t+29.78 s. The reason is that **both pg timers are plain `setTimeout`s** — `pg-pool/index.js:219` for the queue wait and `pg/lib/client.js:148` for the socket — and a `setTimeout` cannot fire while the event loop is blocked.
 
-`fallbackOnTransientDbError` correctly rethrows during `next build`, so a bad bake cannot be frozen into build output. It does **not** rethrow during an on-demand ISR render at request time, and that is a real gap rather than a theoretical one.
+Measured on deploy preview 1123 with a diagnostic route that ran 400 ms of pure idle `await` **before touching the database at all**, then reported the loop lag it observed. Three of forty invocations came back like this:
 
-Two of the forty-two cold renders returned HTTP 200 carrying `<h1>This profile is taking a moment to load</h1>` — the degraded `ConsultantUnavailable` shell — at 66,407 bytes against a healthy 104–114 KB. Because the response is a 200 on a cacheable route, Netlify stored it in the durable cache. Every later visitor then received the broken page **from cache in 0.3 s**, for the whole revalidate window, with no error anywhere and nothing slow left to notice.
+| instance age | `process.uptime()` | invocation | 400 ms idle phase took | max loop lag | first DB attempt |
+|---|---|---|---|---|---|
+| 40 ms | 3,363 ms | 1 | 23,905 ms | 23,746 ms | ok in 862 ms |
+| 39 ms | 3,361 ms | 1 | 24,634 ms | 24,534 ms | ok in 866 ms |
+| 100 ms | 3,355 ms | 1 | 24,823 ms | 24,655 ms | ok in 1,037 ms |
 
-The lesson generalises past this one helper: on an ISR route, a fail-open path converts a transient database blip into a cached artefact. Fail-open and cacheable responses are safe individually and dangerous together. This is tracked as issue #1119.
+The other thirty-seven, all on instances at least 47 s old, completed the same idle phase in 400–453 ms with lag of 1–70 ms. So the stall is roughly 24 seconds, it happens **before any database work**, and it happens only on a brand-new instance serving its first invocation. The database query that follows takes about a second — and in an earlier round where a connect *did* get caught by the stall and failed after 25.7 s and 26.1 s, the immediately retried attempt connected in 340 ms and 327 ms.
+
+Three consequences worth carrying forward. No value of `PG_CONNECT_TIMEOUT_MS` can bound this, so do not propose tuning it. `prisma:error timeout exceeded when trying to connect` in the function log is not evidence that the pooler is unhealthy — check whether the instance was new before believing it. And the only levers that actually help are not invoking the function at all (an ISR cache hit costs no instance), and retrying once past the stall, which `lib/data/fail-open.ts` now does.
+
+The function runs with `AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1024`, a V8 heap limit of 1,018 MB and 675–795 MB RSS at rest, and Lambda scales CPU with memory. That the stall is cold-instance JS/GC work at that CPU share is the obvious reading but is **inferred**, not measured. `NODE_OPTIONS=--max-old-space-size=6144` from `netlify.toml` was suspected and ruled out: `process.env.NODE_OPTIONS` is `null` inside the function, so `[build.environment]` does not reach the runtime.
+
+Do not treat the platform ceiling as a backstop either. Netlify documents 10 s by default and 26 s maximum on paid plans, yet invocations of 26.4 s to 31.9 s were logged on this Pro account. Tracked as issue #1120.
+
+### Fail-open and a cacheable response are safe alone and dangerous together
+
+A fail-open path on an ISR route converts a transient database blip into a cached artefact. `fallbackOnTransientDbError` rethrew during `next build` but degraded at request time, and on `/explore/experts/[consultantId]` that produced HTTP 200 responses carrying the degraded shell at 66 KB against a healthy 104–118 KB. Ten of forty concurrent cold renders came back that way, each with `Cache-Status: "Netlify Durable"; fwd=uri-miss; stored`, and re-fetching them five minutes later returned the same broken page in 0.30–0.64 s with `"Netlify Durable"; hit` and `age: 318–350`. The broken page becomes the *fast* one, which is why nobody notices.
+
+Worse, the degrade is often cheap: several of those poisoned entries were produced in **0.47 s**, because a pooler that fails fast reaches the fallback fast. Do not assume a degraded render announces itself by being slow.
+
+The fix, shipped in #1123, is that degrading is now opt-in per call site (`perRequest`) in `lib/data/fail-open.ts`, and the default on anything with a `revalidate` export is to rethrow.
+
+**Both halves of the framework behaviour that makes rethrowing correct were verified by observation**, on a temporary ISR route shaped like the real one, on deploy preview 1123:
+
+- A render that throws returns **HTTP 500** with `Cache-Status: "Netlify Durable"; fwd=bypass, "Netlify Edge"; fwd=miss; fwd-status=500` — no `stored`, and three consecutive requests each re-rendered rather than hitting a cache. Nothing is persisted.
+- When a cached good copy already exists and the *revalidation* throws, the good copy keeps being served. Across 45 polls spanning several deliberately-throwing windows on a `revalidate = 10` route, every response was the good body with `age` climbing to 39–53 s, resetting only when a non-throwing window regenerated it. This matches Next's documented "Handling uncaught exceptions" paragraph.
+
+So on an ISR route, throwing is strictly better than degrading: the one unlucky visitor gets an error boundary, everyone else keeps the last good copy, and nothing bad is written down.
 
 ## Options assessed and rejected — do not re-propose without new information
 
