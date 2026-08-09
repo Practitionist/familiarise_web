@@ -200,6 +200,14 @@ export function SlotPicker({
         eventId={subject.eventId}
         consulteeUserId={subject.counterpartUserId}
         mode={policy.calendarMode}
+        // Consultant surfaces (allocate / manage timings / propose) paint
+        // Selected / Being moved / This booking. Consultee reschedule stays
+        // on the buyer legend even when eventId is set for status-grid paint.
+        showConsultantLegend={
+          policy.kind === "RESCHEDULE_CONSULTANT" ||
+          policy.kind === "MANAGE_TIMINGS" ||
+          policy.kind === "ALLOCATE"
+        }
         sessionDurationInHours={subject.sessionDurationInHours}
         durationInHours={subject.durationInHours}
         sessionsPerWeek={subject.sessionsPerWeek}
