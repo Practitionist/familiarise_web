@@ -41,6 +41,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import { reportSentryError } from "@/lib/observability/report";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -528,7 +529,15 @@ export async function isDbHealthy(): Promise<boolean> {
     // ORM connectivity probe (no raw SQL): a LIMIT 1 read proves the connection.
     await prisma.user.findFirst({ select: { id: true } });
     return true;
-  } catch {
+  } catch (error) {
+    // Handlers 503 on false so gateways retry — correct for a transient
+    // outage, but a persistent non-connectivity fault (e.g. schema drift)
+    // would 503 every webhook forever with no signal. Report it (#1125).
+    reportSentryError(error, {
+      subsystem: "webhooks",
+      op: "isDbHealthy",
+      expected: false,
+    });
     return false;
   }
 }
@@ -774,8 +783,22 @@ export async function handleRefundCreated(
                 err,
               ),
             );
-          // Opportunistic: if wallet-based funding was used, credit the
-          // refund amount back. Swallow if no wallet flow applies.
+          // If wallet-based funding was used, credit the refund amount back.
+          //
+          // "Swallow if no wallet flow applies" is what the comment here used to
+          // say, and it described a case the `fundingSource === "WALLET"` guard
+          // already handles structurally — so the catch only ever fired on a REAL
+          // failure, and only ever wrote a console.warn that production deleted
+          // (#1122). The note twenty lines above calls this credit "the guaranteed
+          // bookkeeping" for an invoice refund. It was not guaranteed and nobody
+          // could have known.
+          //
+          // Still not rethrown, and that is deliberate: the dispatcher stamps
+          // error=true on a throw and the stuck-event sweeper only re-drives
+          // error=null, so rethrowing would roll back the whole refund booking
+          // AND retire the event permanently — strictly worse than a booked
+          // refund missing its wallet credit. Reported loudly instead, so the
+          // credit can be applied by hand. #1128 tracks making it durable.
           try {
             const ba = await tx.billingAccount.findFirst({
               where: { ownerOrgId: invoice.organizationId },
@@ -791,8 +814,19 @@ export async function handleRefundCreated(
               });
             }
           } catch (err) {
+            reportSentryError(err, {
+              subsystem: "enterprise",
+              op: "handleRefundCreated.walletCredit",
+              extra: {
+                refundId,
+                invoiceId: invoice.id,
+                organizationId: invoice.organizationId,
+                amountPaise: amount,
+                providerPaymentId,
+              },
+            });
             console.warn(
-              `⚠️ Wallet credit for invoice refund ${refundId} skipped:`,
+              `⚠️ Wallet credit for invoice refund ${refundId} FAILED — org not credited:`,
               err,
             );
           }
