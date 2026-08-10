@@ -280,7 +280,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   }
   if (isError && !data) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-3 text-center">
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
         <div className="flex items-center gap-2 text-destructive">
           <AlertTriangle className="h-5 w-5" />
           <span>Failed to load settings.</span>
@@ -299,7 +299,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   }
   if (!staffData) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
+      <div className="flex items-center justify-center py-16">
         Staff member not found.
       </div>
     );

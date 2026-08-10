@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, Inbox } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
@@ -13,17 +13,15 @@ import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 export default function HomePageClient({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  const queryClient = useQueryClient();
-
-  // Read consultant name from the cached profile (already fetched by layout)
-  const consultantProfile = queryClient.getQueryData<{ user?: { name?: string } }>(["consultant-data", consultantId]);
-  const consultantName = consultantProfile?.user?.name;
-
-  // Use the centralized query configuration with optimized settings for immediate rendering
+  // The factory's staleTime (2 min) is deliberately NOT overridden here. This
+  // used to force `staleTime: 0` under a comment about showing stale data
+  // immediately, which is not what staleTime does: it marks the server-prefetched
+  // cache entry stale on mount, so the client refetched
+  // GET /api/dashboard/consultant/[id] straight after hydration and recomputed
+  // the identical payload the page had just dehydrated — doubling every query
+  // behind it. Harmless before #890 seeded the cache; pure waste after. (#1121)
   const dashboardQuery = {
     ...createConsultantQueries(consultantId).dashboard,
-    // Show stale data immediately while fetching in background
-    staleTime: 0,
     refetchOnWindowFocus: false,
   };
   const {
@@ -37,7 +35,8 @@ export default function HomePageClient({
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {
-    return <HomeSkeleton />;
+    // Header is owned by the server page now — see its comment on FCP.
+    return <HomeSkeleton withHeader={false} />;
   }
 
   if (error && !dashboardData) {
@@ -83,8 +82,7 @@ export default function HomePageClient({
       <HomeTab
         appointments={dashboardData.appointments}
         consultantId={consultantId}
-        consultantName={consultantName}
-        pendingRequestsCount={dashboardData.approvals?.length ?? 0}
+        pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
         performanceSnapshot={dashboardData.performanceSnapshot}
         financialSummary={dashboardData.financialSummary}
       />

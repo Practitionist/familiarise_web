@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { getUserDetails } from "@/lib/data/user-details";
 import { NextRequest, NextResponse } from "next/server";
 import { UserRole, Gender } from "@prisma/client";
 
@@ -37,67 +38,7 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: id },
-      include: {
-        // Professional background at User level
-        workExperiences: {
-          orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
-        },
-        education: {
-          orderBy: { endYear: "desc" },
-        },
-        certifications: {
-          orderBy: { issueDate: "desc" },
-        },
-        consultantProfile: {
-          select: {
-            id: true,
-            description: true,
-            experience: true,
-            rating: true,
-            domainId: true,
-            // New fields
-            headline: true,
-            websiteUrl: true,
-            twitterUrl: true,
-            githubUrl: true,
-            videoIntroUrl: true,
-            languages: true,
-            toolsAndTechnologies: true,
-            mentoringStyle: true,
-            sessionTypes: true,
-            profileCompletionPercentage: true,
-            isVerified: true,
-            totalMenteesHelped: true,
-          },
-        },
-        consulteeProfile: {
-          select: {
-            id: true,
-            aboutMe: true,
-            preferredLanguage: true,
-            goals: true,
-            careerStage: true,
-            skillsToDevelop: true,
-            budgetPreference: true,
-          },
-        },
-        staffProfile: {
-          select: {
-            id: true,
-            department: true,
-            position: true,
-          },
-        },
-        adminProfile: {
-          select: {
-            id: true,
-            notes: true,
-          },
-        },
-      },
-    });
+    const user = await getUserDetails(id);
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });

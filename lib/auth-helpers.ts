@@ -17,6 +17,14 @@ import {
 /**
  * Requires API authentication and returns the session or an error response.
  * Use this at the start of protected API route handlers.
+ *
+ * Always reads force-fresh, and there is deliberately no opt-out. Session
+ * revocation is invisible to a cached read, and `session.user.role` comes from
+ * the cookie payload — ~86 call sites branch on that role directly (e.g. the
+ * ADMIN gate on DELETE /api/bookings/subscriptions/[id]), so a stale read
+ * honours a demotion up to 5 minutes late. The cookie cache would save roughly
+ * one query in four anyway, because customSession re-runs its enrichment on
+ * every call regardless.
  */
 export async function requireApiAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }

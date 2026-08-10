@@ -163,11 +163,11 @@ export function ProfileSection({
           </div>
 
           {/* Right Column - Description */}
-          <div className="bg-zinc-50 p-6 rounded-lg h-full">
-            <Label className="text-lg font-semibold mb-4 block">
+          <div className="rounded-lg bg-zinc-50 p-6">
+            <Label className="mb-4 block text-lg font-semibold">
               Professional Summary
             </Label>
-            <p className="text-sm text-zinc-600 mb-3">
+            <p className="mb-3 text-sm text-zinc-600">
               Write a compelling description of your expertise and what makes
               you unique
             </p>
@@ -176,7 +176,7 @@ export function ProfileSection({
               value={formData.description}
               onChange={onInputChange}
               placeholder="Share your professional journey, achievements, and what clients can expect when working with you..."
-              className="h-[calc(100%-6rem)] resize-none"
+              className="min-h-[16rem] resize-none"
             />
           </div>
         </div>

@@ -15,11 +15,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { orgDetailsInclude } from "@/lib/data/org-details-include";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { isAtLeastRole } from "@/lib/auth/role-ranks";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrganization } from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 
 const SizeBucketSchema = z.enum([
@@ -96,34 +98,9 @@ export async function GET(
 
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    include: {
-      billingAccount: {
-        select: {
-          id: true,
-          fundingSource: true,
-          currency: true,
-          walletBalance: true,
-          creditLimit: true,
-        },
-      },
-      payoutAccount: {
-        select: {
-          id: true,
-          status: true,
-          accountNumberLast4: true,
-          bankName: true,
-        },
-      },
-      _count: {
-        select: {
-          memberships: true,
-          contracts: true,
-          invoices: true,
-          purchaseOrders: true,
-          auditLogs: true,
-        },
-      },
-    },
+    // Shared with the server-side seed in lib/data/org-details-server.ts so
+    // the route and the prefetch cannot drift apart.
+    include: orgDetailsInclude,
   });
   if (!org) {
     return NextResponse.json(
@@ -205,6 +182,11 @@ export async function PATCH(
     }
   }
 
+  // Captured inside the transaction so a slug rename can purge the OLD public
+  // path too — otherwise its cached document keeps being served under a URL the
+  // org no longer answers to.
+  let previousSlug: string | undefined;
+
   try {
     // Serializable closes the TOCTOU between the wind-down COUNT checks below
     // and the UPDATE (S2 in the state audit): a concurrent invoice/assignment
@@ -216,6 +198,7 @@ export async function PATCH(
         where: { id: orgId },
         include: { billingAccount: { select: { id: true, walletBalance: true } } },
       });
+      previousSlug = current?.slug;
       if (!current) {
         throw Object.assign(new Error("Organization not found"), {
           httpStatus: 404,
@@ -506,6 +489,11 @@ export async function PATCH(
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
+
+    // isPublic, slug, name and the whole brandingProfile upsert are all rendered
+    // on the public directory and org profile, so publish the change now instead
+    // of leaving it behind the ISR window.
+    purgeOrgSurfaces(updated.slug, previousSlug);
 
     return NextResponse.json({ organization: updated });
   } catch (err) {

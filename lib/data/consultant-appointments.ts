@@ -25,6 +25,7 @@
 
 import prisma from "@/lib/prisma";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
+import type { User } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import type { TAppointment } from "@/types/appointment";
 
@@ -63,9 +64,26 @@ export interface GetConsultantAppointmentsArgs {
  * (the default "personal" view); the route passes the full arg set parsed
  * from the request query string.
  */
+/**
+ * Slot users on this surface are projected down to `listUserSelect`. TAppointment
+ * still declares the full User relation, so name the narrower shape here instead
+ * of letting the `as unknown as` at the bottom imply fields that were never
+ * queried — reading e.g. `.role` off one of these is `undefined` at runtime.
+ */
+type ListSlotUser = Pick<User, "id" | "name" | "email" | "image">;
+export type ConsultantListAppointment = Omit<
+  TAppointment,
+  "slotsOfAppointment"
+> & {
+  slotsOfAppointment: (Omit<
+    TAppointment["slotsOfAppointment"][number],
+    "user"
+  > & { user: ListSlotUser[] })[];
+};
+
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,
-): Promise<TAppointment[]> {
+): Promise<ConsultantListAppointment[]> {
   const {
     type,
     consultantProfileId,
@@ -254,13 +272,20 @@ export async function getConsultantAppointments(
     whereClause.AND = [...existingAnd, { OR: statusFilters }];
   }
 
+  const listUserSelect = {
+    id: true,
+    name: true,
+    email: true,
+    image: true,
+  } as const;
+
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
       slotsOfAppointment: {
         orderBy: { startsAt: "asc" },
         include: {
-          user: true,
+          user: { select: listUserSelect },
           meetingSession: {
             select: { id: true, endedAt: true },
           },
@@ -272,14 +297,14 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: listUserSelect },
             },
           },
         },
@@ -291,14 +316,14 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: { select: listUserSelect },
             },
           },
           schedulingPeriodStartsAt: true,
@@ -315,7 +340,7 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
               collaborators: {
@@ -344,7 +369,7 @@ export async function getConsultantAppointments(
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: { select: listUserSelect },
                 },
               },
               collaborators: {
@@ -388,5 +413,5 @@ export async function getConsultantAppointments(
   // result extension carries an inspect symbol), so the payload must be
   // plainified before it crosses the RSC→Client HydrationBoundary. Preserves
   // Dates as Dates. No-op for the route path (JSON drops symbols).
-  return toPlain(sorted) as unknown as TAppointment[];
+  return toPlain(sorted) as unknown as ConsultantListAppointment[];
 }

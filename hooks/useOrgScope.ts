@@ -23,6 +23,7 @@
 import { useCallback, useMemo } from "react";
 import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
+import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 
 export type Scope =
   | { kind: "personal" }
@@ -96,9 +97,19 @@ export function useOrgScope(
     orgIdFromPath && pathname?.startsWith("/dashboard/organization/"),
   );
 
-  const role = session?.user?.role;
+  // Fall back to the server-resolved facts. useSession() is still pending
+  // during SSR, so without this both values are empty there and the scope
+  // always resolved to `personal` — while the server pages computed `all` for
+  // org members / admins / staff. The scope segment is part of the query key
+  // (["consultee-events", id, scopeKey]), so every such user got a guaranteed
+  // hydration miss and then a second key flip once the session landed. The
+  // appointments pages document this and work around it by prefetching only
+  // "personal", which is why org members get no hydration on their busiest tab.
+  const serverFacts = useServerSessionFacts();
+  const role = session?.user?.role ?? serverFacts.role;
   const firstOrgId =
-    session?.user?.organizationMemberships?.[0]?.organizationId ?? null;
+    session?.user?.organizationMemberships?.[0]?.organizationId ??
+    serverFacts.firstOrgId;
 
   const scope: Scope = useMemo(() => {
     if (pinned && orgIdFromPath) {

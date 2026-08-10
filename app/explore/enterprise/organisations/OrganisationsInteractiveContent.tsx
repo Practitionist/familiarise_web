@@ -85,14 +85,13 @@ export default function OrganisationsInteractiveContent({
     },
     // The RSC already rendered the unfiltered first page; don't refetch it.
     //
-    // Seeded ONLY when the server actually returned rows. The RSC read is
-    // wrapped in fallbackOnTransientDbError, so a cold-connect timeout (#932)
-    // degrades to an EMPTY page rather than throwing — and seeding that as
-    // initialData marks it fresh for staleTime, so the client never refetches
-    // and the user is stuck on "No organisations match these filters"
-    // indefinitely, even though the API answers correctly on the next call.
-    // Falling through to a normal fetch costs one request in the genuinely
-    // empty case and repairs the degraded case.
+    // Seeded ONLY when the server actually returned rows. The RSC read no longer
+    // degrades to an empty page on a cold-connect timeout — since #1119 it throws
+    // and this component never renders — so the guard no longer has a degraded
+    // case to repair. It is kept because seeding an empty list as initialData
+    // marks it fresh for staleTime, so the client would never refetch and a
+    // genuinely-empty-right-now directory would stay stuck on "No organisations
+    // match these filters". Falling through to a normal fetch costs one request.
     initialData:
       isDefaultView && initialItems.length > 0
         ? {

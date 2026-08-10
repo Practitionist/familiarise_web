@@ -33,8 +33,9 @@ export default function HomePageClient({
 
   const eventsQuery = {
     ...createConsulteeQueries(consulteeId, orgScopeParam).events,
-    // Show stale data immediately while fetching in background
-    staleTime: 0,
+    // Keep SSR-dehydrated events warm long enough to avoid an immediate
+    // refetch waterfall on first paint (aligned with dashboard staleTimes).
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
   };
   const { data: eventsData, isLoading, error, refetch } = useQuery(eventsQuery);

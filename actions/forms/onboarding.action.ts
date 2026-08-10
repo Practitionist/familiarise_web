@@ -68,7 +68,11 @@ export async function updateOnboardingInformationAction(
   }
 
   // Use the central processing function
-  return await processOnboardingData(userId, body);
+  // No cookie-cache refresh here: requireOnboarded() reads force-fresh, so it
+  // already sees onboardingCompleted / profile ids. A refresh would also be the
+  // wrong tool — getSession reads the CALLER's headers, and this action lets an
+  // ADMIN/STAFF update someone else, whose session it could not refresh anyway.
+  return processOnboardingData(userId, body);
 }
 // #endregion
 
@@ -134,6 +138,49 @@ export async function setOnboardingRoleAction(
   });
 
   return { success: true };
+}
+
+/**
+ * Undo a provisional ORG_WORKSPACE handoff when the user backs out of the
+ * create-org wizard. `setOnboardingRoleAction` has to commit the role before
+ * the wizard runs (`POST /api/organizations` gates on it), so without this a
+ * user who changed their mind stayed on ORG_WORKSPACE with
+ * `onboardingCompleted: false` — org-creation rights for someone who never
+ * finished onboarding.
+ *
+ * The revert target is CONSULTEE because that is the `User.role` schema
+ * default every account starts on; the real role is written by
+ * `processOnboardingData` when onboarding completes.
+ *
+ * The `where` clause is the safety guard, applied in a single statement so
+ * there is no read-then-write race: only a row that is still ORG_WORKSPACE,
+ * still un-onboarded, and holds no membership is provisional. A real org owner
+ * (who has at least the owner Membership created with their org) is never
+ * touched.
+ */
+export async function resetOnboardingRoleAction(
+  userId: string,
+): Promise<{ success: boolean; reverted?: boolean; error?: string }> {
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+  if (session.user.id !== userId) {
+    return { success: false, error: "Forbidden" };
+  }
+
+  const { count } = await prisma.user.updateMany({
+    where: {
+      id: userId,
+      role: UserRole.ORG_WORKSPACE,
+      // The column is nullable, so `false` alone would skip null rows.
+      onboardingCompleted: { not: true },
+      memberships: { none: {} },
+    },
+    data: { role: UserRole.CONSULTEE },
+  });
+
+  return { success: true, reverted: count > 0 };
 }
 
 /**

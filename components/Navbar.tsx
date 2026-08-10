@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
   Menu,
@@ -45,6 +44,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
+import { resolveAuthView, useRememberedAuth } from "@/hooks/useRememberedAuth";
 import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
 import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
@@ -347,22 +347,16 @@ function DesktopDropdownPanel({
   const panelGrid = isWide ? "grid-cols-3" : "grid-cols-2";
 
   return (
-    <motion.div
+    <div
       id={panelId}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 8 }}
-      transition={{ duration: 0.15 }}
       // Mega panels centre on the VIEWPORT (fixed), list panels on their
       // trigger (absolute) — an 860px panel hung off a narrow left-side trigger
       // reads as badly misaligned.
       //
       // Centred with `inset-x-0 mx-auto`, never `left-1/2 -translate-x-1/2`:
-      // motion.div writes an inline `transform` for its y animation, which
-      // beats Tailwind's translate class, so the -50% shift was silently
-      // dropped and the panel sat half a viewport to the right. Margin centring
-      // can't be clobbered by a transform.
-      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] ${
+      // a transform-based centre fights other transforms. Margin centring
+      // can't be clobbered.
+      className={`inset-x-0 mx-auto bg-popover rounded-xl shadow-xl border border-border overflow-hidden z-[1100] animate-in fade-in slide-in-from-top-1 duration-150 ${
         isMega
           ? `fixed max-w-[calc(100vw-2rem)] ${panelWidth}`
           : `absolute top-full mt-2 ${panelWidth}`
@@ -420,7 +414,7 @@ function DesktopDropdownPanel({
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -508,15 +502,13 @@ function DesktopNavItem({
           className={`w-3.5 h-3.5 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
         />
       </button>
-      <AnimatePresence>
-        {open && (
-          <DesktopDropdownPanel
-            group={group}
-            panelId={panelId}
-            onClose={() => setOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {open && (
+        <DesktopDropdownPanel
+          group={group}
+          panelId={panelId}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -526,10 +518,19 @@ function DesktopNavItem({
 const Navbar = () => {
   const router = useRouter();
   const pathname = usePathname();
-  // The root layout is static (#932), so the session hydrates client-side here.
-  // While it resolves, `isPending` drives a neutral auth-area placeholder so a
-  // logged-in user doesn't flash the signed-out CTA on first paint.
+  // The root layout is static (#932), so the session hydrates client-side here,
+  // which makes the whole gap between FCP and this bar settling the /api/auth
+  // round trip itself. `useRememberedAuth` fills that gap with the last resolved
+  // shape (adopted before paint, never during render — hydration must match) and
+  // the real session overwrites it the moment it lands.
   const { data: session, isPending } = useSession();
+  const remembered = useRememberedAuth();
+  const authView = resolveAuthView({
+    isPending,
+    user: session?.user,
+    remembered,
+  });
+  const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency } = useCurrency();
@@ -572,8 +573,8 @@ const Navbar = () => {
   };
 
   const getUserImage = () => {
-    return session?.user?.image && session.user.image !== ""
-      ? session.user.image
+    return authView.image && authView.image !== ""
+      ? authView.image
       : defaultUserImage;
   };
 
@@ -617,7 +618,7 @@ const Navbar = () => {
 
             {/* Desktop Navigation */}
             <div className="hidden lg:flex items-center gap-0.5">
-              {session?.user && (
+              {isAuthedView && (
                 <Link href="/dashboard">
                   <Button
                     variant="ghost"
@@ -680,18 +681,18 @@ const Navbar = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {isPending ? (
+              {authView.mode === "unknown" ? (
                 <div className="flex items-center gap-3">
                   <Skeleton className="h-9 w-9 rounded-full" />
                   <Skeleton className="h-9 w-28 rounded-md" />
                 </div>
-              ) : session?.user ? (
+              ) : isAuthedView ? (
                 <div className="flex items-center gap-3">
                   <Link href="/profile">
                     <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
                       <AvatarImage src={getUserImage()} alt="Profile" />
                       <AvatarFallback className="bg-zinc-900 text-white text-sm">
-                        {session.user.name?.charAt(0) ?? "U"}
+                        {authView.name?.charAt(0) ?? "U"}
                       </AvatarFallback>
                     </Avatar>
                   </Link>
@@ -734,26 +735,22 @@ const Navbar = () => {
         </div>
       </nav>
 
-      {/* Mobile Drawer */}
-      <AnimatePresence>
-        {isOpen && (
+      {/* Mobile Drawer — CSS transitions only; framer-motion was pulled into
+          every public page via the root navbar for enter/exit polish. */}
+      {isOpen && (
           <>
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden"
+            {/* Backdrop — native button so keyboard/AT get a real interactive
+                control (Sonar typescript:S6848 / S1082). */}
+            <button
+              type="button"
+              aria-label="Close menu"
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden animate-in fade-in duration-150"
               onClick={closeMenu}
             />
 
             {/* Drawer */}
-            <motion.div
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left"
+            <div
+              className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left animate-in slide-in-from-left duration-300"
             >
               {/* Drawer Header */}
               <div className="flex justify-between items-center p-5 border-b border-zinc-800">
@@ -779,7 +776,7 @@ const Navbar = () => {
                 className="flex flex-col p-5 overflow-y-auto"
                 style={{ maxHeight: "calc(100% - 10rem)" }}
               >
-                {session?.user && (
+                {isAuthedView && (
                   <Link
                     href="/dashboard"
                     className="flex items-center gap-3 px-4 py-3 rounded-xl text-white hover:bg-zinc-800 transition-colors mb-1"
@@ -900,22 +897,22 @@ const Navbar = () => {
 
               {/* User Section */}
               <div className="absolute bottom-0 left-0 right-0 p-5 border-t border-zinc-800 bg-zinc-900 safe-bottom">
-                {isPending ? (
+                {authView.mode === "unknown" ? (
                   <div className="flex items-center gap-3">
                     <Skeleton className="h-10 w-10 rounded-full" />
                     <Skeleton className="h-4 w-32 rounded" />
                   </div>
-                ) : session?.user ? (
+                ) : isAuthedView ? (
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Avatar className="h-10 w-10 border border-zinc-700">
                         <AvatarImage src={getUserImage()} alt="Profile" />
                         <AvatarFallback className="bg-zinc-800 text-white">
-                          {session.user.name?.charAt(0) ?? "U"}
+                          {authView.name?.charAt(0) ?? "U"}
                         </AvatarFallback>
                       </Avatar>
                       <span className="text-white font-medium text-sm truncate max-w-[140px]">
-                        {session.user.name}
+                        {authView.name}
                       </span>
                     </div>
                     <Button
@@ -936,10 +933,9 @@ const Navbar = () => {
                   </Button>
                 )}
               </div>
-            </motion.div>
+            </div>
           </>
         )}
-      </AnimatePresence>
     </>
   );
 };

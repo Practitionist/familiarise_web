@@ -1,8 +1,20 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import AnalyticsPageClient from "../analytics/AnalyticsPageClient";
 import { EarningsSummaryPanel } from "./EarningsSummaryPanel";
+
+const AnalyticsPageClient = dynamic(
+  () => import("../analytics/AnalyticsPageClient"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+        Loading analytics…
+      </div>
+    ),
+  },
+);
 
 /**
  * Earnings, with Analytics as its second panel.
@@ -13,6 +25,9 @@ import { EarningsSummaryPanel } from "./EarningsSummaryPanel";
  * is the pattern the rule exists to stop. Both panels keep their own filter and
  * pagination state, deliberately: they answer different questions and resetting
  * one when the other moves would be surprising.
+ *
+ * Analytics (recharts) is code-split so the Summary tab does not pay for the
+ * charting library on first paint.
  */
 export function EarningsTabs({
   consultantId,

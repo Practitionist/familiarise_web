@@ -5,15 +5,29 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
-  EMPTY_EXPERTS_METADATA,
 } from "@/lib/data/explore-experts";
-import {
-  emptyOnTransientDbError,
-  fallbackOnTransientDbError,
-} from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. This listing reads no session and takes no
+// searchParams (filtering happens in the client component below), so the
+// rendered HTML is identical for every visitor and safe to share.
+//
+// force-dynamic made this route uncacheable at the CDN (Next sends dynamic pages
+// `private, no-store`), so every visitor paid a cross-region cold DB round trip.
+// Prerendered HTML is served off the CDN with no function invocation.
+//
+// This route IS prerendered during `next build`, which is exactly the read #932
+// saw fail on a cold cross-region pooler connect. That is guarded rather than
+// avoided: these reads no longer degrade at all (#1119), so a flaky build fails
+// loudly instead of shipping an empty experts directory. `withBuildTimeRetry`
+// gives the build two extra attempts before it gives up.
+//
+// 5 minutes, matched by the unstable_cache windows on the reads below so the
+// declared interval is the effective one — Next resolves a route's revalidate to
+// the MINIMUM of the segment value and every data-cache entry read during the
+// render, so a shorter window underneath would silently win. New and updated
+// profiles purge this path on demand at the write sites.
+export const revalidate = 300;
 
 function HeroSection({
   totalConsultants,
@@ -82,22 +96,15 @@ function HeroSection({
 }
 
 export default async function ExploreExperts() {
-  // Degrade gracefully: a heavy curated read that times out (cold query brushing
-  // the pg query budget) renders an empty row instead of erroring the whole page.
+  // These used to degrade to empty rows on a transient timeout. This route is ISR,
+  // so that empty page would be cached and served to everyone until the window
+  // expired; retry once and otherwise throw, which caches nothing (#1119).
   const [metadata, featuredExperts, trendingExperts, newestExperts] =
     await Promise.all([
-      getExpertsMetadata().catch(
-        fallbackOnTransientDbError("experts metadata", EMPTY_EXPERTS_METADATA),
-      ),
-      getCuratedExperts("rating", 5).catch(
-        emptyOnTransientDbError("featured experts"),
-      ),
-      getCuratedExperts("trending", 8).catch(
-        emptyOnTransientDbError("trending experts"),
-      ),
-      getCuratedExperts("newest", 8).catch(
-        emptyOnTransientDbError("newest experts"),
-      ),
+      withBuildTimeRetry(getExpertsMetadata),
+      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
+      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
     ]);
 
   return (

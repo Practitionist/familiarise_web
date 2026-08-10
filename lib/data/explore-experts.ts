@@ -253,7 +253,9 @@ export async function fetchExpertsMetadata() {
         select: { languages: true },
       })
       .then((rows) =>
-        Array.from(new Set(rows.flatMap((r) => r.languages))).sort(),
+        Array.from(new Set(rows.flatMap((r) => r.languages)))
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b)),
       ),
     // Available companies (from verified consultants' work experiences)
     prisma.workExperience
@@ -300,21 +302,6 @@ export const getExpertsMetadata = unstable_cache(
 );
 
 export type ExpertsMetadata = Awaited<ReturnType<typeof fetchExpertsMetadata>>;
-
-// Safe empty shape so a transient metadata-read timeout degrades to empty
-// filters + the hero's marketing defaults instead of crashing the page (#925).
-export const EMPTY_EXPERTS_METADATA: ExpertsMetadata = {
-  domains: [],
-  subdomains: [],
-  tags: [],
-  consultantMetadata: {
-    totalConsultants: 0,
-    consultantsByDomain: [],
-    averageRating: 0,
-  },
-  availableLanguages: [],
-  availableCompanies: [],
-};
 
 // ---------------------------------------------------------------------------
 // Curated experts (Featured / Trending / Newest rows)
@@ -367,8 +354,12 @@ export const getRecentReviews = (limit: number = 6) =>
 // ---------------------------------------------------------------------------
 
 // Cross-request cached: each (sort, limit) pair is keyed separately by
-// unstable_cache, so the three curated rows share one short-lived cache entry
-// apiece instead of re-querying the pooler on every explore load (#932).
+// unstable_cache, so the three curated rows share one cache entry apiece instead
+// of re-querying the pooler on every explore load (#932).
+//
+// 300 to match /explore/experts' route-level revalidate rather than undercut it:
+// Next takes the minimum of the segment interval and every data cache entry read
+// during the render, so the old 120 was silently capping that page's ISR window.
 export const getCuratedExperts = unstable_cache(
   async (sort: "rating" | "trending" | "newest", limit: number = 8) => {
     const rows = await prisma.consultantProfile.findMany({
@@ -383,16 +374,17 @@ export const getCuratedExperts = unstable_cache(
     return rows.map(toConsultantCard);
   },
   ["curated-experts"],
-  { revalidate: 120, tags: ["experts"] },
+  { revalidate: 300, tags: ["experts"] },
 );
 
 // Cached default consultants page — the explore landing's most common read
 // (unfiltered, verified, page 1). Keyed per (sort, limit) so the handful of
 // default sort/limit combos each get one short-lived entry, served from the Next
 // data cache instead of opening a cross-region pooled connection on every load.
-// Tagged "experts" (same as getCuratedExperts) so a future revalidateTag("experts")
-// can clear it; until one is wired on consultant verify/edit, the 60s revalidate
-// bounds staleness. (#945 — pairs with the route's no-store fail-open; #932 caching.)
+// Tagged "experts" (same as getCuratedExperts) so it is cleared by the
+// revalidateTag("experts") that consultant verify/edit/delete now fires via
+// purgeExpertSurfaces (lib/data/public-cache.ts); the 60s revalidate is the
+// backstop. (#945 — pairs with the route's no-store fail-open; #932 caching.)
 export const getDefaultConsultantsPage = unstable_cache(
   async (sort: string, limit: number) => {
     const where: Prisma.ConsultantProfileWhereInput = {

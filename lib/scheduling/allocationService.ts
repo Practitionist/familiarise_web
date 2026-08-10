@@ -1,4 +1,5 @@
 import { reportSentryError } from "@/lib/observability/report";
+import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { TimeSlot } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/slotAllocation/types";
 
@@ -248,6 +249,17 @@ export class AllocationService {
     slots: TimeSlot[],
     allocationOptions?: AllocationCallOptions,
   ): Promise<AllocationResponse> {
+    // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
+    // mock0801-appt-pending) are legal Prisma String @ids but rejected by
+    // eventIdSchema. Surface a clear recreate message instead.
+    if (!isEventIdFormat(eventId)) {
+      return {
+        success: false,
+        error:
+          "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+      };
+    }
+
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
     // Build the request object consistently for all event types. Auto mode

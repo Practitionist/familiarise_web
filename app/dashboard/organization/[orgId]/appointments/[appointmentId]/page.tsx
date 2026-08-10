@@ -66,6 +66,10 @@ export default async function OrgAppointmentDetailPage({
   if (!owns) notFound();
 
   return (
-    <DetailPageClient orgId={orgId} appointmentId={appointmentId} />
+    <DetailPageClient
+      orgId={orgId}
+      appointmentId={appointmentId}
+      consulteeId={profile.id}
+    />
   );
 }

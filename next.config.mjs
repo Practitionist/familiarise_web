@@ -160,20 +160,30 @@ const nextConfig = {
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     webpackMemoryOptimizations: true,
+    // Only packages Next does NOT already optimize by default. Its built-in
+    // list covers lucide-react, recharts and date-fns among others, so listing
+    // those was inert config that read as if it were doing something.
+    // https://nextjs.org/docs/app/api-reference/config/next-config-js/optimizePackageImports
     optimizePackageImports: [
-      "lucide-react",
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "recharts",
-      "date-fns",
       "@radix-ui/react-icons",
+      // Imported by components/notifications/NotificationInbox.tsx and not in
+      // the default list.
+      "@novu/react",
+      "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
     staleTimes: { dynamic: 30, static: 180 },
   },
 
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
+  // NOTE: date-fns is now 4.1.0 and ships an exports map, so this is likely a
+  // leftover from the v2/v3 era — and transpiling a package may defeat Next's
+  // built-in optimizePackageImports handling for it (45 files import date-fns).
+  // Left in place deliberately: the claim above is unverified either way, and
+  // confirming it needs `npm run build:analyze`, not reasoning.
   transpilePackages: ["date-fns"],
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
@@ -219,9 +229,25 @@ const nextConfig = {
     ],
   },
 
-  // Reduce JavaScript bundle size by removing console statements in production
+  // The bundle-size framing this carried as a bare `true` was wrong, and it cost
+  // two investigations. SWC applies this transform to the SERVER layer as well as
+  // the client — Next offers no client-only scoping (vercel/next.js#48410 is
+  // unresolved) — so `true` deleted every one of ~1,110 server-side diagnostics
+  // from the deployed function. Proven, not inferred: a console.warn at Prisma
+  // client construction produced ZERO log lines on preview 1118 across two
+  // confirmed module loads, while third-party output in the same window survived
+  // (node_modules is not compiled by SWC). #1122.
+  //
+  // `error` and `warn` are the levels a deliberate diagnostic uses, so they stay.
+  // `log` is the chatty one and keeps being stripped, which is the whole of the
+  // bundle saving the original comment was after. Note this cannot be recovered
+  // with Sentry's consoleLoggingIntegration: that patches globalThis.console at
+  // runtime, and this deletes the call expressions at compile time.
   compiler: {
-    removeConsole: process.env.NODE_ENV === "production",
+    removeConsole:
+      process.env.NODE_ENV === "production"
+        ? { exclude: ["error", "warn"] }
+        : false,
   },
 
   async headers() {

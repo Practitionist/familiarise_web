@@ -2,7 +2,10 @@ import {
   getCuratedPrograms,
   getTopicsWithCount,
 } from "@/lib/data/explore-programs";
-import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import {
+  emptyOnTransientDbError,
+  fallbackOnTransientDbError,
+} from "@/lib/data/fail-open";
 import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
@@ -13,22 +16,23 @@ import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
 // specific, so it must NOT enter the shared curated cache — it's fetched
 // per-request here and prop-drilled to the card, which badges a plan
 // "Recommended by <org>" when the viewer's org sponsors that plan's program.
-// Fail-open to an empty map (signed-out or a transient read → no badges).
+//
+// Signed-out returns {} here because that is an ANSWER, not a failure. Failure
+// is handled at the call site by the same fail-open helper the four sibling
+// reads use — this used to be a bare `catch { return {} }`, which swallowed
+// every error class and would have silently dropped every org badge on a mapper
+// or schema regression, indefinitely and with no signal. (#1125)
 async function getViewerOrgs(): Promise<Record<string, string>> {
-  try {
-    const session = await getSession();
-    const userId = session?.user?.id;
-    if (!userId) return {};
-    const memberships = await prisma.membership.findMany({
-      where: { userId, status: "ACTIVE" },
-      select: { organization: { select: { id: true, name: true } } },
-    });
-    return Object.fromEntries(
-      memberships.map((m) => [m.organization.id, m.organization.name]),
-    );
-  } catch {
-    return {};
-  }
+  const session = await getSession();
+  const userId = session?.user?.id;
+  if (!userId) return {};
+  const memberships = await prisma.membership.findMany({
+    where: { userId, status: "ACTIVE" },
+    select: { organization: { select: { id: true, name: true } } },
+  });
+  return Object.fromEntries(
+    memberships.map((m) => [m.organization.id, m.organization.name]),
+  );
 }
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
@@ -56,15 +60,32 @@ export default async function ExplorePrograms() {
     levels,
   ] = await Promise.all([
     getCuratedPrograms("all", "trending", 8).catch(
-      emptyOnTransientDbError("trending programs"),
+      emptyOnTransientDbError("trending programs", { perRequest: true }),
     ),
     getCuratedPrograms("all", "newest", 8).catch(
-      emptyOnTransientDbError("newest programs"),
+      emptyOnTransientDbError("newest programs", { perRequest: true }),
     ),
-    getTopicsWithCount("all").catch(emptyOnTransientDbError("topics")),
-    fetchProgramStats(),
-    getViewerOrgs(),
-    getCachedProgramLevels().catch(emptyOnTransientDbError("program levels")),
+    getTopicsWithCount("all").catch(
+      emptyOnTransientDbError("topics", { perRequest: true }),
+    ),
+    // `null` here means "show the marketing numbers instead", which the client
+    // already handles. Routed through the helper rather than a local catch so a
+    // real defect surfaces instead of quietly pinning the hero to placeholders.
+    getCachedProgramCounts().catch(
+      fallbackOnTransientDbError("program stats", null, { perRequest: true }),
+    ),
+    getViewerOrgs().catch(
+      fallbackOnTransientDbError<Record<string, string>>(
+        "viewer orgs",
+        {},
+        {
+          perRequest: true,
+        },
+      ),
+    ),
+    getCachedProgramLevels().catch(
+      emptyOnTransientDbError("program levels", { perRequest: true }),
+    ),
   ]);
 
   return (
@@ -122,17 +143,3 @@ const getCachedProgramLevels = unstable_cache(
   ["program-levels"],
   { revalidate: 3600, tags: ["programs"] },
 );
-
-/** Counts of class plans + webinar plans for the hero stats strip.
- *  Returns null on failure so the client falls back to the marketing
- *  numbers — same fail-open behavior the old client `useEffect` had. */
-async function fetchProgramStats(): Promise<{
-  classCount: number;
-  webinarCount: number;
-} | null> {
-  try {
-    return await getCachedProgramCounts();
-  } catch {
-    return null;
-  }
-}

@@ -15,6 +15,7 @@ import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
+import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { apiError } from "@/lib/errors";
 import * as Sentry from "@sentry/nextjs";
 import {
@@ -562,6 +563,11 @@ export async function PUT(
       },
     });
 
+    // Headline, description, experience, domain and tags are all rendered on the
+    // public profile and the directory cards, so an expert editing their profile
+    // should see it live rather than wait out the ISR window.
+    purgeExpertSurfaces(id);
+
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
@@ -624,6 +630,9 @@ export async function DELETE(
           data: { deletedAt: new Date() },
         }),
       ]);
+      // deletedAt is one of the two public gates — the profile has just left
+      // both public surfaces.
+      purgeExpertSurfaces(id);
       return NextResponse.json({
         message: "Consultant deactivated (financial history retained)",
         softDeleted: true,
@@ -665,6 +674,7 @@ export async function DELETE(
       }),
     ]);
 
+    purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });

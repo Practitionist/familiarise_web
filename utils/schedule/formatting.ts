@@ -73,6 +73,16 @@ const shiftDayOfWeek = (dayOfWeek: string, offset: number): string => {
  * Converts local times to UTC and handles overnight slot detection.
  * Overnight slots produce a single record with startDay !== endDay.
  *
+ * THROWS on a formatting failure, deliberately. This used to carry three nested
+ * catches that degraded instead: a per-slot one dropped the offending slot from
+ * the payload, and an outer one returned `[]` for the whole schedule. The result
+ * is a PUT body (SettingsTab.tsx), so degrading here does not mean "render less"
+ * — it means SAVE less. A single throwing slot silently vanished from the
+ * consultant's availability, and the outer catch wiped it entirely; SettingsTab
+ * then refetched and displayed the wiped state as "what was actually saved". An
+ * availability save has to be all-or-nothing, and the caller already has a
+ * try/catch with a destructive toast to fail into. (#1125)
+ *
  * @param slots - The slots to format (keyed by day or date)
  * @param isWeekly - Whether these are weekly recurring slots
  * @param timezone - The user's timezone (e.g., "America/New_York")
@@ -83,63 +93,37 @@ export function formatSlotsForApi(
   isWeekly: boolean,
   timezone: string = "UTC",
 ): (WeeklySlotApiFormat | CustomSlotApiFormat)[] {
-  try {
-    return Object.entries(slots)
-      .filter(([key, daySlots]) => {
-        // Ensure we have valid key and slots array
-        return key && Array.isArray(daySlots) && daySlots.length > 0;
-      })
-      .flatMap(([key, daySlots]) => {
-        // Sort slots chronologically before processing
-        const sortedSlots = sortSlotsByTime(daySlots);
+  return Object.entries(slots)
+    .filter(([key, daySlots]) => {
+      // Ensure we have valid key and slots array
+      return key && Array.isArray(daySlots) && daySlots.length > 0;
+    })
+    .flatMap(([key, daySlots]) => {
+      // Sort slots chronologically before processing
+      const sortedSlots = sortSlotsByTime(daySlots);
 
-        const validSlots = sortedSlots.filter((slot) => {
-          // Comprehensive slot validation
-          return (
-            slot &&
-            typeof slot === "object" &&
-            slot.isValid === true &&
-            slot.startTime &&
-            slot.endTime &&
-            typeof slot.startTime === "string" &&
-            typeof slot.endTime === "string" &&
-            isValidTimeRange(slot.startTime, slot.endTime)
-          );
-        });
-
-        if (isWeekly) {
-          // flatMap because formatWeeklySlot returns an array (may be empty on error)
-          return validSlots.flatMap((slot) => {
-            try {
-              return formatWeeklySlot(slot, key, timezone);
-            } catch (error) {
-              console.error("Error formatting weekly slot for API:", error, {
-                key,
-                slot,
-              });
-              return [];
-            }
-          });
-        } else {
-          return validSlots
-            .map((slot) => {
-              try {
-                return formatCustomSlot(slot, key, timezone);
-              } catch (error) {
-                console.error("Error formatting custom slot for API:", error, {
-                  key,
-                  slot,
-                });
-                return null;
-              }
-            })
-            .filter(Boolean) as CustomSlotApiFormat[];
-        }
+      const validSlots = sortedSlots.filter((slot) => {
+        // Comprehensive slot validation
+        return (
+          slot &&
+          typeof slot === "object" &&
+          slot.isValid === true &&
+          slot.startTime &&
+          slot.endTime &&
+          typeof slot.startTime === "string" &&
+          typeof slot.endTime === "string" &&
+          isValidTimeRange(slot.startTime, slot.endTime)
+        );
       });
-  } catch (error) {
-    console.error("Error in formatSlotsForApi:", error, { slots, isWeekly });
-    return [];
-  }
+
+      if (isWeekly) {
+        // flatMap because formatWeeklySlot returns an array
+        return validSlots.flatMap((slot) =>
+          formatWeeklySlot(slot, key, timezone),
+        );
+      }
+      return validSlots.map((slot) => formatCustomSlot(slot, key, timezone));
+    });
 }
 
 /**
@@ -179,15 +163,30 @@ function formatWeeklySlot(
     isOvernightUTC: slot.isOvernightUTC,
   });
 
+  // Throws instead of returning [], which the caller's flatMap silently
+  // absorbed — the same drop-a-slot-from-the-save-payload hazard fixed in
+  // formatCustomSlot, and this is the worse half of it because WEEKLY is the
+  // default schedule type. convertTimezoneToUtc returns "" for both an
+  // unparseable time and a caught conversion error (an unusable timezone
+  // reaches it that way), so the empty string could never be distinguished
+  // from a slot that was legitimately omitted. (#1125)
   const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
-  if (!startUTC) return [];
+  if (!startUTC) {
+    throw new Error(
+      `Could not convert weekly slot start ${slot.startTime} on ${dayOfWeek} to UTC in ${timezone}`,
+    );
+  }
 
   const endUTC = overnight
     ? slot.endTime === "00:00"
       ? convertTimezoneToUtc("00:00", nextDate, timezone)
       : convertTimezoneToUtc(slot.endTime, nextDate, timezone)
     : convertTimezoneToUtc(slot.endTime, baseDate, timezone);
-  if (!endUTC) return [];
+  if (!endUTC) {
+    throw new Error(
+      `Could not convert weekly slot end ${slot.endTime} on ${dayOfWeek} to UTC in ${timezone}`,
+    );
+  }
 
   // Extract UTC minutes — these are always correct regardless of epoch dates
   const startMin = dateToMinuteUtc(new Date(startUTC));
@@ -242,7 +241,7 @@ function formatCustomSlot(
   slot: { startTime: string; endTime: string },
   dateKey: string,
   timezone: string,
-): CustomSlotApiFormat | null {
+): CustomSlotApiFormat {
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!dateRegex.test(dateKey)) {
     throw new Error(`Invalid date format: ${dateKey}`);
@@ -263,9 +262,16 @@ function formatCustomSlot(
     slot.startTime, // startTimeStr for overnight detection
   );
 
-  // If conversion failed, return null to filter out this slot
+  // Throws rather than returning null, which the caller then filtered away.
+  // `convertTimezoneToUtcWithOvernight` returns "" for both an unparseable time
+  // and a caught conversion error, so a null here was indistinguishable from
+  // "this slot is fine but omitted" — and it was omitted from a SAVE payload.
+  // Dropping a boundary the consultant typed is not a degradation we get to
+  // make on their behalf. (#1125)
   if (!startTimeUtc || !endTimeUtc) {
-    return null;
+    throw new Error(
+      `Could not convert slot ${slot.startTime}-${slot.endTime} on ${dateKey} to UTC in ${timezone}`,
+    );
   }
 
   return {

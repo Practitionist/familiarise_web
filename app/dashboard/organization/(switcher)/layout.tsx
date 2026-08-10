@@ -25,9 +25,9 @@ export default function OrganizationSwitcherLayout({
 }) {
   return (
     <NovuProvider>
-      <div className="flex h-screen-maintenance flex-col bg-zinc-50 dark:bg-zinc-950">
+      <div className="flex h-screen-maintenance min-h-0 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
         <OrgSwitcherTopBar />
-        <main className="flex-1 overflow-y-auto">
+        <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="p-6">{children}</div>
         </main>
       </div>

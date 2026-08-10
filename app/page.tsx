@@ -17,32 +17,55 @@ import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
-import { emptyOnTransientDbError } from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
   BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
 
-// Stream behind the (now static) layout's instant skeleton instead of prerendering
-// at build — the static layout makes loading.tsx prefetchable, and force-dynamic
-// keeps the curated data fresh + off the build-time cross-region DB connect. (#932)
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. Nothing here is per-viewer — the root layout reads no
+// session (the Navbar is a client component on useSession()), and every section
+// below renders the same curated marketing data for signed-in and anonymous
+// visitors alike — so one cached HTML document is correct for everyone.
+//
+// force-dynamic was actively harmful on this route: Next marks a dynamic page
+// `private, no-cache, no-store, max-age=0, must-revalidate`, which is uncacheable
+// at every CDN, so every first-time visitor paid a Netlify ap-southeast-1 ->
+// Supabase ap-south-1 round trip behind a cold function boot. Prerendered HTML is
+// served straight off the CDN with no function invocation at all, on the one page
+// where LCP matters most.
+//
+// This route IS prerendered during `next build` and its reads therefore run in
+// the build environment — the #932 risk. That is deliberate and guarded: these
+// reads no longer degrade at all (#1119), so a transient pooler failure fails the
+// build loudly instead of baking an empty landing page into static HTML for a
+// whole window. `withBuildTimeRetry` gives the build two extra attempts first.
+//
+// 1 hour: curated marketing content that changes on the order of days. Publishing
+// a featured expert or review purges this path on demand (revalidateTag/
+// revalidatePath at the write sites), so the interval is a backstop, not the SLA.
+export const revalidate = 3600;
 
-// Each section reads independently; a transient pooler timeout (cross-region cold
-// connect, #932) in any one degrades that section to empty rather than throwing
-// past its Suspense boundary and crashing the whole landing page. (FAMILIARISE_WEB-A)
+// Each section reads independently. A transient pooler timeout (cross-region cold
+// connect, #932) now throws past its Suspense boundary rather than rendering the
+// section empty, because this route is ISR and an empty section would be cached
+// and replayed for the whole window (#1119).
+//
+// Be clear about the trade, because it is worse for one visitor than it used to
+// be: this replaces the entire landing page with app/error.tsx, hero and all, not
+// just the section that failed. It is the right trade only because `/` is
+// prerendered at build, so a cached copy almost always exists and a failed
+// revalidation keeps serving it. The exposed window is a regeneration with no
+// cached copy — i.e. straight after a revalidatePath purge from a write site.
+// (FAMILIARISE_WEB-A)
 async function BenefitsLoader() {
-  const images = await getHomeImages().catch(
-    emptyOnTransientDbError("home images"),
-  );
+  const images = await withBuildTimeRetry(getHomeImages);
   return <BenefitsSection images={images} />;
 }
 
 async function FeaturedExpertsLoader() {
-  const experts = await getHomeExperts().catch(
-    emptyOnTransientDbError("home experts"),
-  );
+  const experts = await withBuildTimeRetry(getHomeExperts);
   // Hide the section rather than render an empty marquee under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
@@ -51,9 +74,7 @@ async function FeaturedExpertsLoader() {
 }
 
 async function ReviewsLoader() {
-  const reviews = await getHomeReviews().catch(
-    emptyOnTransientDbError("home reviews"),
-  );
+  const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
   return (
     <>

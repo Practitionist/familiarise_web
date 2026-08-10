@@ -5,7 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { getGlobalVideoClient } from "@/lib/stream/disconnect";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
@@ -112,7 +112,6 @@ export function useEventActions({
 }: UseEventActionsOptions) {
   const { toast } = useToast();
   const router = useRouter();
-  const client = useStreamVideoClient();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
   const consulteeId = params?.consulteeId;
@@ -310,6 +309,9 @@ export function useEventActions({
   const handleJoinSession = async (forceSlot?: SlotOfAppointment) => {
     const slotToUse = forceSlot || getJoinableSlot();
 
+    // Singleton at click time: the SDK context is scoped to /meetings now, and
+    // this is the same instance <StreamVideo> would return (#248 idiom).
+    const client = getGlobalVideoClient();
     if (!client) {
       toast({
         title: "Not signed in",

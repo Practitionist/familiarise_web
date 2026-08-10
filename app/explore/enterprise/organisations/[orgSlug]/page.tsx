@@ -14,7 +14,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
-import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 
 import {
@@ -36,9 +35,28 @@ const PUBLIC_PLAN_CARD_SELECT = {
 } as const;
 
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-// (Replaces the prior `revalidate = 60`, inert while the layout forced dynamic.)
-export const dynamic = "force-dynamic";
+// ISR per orgSlug, not force-dynamic. The cache key is the org being viewed,
+// never the viewer: no session is read here or in any layout above, and the
+// query is already scoped to `isPublic` ACTIVE orgs, so the HTML is public by
+// construction.
+//
+// 5 minutes. This surface links straight into checkout-bound plan pages and the
+// plan lists are gated by eventPlanDiscoverableWhere(), so a withdrawn plan
+// lingering in cached HTML is a dead-end click — which is why archiving or
+// hiding a plan purges this path on demand rather than waiting out the window.
+export const revalidate = 300;
+
+// Required for `revalidate` above to be anything other than dead config: Next
+// renders a dynamic segment dynamically unless generateStaticParams exists, and
+// silently ignores the interval. The empty array is the documented "all paths at
+// runtime" shape — nothing is prerendered during `next build`, so org pages stay
+// off the build-time cross-region pooler connect (#932) and each renders on its
+// first request instead. dynamicParams defaults to true, so a slug not in the
+// array still renders on demand rather than 404ing.
+// https://nextjs.org/docs/15/app/api-reference/functions/generate-static-params
+export function generateStaticParams() {
+  return [];
+}
 
 // React.cache so generateMetadata() and the page body share one query per request
 // instead of running this heavy org read twice (more visible now it's per-request).
@@ -180,15 +198,12 @@ export async function generateMetadata({
   params: Promise<{ orgSlug: string }>;
 }): Promise<Metadata> {
   const { orgSlug } = await params;
-  // Metadata runs before render with no error boundary — a transient timeout
-  // would 500. Fall back to null (generic title); the page body re-reads and
-  // surfaces any real error. (#925)
-  const org = await fetchOrgBySlug(orgSlug).catch(
-    fallbackOnTransientDbError<Awaited<ReturnType<typeof fetchOrgBySlug>>>(
-      "org metadata",
-      null,
-    ),
-  );
+  // The fallback used to be a generic title on a transient timeout, which was
+  // right while this route was dynamic. It is ISR now, so that degraded head
+  // would be cached and replayed to everyone; a 500 that caches nothing is the
+  // better trade. Left bare so it fails the same way the page body below does —
+  // they share one `React.cache`d read per request (#1119).
+  const org = await fetchOrgBySlug(orgSlug);
   if (!org) return { title: "Organisation not found" };
   return {
     title: `${org.name} — Familiarise`,

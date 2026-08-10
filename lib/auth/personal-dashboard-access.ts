@@ -55,6 +55,10 @@ export async function requirePersonalProfileAccess(
   kind: PersonalProfileKind,
   profileId: string,
 ): Promise<PersonalProfileAccess> {
+  // Force-fresh, matching requireOnboarded(): ownership and role are re-read
+  // from prisma below, but only a fresh read notices a REVOKED session, and
+  // this is the gate on someone's personal dashboard. Both readers pass `true`,
+  // so they share one React.cache entry per request anyway.
   const session = await getSession(true);
   if (!session?.user?.id) redirect("/auth/signin");
 

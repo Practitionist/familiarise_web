@@ -187,14 +187,24 @@ export function RequestsSkeleton() {
 }
 
 // Home dashboard skeleton
-export function HomeSkeleton() {
+/**
+ * `withHeader={false}` when the caller already rendered the real header. Note
+ * that a skeleton is made of `Skeleton` boxes with no text, image or SVG, so it
+ * cannot trigger First Contentful Paint — measured on #1102, where the shell
+ * HTML arrived at 458ms but FCP still waited ~6s for real text. If a surface
+ * needs an early FCP, it has to render actual text, not a placeholder for it.
+ */
+export function HomeSkeleton({
+  withHeader = true,
+}: Readonly<{ withHeader?: boolean }> = {}) {
   return (
     <div className="flex-1 flex flex-col">
-      {/* Header */}
-      <div className="sticky top-0 z-30 border-b border-border/50 bg-muted/80 px-6 py-4 backdrop-blur-xl lg:px-8">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="mt-1 h-4 w-64" />
-      </div>
+      {withHeader && (
+        <div className="sticky top-0 z-30 border-b border-border/50 bg-muted/80 px-6 py-4 backdrop-blur-xl lg:px-8">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="mt-1 h-4 w-64" />
+        </div>
+      )}
 
       {/* Content */}
       <div className="space-y-6 px-6 py-6 lg:px-8">
@@ -288,7 +298,7 @@ export function SettingsSkeleton() {
 // Help skeleton
 export function HelpSkeleton() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="w-full bg-background">
       <div className="w-full px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <div className="space-y-6 sm:space-y-10">
           {/* Header */}

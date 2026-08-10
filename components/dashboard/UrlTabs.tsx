@@ -10,18 +10,19 @@
  * state has to be addressable — a plain `defaultValue` would drop the user on
  * the first panel regardless of where they came from.
  *
- * Uses `router.replace` with `scroll: false`: switching a tab is a lateral
- * move, not navigation, so it shouldn't stack history entries or jump the
- * viewport. The browser back button still leaves the page rather than walking
- * back through every tab the user glanced at.
+ * URL writes use `history.replaceState` (not `router.replace`) so switching a
+ * tab does not trigger a Next.js soft navigation / RSC refetch. Local state
+ * keeps the active panel in sync immediately; the address bar stays shareable.
+ * History is not pushed — back still leaves the page rather than walking
+ * every tab glance.
  *
  * Tabs are filtered by `show` so a caller can gate individual panels off the
  * same permission matrix that gates the sidebar — a hidden tab must not render
  * a trigger that 403s when clicked.
  */
 
-import { useCallback } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -42,7 +43,6 @@ export function UrlTabs({
   paramName?: string;
   className?: string;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -50,20 +50,36 @@ export function UrlTabs({
   const requested = searchParams?.get(paramName);
   // Fall back to the first visible tab when the param is absent or names a tab
   // this user can't see — a stale bookmark shouldn't render an empty page.
-  const active =
+  const urlActive =
     visible.find((t) => t.value === requested)?.value ?? visible[0]?.value;
+
+  // Local override so replaceState (which does not update useSearchParams)
+  // still flips the panel immediately.
+  const [localActive, setLocalActive] = useState<string | null>(null);
+  const active = localActive ?? urlActive;
+
+  // External URL change (e.g. redirect into ?tab=) wins over a stale local pick.
+  useEffect(() => {
+    setLocalActive(null);
+  }, [requested]);
 
   const onValueChange = useCallback(
     (value: string) => {
+      setLocalActive(value);
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       params.set(paramName, value);
       // Panels that paginate all read the same `?page=`. Without this, moving
       // to page 3 of Documents and then clicking Trials would open Trials on
       // page 3 — or on an empty page, if it has fewer.
       params.delete("page");
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      const qs = params.toString();
+      const target = qs ? pathname + "?" + qs : pathname;
+      const current = window.location.pathname + window.location.search;
+      if (target !== current) {
+        window.history.replaceState(window.history.state, "", target);
+      }
     },
-    [paramName, pathname, router, searchParams],
+    [paramName, pathname, searchParams],
   );
 
   if (!active) return null;

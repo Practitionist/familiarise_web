@@ -1,13 +1,24 @@
 "use client";
 
-import { UnifiedCalendar, UnifiedCalendarProps } from "./UnifiedCalendar";
+import dynamic from "next/dynamic";
+import type { UnifiedCalendarProps } from "./UnifiedCalendar";
 import CalendarErrorBoundary from "./CalendarErrorBoundary";
+import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { SlotStatusLegend } from "./SlotStatusLegend";
 import {
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
 } from "@/lib/scheduling/slot-status-tokens";
 import { cn } from "@/utils/tailwind";
+
+const UnifiedCalendar = dynamic(
+  () =>
+    import("./UnifiedCalendar").then((m) => ({ default: m.UnifiedCalendar })),
+  {
+    ssr: false,
+    loading: () => <CalendarGridSkeleton className="min-h-0 flex-1" />,
+  },
+);
 
 /**
  * Mounts the legend alongside the calendar.
@@ -16,6 +27,10 @@ import { cn } from "@/utils/tailwind";
  * what any of them meant, so a consultant seeing a yellow cell had to guess
  * whether it was bookable. Putting the legend here rather than inside
  * UnifiedCalendar means every caller gets it and none can forget it.
+ *
+ * UnifiedCalendar itself is code-split here so SlotPicker / allocate /
+ * reschedule routes do not pay the calendar module on first paint of the
+ * surrounding page chrome.
  */
 export function SafeUnifiedCalendar({
   className,
@@ -30,15 +45,13 @@ export function SafeUnifiedCalendar({
       <div className={cn("flex min-h-0 flex-col gap-3", className)}>
         {/* Above the grid, not below: a key you can only reach by scrolling
             past the thing it explains is backwards, and on a laptop it sat
-            below the fold entirely (#1064). A buyer picking a time has no use
-            for "This booking" or "Being moved" — those name states of an
-            allocation they are not doing, and one of them refers to a slot
-            the picker does not even display. Follows `mode` for the same
-            reason includeAppointmentDetails does: "allocate" is the
-            consultant's surface, everything else is a buyer's. */}
+            below the fold entirely (#1064). Buyers have no use for "This
+            booking" / "Being moved"; consultants do on allocate AND on
+            reschedule-propose (select mode with event context). Prefer the
+            explicit prop; fall back to mode === "allocate". */}
         <SlotStatusLegend
           keys={
-            props.mode === "allocate"
+            (props.showConsultantLegend ?? props.mode === "allocate")
               ? CONSULTANT_LEGEND_KEYS
               : BUYER_LEGEND_KEYS
           }

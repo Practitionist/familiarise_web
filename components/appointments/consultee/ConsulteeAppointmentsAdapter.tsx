@@ -3,7 +3,7 @@
 import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useParams, useRouter } from "next/navigation";
-import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { getGlobalVideoClient } from "@/lib/stream/disconnect";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
@@ -110,14 +110,23 @@ const KIND_TO_REPORT_TYPE: Record<
   CLASS: "CLASS",
 };
 
-export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
+/**
+ * @param options.consulteeId — Override when the URL has no `[consulteeId]`
+ *   (org appointment detail). Falls back to the route param, then the session.
+ */
+export function useConsulteeAppointmentsAdapter(options?: {
+  consulteeId?: string;
+}): AppointmentActionAdapter {
   const router = useRouter();
   const { toast } = useToast();
-  const client = useStreamVideoClient();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
-  const consulteeId = params?.consulteeId;
+  const consulteeId =
+    options?.consulteeId ||
+    params?.consulteeId ||
+    session?.user?.consulteeProfileId ||
+    undefined;
 
   // ONE set of dialogs, keyed off the row that opened them.
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
@@ -144,6 +153,10 @@ export function useConsulteeAppointmentsAdapter(): AppointmentActionAdapter {
   // Join can't go through useEventActions — its args follow activeVm state,
   // which wouldn't be committed yet on a same-click join from a row.
   const joinNow = async (vm: AppointmentVM, slot: SlotLike) => {
+    // Read the singleton at click time rather than via useStreamVideoClient:
+    // the SDK context is now scoped to /meetings, and this is the same instance
+    // <StreamVideo> would hand back. Matches the #248 lazy-join idiom.
+    const client = getGlobalVideoClient();
     if (!client) {
       toast({
         title: "Not signed in",

@@ -143,7 +143,7 @@ export function OperatorDashboardShell({
 
   return (
     <NovuProvider>
-      <div className="flex h-screen-maintenance bg-background">
+      <div className="flex h-screen-maintenance overflow-hidden bg-background">
         <CollapsibleSidebar
           items={sidebarGroups ? undefined : sidebarItems}
           groups={sidebarGroups}
@@ -169,7 +169,7 @@ export function OperatorDashboardShell({
         />
 
         {/* Right panel: context bar + scrolling page content */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <DashboardContextBar
             identity={{
               name: displayName,
@@ -185,7 +185,7 @@ export function OperatorDashboardShell({
             }
           />
 
-          <main className="flex-1 overflow-y-auto">
+          <main className="min-h-0 flex-1 overflow-y-auto">
             <div className="p-6">
               <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
             </div>

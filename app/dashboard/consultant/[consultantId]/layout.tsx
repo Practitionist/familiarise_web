@@ -45,6 +45,7 @@ import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { getEffectiveUserId } from "@/utils/auth";
+import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import {
@@ -384,7 +385,11 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
-  const userId = getEffectiveUserId(session);
+  // Fall back to the server-resolved id: useSession() is still pending during
+  // SSR, so without this the query key below is ["user-details", undefined] and
+  // the server seed in app/dashboard/layout.tsx can never be read (#1105).
+  const serverUserId = useServerUserId();
+  const userId = getEffectiveUserId(session) ?? serverUserId;
 
   // Sync user as Novu subscriber (once per session)
   useNovuSubscriberSync();

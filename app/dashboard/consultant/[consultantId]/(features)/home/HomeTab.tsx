@@ -13,7 +13,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
@@ -71,7 +70,6 @@ import type {
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
-  consultantName?: string;
   pendingRequestsCount?: number;
   performanceSnapshot?: TPerformanceSnapshot;
   financialSummary?: TFinancialSummary;
@@ -93,7 +91,6 @@ const fadeInUp = {
 export function HomeTab({
   appointments,
   consultantId,
-  consultantName,
   pendingRequestsCount = 0,
   performanceSnapshot,
   financialSummary,
@@ -164,7 +161,6 @@ export function HomeTab({
       .slice(0, 5);
   }, [allUpcomingAppointments]);
 
-  const firstName = consultantName?.split(" ")[0];
 
   // "Needs you now" — derived from data already on the page, so no extra
   // fetch. The rows go over whole, ids and ends included: these are raw
@@ -190,11 +186,9 @@ export function HomeTab({
 
   return (
     <>
-      <DashboardHeader
-        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
-        subtitle="Here's what's happening with your appointments today"
-      />
-
+      {/* The header is rendered by the server page, outside the Suspense
+          boundary, so it can paint as real text while this tab is still
+          waiting on data. Keeping a copy here would double it up. */}
       <DashboardContent>
         <motion.div
           variants={staggerChildren}

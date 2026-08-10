@@ -6,16 +6,29 @@ import {
   DEFAULT_ORGANISATION_FILTERS,
   getOrganisationsMetadata,
   getOrganisationsPage,
-  type OrganisationsMetadata,
 } from "@/lib/data/explore-organisations";
-import { fallbackOnTransientDbError } from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 
 import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
 } from "./OrganisationsInteractiveContent";
 
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. The directory reads no session and no searchParams
+// (filtering is client-side in OrganisationsInteractiveContent), and it lists
+// only `isPublic` ACTIVE orgs, so every visitor is entitled to the same HTML.
+//
+// force-dynamic made this uncacheable at the CDN (Next sends dynamic pages
+// `private, no-store`), so every visit paid a cross-region DB round trip for a
+// list that turns over on the order of days.
+//
+// This route IS prerendered during `next build` (#932): the reads run in the
+// build environment and no longer degrade at all (#1119), so a transient pooler
+// failure fails the build instead of baking an empty directory.
+//
+// 5 minutes: unlike the expert reads this one has no unstable_cache layer, so
+// the interval is the only thing between visitors and the DB. Orgs going public
+// purge this path on demand at the write sites.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Explore Organisations | Familiarise",
@@ -23,29 +36,14 @@ export const metadata: Metadata = {
     "Discover expert networks, consulting agencies, and learning institutions on Familiarise. Browse their curated experts and programs.",
 };
 
-const EMPTY_METADATA: OrganisationsMetadata = {
-  industries: [],
-  types: [],
-  sizes: [],
-  capabilities: [],
-  total: 0,
-};
-
 async function OrganisationsDirectory() {
-  // Both reads degrade rather than crash the page on a transient pooler
-  // timeout (cross-region cold connect, #932).
+  // Both reads throw on a transient pooler timeout (cross-region cold connect,
+  // #932). They used to degrade, which was safe while this route was dynamic and
+  // is not now that it is ISR — a degraded directory would be cached and replayed
+  // to everyone (#1119).
   const [meta, firstPage] = await Promise.all([
-    getOrganisationsMetadata().catch(
-      fallbackOnTransientDbError("org directory metadata", EMPTY_METADATA),
-    ),
-    getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS).catch(
-      fallbackOnTransientDbError("org directory page", {
-        items: [],
-        total: 0,
-        page: 1,
-        totalPages: 1,
-      }),
-    ),
+    withBuildTimeRetry(getOrganisationsMetadata),
+    withBuildTimeRetry(() => getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS)),
   ]);
 
   return (
