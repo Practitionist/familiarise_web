@@ -105,6 +105,34 @@ describe("consultant Home read shape (#1101)", () => {
     }
   });
 
+  it("issues no display read at all when there is nothing upcoming (#1121)", async () => {
+    // slotFindMany resolves [] from beforeEach, so homeAppointmentIds is empty —
+    // a new consultant, an entirely past book, or one whose upcoming work was
+    // cancelled. Prisma renders an empty `in` as `IN (NULL)`, and the display
+    // read's include graph then costs nine follow-up SELECTs on `users` for a
+    // result that is guaranteed to be empty.
+    await getConsultantDashboard("cp-1");
+
+    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].include);
+    expect(displayReads).toEqual([]);
+
+    // The active-book read is id-independent and MUST still run — the guard is
+    // per-query, not an early return, or Financial Summary goes blank.
+    expect(apptFindMany.mock.calls.some((c) => c[0].select)).toBe(true);
+  });
+
+  it("still issues the display read when there IS something upcoming (#1121)", async () => {
+    // Non-vacuity anchor for the assertion above: prove the guard is keyed on
+    // emptiness and has not simply deleted the read.
+    slotFindMany.mockResolvedValue([{ appointmentId: "appt-1" }]);
+
+    await getConsultantDashboard("cp-1");
+
+    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].include);
+    expect(displayReads).toHaveLength(1);
+    expect(displayReads[0][0].where.id.in).toEqual(["appt-1"]);
+  });
+
   it("derives active clients from a dedicated query, not the truncated display list", async () => {
     // Display list is capped; the active book is not. Deriving counts from the
     // capped array under-reported Financial Summary for any real consultant.

@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
+import { readByIds } from "@/lib/data/read-by-ids";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
@@ -186,19 +187,23 @@ export const getCuratedPrograms = unstable_cache(
         // slicing here lets every caller share one entry.
         const sortedIds = (await getTrendingClassPlanIds()).slice(0, limit);
 
-        classPlans = await prisma.classPlan.findMany({
-          where: {
-            id: { in: sortedIds },
-            ...eventPlanDiscoverableWhere(),
-            ...liveConsultantWhere,
-          }, // #726
-          include: {
-            consultantProfile: planConsultantInclude,
-            topics: true,
-            classContents: true,
-            classes: true,
-          },
-        });
+        // No enrollments in the window means no ranked ids — see readByIds for
+        // why that is not free. (#1121)
+        classPlans = await readByIds(sortedIds, () =>
+          prisma.classPlan.findMany({
+            where: {
+              id: { in: sortedIds },
+              ...eventPlanDiscoverableWhere(),
+              ...liveConsultantWhere,
+            }, // #726
+            include: {
+              consultantProfile: planConsultantInclude,
+              topics: true,
+              classContents: true,
+              classes: true,
+            },
+          }),
+        );
 
         // Re-sort to match ranking order
         const idOrder = new Map(sortedIds.map((id, i) => [id, i]));
@@ -240,17 +245,20 @@ export const getCuratedPrograms = unstable_cache(
         // class-plan twin above for why no limit arg).
         const sortedIds = (await getTrendingWebinarPlanIds()).slice(0, limit);
 
-        webinarPlans = await prisma.webinarPlan.findMany({
-          where: {
-            id: { in: sortedIds },
-            ...eventPlanDiscoverableWhere(),
-            ...liveConsultantWhere,
-          }, // #726
-          include: {
-            consultantProfile: planConsultantInclude,
-            topics: true,
-          },
-        });
+        // Empty-`in` guard, same reasoning as the class-plan twin above. (#1121)
+        webinarPlans = await readByIds(sortedIds, () =>
+          prisma.webinarPlan.findMany({
+            where: {
+              id: { in: sortedIds },
+              ...eventPlanDiscoverableWhere(),
+              ...liveConsultantWhere,
+            }, // #726
+            include: {
+              consultantProfile: planConsultantInclude,
+              topics: true,
+            },
+          }),
+        );
 
         const idOrder = new Map(sortedIds.map((id, i) => [id, i]));
         webinarPlans.sort(

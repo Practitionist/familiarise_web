@@ -229,9 +229,25 @@ const nextConfig = {
     ],
   },
 
-  // Reduce JavaScript bundle size by removing console statements in production
+  // The bundle-size framing this carried as a bare `true` was wrong, and it cost
+  // two investigations. SWC applies this transform to the SERVER layer as well as
+  // the client — Next offers no client-only scoping (vercel/next.js#48410 is
+  // unresolved) — so `true` deleted every one of ~1,110 server-side diagnostics
+  // from the deployed function. Proven, not inferred: a console.warn at Prisma
+  // client construction produced ZERO log lines on preview 1118 across two
+  // confirmed module loads, while third-party output in the same window survived
+  // (node_modules is not compiled by SWC). #1122.
+  //
+  // `error` and `warn` are the levels a deliberate diagnostic uses, so they stay.
+  // `log` is the chatty one and keeps being stripped, which is the whole of the
+  // bundle saving the original comment was after. Note this cannot be recovered
+  // with Sentry's consoleLoggingIntegration: that patches globalThis.console at
+  // runtime, and this deletes the call expressions at compile time.
   compiler: {
-    removeConsole: process.env.NODE_ENV === "production",
+    removeConsole:
+      process.env.NODE_ENV === "production"
+        ? { exclude: ["error", "warn"] }
+        : false,
   },
 
   async headers() {

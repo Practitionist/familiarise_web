@@ -19,6 +19,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { readByIds } from "@/lib/data/read-by-ids";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -387,11 +388,17 @@ export async function getConsultantDashboard(
     netEarningsAgg,
     readyEarningsAgg,
   ] = await Promise.all([
-    // Fetch approved appointments for consultations, subscriptions, webinars, and classes
-    prisma.appointment.findMany({
-      where: { id: { in: homeAppointmentIds } },
-      include: appointmentInclude,
-    }),
+    // Fetch approved appointments for consultations, subscriptions, webinars, and
+    // classes. `appointmentInclude` carries nine nested `user` selections, so an
+    // unguarded empty id list cost nine follow-up SELECTs — see readByIds. The
+    // guard is per-query, not an early return: every other read below is
+    // consultant-scoped rather than id-scoped and must still run. (#1121)
+    readByIds(homeAppointmentIds, () =>
+      prisma.appointment.findMany({
+        where: { id: { in: homeAppointmentIds } },
+        include: appointmentInclude,
+      }),
+    ),
     // Active clients / programs are counted over the consultant's whole active
     // book, not the handful of rows Home renders. Deriving them from the
     // display array meant the Financial Summary card under-reported for anyone
@@ -606,8 +613,7 @@ export async function getConsultantDashboard(
             requestedBy: {
               id: appointment.consultation.requestedBy?.id ?? "",
               user: {
-                name:
-                  appointment.consultation.requestedBy?.user?.name ?? null,
+                name: appointment.consultation.requestedBy?.user?.name ?? null,
                 image:
                   appointment.consultation.requestedBy?.user?.image ?? null,
               },
@@ -626,8 +632,7 @@ export async function getConsultantDashboard(
             requestedBy: {
               id: appointment.subscription.requestedBy?.id ?? "",
               user: {
-                name:
-                  appointment.subscription.requestedBy?.user?.name ?? null,
+                name: appointment.subscription.requestedBy?.user?.name ?? null,
                 image:
                   appointment.subscription.requestedBy?.user?.image ?? null,
               },
@@ -658,8 +663,7 @@ export async function getConsultantDashboard(
             id: appointment.class.id,
             classPlan: {
               ...appointment.class.classPlan,
-              consultantProfile:
-                appointment.class.classPlan.consultantProfile,
+              consultantProfile: appointment.class.classPlan.consultantProfile,
               collaborators: appointment.class.classPlan.collaborators ?? [],
             },
             status: appointment.class.status,
