@@ -163,15 +163,30 @@ function formatWeeklySlot(
     isOvernightUTC: slot.isOvernightUTC,
   });
 
+  // Throws instead of returning [], which the caller's flatMap silently
+  // absorbed — the same drop-a-slot-from-the-save-payload hazard fixed in
+  // formatCustomSlot, and this is the worse half of it because WEEKLY is the
+  // default schedule type. convertTimezoneToUtc returns "" for both an
+  // unparseable time and a caught conversion error (an unusable timezone
+  // reaches it that way), so the empty string could never be distinguished
+  // from a slot that was legitimately omitted. (#1125)
   const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
-  if (!startUTC) return [];
+  if (!startUTC) {
+    throw new Error(
+      `Could not convert weekly slot start ${slot.startTime} on ${dayOfWeek} to UTC in ${timezone}`,
+    );
+  }
 
   const endUTC = overnight
     ? slot.endTime === "00:00"
       ? convertTimezoneToUtc("00:00", nextDate, timezone)
       : convertTimezoneToUtc(slot.endTime, nextDate, timezone)
     : convertTimezoneToUtc(slot.endTime, baseDate, timezone);
-  if (!endUTC) return [];
+  if (!endUTC) {
+    throw new Error(
+      `Could not convert weekly slot end ${slot.endTime} on ${dayOfWeek} to UTC in ${timezone}`,
+    );
+  }
 
   // Extract UTC minutes — these are always correct regardless of epoch dates
   const startMin = dateToMinuteUtc(new Date(startUTC));

@@ -213,6 +213,10 @@ export const orgDataExportLimiter = makeLimiter(
  *                     Prefix with a route slug when reusing the same limiter across
  *                     multiple endpoints (e.g. `tickets:${userId}`).
  */
+// Module scope, so the window is per function instance and resets with it.
+const REDIS_FAILURE_REPORT_INTERVAL_MS = 60_000;
+let lastRedisFailureReportAt = 0;
+
 export async function applyRateLimit(
   limiter: Ratelimit,
   identifier: string,
@@ -239,11 +243,22 @@ export async function applyRateLimit(
     // sendDefaultPii: false. It buys nothing anyway: when Redis is down every
     // limiter fails, so one sample's key is not diagnostic, and the captured
     // transaction already names the route. (#1127)
-    reportSentryError(error, {
-      subsystem: "rate-limit",
-      op: "applyRateLimit",
-      expected: false,
-    });
+    // Throttled to one report per instance per minute. Unthrottled, a Redis
+    // outage fires a capture on EVERY limited request across every route — the
+    // failure is total, not per-caller, so the second event of an outage carries
+    // no information the first did not, and the volume both burns quota and
+    // buries unrelated alerts. Per-instance rather than global on purpose: there
+    // is no shared state to coordinate through when the shared state IS what is
+    // down. (#1125)
+    const now = Date.now();
+    if (now - lastRedisFailureReportAt > REDIS_FAILURE_REPORT_INTERVAL_MS) {
+      lastRedisFailureReportAt = now;
+      reportSentryError(error, {
+        subsystem: "rate-limit",
+        op: "applyRateLimit",
+        expected: false,
+      });
+    }
     return null;
   }
 }

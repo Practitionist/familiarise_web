@@ -67,6 +67,31 @@ describe("formatSlotsForApi is all-or-nothing (#1125)", () => {
     expect(() => formatSlotsForApi(slots, true, "UTC")).toThrow();
   });
 
+  it("throws rather than dropping a WEEKLY slot whose UTC conversion fails", () => {
+    // The weekly twin of the custom-slot case, and the worse half: weekly is the
+    // default schedule type. formatWeeklySlot returned [] here and the caller's
+    // flatMap absorbed it, so the slot vanished from the PUT body silently.
+    // An unusable timezone is how a VALID slot reaches that path —
+    // convertTimezoneToUtc catches the failure and returns "".
+    const slots: SlotsType = {
+      monday: [slot("09:00", "10:00")],
+    };
+
+    expect(() => formatSlotsForApi(slots, true, "Not/AZone")).toThrow(
+      /Could not convert weekly slot/,
+    );
+  });
+
+  it("throws rather than dropping a CUSTOM slot whose UTC conversion fails", () => {
+    const slots: SlotsType = {
+      "2026-09-01": [slot("09:00", "10:00")],
+    };
+
+    expect(() => formatSlotsForApi(slots, false, "Not/AZone")).toThrow(
+      /Could not convert slot/,
+    );
+  });
+
   it("still skips slots the caller already marked invalid", () => {
     // Distinct from a formatting FAILURE: `isValid: false` is the editor saying
     // the row is incomplete, which is an answer, not an error. Those must keep
