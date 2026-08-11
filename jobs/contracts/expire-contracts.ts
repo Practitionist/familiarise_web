@@ -25,6 +25,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
@@ -53,6 +54,10 @@ export async function runExpireContracts(): Promise<ExpireStats> {
   stats.scanned = due.length;
 
   for (const c of due) {
+    // #1132 — docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md
+    // states each nightly lifecycle cron runs Serializable; no isolation level
+    // was passed, so this ran at READ COMMITTED. The CAS claim below is the
+    // real correctness guard, but the doc claim should be true of the code.
     await prisma.$transaction(async (tx) => {
       // Conditional update — claim the row only if still ACTIVE so two
       // cron replicas don't double-process. Doubles as the distributed
@@ -106,7 +111,7 @@ export async function runExpireContracts(): Promise<ExpireStats> {
           },
         },
       });
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   return stats;

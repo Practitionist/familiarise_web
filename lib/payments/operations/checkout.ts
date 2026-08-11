@@ -3077,6 +3077,14 @@ export async function handleCheckout(
           "already have a session booked", // consultee double-book (FAMILIARISE_WEB-P)
           "overlapping dates",
           "insufficient credits",
+          // #1132 — validateSlotAvailability throws these from INSIDE the
+          // transaction, so without them here a genuine slot conflict was
+          // rewritten to "Failed to record payment information" → UNKNOWN →
+          // "Something Went Wrong", and the user had no idea to pick another
+          // slot. ADR 16's clean-error claim only held for the pre-transaction
+          // check.
+          "already booked",
+          "no longer available",
         ];
         if (
           preservedMessages.some((msg) =>
