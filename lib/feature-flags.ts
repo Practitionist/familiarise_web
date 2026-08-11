@@ -63,6 +63,29 @@ export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
 /**
+ * Section 194-O withholding base (#1132). OFF by default — flipping it changes
+ * how much tax is withheld from real consultants, so it needs written CA
+ * sign-off first.
+ *
+ * Today the base is `payout.amount`, i.e. the consultant's share NET of our
+ * platform commission. Section 194-O — now s.393(1) Table Sl. 8(v) of the
+ * Income-tax Act 2025 — requires deduction on the GROSS amount of the sale, and
+ * CBDT Circulars 17/2020 and 20/2021 are explicit that the operator's retained
+ * commission is not deductible from that base. So the current computation
+ * under-withholds by the commission fraction, with s.201 interest at 1%/month
+ * and a 30% expense disallowance as the downside.
+ *
+ * When true, the payout path sums `ConsultantEarnings.grossAmount` over the
+ * earnings in the payout and uses that as the base, and applies the statutory
+ * ₹5,00,000 exemption (see TDS_194O_EXEMPTION_PAISE) which only holds when all
+ * three limbs are satisfied: individual/HUF, cumulative ≤ ₹5L, and PAN on file.
+ *
+ * Pairs with TDS_ENGINE=194O, which drops the legacy ₹50K 194J gate.
+ */
+export const ENABLE_TDS_194O_GROSS =
+  process.env.ENABLE_TDS_194O_GROSS === "true";
+
+/**
  * IRP (Invoice Registration Portal) live e-invoice integration.
  *
  * ClearTax GSP connector is wired (`lib/compliance/irp.ts`,

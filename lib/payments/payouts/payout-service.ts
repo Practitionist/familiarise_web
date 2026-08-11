@@ -33,10 +33,15 @@ import {
 import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
 import {
+  ENABLE_LIVE_PAYOUTS,
+  ENABLE_TDS_194O_GROSS,
+} from "@/lib/feature-flags";
+import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
+  resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
@@ -495,6 +500,20 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
+  // #1132 / ADR 11 — the submission freeze. This gate existed only on the org
+  // rail (org-payout-service.ts:525); the consultant rail read the flag nowhere
+  // and was held back solely by RazorpayX credentials being absent. The day
+  // those credentials land for the org go-live, this cron would have wired
+  // every APPROVED consultant payout to a real bank account while the freeze
+  // was believed to be on. assertPayoutBalance is not a substitute — it
+  // short-circuits to ok when the flag is off, so it never blocked either.
+  if (!ENABLE_LIVE_PAYOUTS) {
+    console.warn(
+      "[Payouts] ENABLE_LIVE_PAYOUTS is off — holding approved consultant payouts.",
+    );
+    return [];
+  }
+
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
   // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
   // closed and page. `acquireLock` returns null for both, so without this
@@ -657,7 +676,29 @@ async function processSinglePayout(payout: {
     );
     const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
     let taxablePaise = 0;
-    if (pure194O) {
+    let thresholdReason: string | null = null;
+
+    if (ENABLE_TDS_194O_GROSS) {
+      // #1132 — 194-O is charged on the GROSS amount of the sale, not on the
+      // consultant's share after our commission (CBDT Circulars 17/2020,
+      // 20/2021). Sum the booking gross across the earnings in this payout and
+      // apply the three-limb ₹5L exemption.
+      const grossAgg = await prisma.consultantEarnings.aggregate({
+        where: { payoutId: payout.id },
+        _sum: { grossAmount: true, refundedShareAmount: true },
+      });
+      const grossThisPayoutPaise =
+        sumPaise(grossAgg._sum.grossAmount) -
+        sumPaise(grossAgg._sum.refundedShareAmount);
+      const resolved = resolve194OTaxablePaise({
+        grossBeforePaise: cumulativeBeforePayout,
+        grossThisPayoutPaise,
+        entityType: consultantTaxInfo?.taxEntityType ?? null,
+        panOnFile: !!consultantTaxInfo?.panEncrypted,
+      });
+      taxablePaise = resolved.taxablePaise;
+      thresholdReason = resolved.reason;
+    } else if (pure194O) {
       taxablePaise = payout.amount;
     } else if (cumulativeAfterPayout > TDS_THRESHOLD_PAISE) {
       taxablePaise =
@@ -688,7 +729,9 @@ async function processSinglePayout(payout: {
             tdsAmountPaise: 0,
             dtaaRateApplied: null,
             fallbackApplied: false,
-            reason: `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
+            reason:
+              thresholdReason ??
+              `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
           };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
@@ -1045,11 +1088,18 @@ export async function handlePayoutWebhook(
       });
 
       // #771 D1/D5 — double-entry (dual-write): clear what we owed the
-      // consultant. payout.amount is the cash that left; tdsDeducted was
-      // withheld and is owed to the government.
-      //   Dr CONSULTANT_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+      // consultant.
+      //
+      // #1132 — `payout.amount` is the GROSS payable, not the cash that left.
+      // The gateway is called with `payout.amount - tds` (see
+      // payoutAmountAfterTDS above), so crediting CASH with the gross
+      // over-stated it by the withheld amount on every deduction and pushed
+      // CONSULTANT_PAYABLE toward a debit balance. The transaction still
+      // balanced, so neither the deferred trigger nor the reconciler caught it.
+      //   Dr CONSULTANT_PAYABLE (gross)  Cr CASH (gross − tds)  Cr TDS_PAYABLE (tds)
       if (payout.amount > 0) {
         const tdsPaise = payout.tdsDeducted ?? 0;
+        const cashPaise = payout.amount - tdsPaise;
         const payoutPostings: Posting[] = [
           {
             account: {
@@ -1057,12 +1107,12 @@ export async function handlePayoutWebhook(
               consultantProfileId: payout.consultantProfileId,
             },
             direction: "DEBIT",
-            amountPaise: payout.amount + tdsPaise,
+            amountPaise: payout.amount,
           },
           {
             account: { kind: "CASH" },
             direction: "CREDIT",
-            amountPaise: payout.amount,
+            amountPaise: cashPaise,
           },
         ];
         if (tdsPaise > 0) {
