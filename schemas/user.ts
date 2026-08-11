@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
+import { isAdult, UNDER_AGE_MESSAGE } from "@/lib/compliance/age";
 
 // #region Enums
 
@@ -46,6 +47,32 @@ export const DayOfWeekEnum = z.enum([
   "SATURDAY",
   "SUNDAY",
 ]);
+
+// #endregion
+
+// #region Age Gate
+
+/**
+ * #1132 — the DPDP age gate, defined once and reused by every onboarding
+ * schema so the wizard's step schemas and the canonical user schema cannot
+ * drift apart.
+ *
+ * India's age of majority is 18 (DPDP s.2(f)); below it, processing requires
+ * verifiable parental consent (s.9) and behavioural tracking is prohibited
+ * outright (s.9(3)). `dateOfBirth` was previously optional and never checked,
+ * so the product had no age gate at all while the privacy policy quoted the
+ * COPPA age of 13. Collecting the date purely to confirm non-child status is
+ * itself an exempt purpose (Fourth Schedule Part B item 6), so this adds no
+ * new obligation.
+ *
+ * `coerce` because the wizard round-trips values through JSON between steps.
+ */
+export const DateOfBirthSchema = z.coerce
+  .date({
+    required_error: "Date of birth is required",
+    invalid_type_error: "Enter a valid date of birth",
+  })
+  .refine((d) => isAdult(d), { message: UNDER_AGE_MESSAGE });
 
 // #endregion
 
@@ -103,7 +130,7 @@ export const PersonalInfoAndRoleSchema = z.object({
   onboardingCompleted: z.boolean().optional().default(false),
   role: UserRoleEnum,
   // New fields
-  dateOfBirth: z.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: GenderEnum.optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),

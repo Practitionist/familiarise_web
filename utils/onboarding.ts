@@ -8,6 +8,7 @@ import {
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
+import { DateOfBirthSchema } from "@/schemas/user";
 import {
   WeeklySlotSchema,
   CustomSlotSchema,
@@ -140,7 +141,7 @@ export const OnboardingBaseSchema = z.object({
   timezone: z.string().optional(),
   onlineStatus: z.boolean().optional().default(false),
   onboardingCompleted: z.boolean().optional().default(false),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -217,7 +218,7 @@ export const FrontendOnboardingBaseSchema = z.object({
   onlineStatus: z.boolean().default(false),
   onboardingCompleted: z.boolean().default(false),
   role: z.nativeEnum(UserRole),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -237,7 +238,7 @@ export const PersonalInfoAndRoleFormSchema = z.object({
   role: z.nativeEnum(UserRole),
   onlineStatus: z.boolean().optional(),
   onboardingCompleted: z.boolean().optional(),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -639,6 +640,9 @@ export function transformFrontendToServerData(
     onlineStatus: frontendData.onlineStatus,
     onboardingCompleted: frontendData.onboardingCompleted,
     role: frontendData.role,
+    // #1132 — carried through every role branch: the age gate is only a gate
+    // if the value it validated is the one that reaches the database.
+    dateOfBirth: frontendData.dateOfBirth,
   };
 
   switch (frontendData.role) {

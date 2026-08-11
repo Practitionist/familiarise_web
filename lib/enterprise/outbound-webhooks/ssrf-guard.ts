@@ -89,7 +89,12 @@ function isBlockedV6(ip: string): boolean {
   if (embedded) return isBlockedV4(embedded[1]);
 
   if (v === "::" || v === "::1") return true;
-  if (v.startsWith("fe8") || v.startsWith("fe9") || v.startsWith("fea") || v.startsWith("feb")) {
+  if (
+    v.startsWith("fe8") ||
+    v.startsWith("fe9") ||
+    v.startsWith("fea") ||
+    v.startsWith("feb")
+  ) {
     return true; // fe80::/10 link-local
   }
   if (/^f[cd]/.test(v)) return true; // fc00::/7 unique-local
@@ -128,7 +133,11 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   }
 
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
-  if (BLOCKED_HOSTNAMES.has(host) || host.endsWith(".localhost") || host.endsWith(".internal")) {
+  if (
+    BLOCKED_HOSTNAMES.has(host) ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".internal")
+  ) {
     throw new SsrfBlockedError("host is not publicly routable");
   }
 

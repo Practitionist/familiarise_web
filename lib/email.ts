@@ -750,3 +750,88 @@ export async function sendWaitlistWelcomeEmail({
     return { success: false, error };
   }
 }
+
+/**
+ * #1132 — contact / enterprise-sales inquiry.
+ *
+ * The /contactus form previously had no submit handler and no route behind it:
+ * every inquiry, including every enterprise lead the /enterprise CTAs sent
+ * there, was silently discarded. This routes them to the ops inbox with the
+ * sender on Reply-To, and inherits the FailedEmail retry path so a transient
+ * Resend outage does not lose the lead.
+ */
+export async function sendContactInquiryEmail({
+  firstName,
+  lastName,
+  email,
+  phone,
+  subject,
+  message,
+  category,
+}: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+  category?: string | null;
+}) {
+  let sentMessage: RenderedEmail | undefined;
+  try {
+    const resend = getResendClient();
+    if (!resend) {
+      return { success: false, error: "Email service not configured" };
+    }
+
+    const to = process.env.CONTACT_INBOX_ADDRESS || "support@familiarise.com";
+    const name = `${firstName} ${lastName}`.trim();
+    const esc = (s: string) =>
+      s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const rows: Array<[string, string]> = [
+      ["Name", name],
+      ["Email", email],
+      ["Phone", phone || "—"],
+      ["Category", category || "—"],
+      ["Subject", subject],
+    ];
+
+    const html = `
+      <h2>New contact inquiry</h2>
+      <table cellpadding="6" style="border-collapse:collapse">
+        ${rows
+          .map(
+            ([k, v]) =>
+              `<tr><td style="font-weight:600">${esc(k)}</td><td>${esc(v)}</td></tr>`,
+          )
+          .join("")}
+      </table>
+      <h3>Message</h3>
+      <p style="white-space:pre-wrap">${esc(message)}</p>
+    `;
+
+    sentMessage = {
+      from: DEFAULT_FROM_ADDRESS,
+      to,
+      subject: `[Contact] ${subject}`,
+      html,
+      // Ops replies go straight to the person who wrote in.
+      replyTo: email,
+    };
+
+    const data = await resend.emails.send(sentMessage);
+    if (data.error) throw new Error(data.error.message || "Resend API error");
+
+    return { success: true, data };
+  } catch (error) {
+    console.error("Failed to send contact inquiry email:", error);
+    if (sentMessage)
+      await recordFailedEmail(sentMessage, "CONTACT_INQUIRY", error);
+    return { success: false, error };
+  }
+}

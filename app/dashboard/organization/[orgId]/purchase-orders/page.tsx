@@ -53,7 +53,9 @@ export default function PurchaseOrdersPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast } = useOrgRole(orgId);
+  // #1132 — PO mutations are `purchaseOrders.manage` (OWNER + BILLING_ADMIN).
+  // MAINTAINER previously saw create/edit/delete and ate a 403 on submit.
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "purchaseOrders.read",
     canSponsor: true,
@@ -82,7 +84,7 @@ export default function PurchaseOrdersPage({
   // MAINTAINER-or-higher so OWNER and BILLING_ADMIN both pass without
   // the page reaching into the disjunction rules. A MANAGER session
   // never sees the affordances.
-  const canMutate = isAtLeast("MAINTAINER");
+  const canMutate = can("purchaseOrders.manage");
 
   const rows = useMemo(() => {
     const data = list.data?.data ?? [];

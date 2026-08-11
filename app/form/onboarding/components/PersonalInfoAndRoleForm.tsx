@@ -195,6 +195,48 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
               )}
             </div>
 
+            {/* #1132 — DPDP age gate. India's age of majority is 18 (s.2(f)),
+                and below it processing needs verifiable parental consent
+                (s.9). There was no age check anywhere in the product before
+                this. Collecting the DOB solely to run the check is an exempt
+                purpose (Fourth Schedule Part B item 6). */}
+            <div className="space-y-2">
+              <Label htmlFor="dateOfBirth">
+                Date of birth <span className="text-destructive">*</span>
+              </Label>
+              <Controller
+                name="dateOfBirth"
+                control={control}
+                render={({ field }) => (
+                  <Input
+                    id="dateOfBirth"
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={
+                      field.value instanceof Date && !isNaN(field.value.getTime())
+                        ? field.value.toISOString().slice(0, 10)
+                        : ""
+                    }
+                    onChange={(e) =>
+                      field.onChange(
+                        e.target.value ? new Date(e.target.value) : undefined,
+                      )
+                    }
+                    aria-invalid={!!errors.dateOfBirth}
+                  />
+                )}
+              />
+              {errors.dateOfBirth ? (
+                <p className="text-sm text-destructive">
+                  {errors.dateOfBirth.message}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  You must be at least 18 to use Familiarise.
+                </p>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="gender">Gender</Label>
               <Controller

@@ -500,20 +500,6 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
-  // #1132 / ADR 11 — the submission freeze. This gate existed only on the org
-  // rail (org-payout-service.ts:525); the consultant rail read the flag nowhere
-  // and was held back solely by RazorpayX credentials being absent. The day
-  // those credentials land for the org go-live, this cron would have wired
-  // every APPROVED consultant payout to a real bank account while the freeze
-  // was believed to be on. assertPayoutBalance is not a substitute — it
-  // short-circuits to ok when the flag is off, so it never blocked either.
-  if (!ENABLE_LIVE_PAYOUTS) {
-    console.warn(
-      "[Payouts] ENABLE_LIVE_PAYOUTS is off — holding approved consultant payouts.",
-    );
-    return [];
-  }
-
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
   // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
   // closed and page. `acquireLock` returns null for both, so without this
@@ -528,6 +514,24 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   const redisHealthy = await checkRedisHealth();
   if (!redisHealthy) {
     throw new CronLockUnavailableError("process-payouts");
+  }
+
+  // #1132 / ADR 11 — the submission freeze. This gate existed only on the org
+  // rail (org-payout-service.ts:525); the consultant rail read the flag nowhere
+  // and was held back solely by RazorpayX credentials being absent. The day
+  // those credentials land for the org go-live, this cron would have wired
+  // every APPROVED consultant payout to a real bank account while the freeze
+  // was believed to be on. assertPayoutBalance is not a substitute — it
+  // short-circuits to ok when the flag is off, so it never blocked either.
+  //
+  // Deliberately placed AFTER the Redis prechecks above so ADR 13's fail-closed
+  // contract is unchanged: an unreachable Redis still pages regardless of the
+  // flag, rather than being masked by an early return.
+  if (!ENABLE_LIVE_PAYOUTS) {
+    console.warn(
+      "[Payouts] ENABLE_LIVE_PAYOUTS is off — holding approved consultant payouts.",
+    );
+    return [];
   }
 
   const lockToken = await acquireLock(

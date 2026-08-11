@@ -99,9 +99,15 @@ export async function runDispatchTick(params: {
   now?: () => number;
   /// Batch ceiling override; defaults to MAX_BATCH.
   maxBatch?: number;
+  /// Inject for testing — production uses the real SSRF guard. Fixture
+  /// endpoints use reserved non-resolving hosts (`*.example`), which the guard
+  /// correctly refuses, so tests exercising delivery pass a no-op here. Never
+  /// override this in production code.
+  assertUrlFn?: (url: string) => Promise<void>;
 }): Promise<WorkerRunResult> {
   const { prisma } = params;
   const fetchImpl = params.fetchFn ?? globalThis.fetch;
+  const assertUrl = params.assertUrlFn ?? assertPublicUrl;
   const now = params.now ?? (() => Date.now());
   const batchLimit = params.maxBatch ?? MAX_BATCH;
 
@@ -212,7 +218,7 @@ export async function runDispatchTick(params: {
       // with a public address at create time can answer with 169.254.169.254
       // now. Treated as a delivery failure, so it retries and eventually
       // disables the endpoint rather than 500-ing the tick.
-      await assertPublicUrl(row.endpoint.url);
+      await assertUrl(row.endpoint.url);
 
       // AbortController + timer: fetch's default has no per-request
       // timeout in the Node runtime. A receiver hanging at the TCP

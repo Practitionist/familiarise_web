@@ -76,13 +76,18 @@ export function SettingsTabs({ orgId }: { orgId: string }) {
       value: "scim",
       label: "SCIM",
       content: <ScimPanel orgId={orgId} />,
-      show: canIntegrations,
+      // #1132 — the SCIM token routes are requireOrgOwner, so showing this on
+      // `integrations.read` (which includes MAINTAINER/BILLING_ADMIN/MANAGER)
+      // rendered a tab that 403s the moment it loads.
+      show: role === "OWNER",
     },
     {
       value: "data-exports",
       label: "Data exports",
       content: <DataExportsPanel orgId={orgId} />,
-      show: canIntegrations,
+      // #1132 — the data-export routes are requireOrgBillingAdminOrOwner, so
+      // this is `billing.manage`, not the broader `integrations.read`.
+      show: can("billing.manage"),
     },
     {
       // ADR 23 — the org dashboard carried a notification bell but no way to

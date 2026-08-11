@@ -94,6 +94,10 @@ describe("runDispatchTick — success path", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 200 }));
 
     const result = await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -132,6 +136,10 @@ describe("runDispatchTick — permanent client error", () => {
     const fetchFn = mockFetch(async () => new Response("bad", { status: 400 }));
 
     const result = await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -156,6 +164,10 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 503 }));
 
     await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -181,6 +193,10 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 429 }));
 
     await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -198,6 +214,10 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 502 }));
 
     await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -218,6 +238,10 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     });
 
     await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -247,6 +271,10 @@ describe("runDispatchTick — operator pause", () => {
     });
 
     await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -272,6 +300,10 @@ describe("runDispatchTick — guarded atomic claim (#812)", () => {
     });
 
     const result = await runDispatchTick({
+      // #1132 — fixture endpoints use the reserved `.example` TLD, which does
+      // not resolve, so the real SSRF guard refuses them. Bypass it here; the
+      // guard itself is covered in __tests__/security/audit-1132-security.
+      assertUrlFn: async () => {},
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,

@@ -214,7 +214,9 @@ export function WalletTab({
   moneyMoveBlocked?: boolean;
   moneyMoveReason?: string;
 }) {
-  const { isAtLeast, role } = useOrgRole(orgId);
+  // #1132 — top-up is `billing.manage` (OWNER + BILLING_ADMIN), not a rank
+  // floor. The server has always authorised BILLING_ADMIN here.
+  const { can, role } = useOrgRole(orgId);
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
@@ -442,7 +444,7 @@ export function WalletTab({
         <>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-foreground">Wallet balance</h3>
-            {isAtLeast("OWNER") && (
+            {can("billing.manage") && (
               <div className="flex flex-col items-end gap-1">
                 <Button
                   size="sm"
