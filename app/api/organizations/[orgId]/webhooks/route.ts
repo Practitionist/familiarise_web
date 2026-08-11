@@ -25,6 +25,10 @@ import {
 } from "@/lib/enterprise/outbound-webhooks/event-types";
 import { generateEndpointSecret } from "@/lib/enterprise/outbound-webhooks/signing";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
+import {
+  assertPublicUrl,
+  SsrfBlockedError,
+} from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
 
 const REDACTED_SECRET = "[redacted]";
 
@@ -33,8 +37,11 @@ const REDACTED_SECRET = "[redacted]";
  * -------------------------------------------
  * Outbound webhooks carry PII (member emails, invoice line items). A
  * plain-http URL would leak that PII over the network. The schema
- * refuses anything other than `https://` at registration time so we
- * don't have to revalidate at delivery time.
+ * refuses anything other than `https://` at registration time.
+ *
+ * Scheme is necessary but not sufficient: `assertPublicUrl` additionally
+ * proves the host resolves to a publicly routable address, and runs again at
+ * delivery time because DNS can be repointed after registration (#1132).
  */
 const HttpsUrl = z
   .string()
@@ -111,6 +118,18 @@ export async function POST(
       { error: "Invalid body", detail: parsed.error.flatten() },
       { status: 400 },
     );
+  }
+
+  // #1132 — the URL is attacker-chosen, so it must be proven publicly routable
+  // before we ever dial it. Re-checked at delivery time too, since DNS can be
+  // repointed after registration.
+  try {
+    await assertPublicUrl(parsed.data.url);
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 
   // 32-byte secret minted ONCE; written to the DB and returned to the

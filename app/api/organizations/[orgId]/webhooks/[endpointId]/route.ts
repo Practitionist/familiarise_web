@@ -25,6 +25,10 @@ import {
   isOutboundWebhookEvent,
 } from "@/lib/enterprise/outbound-webhooks/event-types";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
+import {
+  assertPublicUrl,
+  SsrfBlockedError,
+} from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
 
 const REDACTED_SECRET = "[redacted]";
 
@@ -118,6 +122,19 @@ export async function PATCH(
       { error: "No mutable fields in body" },
       { status: 400 },
     );
+  }
+
+  // #1132 — a PATCH can repoint an existing endpoint at an internal address,
+  // so the egress guard has to run here too, not only on create.
+  if (parsed.data.url !== undefined) {
+    try {
+      await assertPublicUrl(parsed.data.url);
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+      throw err;
+    }
   }
 
   const updated = await prisma.$transaction(async (tx) => {
