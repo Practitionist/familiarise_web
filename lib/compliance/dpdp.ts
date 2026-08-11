@@ -48,10 +48,19 @@
  *        GUARDIAN_VERIFIED` (deferred; add if targeting students).
  *
  * 6. Significant Data Fiduciary (SDF):
- *      - Thresholds not fully finalised as of Nov 2025 Rules.
- *      - Familiarise likely NOT an SDF until ≥ 5M active users.
- *      - If designated SDF: annual DPIA, DPO-in-India, independent audit.
- *      - Defer; revisit when nearing threshold.
+ *      - There is NO user-count trigger. An earlier version of this comment
+ *        claimed "not an SDF until >= 5M active users"; that number appears
+ *        nowhere in the Act or the Rules and was wrong (corrected in #1132).
+ *      - SDF status is conferred by Central Government notification under
+ *        s.10(1), on qualitative factors: volume AND SENSITIVITY of the data,
+ *        risk to data principals' rights, sovereignty and integrity of India,
+ *        electoral democracy, security of the State, and public order.
+ *      - Sensitivity alone can reach us: we hold recorded 1:1 mentoring and
+ *        counselling sessions. Do not assume scale is the only path in.
+ *      - If designated SDF: annual DPIA, DPO based in India, independent audit,
+ *        and algorithmic due diligence (Rule 13).
+ *      - Watch: MeitY consulted on 23 Jan 2026 about compressing SDF duties and
+ *        bringing Rule 13(4) localisation forward. Not gazetted as of Aug 2026.
  *
  * 7. Data breach notification:
  *      - Within 72 hours of detection, notify Data Protection Board of

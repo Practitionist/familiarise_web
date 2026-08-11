@@ -20,10 +20,13 @@ last-reviewed: 2026-07-17
 This doc covers the (now-removed) group-hierarchy columns on `Organization`
 (#771 D3) and explains what was, and was not, wired.
 
-> 🟡 **Gap:** the subtree-scoping work that would make these columns live —
+> 🟡 **Gap:** the subtree-scoping work that would make hierarchy real —
 > population on create, the `requireOrgAccess` subtree scope, the helper functions,
 > and the consolidated-reporting roll-up — is deferred to the #771 group-billing
-> epic. The columns are present and inert; nothing reads or writes them yet.
+> epic. Note that the columns are **gone**, not inert: an earlier version of this
+> block said "present and inert", which stopped being true when #705 dropped them
+> (corrected in #1132). There is no hierarchy in the schema today, so there is
+> also no inheritance, no cycle risk and no depth bound to reason about.
 
 `Organization` carries two self-relation hierarchy columns,
 `parentOrganizationId` and `rootOrganizationId`, so that a future conglomerate-buyer

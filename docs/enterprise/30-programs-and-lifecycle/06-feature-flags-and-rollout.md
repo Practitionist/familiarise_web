@@ -14,13 +14,14 @@ Flags are read from `process.env` at module load, so setting one requires a rede
 
 ## Module flags (`lib/feature-flags.ts`)
 
-Exactly five flags are exported from the module, and each one is the literal expression `process.env.X === "true"`, so an absent or empty value means off. The table below gives each flag's default, purpose, and the surfaces it dark-fails when off.
+Six flags are exported from the module, and each one is the literal expression `process.env.X === "true"`, so an absent or empty value means off. The table below gives each flag's default, purpose, and the surfaces it dark-fails when off.
 
 | Flag | Default | Purpose | Gated surfaces when OFF |
 |---|---|---|---|
 | `ENABLE_HOST_ORGS` | off | Hosting orgs (agencies hosting experts, 3-way split). | `POST /organizations` rejects `canHost=true` with 400 `HOST_ORGS_GATED`; `POST …/members` rejects `role=EXPERT`; the org-create wizard hides the host capability (server flag threaded to the wizard); the public org directory shows a "coming soon" state; the host routes stay gated; `/experts` + `/payouts` nav hidden; `earnings-service` takes the sponsor-only split. |
 | `ENABLE_LIVE_PAYOUTS` | off | Live payout **disbursement** gate (#776 §B). | The whole pipeline runs (batches, ledger, TDS, status machine) but gateway submission is held; org/consultant payouts sit `PROCESSING`, surfaced honestly as "pending platform enablement", **never** as a failure. Server-only — the home action-center + payout surfaces read it server-side and pass the boolean down. |
-| `ENABLE_IRP_UPLOADER` | off | IRP (Invoice Registration Portal) live e-invoice submission. | ClearTax GSP connector is wired (`lib/compliance/irp.ts`, `jobs/compliance/irp-uploader.ts`) but the GitHub Action short-circuits so CI doesn't burn minutes on a stub; sub-₹5cr orgs ride the `{ status: "FAILED", reason: "STUB" }` return (they don't need IRN to claim ITC). |
+| `ENABLE_DUNNING_SUSPEND` | off | Dunning cascade that suspends an org with an overdue invoice. | `lib/payments/operations/checkout.ts` skips the suspend gate, so an org with an overdue invoice keeps booking. Decide before self-serve tenants (#812/#779). |
+| `ENABLE_TDS_194O_GROSS` | off | Section 194-O withholding computed on the GROSS sale amount, with the three-limb ₹5,00,000 exemption. | The legacy base (consultant share net of platform commission) and the 194J ₹50,000 threshold stay in force. Flipping this changes real withholding, so it needs written CA sign-off first — see #1132. |
 | `ENABLE_TDS_ADMIN_VIEW` | off | Admin TDS dashboard + Form 26Q filing surfaces. | `app/api/admin/tds/route.ts` returns 404 (hides from discovery). TDS data is still captured continuously by the payout pipeline; only the *filing workflow* (mark-as-filed, decrypted-PAN view) is gated. |
 | `ENABLE_BETTERSTACK_TELEMETRY` | off | Better Stack Telemetry log sink for operational events (#776 §K). | `recordSystemEvent`/`recordSystemError` always write the `SystemEvent` table (source of truth); the flag (plus `BETTERSTACK_SOURCE_TOKEN` + `BETTERSTACK_INGEST_URL`) only adds the fire-and-forget side-channel that ships those events so a stuck payout / failed reconcile / HMAC failure can page someone. Never on the critical path. |
 
@@ -71,7 +72,7 @@ The gates below are read inline at the point of use rather than re-exported from
 | Env var | Read at | Effect |
 |---|---|---|
 | `ENABLE_STRIPE_PAYOUTS` | `app/api/webhooks/stripe/route.ts` | When `!= "true"`, inbound Stripe Connect `transfer.*` / payout webhook events are logged-and-ignored (the platform settles via Razorpay; Stripe Connect payout rails are not live). |
-| `ENABLE_ROUTED_WALLET` | `lib/payments/payouts/razorpay-route.ts` | Gates the Razorpay **Route** (linked-account) wallet path. Off ⇒ the routed-wallet branch is skipped. |
+| `ENABLE_IRP_UPLOADER` | `jobs/compliance/irp-uploader.ts` + its workflow | IRP (Invoice Registration Portal) live e-invoice submission. Read directly from `process.env`, **not** exported from `lib/feature-flags.ts`. Off ⇒ the job short-circuits so CI doesn't burn minutes on a stub; sub-₹5cr orgs ride the `{ status: "FAILED", reason: "STUB" }` return (they don't need an IRN to claim ITC). |
 | `ENABLE_MOCK_PAYMENTS` | `lib/payments/operations/mock.ts` | Test/dev only — when `"true"`, the mock payment operator stands in for the real gateway so flows run without hitting Razorpay. Must stay off in production. |
 | `MAX_INVOICE_BOOKING_PAISE` | `lib/enterprise/governance.ts#getInvoiceCreditLimitPaise` | Numeric override (not a boolean). Sets the starter credit limit for new, not-yet-verified INVOICE-funded orgs for staged ramps; falls back to ₹50,000 (`50_000_00`) when unset/non-positive. Defends the "book everything then ghost" abuse pattern (#687). |
 
