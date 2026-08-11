@@ -80,7 +80,26 @@ export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
  * ₹5,00,000 exemption (see TDS_194O_EXEMPTION_PAISE) which only holds when all
  * three limbs are satisfied: individual/HUF, cumulative ≤ ₹5L, and PAN on file.
  *
- * Pairs with TDS_ENGINE=194O, which drops the legacy ₹50K 194J gate.
+ * Requires TDS_ENGINE=194O as well — the gross base is a refinement of the
+ * 194-O engine, not an independent one.
+ *
+ * PRECONDITIONS FOR ENABLING (both, not just the first):
+ *
+ *   1. Written CA approval of the gross base and the three-limb ₹5L threshold.
+ *
+ *   2. The cumulative-gross read must be made race-safe. `priorGrossAgg` counts
+ *      earnings that are already PAID, and earnings only become PAID when a
+ *      completion webhook lands. `processApprovedPayouts` serialises its own
+ *      workers, but completion webhooks do not serialise against it, and the
+ *      schema permits several payouts per consultant per financial year. Two
+ *      payouts either side of an in-flight PROCESSING one can therefore both
+ *      read a prior-gross below ₹5L and both under-withhold. Reserve the
+ *      cumulative gross atomically per (consultant, financial year), or include
+ *      locked in-flight payouts in the aggregate, before flipping this on.
+ *
+ * Until then the legacy base (consultant share net of platform commission) and
+ * the 194J ₹50,000 threshold remain in force, which over-withholds relative to
+ * the statute rather than under-withholding — the safe direction to be wrong in.
  */
 export const ENABLE_TDS_194O_GROSS =
   process.env.ENABLE_TDS_194O_GROSS === "true";
@@ -128,7 +147,8 @@ export const ENABLE_TDS_194O_GROSS =
  *   2. Confirm the assigned ADMIN's session has the decryption key
  *   3. See Issue #737 for the Form 26Q quarterly cadence
  */
-export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true";
+export const ENABLE_TDS_ADMIN_VIEW =
+  process.env.ENABLE_TDS_ADMIN_VIEW === "true";
 
 /**
  * Better Stack Telemetry (logs) sink for operational events (#776 §K).
@@ -166,4 +186,3 @@ export const ENABLE_BETTERSTACK_TELEMETRY =
  */
 export const ENABLE_DUNNING_SUSPEND =
   process.env.ENABLE_DUNNING_SUSPEND === "true";
-

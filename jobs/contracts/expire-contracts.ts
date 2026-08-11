@@ -98,9 +98,15 @@ export async function runExpireContracts(): Promise<ExpireStats> {
               where: { contractId: c.id, status: "ACTIVE" },
               data: { status: "EXPIRED" },
             });
+            // #1132 review — `status: "ACTIVE"` was missing (pre-existing), so
+            // an already-CLOSED assignment whose periodEnd is still in the
+            // future had its end date rewritten and was counted again in
+            // `assignmentsClosed`. The comment above always said "still-ACTIVE
+            // assignments"; the query did not say it.
             const closed = await tx.programAssignment.updateMany({
               where: {
                 programId: { in: programIds },
+                status: "ACTIVE",
                 periodEnd: { gte: now },
               },
               data: { periodEnd: now, status: "CLOSED" },
