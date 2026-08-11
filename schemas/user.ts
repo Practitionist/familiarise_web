@@ -2,7 +2,11 @@
 import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
-import { isAdult, UNDER_AGE_MESSAGE } from "@/lib/compliance/age";
+import {
+  isAdult,
+  isRealCalendarDate,
+  UNDER_AGE_MESSAGE,
+} from "@/lib/compliance/age";
 
 // #region Enums
 
@@ -67,11 +71,23 @@ export const DayOfWeekEnum = z.enum([
  *
  * `coerce` because the wizard round-trips values through JSON between steps.
  */
-export const DateOfBirthSchema = z.coerce
-  .date({
-    required_error: "Date of birth is required",
-    invalid_type_error: "Enter a valid date of birth",
-  })
+export const DateOfBirthSchema = z
+  .union(
+    [
+      z.date({ invalid_type_error: "Enter a valid date of birth" }),
+      // #1132 — a string branch rather than `z.coerce.date()`, so the raw text
+      // is still visible when we check it. `new Date("2001-02-29")` does not
+      // throw, it rolls forward to 2001-03-01, and coercing first would leave
+      // us validating a birthday the user never typed.
+      z
+        .string()
+        .refine(isRealCalendarDate, {
+          message: "Enter a valid date of birth",
+        })
+        .transform((s) => new Date(s)),
+    ],
+    { required_error: "Date of birth is required" },
+  )
   .refine((d) => isAdult(d), { message: UNDER_AGE_MESSAGE });
 
 // #endregion
@@ -261,7 +277,6 @@ export const ConsultantProfileSchema = z.object({
   certifications: z.array(CertificationSchema).optional(),
   education: z.array(EducationSchema).optional(),
 });
-
 
 // #endregion
 

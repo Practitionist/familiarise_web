@@ -779,11 +779,6 @@ export async function sendContactInquiryEmail({
 }) {
   let sentMessage: RenderedEmail | undefined;
   try {
-    const resend = getResendClient();
-    if (!resend) {
-      return { success: false, error: "Email service not configured" };
-    }
-
     const to = process.env.CONTACT_INBOX_ADDRESS || "support@familiarise.com";
     const name = `${firstName} ${lastName}`.trim();
     const esc = (s: string) =>
@@ -823,6 +818,16 @@ export async function sendContactInquiryEmail({
       // Ops replies go straight to the person who wrote in.
       replyTo: email,
     };
+
+    // #1132 — the client lookup happens AFTER the message is built, so an
+    // unconfigured Resend still lands the inquiry in FailedEmail for the retry
+    // worker. Returning before `sentMessage` existed meant the catch could not
+    // record it, and a missing key silently discarded the lead — contradicting
+    // what app/api/contact/route.ts tells the sender.
+    const resend = getResendClient();
+    if (!resend) {
+      throw new Error("Email service not configured");
+    }
 
     const data = await resend.emails.send(sentMessage);
     if (data.error) throw new Error(data.error.message || "Resend API error");

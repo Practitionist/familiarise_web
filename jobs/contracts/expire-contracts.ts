@@ -26,6 +26,7 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
@@ -54,64 +55,82 @@ export async function runExpireContracts(): Promise<ExpireStats> {
   stats.scanned = due.length;
 
   for (const c of due) {
-    // #1132 — docs/enterprise/30-programs-and-lifecycle/01-concurrency-and-idempotency.md
-    // states each nightly lifecycle cron runs Serializable; no isolation level
-    // was passed, so this ran at READ COMMITTED. The CAS claim below is the
-    // real correctness guard, but the doc claim should be true of the code.
-    await prisma.$transaction(async (tx) => {
-      // Conditional update — claim the row only if still ACTIVE so two
-      // cron replicas don't double-process. Doubles as the distributed
-      // lock; loser sees `claim.count === 0` and skips.
-      const claim = await tx.contract.updateMany({
-        where: { id: c.id, status: "ACTIVE" },
-        data: { status: "EXPIRED" },
-      });
-      if (claim.count === 0) return;
-      stats.expired += 1;
+    // #1132 — 01-concurrency-and-idempotency.md states each nightly lifecycle
+    // cron runs Serializable; no isolation level was passed, so this ran at
+    // READ COMMITTED. The CAS claim below is the real correctness guard, but
+    // the documented behaviour should be true of the code.
+    //
+    // Raising the isolation level introduces P2034: a concurrent write can
+    // abort the transaction, and an unretried abort would throw out of the
+    // whole loop and leave every later contract unprocessed until tomorrow.
+    // withSerializableRetry retries ONLY P2034, so business rejections still
+    // propagate. `claimed` is returned rather than mutating stats inside the
+    // callback — a retried callback would otherwise double-count.
+    const claimed = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Conditional update — claim the row only if still ACTIVE so two
+          // cron replicas don't double-process. Doubles as the distributed
+          // lock; loser sees `claim.count === 0` and skips.
+          const claim = await tx.contract.updateMany({
+            where: { id: c.id, status: "ACTIVE" },
+            data: { status: "EXPIRED" },
+          });
+          if (claim.count === 0)
+            return { expired: false, assignmentsClosed: 0 };
+          let assignmentsClosed = 0;
 
-      // Soft-close active ProgramAssignments scoped to the contract.
-      // `Program.contractId → Contract`, then ProgramAssignment.programId
-      // resolves up to the contract. We close the period at `now` rather
-      // than deleting so engagementsUsed history + UsageLedgerEntry rows
-      // stay queryable for reconciliation.
-      const programs = await tx.program.findMany({
-        where: { contractId: c.id },
-        select: { id: true },
-      });
-      if (programs.length > 0) {
-        const programIds = programs.map((p) => p.id);
-        // #779 §A — a contract expiry takes its ACTIVE programs (→ EXPIRED)
-        // and their still-ACTIVE assignments (→ CLOSED) with it, so the
-        // lifecycle is explicit rather than inferred from periodEnd alone.
-        await tx.program.updateMany({
-          where: { contractId: c.id, status: "ACTIVE" },
-          data: { status: "EXPIRED" },
-        });
-        const closed = await tx.programAssignment.updateMany({
-          where: {
-            programId: { in: programIds },
-            periodEnd: { gte: now },
-          },
-          data: { periodEnd: now, status: "CLOSED" },
-        });
-        stats.assignmentsClosed += closed.count;
-      }
+          // Soft-close active ProgramAssignments scoped to the contract.
+          // `Program.contractId → Contract`, then ProgramAssignment.programId
+          // resolves up to the contract. We close the period at `now` rather
+          // than deleting so engagementsUsed history + UsageLedgerEntry rows
+          // stay queryable for reconciliation.
+          const programs = await tx.program.findMany({
+            where: { contractId: c.id },
+            select: { id: true },
+          });
+          if (programs.length > 0) {
+            const programIds = programs.map((p) => p.id);
+            // #779 §A — a contract expiry takes its ACTIVE programs (→ EXPIRED)
+            // and their still-ACTIVE assignments (→ CLOSED) with it, so the
+            // lifecycle is explicit rather than inferred from periodEnd alone.
+            await tx.program.updateMany({
+              where: { contractId: c.id, status: "ACTIVE" },
+              data: { status: "EXPIRED" },
+            });
+            const closed = await tx.programAssignment.updateMany({
+              where: {
+                programId: { in: programIds },
+                periodEnd: { gte: now },
+              },
+              data: { periodEnd: now, status: "CLOSED" },
+            });
+            assignmentsClosed += closed.count;
+          }
 
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: c.organizationId,
-          actorMembershipId: null,
-          targetMembershipId: null,
-          category: "CONTRACT",
-          action: AUDIT_ACTIONS.CONTRACT.CONTRACT_EXPIRED,
-          description: `Contract ${c.id} auto-expired (effectiveTo=${c.effectiveTo?.toISOString()})`,
-          details: {
-            contractId: c.id,
-            effectiveTo: c.effectiveTo?.toISOString() ?? null,
-          },
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: c.organizationId,
+              actorMembershipId: null,
+              targetMembershipId: null,
+              category: "CONTRACT",
+              action: AUDIT_ACTIONS.CONTRACT.CONTRACT_EXPIRED,
+              description: `Contract ${c.id} auto-expired (effectiveTo=${c.effectiveTo?.toISOString()})`,
+              details: {
+                contractId: c.id,
+                effectiveTo: c.effectiveTo?.toISOString() ?? null,
+              },
+            },
+          });
+
+          return { expired: true, assignmentsClosed };
         },
-      });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+
+    if (claimed.expired) stats.expired += 1;
+    stats.assignmentsClosed += claimed.assignmentsClosed;
   }
 
   return stats;
@@ -128,7 +147,11 @@ async function main() {
   console.log(
     `[expire-contracts] Done. scanned=${stats.scanned} expired=${stats.expired} assignmentsClosed=${stats.assignmentsClosed}`,
   );
-  Sentry.logger.info("job:expire-contracts finished", { scanned: stats.scanned, expired: stats.expired, assignmentsClosed: stats.assignmentsClosed });
+  Sentry.logger.info("job:expire-contracts finished", {
+    scanned: stats.scanned,
+    expired: stats.expired,
+    assignmentsClosed: stats.assignmentsClosed,
+  });
 }
 
 // Only run when invoked directly (allows the function to be imported and

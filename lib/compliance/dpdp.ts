@@ -59,8 +59,14 @@
  *        counselling sessions. Do not assume scale is the only path in.
  *      - If designated SDF: annual DPIA, DPO based in India, independent audit,
  *        and algorithmic due diligence (Rule 13).
- *      - Watch: MeitY consulted on 23 Jan 2026 about compressing SDF duties and
- *        bringing Rule 13(4) localisation forward. Not gazetted as of Aug 2026.
+ *      - Rule 13(4) (the SDF cross-border restriction on notified categories of
+ *        personal data and the traffic data about its flow) already EXISTS in
+ *        the Rules as notified on 13 Nov 2025 — what is deferred is its
+ *        commencement, along with Rules 3 and 5-16, to 13 May 2027.
+ *      - Watch: MeitY consulted in early 2026 on compressing the SDF duties and
+ *        bringing Rule 13(4) and Rule 15 into force ahead of that date. It is
+ *        the ACCELERATION that is unnotified, not the rule itself. Confirm
+ *        against the gazette before relying on either date.
  *
  * 7. Data breach notification:
  *      - Within 72 hours of detection, notify Data Protection Board of
@@ -129,7 +135,9 @@ export interface ConsentArtifactDraft {
  * What's deferred is the surrounding workflow (purpose-code taxonomy,
  * notice rendering, withdrawal UX, cron cleanup).
  */
-export function buildConsentArtifact(input: ConsentGrantInput): ConsentArtifactDraft {
+export function buildConsentArtifact(
+  input: ConsentGrantInput,
+): ConsentArtifactDraft {
   const grantedAt = input.grantedAt ?? new Date();
   const auditRetainedUntil = new Date(grantedAt);
   auditRetainedUntil.setFullYear(auditRetainedUntil.getFullYear() + 7);

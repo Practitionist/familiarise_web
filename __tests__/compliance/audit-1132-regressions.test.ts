@@ -76,6 +76,44 @@ describe("GST place of supply (#1132)", () => {
     expect(r.cgstPaise + r.sgstPaise).toBe(r.totalPaise - r.subtotalPaise);
   });
 
+  // #1132 review — placeOfSupply was read off the raw input while the tax legs
+  // used the resolved code, so an invoice could declare one state and be taxed
+  // under another.
+  it("reports the resolved place of supply, not the raw input", () => {
+    const r = deriveGstBreakdown({
+      subtotalPaise: 100_000,
+      supplierStateCode: "KA",
+      buyerStateCode: "27",
+      buyerGstin: "29AAFCF1234Q1ZN",
+      buyerCountry: "IN",
+    });
+    expect(r.placeOfSupply).toBe("29");
+    expect(r.reason).toBe("INTRA_STATE_CGST_SGST");
+  });
+
+  it("reports an unresolvable buyer state as no place of supply", () => {
+    const r = deriveGstBreakdown({
+      subtotalPaise: 100_000,
+      supplierStateCode: "KA",
+      buyerStateCode: "ZZ",
+      buyerCountry: "IN",
+    });
+    expect(r.placeOfSupply).toBeNull();
+    expect(r.reason).toBe("IGST_STATE_UNKNOWN");
+  });
+
+  // An unresolvable SUPPLIER state also fails the intra-state test, so calling
+  // the result INTER_STATE_IGST recorded an unverified classification.
+  it("flags an unresolvable supplier state as unknown, not inter-state", () => {
+    const r = deriveGstBreakdown({
+      subtotalPaise: 100_000,
+      supplierStateCode: "ZZ",
+      buyerStateCode: "27",
+      buyerCountry: "IN",
+    });
+    expect(r.reason).toBe("IGST_STATE_UNKNOWN");
+  });
+
   it("leaves exports zero-rated", () => {
     const r = deriveGstBreakdown({
       subtotalPaise: 100_000,
@@ -118,6 +156,16 @@ describe("DPDP age gate (#1132)", () => {
     expect(isAdult("not a date", asOf)).toBe(false);
     expect(isAdult(new Date("2030-01-01T00:00:00Z"), asOf)).toBe(false);
     expect(isAdult(new Date("1850-01-01T00:00:00Z"), asOf)).toBe(false);
+  });
+
+  // #1132 review — `new Date("2001-02-29")` silently rolls to 2001-03-01
+  // rather than throwing, so a typo became a different birthday.
+  it("rejects calendar dates that do not exist", () => {
+    expect(ageInYears("2001-02-29", asOf)).toBeNull();
+    expect(ageInYears("2000-02-29", asOf)).toBe(26); // 2000 IS a leap year
+    expect(ageInYears("1990-13-01", asOf)).toBeNull();
+    expect(ageInYears("1990-04-31", asOf)).toBeNull();
+    expect(isAdult("2001-02-29", asOf)).toBe(false);
   });
 
   it("computes whole years correctly across a birthday boundary", () => {

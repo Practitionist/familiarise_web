@@ -28,13 +28,15 @@ This doc covers the (now-removed) group-hierarchy columns on `Organization`
 > (corrected in #1132). There is no hierarchy in the schema today, so there is
 > also no inheritance, no cycle risk and no depth bound to reason about.
 
-`Organization` carries two self-relation hierarchy columns,
-`parentOrganizationId` and `rootOrganizationId`, so that a future conglomerate-buyer
-rollout for Tata-, Reliance-, or Birla-style subsidiary groups can land without a
-structural migration. Both columns are nullable and inert in v1: no code reads or
-writes them, and the group-billing and subsidiary-scoping APIs that would consume
-them are stubbed to return 501. The columns exist to make the data model
-future-proof without committing to the UX yet.
+**Historical design context — none of this describes the current schema.** The
+original v1 design gave `Organization` two self-relation hierarchy columns,
+`parentOrganizationId` and `rootOrganizationId`, so that a future
+conglomerate-buyer rollout for Tata-, Reliance-, or Birla-style subsidiary groups
+could land without a structural migration. Both columns were nullable and inert:
+no code read or wrote them, and the group-billing and subsidiary-scoping APIs
+that would have consumed them returned 501. They were dropped before launch (see
+the status note above); the schema below is preserved as the shape a future
+implementation would start from, not as a description of `prisma/schema.prisma`.
 
 These columns were dropped in #768 (`4f80bac5` —
 _"drop Organization hierarchy (parentId/rootId/depth)"_, which also deleted

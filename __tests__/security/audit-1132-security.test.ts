@@ -31,10 +31,17 @@ describe("BetterAuth plugin surface (#1132)", () => {
   // actor rank to target rank, so granting it to STAFF let STAFF assign itself
   // ADMIN — which auth-helpers then treats as OWNER on every organization.
   it("does not grant STAFF set-role or ban", () => {
-    const staffAc = authSrc.slice(
-      authSrc.indexOf("const staffAc"),
-      authSrc.indexOf("export const auth"),
-    );
+    // #1132 review — prove the anchors resolved before asserting on the slice.
+    // A missing anchor yields -1, and slice(-1, -1) is "", which satisfies
+    // `not.toMatch` — so a rename would have turned this security regression
+    // test green instead of red.
+    const start = authSrc.indexOf("const staffAc");
+    const end = authSrc.indexOf("export const auth");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const staffAc = authSrc.slice(start, end);
+    expect(staffAc.length).toBeGreaterThan(0);
     expect(staffAc).not.toMatch(/["']set-role["']/);
     expect(staffAc).not.toMatch(/["']ban["']/);
   });
@@ -53,6 +60,7 @@ describe("Razorpay webhook dedup key (#1132)", () => {
     const idxPayment = src.indexOf("payload?.payment?.entity?.id");
 
     expect(idxRefund).toBeGreaterThan(-1);
+    expect(idxDispute).toBeGreaterThan(-1);
     expect(idxPayment).toBeGreaterThan(-1);
     expect(idxRefund).toBeLessThan(idxPayment);
     expect(idxDispute).toBeLessThan(idxPayment);
@@ -88,6 +96,30 @@ describe("Outbound webhook egress guard (#1132)", () => {
     await expectBlocked("https://user:pass@example.com/hook");
     await expectBlocked("https://localhost/hook");
     await expectBlocked("https://foo.internal/hook");
+  });
+
+  // #1132 review — url.hostname keeps the brackets on an IPv6 literal, so
+  // these were previously rejected only because the bracketed string failed to
+  // resolve. They must be rejected as non-routable ADDRESSES, and the hex
+  // spellings of loopback must be caught too.
+  it("classifies IPv6 literals as addresses, including hex-embedded loopback", async () => {
+    for (const url of [
+      "https://[::ffff:7f00:1]/hook",
+      "https://[::7f00:1]/hook",
+      "https://[64:ff9b::10.0.0.1]/hook",
+      "https://[2002:7f00:1::]/hook",
+    ]) {
+      await expect(assertPublicUrl(url)).rejects.toThrow(
+        /not publicly routable|non-public address/,
+      );
+    }
+  });
+
+  it("allows a genuinely public IPv6 endpoint", async () => {
+    // Previously impossible: every IPv6 literal died in the DNS branch.
+    await expect(
+      assertPublicUrl("https://[2606:4700:4700::1111]/hook"),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects an unresolvable host rather than letting it through", async () => {

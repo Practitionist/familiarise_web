@@ -22,6 +22,27 @@
 export const AGE_OF_MAJORITY = 18;
 
 /**
+ * True when a `YYYY-MM-DD` string names a date that actually exists.
+ *
+ * #1132 — `new Date("2001-02-29")` does not throw; it rolls forward to
+ * 2001-03-01. Anything that coerces before validating is therefore checking a
+ * birthday the user never entered. Non-ISO strings pass through here and are
+ * left to `Date` parsing to reject.
+ */
+export function isRealCalendarDate(value: string): boolean {
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!iso) return !Number.isNaN(new Date(value).getTime());
+  const [, y, m, d] = iso;
+  const probe = new Date(`${y}-${m}-${d}T00:00:00.000Z`);
+  return (
+    !Number.isNaN(probe.getTime()) &&
+    probe.getUTCFullYear() === Number(y) &&
+    probe.getUTCMonth() + 1 === Number(m) &&
+    probe.getUTCDate() === Number(d)
+  );
+}
+
+/**
  * Whole years elapsed between `dob` and `asOf`, calendar-correct (an 18th
  * birthday today counts as 18). Returns null for an absent or unparseable date.
  */
@@ -30,6 +51,11 @@ export function ageInYears(
   asOf: Date = new Date(),
 ): number | null {
   if (!dob) return null;
+
+  // A calendar date that does not exist is bad input, not a date one day
+  // later — see isRealCalendarDate.
+  if (typeof dob === "string" && !isRealCalendarDate(dob)) return null;
+
   const d = dob instanceof Date ? dob : new Date(dob);
   if (Number.isNaN(d.getTime())) return null;
 

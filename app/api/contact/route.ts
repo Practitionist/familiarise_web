@@ -14,7 +14,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { sendContactInquiryEmail } from "@/lib/email";
-import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
+import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
 const CATEGORY_VALUES = INQUIRY_CATEGORIES.map((c) => c.value);
@@ -38,14 +38,19 @@ const ContactBodySchema = z.object({
     .or(z.literal("")),
   // Honeypot: a real person never fills a hidden field. Bots fill everything.
   // Present in the payload but never rendered visibly.
-  website: z.string().max(0).optional(),
+  //
+  // #1132 — deliberately NOT `.max(0)`. Rejecting a populated value at the
+  // schema meant a tripped honeypot returned 400 while a clean submit returned
+  // 202, which is exactly the signal the silent-success branch below exists to
+  // deny a bot. Accept it here, discard it after parsing.
+  website: z.string().max(200).optional(),
 });
 
 export async function POST(req: NextRequest) {
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-nf-client-connection-ip") ||
-    "unknown";
+  // #1132 — use the shared helper: it prefers Netlify's canonical
+  // x-nf-client-connection-ip over the caller-supplied x-forwarded-for, so a
+  // spoofed header cannot vary the bucket key per request.
+  const ip = getClientIp(req);
 
   const rl = await applyRateLimit(spamLimiter, `contact:${ip}`);
   if (rl) return rl;

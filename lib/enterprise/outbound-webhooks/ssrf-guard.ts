@@ -80,26 +80,98 @@ function isBlockedV4(ip: string): boolean {
   return false;
 }
 
-function isBlockedV6(ip: string): boolean {
+/**
+ * Expand an IPv6 address to its 16 bytes. Returns null if it does not parse.
+ *
+ * #1132 — string-prefix matching was not enough: `::ffff:7f00:1` and `::7f00:1`
+ * are loopback written in hex, and neither matches a dotted-quad regex nor a
+ * `fe8`/`fc` prefix. Classifying on the bytes catches every spelling of the
+ * same address.
+ */
+function ipv6ToBytes(ip: string): Uint8Array | null {
   const v = ip.toLowerCase().split("%")[0]; // strip zone index
+  if (v.length === 0) return null;
 
-  // IPv4-mapped (::ffff:a.b.c.d) and NAT64 (64:ff9b::/96) embed a v4 address —
-  // classify on the embedded address, not the v6 wrapper.
-  const embedded = v.match(/(?:^::ffff:|^64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/);
-  if (embedded) return isBlockedV4(embedded[1]);
-
-  if (v === "::" || v === "::1") return true;
-  if (
-    v.startsWith("fe8") ||
-    v.startsWith("fe9") ||
-    v.startsWith("fea") ||
-    v.startsWith("feb")
-  ) {
-    return true; // fe80::/10 link-local
+  // A trailing dotted-quad (::ffff:127.0.0.1) contributes the last 4 bytes.
+  let tail: number[] = [];
+  let head = v;
+  const dotted = v.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dotted) {
+    const quad = dotted[1].split(".").map(Number);
+    if (quad.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    tail = quad;
+    head = v.slice(0, v.length - dotted[1].length);
+    if (head.endsWith(":")) head = head.slice(0, -1);
   }
-  if (/^f[cd]/.test(v)) return true; // fc00::/7 unique-local
-  if (v.startsWith("ff")) return true; // ff00::/8 multicast
-  if (v.startsWith("2002:")) return true; // 6to4 — wraps a v4 address
+
+  const [left, right, ...rest] = head.split("::");
+  if (rest.length > 0) return null; // more than one "::" is invalid
+
+  const toWords = (part: string): number[] | null => {
+    if (!part) return [];
+    const out: number[] = [];
+    for (const g of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+
+  const lw = toWords(left);
+  if (lw === null) return null;
+  const rw = right === undefined ? null : toWords(right);
+  if (right !== undefined && rw === null) return null;
+
+  const bytesFromWords = (w: number[]) => w.flatMap((n) => [n >> 8, n & 0xff]);
+  const leftBytes = bytesFromWords(lw);
+  const rightBytes = [...bytesFromWords(rw ?? []), ...tail];
+
+  let bytes: number[];
+  if (right === undefined) {
+    bytes = [...leftBytes, ...tail];
+    if (bytes.length !== 16) return null;
+  } else {
+    const fill = 16 - leftBytes.length - rightBytes.length;
+    if (fill < 0) return null;
+    bytes = [...leftBytes, ...new Array(fill).fill(0), ...rightBytes];
+    if (bytes.length !== 16) return null;
+  }
+  return Uint8Array.from(bytes);
+}
+
+function isBlockedV6(ip: string): boolean {
+  const b = ipv6ToBytes(ip);
+  if (b === null) return true; // unparseable → fail closed
+
+  const allZeroUpTo = (n: number) => b.slice(0, n).every((x) => x === 0);
+
+  // ::  (unspecified) and ::1 (loopback)
+  if (allZeroUpTo(15) && (b[15] === 0 || b[15] === 1)) return true;
+
+  // ::ffff:a.b.c.d — IPv4-mapped. Classify the embedded v4 address.
+  if (allZeroUpTo(10) && b[10] === 0xff && b[11] === 0xff) {
+    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+  }
+  // 64:ff9b::/96 — NAT64, likewise wraps a v4 address.
+  if (
+    b[0] === 0x00 &&
+    b[1] === 0x64 &&
+    b[2] === 0xff &&
+    b[3] === 0x9b &&
+    b.slice(4, 12).every((x) => x === 0)
+  ) {
+    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+  }
+  // Any other address inside ::/96 embeds a v4 address in its low word
+  // (e.g. ::7f00:1 is 127.0.0.1) — treat it the same way.
+  if (allZeroUpTo(12) && !(b[12] === 0 && b[13] === 0)) {
+    return isBlockedV4(`${b[12]}.${b[13]}.${b[14]}.${b[15]}`);
+  }
+
+  if ((b[0] & 0xfe) === 0xfc) return true; // fc00::/7 unique-local
+  if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return true; // fe80::/10 link-local
+  if (b[0] === 0xff) return true; // ff00::/8 multicast
+  if (b[0] === 0x20 && b[1] === 0x02) return true; // 2002::/16 6to4
   return false;
 }
 
@@ -132,7 +204,15 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     throw new SsrfBlockedError("credentials in the URL are not allowed");
   }
 
-  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  // #1132 — `url.hostname` KEEPS the brackets on an IPv6 literal ("[::1]"),
+  // so `isIP` returned 0 and the address fell through to a DNS lookup that
+  // could never succeed. That happened to reject loopback, but for the wrong
+  // reason, and it made every legitimate IPv6-only endpoint unusable. Strip
+  // the brackets so literals are classified as addresses.
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
   if (
     BLOCKED_HOSTNAMES.has(host) ||
     host.endsWith(".localhost") ||
@@ -164,5 +244,28 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     if (isBlockedAddress(address)) {
       throw new SsrfBlockedError("host resolves to a non-public address");
     }
+  }
+}
+
+/**
+ * Shared guard→400 mapping for the webhook CRUD routes (#1132 review).
+ *
+ * Both the create and the update route need identical handling, and a future
+ * mutation route is easy to add without it. Returns a 400 `NextResponse` when
+ * the URL is refused, or `null` when it is safe to proceed. Non-SSRF errors
+ * (a genuine DNS/runtime fault) are rethrown rather than reported as the
+ * customer's mistake.
+ */
+export async function rejectIfNotPublicUrl(
+  url: string,
+): Promise<Response | null> {
+  try {
+    await assertPublicUrl(url);
+    return null;
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 }

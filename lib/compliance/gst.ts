@@ -83,8 +83,6 @@ export function deriveGstBreakdown(params: {
   buyerGstin?: string | null;
 }): GstBreakdown {
   const hsnCode = params.hsnCode ?? "999293";
-  const placeOfSupply =
-    params.buyerStateCode ?? params.supplierStateCode ?? null;
 
   // #1132 — the two sides are stored in different representations and so never
   // compared equal: the seller is env-sourced alpha ("KA") while the buyer is
@@ -99,6 +97,17 @@ export function deriveGstBreakdown(params: {
     params.supplierGstin ?? null,
     params.supplierStateCode,
   );
+
+  // Derived AFTER resolution, not from the raw input: with buyerStateCode "27"
+  // and a buyerGstin starting "29", the tax legs used 29 while the stored
+  // place-of-supply still said 27 — an invoice whose heads and whose declared
+  // place of supply disagree. When the buyer gave us something we cannot
+  // resolve, report null rather than echoing an unusable code or silently
+  // falling back to the supplier's own state.
+  const placeOfSupply =
+    params.buyerStateCode || params.buyerGstin
+      ? buyerState
+      : (supplierState ?? null);
 
   // Zero-rated export
   if (params.buyerCountry !== "IN") {
@@ -149,9 +158,13 @@ export function deriveGstBreakdown(params: {
   // distinctly so a missing place-of-supply that silently defaulted to IGST is
   // visible in the stored reason (auditable), rather than masquerading as a real
   // inter-state supply.
-  // Keyed off the resolved code, not the raw one: a state we hold but cannot
+  // Keyed off the resolved codes, not the raw ones: a state we hold but cannot
   // map is just as unknown as an absent one, and must not read as inter-state.
-  const igstReason = !buyerState ? "IGST_STATE_UNKNOWN" : "INTER_STATE_IGST";
+  // #1132 — this covers BOTH sides. An unresolvable SUPPLIER state also lands
+  // here (the intra-state branch requires both), and reporting that as
+  // INTER_STATE_IGST recorded an unverified classification as a confirmed one.
+  const igstReason =
+    !buyerState || !supplierState ? "IGST_STATE_UNKNOWN" : "INTER_STATE_IGST";
   return {
     subtotalPaise: params.subtotalPaise,
     igstPaise: taxPaise,

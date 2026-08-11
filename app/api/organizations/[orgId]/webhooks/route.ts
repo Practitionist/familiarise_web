@@ -25,10 +25,7 @@ import {
 } from "@/lib/enterprise/outbound-webhooks/event-types";
 import { generateEndpointSecret } from "@/lib/enterprise/outbound-webhooks/signing";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
-import {
-  assertPublicUrl,
-  SsrfBlockedError,
-} from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
+import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
 
 const REDACTED_SECRET = "[redacted]";
 
@@ -123,14 +120,8 @@ export async function POST(
   // #1132 — the URL is attacker-chosen, so it must be proven publicly routable
   // before we ever dial it. Re-checked at delivery time too, since DNS can be
   // repointed after registration.
-  try {
-    await assertPublicUrl(parsed.data.url);
-  } catch (err) {
-    if (err instanceof SsrfBlockedError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
-    }
-    throw err;
-  }
+  const blocked = await rejectIfNotPublicUrl(parsed.data.url);
+  if (blocked) return blocked;
 
   // 32-byte secret minted ONCE; written to the DB and returned to the
   // caller verbatim. The dashboard surfaces a "copy now, you won't see

@@ -388,8 +388,9 @@ export default function PrivacyPolicyPage() {
                 are not intended for children, and we do not knowingly collect
                 personal information from anyone under 18. We ask for your date
                 of birth during onboarding solely to confirm that you are not a
-                child, which the Act expressly permits us to do for that
-                purpose.
+                child — a purpose expressly permitted by Part B, item 6 of the
+                Fourth Schedule to the Digital Personal Data Protection Rules,
+                2025.
               </p>
               <p>
                 If you are a parent or guardian and believe your child has

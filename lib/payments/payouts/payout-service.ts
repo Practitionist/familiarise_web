@@ -3,7 +3,10 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -682,8 +685,12 @@ async function processSinglePayout(payout: {
     let taxablePaise = 0;
     let thresholdReason: string | null = null;
 
-    if (ENABLE_TDS_194O_GROSS) {
-      // #1132 — 194-O is charged on the GROSS amount of the sale, not on the
+    // #1132 — requires BOTH switches. ENABLE_TDS_194O_GROSS alone would have
+    // changed the withholding base while TDS_ENGINE was still LEGACY, i.e.
+    // without the documented engine activation. The gross base is a refinement
+    // of the 194-O engine, not an independent engine.
+    if (pure194O && ENABLE_TDS_194O_GROSS) {
+      // 194-O is charged on the GROSS amount of the sale, not on the
       // consultant's share after our commission (CBDT Circulars 17/2020,
       // 20/2021). Sum the booking gross across the earnings in this payout and
       // apply the three-limb ₹5L exemption.
@@ -694,8 +701,28 @@ async function processSinglePayout(payout: {
       const grossThisPayoutPaise =
         sumPaise(grossAgg._sum.grossAmount) -
         sumPaise(grossAgg._sum.refundedShareAmount);
+
+      // The ₹5L exemption is measured on cumulative GROSS receipts, so
+      // `cumulativeBeforePayout` is the wrong input — getCurrentFYCumulativePayments
+      // sums ConsultantPayout.amount, which is net of our commission. Mixing the
+      // two bases would delay the threshold crossing by the commission fraction
+      // and under-withhold. Aggregate prior-FY gross from the earnings instead.
+      const { start, end } = getFYDateRange(financialYear);
+      const priorGrossAgg = await prisma.consultantEarnings.aggregate({
+        where: {
+          consultantProfileId: payout.consultantProfileId,
+          status: EarningStatus.PAID,
+          paidAt: { gte: start, lte: end },
+          payoutId: { not: payout.id },
+        },
+        _sum: { grossAmount: true, refundedShareAmount: true },
+      });
+      const grossBeforePaise =
+        sumPaise(priorGrossAgg._sum.grossAmount) -
+        sumPaise(priorGrossAgg._sum.refundedShareAmount);
+
       const resolved = resolve194OTaxablePaise({
-        grossBeforePaise: cumulativeBeforePayout,
+        grossBeforePaise,
         grossThisPayoutPaise,
         entityType: consultantTaxInfo?.taxEntityType ?? null,
         panOnFile: !!consultantTaxInfo?.panEncrypted,
@@ -1238,7 +1265,11 @@ export async function markConsultantPayoutReversed(
       );
       reportSentryMessage(
         "markConsultantPayoutReversed: payout not found for provider ID",
-        { subsystem: "payments", level: "warning", extra: { providerPayoutId } },
+        {
+          subsystem: "payments",
+          level: "warning",
+          extra: { providerPayoutId },
+        },
       );
       return { wasNoOp: true, notify: null };
     }
@@ -1254,11 +1285,14 @@ export async function markConsultantPayoutReversed(
     if (claim.count === 0) {
       // Modelled no-op — caller falls through to the pre-settlement FAILED
       // path when the payout wasn't COMPLETED.
-      reportSentryMessage("markConsultantPayoutReversed: no-op (not COMPLETED)", {
-        subsystem: "payments",
-        expected: true,
-        extra: { payoutId: payout.id },
-      });
+      reportSentryMessage(
+        "markConsultantPayoutReversed: no-op (not COMPLETED)",
+        {
+          subsystem: "payments",
+          expected: true,
+          extra: { payoutId: payout.id },
+        },
+      );
       return { wasNoOp: true, notify: null };
     }
 
@@ -1274,13 +1308,20 @@ export async function markConsultantPayoutReversed(
     // Exact inverse of the completion posting `payout:<id>`:
     //   original  Dr CONSULTANT_PAYABLE (gross)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
     //   reversal  Dr CASH (net)  Cr CONSULTANT_PAYABLE (gross)  Dr TDS_PAYABLE (tds)
+    //
+    // #1132 — the comment above already described this shape, but the code did
+    // not match it: CASH was debited by the gross and CONSULTANT_PAYABLE
+    // credited by gross+tds. Now that the completion leg credits CASH with
+    // gross-tds, an unadjusted reversal would leave excess cash and an
+    // overstated payable behind on every reversed payout that withheld TDS.
     if (payout.amount > 0) {
       const tdsPaise = payout.tdsDeducted ?? 0;
+      const cashPaise = payout.amount - tdsPaise;
       const reversal: Posting[] = [
         {
           account: { kind: "CASH" },
           direction: "DEBIT",
-          amountPaise: payout.amount,
+          amountPaise: cashPaise,
         },
         {
           account: {
@@ -1288,7 +1329,7 @@ export async function markConsultantPayoutReversed(
             consultantProfileId: payout.consultantProfileId,
           },
           direction: "CREDIT",
-          amountPaise: payout.amount + tdsPaise,
+          amountPaise: payout.amount,
         },
       ];
       if (tdsPaise > 0) {
