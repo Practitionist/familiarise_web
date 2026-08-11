@@ -8,7 +8,7 @@ import {
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
-import { DateOfBirthSchema } from "@/schemas/user";
+import { DateOfBirthSchema } from "@/lib/compliance/age";
 import {
   WeeklySlotSchema,
   CustomSlotSchema,
@@ -41,9 +41,7 @@ export const AchievementCreateInputSchema = z.object({
   description: z.string().optional(),
   url: z.string().url().or(z.literal("")).optional(),
   imageUrl: z.string().url().or(z.literal("")).optional(),
-  achievementType: z
-    .nativeEnum(AchievementType)
-    .default(AchievementType.OTHER),
+  achievementType: z.nativeEnum(AchievementType).default(AchievementType.OTHER),
 });
 
 // Scalar consultant fields — picked from the single source of truth
@@ -104,8 +102,8 @@ const prismaRelationsSchema = z.object({
 // SERVER INPUT SCHEMAS (Prisma-shaped, used by server processing)
 // ============================================================================
 
-export const BaseConsultantProfileCreateInputSchema = consultantScalarFields
-  .merge(prismaRelationsSchema);
+export const BaseConsultantProfileCreateInputSchema =
+  consultantScalarFields.merge(prismaRelationsSchema);
 
 export const ConsultantProfileCreateObjectSchema = z.object({
   create: BaseConsultantProfileCreateInputSchema,
@@ -247,15 +245,14 @@ export const PersonalInfoAndRoleFormSchema = z.object({
 });
 
 // Consultant form: scalar fields from source + frontend relational fields + stricter description
-export const ConsultantProfileFormSchema = consultantScalarFields
-  .extend({
-    description: z.string().min(1, "Description is required"),
-    domain: domainRefSchema,
-    subDomains: z.array(subDomainRefSchema).optional(),
-    tags: z.array(tagRefSchema).optional(),
-    weeklySlots: z.array(WeeklySlotSchema).optional(),
-    customSlots: z.array(CustomSlotSchema).optional(),
-  });
+export const ConsultantProfileFormSchema = consultantScalarFields.extend({
+  description: z.string().min(1, "Description is required"),
+  domain: domainRefSchema,
+  subDomains: z.array(subDomainRefSchema).optional(),
+  tags: z.array(tagRefSchema).optional(),
+  weeklySlots: z.array(WeeklySlotSchema).optional(),
+  customSlots: z.array(CustomSlotSchema).optional(),
+});
 
 // Consultee form: derived from base with stricter validation
 export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.extend({
@@ -753,9 +750,7 @@ export function transformFrontendToServerData(
 
 export function validateOnboardingData(
   data: unknown,
-):
-  | { success: true; data: OnboardingData }
-  | { success: false; error: string } {
+): { success: true; data: OnboardingData } | { success: false; error: string } {
   const validationResult = OnboardingDataSchema.safeParse(data);
 
   if (!validationResult.success) {

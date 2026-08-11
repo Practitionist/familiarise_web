@@ -2,11 +2,7 @@
 import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
-import {
-  isAdult,
-  isRealCalendarDate,
-  UNDER_AGE_MESSAGE,
-} from "@/lib/compliance/age";
+import { DateOfBirthSchema } from "@/lib/compliance/age";
 
 // #region Enums
 
@@ -51,44 +47,6 @@ export const DayOfWeekEnum = z.enum([
   "SATURDAY",
   "SUNDAY",
 ]);
-
-// #endregion
-
-// #region Age Gate
-
-/**
- * #1132 — the DPDP age gate, defined once and reused by every onboarding
- * schema so the wizard's step schemas and the canonical user schema cannot
- * drift apart.
- *
- * India's age of majority is 18 (DPDP s.2(f)); below it, processing requires
- * verifiable parental consent (s.9) and behavioural tracking is prohibited
- * outright (s.9(3)). `dateOfBirth` was previously optional and never checked,
- * so the product had no age gate at all while the privacy policy quoted the
- * COPPA age of 13. Collecting the date purely to confirm non-child status is
- * itself an exempt purpose (Fourth Schedule Part B item 6), so this adds no
- * new obligation.
- *
- * `coerce` because the wizard round-trips values through JSON between steps.
- */
-export const DateOfBirthSchema = z
-  .union(
-    [
-      z.date({ invalid_type_error: "Enter a valid date of birth" }),
-      // #1132 — a string branch rather than `z.coerce.date()`, so the raw text
-      // is still visible when we check it. `new Date("2001-02-29")` does not
-      // throw, it rolls forward to 2001-03-01, and coercing first would leave
-      // us validating a birthday the user never typed.
-      z
-        .string()
-        .refine(isRealCalendarDate, {
-          message: "Enter a valid date of birth",
-        })
-        .transform((s) => new Date(s)),
-    ],
-    { required_error: "Date of birth is required" },
-  )
-  .refine((d) => isAdult(d), { message: UNDER_AGE_MESSAGE });
 
 // #endregion
 

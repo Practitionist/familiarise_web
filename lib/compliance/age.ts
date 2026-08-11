@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Age of majority gate — DPDP Act 2023 (#1132).
  *
@@ -22,41 +24,20 @@
 export const AGE_OF_MAJORITY = 18;
 
 /**
- * True when a `YYYY-MM-DD` string names a date that actually exists.
- *
- * #1132 — `new Date("2001-02-29")` does not throw; it rolls forward to
- * 2001-03-01. Anything that coerces before validating is therefore checking a
- * birthday the user never entered. Non-ISO strings pass through here and are
- * left to `Date` parsing to reject.
- */
-export function isRealCalendarDate(value: string): boolean {
-  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!iso) return !Number.isNaN(new Date(value).getTime());
-  const [, y, m, d] = iso;
-  const probe = new Date(`${y}-${m}-${d}T00:00:00.000Z`);
-  return (
-    !Number.isNaN(probe.getTime()) &&
-    probe.getUTCFullYear() === Number(y) &&
-    probe.getUTCMonth() + 1 === Number(m) &&
-    probe.getUTCDate() === Number(d)
-  );
-}
-
-/**
  * Whole years elapsed between `dob` and `asOf`, calendar-correct (an 18th
- * birthday today counts as 18). Returns null for an absent or unparseable date.
+ * birthday today counts as 18). Returns null for an absent or invalid date.
+ *
+ * Takes a `Date`, not a string: parsing is Zod's job at the schema boundary
+ * (see DateOfBirthSchema), and this helper only does the arithmetic Zod cannot
+ * express. `null`/`undefined` are still accepted because `User.dateOfBirth` is
+ * nullable in Prisma, so a caller reading a stored profile legitimately has one.
  */
 export function ageInYears(
-  dob: Date | string | null | undefined,
+  dob: Date | null | undefined,
   asOf: Date = new Date(),
 ): number | null {
   if (!dob) return null;
-
-  // A calendar date that does not exist is bad input, not a date one day
-  // later — see isRealCalendarDate.
-  if (typeof dob === "string" && !isRealCalendarDate(dob)) return null;
-
-  const d = dob instanceof Date ? dob : new Date(dob);
+  const d = dob;
   if (Number.isNaN(d.getTime())) return null;
 
   let age = asOf.getUTCFullYear() - d.getUTCFullYear();
@@ -76,7 +57,7 @@ export function ageInYears(
  * adult, because an unknown age must never be treated as consentable.
  */
 export function isAdult(
-  dob: Date | string | null | undefined,
+  dob: Date | null | undefined,
   asOf: Date = new Date(),
 ): boolean {
   const age = ageInYears(dob, asOf);
@@ -90,3 +71,43 @@ export function isAdult(
 
 /** Copy shown when the gate rejects. Kept here so UI and API cannot drift. */
 export const UNDER_AGE_MESSAGE = `You must be at least ${AGE_OF_MAJORITY} years old to use Familiarise.`;
+
+/**
+ * #1132 — the DPDP age gate, defined once and reused by every onboarding
+ * schema so the wizard's step schemas and the canonical user schema cannot
+ * drift apart.
+ *
+ * India's age of majority is 18 (DPDP s.2(f)); below it, processing requires
+ * verifiable parental consent (s.9) and behavioural tracking is prohibited
+ * outright (s.9(3)). `dateOfBirth` was previously optional and never checked,
+ * so the product had no age gate at all while the privacy policy quoted the
+ * COPPA age of 13. Collecting the date purely to confirm non-child status is
+ * itself an exempt purpose (Fourth Schedule Part B item 6), so this adds no
+ * new obligation.
+ *
+ */
+const INVALID_DOB = "Enter a valid date of birth";
+
+export const DateOfBirthSchema = z
+  .union(
+    [
+      z.date({ invalid_type_error: INVALID_DOB }),
+      // #1132 — a string branch rather than `z.coerce.date()`. Coercing first
+      // destroys the evidence: `new Date("2001-02-29")` does not throw, it
+      // rolls forward to 2001-03-01, so the schema would end up validating a
+      // birthday the user never typed.
+      //
+      // Zod's own string formats do the calendar check — both are leap-year
+      // and month-length aware, so no hand-rolled date parsing is needed.
+      // `.date()` matches the YYYY-MM-DD the date input emits; `.datetime()`
+      // matches the full ISO string a Date becomes after the wizard's JSON
+      // round-trip between steps.
+      z
+        .union([z.string().date(), z.string().datetime()], {
+          errorMap: () => ({ message: INVALID_DOB }),
+        })
+        .transform((s) => new Date(s)),
+    ],
+    { required_error: "Date of birth is required" },
+  )
+  .refine((d) => isAdult(d), { message: UNDER_AGE_MESSAGE });

@@ -8,7 +8,14 @@
 
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
-import { ageInYears, isAdult, AGE_OF_MAJORITY } from "@/lib/compliance/age";
+import {
+  ageInYears,
+  isAdult,
+  AGE_OF_MAJORITY,
+  UNDER_AGE_MESSAGE,
+  DateOfBirthSchema,
+} from "@/lib/compliance/age";
+
 import {
   resolve194OTaxablePaise,
   TDS_194O_EXEMPTION_PAISE,
@@ -153,19 +160,42 @@ describe("DPDP age gate (#1132)", () => {
   it("fails closed on missing, future and absurd dates", () => {
     expect(isAdult(null, asOf)).toBe(false);
     expect(isAdult(undefined, asOf)).toBe(false);
-    expect(isAdult("not a date", asOf)).toBe(false);
     expect(isAdult(new Date("2030-01-01T00:00:00Z"), asOf)).toBe(false);
     expect(isAdult(new Date("1850-01-01T00:00:00Z"), asOf)).toBe(false);
   });
 
   // #1132 review — `new Date("2001-02-29")` silently rolls to 2001-03-01
-  // rather than throwing, so a typo became a different birthday.
-  it("rejects calendar dates that do not exist", () => {
-    expect(ageInYears("2001-02-29", asOf)).toBeNull();
-    expect(ageInYears("2000-02-29", asOf)).toBe(26); // 2000 IS a leap year
-    expect(ageInYears("1990-13-01", asOf)).toBeNull();
-    expect(ageInYears("1990-04-31", asOf)).toBeNull();
-    expect(isAdult("2001-02-29", asOf)).toBe(false);
+  // rather than throwing, so a typo became a different birthday. The calendar
+  // check therefore has to run BEFORE conversion, which is what the schema's
+  // string branch does; ageInYears itself only ever sees a parsed Date.
+  it("rejects calendar dates that do not exist, at the schema boundary", () => {
+    for (const bad of [
+      "2001-02-29",
+      "1990-04-31",
+      "1990-13-01",
+      "not a date",
+    ]) {
+      expect(DateOfBirthSchema.safeParse(bad).success).toBe(false);
+    }
+    // 2000 IS a leap year, and this one is old enough to be an adult.
+    expect(DateOfBirthSchema.safeParse("2000-02-29").success).toBe(true);
+  });
+
+  it("accepts both the date-input and JSON round-trip string shapes", () => {
+    expect(DateOfBirthSchema.safeParse("2000-06-15").success).toBe(true);
+    expect(
+      DateOfBirthSchema.safeParse("2000-06-15T00:00:00.000Z").success,
+    ).toBe(true);
+    expect(DateOfBirthSchema.safeParse(new Date("2000-06-15")).success).toBe(
+      true,
+    );
+  });
+
+  it("still applies the age gate to string input", () => {
+    const parsed = DateOfBirthSchema.safeParse("2015-01-01");
+    expect(parsed.success).toBe(false);
+    const message = parsed.success ? null : parsed.error.issues[0].message;
+    expect(message).toBe(UNDER_AGE_MESSAGE);
   });
 
   it("computes whole years correctly across a birthday boundary", () => {
