@@ -7,17 +7,13 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Mail, Phone, Clock, MessageSquare } from "lucide-react";
+import { ContactForm } from "./ContactForm";
 import {
   COMPANY_INFO,
   PAGE_META,
   BUSINESS_HOURS,
-  INQUIRY_CATEGORIES,
   SUPPORT_LINKS,
   getMailtoLink,
   getTelLink,
@@ -159,96 +155,7 @@ export default function ContactUsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="first-name">
-                      First name <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="first-name"
-                      placeholder="Enter your first name"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="last-name">
-                      Last name <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="last-name"
-                      placeholder="Enter your last name"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email">
-                    Email <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="email"
-                    placeholder="Enter your email"
-                    required
-                    type="email"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone (optional)</Label>
-                  <Input
-                    id="phone"
-                    placeholder="Enter your phone number"
-                    type="tel"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="subject">
-                    Subject <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="subject"
-                    placeholder="What is this regarding?"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="message">
-                    Message <span className="text-red-500">*</span>
-                  </Label>
-                  <Textarea
-                    className="min-h-[150px]"
-                    id="message"
-                    placeholder="Enter your message"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="category">Inquiry Type</Label>
-                  <select
-                    id="category"
-                    className="w-full px-3 py-2 border border-border rounded-md bg-background"
-                  >
-                    {INQUIRY_CATEGORIES.map((category) => (
-                      <option key={category.value} value={category.value}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <Button className="w-full" type="submit" size="lg">
-                  Send Message
-                </Button>
-
-                <p className="text-xs text-muted-foreground text-center">
-                  We typically respond within 24-48 hours during business days
-                </p>
-              </form>
+              <ContactForm />
             </CardContent>
           </Card>
         </div>

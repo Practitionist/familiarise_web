@@ -261,7 +261,8 @@ function daysLate(dueDate: string | null, createdAt: string): number {
 }
 
 export function BillingPageClient({ orgId }: { orgId: string }) {
-  const { isAtLeast } = useOrgRole(orgId);
+  // #1132 — invoice pay/create is `billing.manage` (OWNER + BILLING_ADMIN).
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "billing.read",
     canSponsor: true,
@@ -502,7 +503,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
   // but only the billing owner pays. Returns null (no action) otherwise.
   const renderInvoiceActions = (inv: OrgInvoice) =>
     (inv.status === "ISSUED" || inv.status === "OVERDUE") &&
-    isAtLeast("OWNER") ? (
+    can("billing.manage") ? (
       <Button
         size="sm"
         variant={inv.status === "OVERDUE" ? "default" : "outline"}
@@ -523,12 +524,12 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         subtitle="Invoices, charges, and outstanding balance"
         actions={
           <div className="flex gap-2">
-            {isAtLeast("OWNER") && (
+            {can("billing.manage") && (
               <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
                 <Plus className="h-4 w-4 mr-1" /> Create invoice
               </Button>
             )}
-            {isAtLeast("OWNER") &&
+            {can("billing.manage") &&
               summary.data?.fundingSource === "INVOICE" && (
               <Button
                 size="sm"

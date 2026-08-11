@@ -383,15 +383,19 @@ export default function PrivacyPolicyPage() {
                 8. Children's Privacy
               </h2>
               <p>
-                Our services are not intended for children under the age of 13.
-                We do not knowingly collect personal information from children
-                under 13. If you are a parent or guardian and believe your child
-                has provided us with personal information, please contact us
-                immediately, and we will take steps to delete such information.
+                Under the Digital Personal Data Protection Act, 2023, a child is
+                anyone who has not completed eighteen years of age. Our services
+                are not intended for children, and we do not knowingly collect
+                personal information from anyone under 18. We ask for your date
+                of birth during onboarding solely to confirm that you are not a
+                child — a purpose expressly permitted by Part B, item 6 of the
+                Fourth Schedule to the Digital Personal Data Protection Rules,
+                2025.
               </p>
               <p>
-                Users between the ages of 13 and 18 must have parental or
-                guardian consent to use our services.
+                If you are a parent or guardian and believe your child has
+                provided us with personal information, please contact us
+                immediately and we will take steps to delete it.
               </p>
 
               <Separator className="my-6" />

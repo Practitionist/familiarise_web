@@ -1180,6 +1180,9 @@ model BillingSubscription {
 
   currentCycleStart DateTime
   currentCycleEnd   DateTime
+  // #1132 — this model carried no index at all while the cycle-close and
+  // invoice-generation crons scan it by nextInvoiceDate / currentCycleEnd on
+  // every run, so each run was a sequential scan. See @@index below.
   nextInvoiceDate   DateTime
   startsAt          DateTime
   endsAt            DateTime?
@@ -1189,6 +1192,9 @@ model BillingSubscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([nextInvoiceDate])
+  @@index([currentCycleEnd])
 }
 
 enum SubscriptionModel {
@@ -4552,6 +4558,11 @@ model ConsultantTaxInfo {
   isIndianResident    Boolean   @default(true)
   lutNumber           String? // Letter of Undertaking for export zero-rating
   lutValidUntil       DateTime?
+  /// #1132 — limb 1 of the 194-O ₹5L exemption: only INDIVIDUAL/HUF get a
+  /// threshold, everyone else is withheld from the first rupee. Nullable and
+  /// read as ineligible when absent — under-withholding is our s.201 liability,
+  /// over-withholding the consultant reclaims at assessment.
+  taxEntityType       TaxEntityType?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 

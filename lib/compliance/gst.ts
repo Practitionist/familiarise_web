@@ -46,6 +46,8 @@
  * ─────────────────────────────────────────────────────────────────────────
  */
 
+import { numericStateCode } from "./state-codes";
+
 export interface GstBreakdown {
   subtotalPaise: number;
   igstPaise: number;
@@ -75,10 +77,37 @@ export function deriveGstBreakdown(params: {
   buyerStateCode: string | null;
   buyerCountry: string;
   hsnCode?: string;
+  // Optional GSTINs — when present their first 2 chars are the authoritative
+  // state code and win over the stored/env codes.
+  supplierGstin?: string | null;
+  buyerGstin?: string | null;
 }): GstBreakdown {
   const hsnCode = params.hsnCode ?? "999293";
+
+  // #1132 — the two sides are stored in different representations and so never
+  // compared equal: the seller is env-sourced alpha ("KA") while the buyer is
+  // written numeric ("29") because the settings form strips non-digits. That
+  // made the intra-state branch below unreachable and billed every domestic
+  // customer IGST. Normalise both to the numeric code before comparing.
+  const buyerState = numericStateCode(
+    params.buyerGstin ?? null,
+    params.buyerStateCode,
+  );
+  const supplierState = numericStateCode(
+    params.supplierGstin ?? null,
+    params.supplierStateCode,
+  );
+
+  // Derived AFTER resolution, not from the raw input: with buyerStateCode "27"
+  // and a buyerGstin starting "29", the tax legs used 29 while the stored
+  // place-of-supply still said 27 — an invoice whose heads and whose declared
+  // place of supply disagree. When the buyer gave us something we cannot
+  // resolve, report null rather than echoing an unusable code or silently
+  // falling back to the supplier's own state.
   const placeOfSupply =
-    params.buyerStateCode ?? params.supplierStateCode ?? null;
+    params.buyerStateCode || params.buyerGstin
+      ? buyerState
+      : (supplierState ?? null);
 
   // Zero-rated export
   if (params.buyerCountry !== "IN") {
@@ -102,12 +131,9 @@ export function deriveGstBreakdown(params: {
   // below still floor+remainder so the parts sum exactly.
   const taxPaise = Math.round(params.subtotalPaise * GST_RATE);
 
-  // Intra-state: CGST + SGST split 50/50
-  if (
-    params.buyerStateCode &&
-    params.supplierStateCode &&
-    params.buyerStateCode === params.supplierStateCode
-  ) {
+  // Intra-state: CGST + SGST split 50/50. An unresolvable state on either side
+  // stays null and falls through to IGST — never treat unknown as a match.
+  if (buyerState && supplierState && buyerState === supplierState) {
     // #776 — deterministic split: floor CGST, SGST absorbs the odd-paise
     // remainder so cgst+sgst === taxPaise exactly. The prior `Math.round(taxPaise/2)`
     // on both legs over-stated the total by 1 paise for odd taxPaise (~50% of
@@ -132,9 +158,13 @@ export function deriveGstBreakdown(params: {
   // distinctly so a missing place-of-supply that silently defaulted to IGST is
   // visible in the stored reason (auditable), rather than masquerading as a real
   // inter-state supply.
-  const igstReason = !params.buyerStateCode
-    ? "IGST_STATE_UNKNOWN"
-    : "INTER_STATE_IGST";
+  // Keyed off the resolved codes, not the raw ones: a state we hold but cannot
+  // map is just as unknown as an absent one, and must not read as inter-state.
+  // #1132 — this covers BOTH sides. An unresolvable SUPPLIER state also lands
+  // here (the intra-state branch requires both), and reporting that as
+  // INTER_STATE_IGST recorded an unverified classification as a confirmed one.
+  const igstReason =
+    !buyerState || !supplierState ? "IGST_STATE_UNKNOWN" : "INTER_STATE_IGST";
   return {
     subtotalPaise: params.subtotalPaise,
     igstPaise: taxPaise,

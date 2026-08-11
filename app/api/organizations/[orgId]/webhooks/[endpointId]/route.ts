@@ -14,10 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import {
-  requireOrgAccess,
-  requireOrgOwner,
-} from "@/lib/auth-helpers";
+import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
@@ -25,6 +22,7 @@ import {
   isOutboundWebhookEvent,
 } from "@/lib/enterprise/outbound-webhooks/event-types";
 import { applyRateLimit, orgWebhookLimiter } from "@/lib/rate-limit";
+import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-guard";
 
 const REDACTED_SECRET = "[redacted]";
 
@@ -118,6 +116,13 @@ export async function PATCH(
       { error: "No mutable fields in body" },
       { status: 400 },
     );
+  }
+
+  // #1132 — a PATCH can repoint an existing endpoint at an internal address,
+  // so the egress guard has to run here too, not only on create.
+  if (parsed.data.url !== undefined) {
+    const blocked = await rejectIfNotPublicUrl(parsed.data.url);
+    if (blocked) return blocked;
   }
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -221,7 +226,10 @@ export async function DELETE(
         { status: (err as { httpStatus?: number }).httpStatus ?? 500 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

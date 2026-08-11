@@ -116,7 +116,11 @@ export function deriveActivationChecklist(
     key: "invite",
     label: s.canHost && !s.canSponsor ? "Invite your experts" : "Invite members",
     done: s.memberCount > 1,
-    href: `${base}/invitations`,
+    // #1132 — `${base}/invitations` is a hard 404: ADR 19 folded invitations
+    // into the members page as a tab and this link was never updated, so the
+    // Getting-Started checklist sent every new org to a not-found page. The
+    // tab value matches MembersTabs; `tab` is UrlTabs' default paramName.
+    href: `${base}/members?tab=invitations`,
   });
 
   if (s.canSponsor) {

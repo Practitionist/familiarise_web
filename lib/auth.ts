@@ -26,10 +26,18 @@ import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-t
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
-// STAFF = moderator: ban/list/get/set-role over users + session control
-// (a subset of the full admin AC). Shares defaultAc so statements line up.
+// STAFF = moderator: read users + session control (a subset of the full admin
+// AC). Shares defaultAc so statements line up.
+//
+// #1132 — `set-role` and `ban` are deliberately NOT granted here. The admin
+// plugin's /admin/set-role authorises on the caller's `user:["set-role"]`
+// permission alone and never compares actor rank to target rank, so holding it
+// let STAFF assign themselves ADMIN — which lib/auth-helpers.ts then treats as
+// OWNER on every organization. This mirrors BACKOFFICE_PERMISSIONS, where
+// `users.moderate` is ADMIN_ONLY. Ban writes already go through lib/moderation
+// via Prisma rather than auth.api.banUser, so nothing legitimate needed it.
 const staffAc = defaultAc.newRole({
-  user: ["list", "ban", "get", "set-role"],
+  user: ["list", "get"],
   session: ["list", "revoke", "delete"],
 });
 
@@ -430,9 +438,16 @@ export const auth = betterAuth({
     // source of truth is our Membership model (linked via
     // Membership.betterAuthMemberId). On creator-role assignment we pass the
     // new enum name "OWNER" which our auth-helpers normalize.
+    // #1132 — org creation must go through POST /api/organizations, which
+    // enforces the ORG_WORKSPACE/ADMIN gate, ENABLE_HOST_ORGS, slug validation
+    // and BillingAccount + OrgWorkspaceProfile creation. The plugin's own
+    // /api/auth/organization/create defaults this flag to `true` when unset,
+    // which let any authenticated user mint an Organization and own it while
+    // skipping every one of those steps.
     organization({
       organizationLimit: 5,
       creatorRole: "OWNER",
+      allowUserToCreateOrganization: false,
     }),
 
     // Enterprise: SSO plugin (SAML / OIDC).

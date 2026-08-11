@@ -18,6 +18,13 @@
 
 import { runDispatchTick } from "@/lib/enterprise/outbound-webhooks/worker";
 
+// #1132 — fixture endpoints use the reserved `.example` TLD, which does not
+// resolve, so the real SSRF guard correctly refuses every one of them. Delivery
+// tests bypass it; the guard itself is covered in
+// __tests__/security/audit-1132-security.test.ts, and the case below proves the
+// worker still calls it when the option is omitted.
+const NOOP_URL_GUARD = async () => {};
+
 function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "del-1",
@@ -35,7 +42,8 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     endpoint: {
       id: "ep-1",
       url: "https://receiver.example/webhook",
-      secret: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      secret:
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
       status: "ACTIVE",
     },
     ...overrides,
@@ -79,13 +87,40 @@ function makePrismaStub(
   };
 }
 
-function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response> | Response) {
+function mockFetch(
+  impl: (url: string, init?: RequestInit) => Promise<Response> | Response,
+) {
   // Cast through `unknown` because the global `fetch` signature carries
   // request-input overloads we don't need here.
   return jest.fn(impl) as unknown as typeof fetch;
 }
 
 const FROZEN_NOW_MS = new Date("2026-05-15T12:00:00Z").getTime();
+
+describe("runDispatchTick — SSRF guard wiring (#1132)", () => {
+  // Every other case in this suite injects NOOP_URL_GUARD, so removing the
+  // assertUrl call from runDispatchTick would not fail any of them. This one
+  // omits the option deliberately: the real guard must run, refuse the
+  // reserved `.example` host, and stop the request before it is made.
+  it("uses the real guard when assertUrlFn is omitted, and never dials a blocked host", async () => {
+    const row = makeRow();
+    const stub = makePrismaStub(row);
+    const fetchFn = mockFetch(async () => new Response("", { status: 200 }));
+
+    const result = await runDispatchTick({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      prisma: stub.prisma as any,
+      fetchFn,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.succeeded).toBe(0);
+    // Treated as a delivery failure so it retries and eventually dead-letters,
+    // rather than throwing out of the tick.
+    expect(result.retried + result.failed).toBe(1);
+  });
+});
 
 describe("runDispatchTick — success path", () => {
   it("marks 2xx as SUCCESS, bumps endpoint.lastSuccessAt, resets failureCount", async () => {
@@ -94,6 +129,7 @@ describe("runDispatchTick — success path", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 200 }));
 
     const result = await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -132,6 +168,7 @@ describe("runDispatchTick — permanent client error", () => {
     const fetchFn = mockFetch(async () => new Response("bad", { status: 400 }));
 
     const result = await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -156,6 +193,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 503 }));
 
     await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -170,9 +208,9 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     });
     // Attempt 1 just failed → schedule attempt 2 at +5min.
     const expectedNext = new Date(FROZEN_NOW_MS + 5 * 60_000);
-    expect((finalUpdate.data as { nextRetryAt: Date }).nextRetryAt.toISOString()).toBe(
-      expectedNext.toISOString(),
-    );
+    expect(
+      (finalUpdate.data as { nextRetryAt: Date }).nextRetryAt.toISOString(),
+    ).toBe(expectedNext.toISOString());
   });
 
   it("429 (rate-limit) is treated as transient (NOT a permanent client error)", async () => {
@@ -181,6 +219,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 429 }));
 
     await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -198,6 +237,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 502 }));
 
     await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -218,6 +258,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
     });
 
     await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -247,6 +288,7 @@ describe("runDispatchTick — operator pause", () => {
     });
 
     await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,
@@ -272,6 +314,7 @@ describe("runDispatchTick — guarded atomic claim (#812)", () => {
     });
 
     const result = await runDispatchTick({
+      assertUrlFn: NOOP_URL_GUARD,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       prisma: stub.prisma as any,
       fetchFn,

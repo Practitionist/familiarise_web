@@ -53,12 +53,26 @@ export function useOrgRole(orgId: string) {
     [role],
   );
 
+  /**
+   * #1132 — prefer this over `isAtLeast` for anything the server gates on the
+   * matrix. The rank ladder cannot express the operations/finance track split:
+   * BILLING_ADMIN sits at rank 70, below MAINTAINER, so `isAtLeast("OWNER")`
+   * on a money control hides it from the one role that exists to use it, even
+   * though the route authorises it. Reach for `isAtLeast` only for genuine
+   * hierarchy checks.
+   */
+  const can = useCallback(
+    (surface: OrgSurface) => hasOrgPermission(role, surface),
+    [role],
+  );
+
   return {
     role,
     canSponsor,
     canHost,
     fundingSource,
     isAtLeast,
+    can,
     isLoading,
   };
 }

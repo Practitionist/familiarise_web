@@ -161,6 +161,10 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
             timezone: ctx.formData.timezone,
             onboardingCompleted: ctx.formData.onboardingCompleted ?? false,
             role: ctx.formData.role ?? "CONSULTANT",
+            // #1132 — step 1 cannot be completed without a validated adult DOB,
+            // so by the time this step renders the value is always present. The
+            // fallback keeps the type honest without inventing an age.
+            dateOfBirth: ctx.formData.dateOfBirth ?? new Date(0),
             emailVerified: ctx.formData.emailVerified,
             image: ctx.formData.image,
           }}

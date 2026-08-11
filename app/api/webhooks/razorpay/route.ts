@@ -149,12 +149,18 @@ export async function POST(req: NextRequest) {
   // would not have moved money; it would have removed a defence-in-depth layer
   // for no correctness gain. If you change this, you are changing what "already
   // processed" means AND weakening a trust boundary.
+  // #1132 — refund/dispute MUST be probed before payment. Razorpay sends
+  // `contains: ["refund","payment"]` on refund events, so a payment-first chain
+  // keyed every refund on a given payment to the same id. The second partial
+  // refund then matched as a duplicate and never reached handleRefundCreated —
+  // no Refund row, no earnings reversal, no credit note, no ledger posting,
+  // while the money had already left. Most-specific entity wins.
   const entityId =
-    event.payload?.payment?.entity?.id ||
-    event.payload?.order?.entity?.id ||
     event.payload?.refund?.entity?.id ||
     event.payload?.dispute?.entity?.id ||
     event.payload?.payout?.entity?.id ||
+    event.payload?.payment?.entity?.id ||
+    event.payload?.order?.entity?.id ||
     event.account_id ||
     `body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
   const eventId = `${eventType}:${entityId}`;

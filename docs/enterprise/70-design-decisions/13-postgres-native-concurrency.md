@@ -141,12 +141,24 @@ fail-open or fail-closed. The unit tests in
 terminal states appear in no allowed-from set, so widening a lifecycle is a
 reviewed map change, not a scattered route edit.
 
-Because there is no `prisma/migrations` directory (the schema is applied
-with `db push` pre-MVP), database-level CHECK constraints and triggers are
-not currently expressible. The CAS WHERE clauses are therefore the
-enforcement layer. Follow-ups once `prisma migrate` is adopted: add CHECK
-constraints mirroring the terminal-state sets and the
-`canSponsor OR canHost` invariant as defence in depth; extend version
-columns to `BillingAccount` and `WebhookEndpoint` settings; thread
-`expectedVersion` through the SSO and payout-account clients the way the
-settings page does.
+There is no `prisma/migrations` directory — the schema is applied with
+`db push` pre-MVP. That does **not** mean database-level CHECK constraints and
+triggers are unavailable, and an earlier revision of this ADR wrongly said so
+(corrected in #1132). They live in `prisma/sql/*.sql` and are applied by
+`npm run db:sidecars`, which `npm run db:push` runs after the schema push;
+`scripts/ci/check-db-sidecars.ts` fails CI if any declared object is missing
+from the live catalog. So CAS WHERE clauses are the _first_ enforcement layer,
+not the only one.
+
+The live sidecars are the deferred `ledger_txn_balanced` CONSTRAINT TRIGGER, the
+`slot_no_confirmed_overlap` GiST exclusion, and ~30 CHECK constraints. The trap
+they guard against is `npm run db:push:schema`, which exists as a standalone
+script and skips the sidecars entirely.
+
+Follow-ups, none of which depend on adopting `prisma migrate`: add CHECK
+constraints mirroring the terminal-state sets and the `canSponsor OR canHost`
+invariant as defence in depth; extend version columns to `BillingAccount` and
+`WebhookEndpoint` settings; thread `expectedVersion` through the SSO and
+payout-account clients the way the settings page does. Adopting `prisma migrate`
+remains the right move before the first paying tenant, but for reviewable schema
+history and rollback — not because constraints are otherwise impossible.
