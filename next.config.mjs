@@ -26,7 +26,9 @@ const withBundleAnalyzer =
  *   - `script-src` includes Razorpay's checkout CDN + Stripe.js +
  *     Stream.io + Sentry + Supabase + 'unsafe-inline'/'unsafe-eval'
  *     (Next.js still emits inline runtime chunks; Next 15 hashing
- *     lands in 16).
+ *     lands in 16) + 'wasm-unsafe-eval'/blob: for the call filters
+ *     (see the section on them below).
+ *   - `worker-src` is pinned rather than inherited — see below.
  *   - `connect-src` opens WSS for Stream + HTTPS for the four payment
  *     gateways + Sentry + Resend + Upstash. Anything new must be
  *     added here AND in the matching client.
@@ -51,15 +53,36 @@ const withBundleAnalyzer =
  * docs. `*.getstream.io` stays because Stream still serves some static assets
  * there and removing it is a separate, unobserved risk.
  *
- * Not added, deliberately: `worker-src`. Nothing in this app constructs a
- * Worker and the Stream background-filter/noise-cancellation add-ons (the
- * things that would need `blob:` workers and `wasm-unsafe-eval`) are not
- * installed. If those are ever enabled, this is the directive that will break
- * first, and `default-src 'self'` is what it will fall back to.
+ * Background blur + noise cancellation, and what they actually need (#1134)
+ * ------------------------------------------------------------------------
+ * The previous note here said `worker-src` was the directive that would break
+ * first, falling back to `default-src`. Both halves were wrong, and the real
+ * blocker was somewhere else entirely. Checked against the shipped bundles
+ * rather than the docs:
+ *
+ *   - There is not a single `new Worker` in the MediaPipe glue
+ *     (`vision_wasm_internal.js`) or in the Krisp bundle. Krisp runs in an
+ *     AudioWorklet, and CSP checks worklets under `script-src`, not
+ *     `worker-src`.
+ *   - `worker-src` falls back to `script-src`, NOT `default-src`. Inheriting
+ *     our `script-src` would have been permissive, not restrictive.
+ *   - `'wasm-unsafe-eval'` is not required while `script-src` still carries
+ *     `'unsafe-eval'`, which already permits WASM compilation. It is listed
+ *     anyway so that removing `'unsafe-eval'` — the direction this header
+ *     should move in — cannot silently break the filters.
+ *
+ * The directive that WOULD have broken both features is `connect-src`: each
+ * package fetches its model and WASM from `https://unpkg.com` at runtime
+ * unless given a `basePath`. Rather than open a third-party CDN on a call
+ * path, both are self-hosted out of node_modules into `public/` at install
+ * time (see the `postinstall` chain) and pointed at ourselves, so `connect-src`
+ * needs no entry at all. `worker-src` is pinned explicitly below: strictly
+ * tighter than letting it inherit `script-src`.
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "worker-src 'self' blob:",
   "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",

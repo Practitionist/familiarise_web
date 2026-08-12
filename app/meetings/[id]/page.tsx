@@ -14,6 +14,7 @@ import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
+import { CallFiltersProvider } from "./components/CallFiltersProvider";
 import { useSession } from "@/lib/auth-client";
 
 const MeetingPage = () => {
@@ -23,7 +24,9 @@ const MeetingPage = () => {
   // used to be two effects racing each other: the call was created client-side
   // before the access check came back, so an unauthorized visitor minted a real
   // Stream call and only then saw "Access Denied".
-  const { call, isCallLoading, error, access } = useGetCallById(id as string);
+  const { call, isCallLoading, error, access, rejoin } = useGetCallById(
+    id as string,
+  );
   const [isSetupComplete, setIsSetupComplete] = useState(false);
 
   // Release the camera and microphone on ANY exit from this page, not just the
@@ -75,9 +78,7 @@ const MeetingPage = () => {
           <h2 className="text-xl font-bold text-foreground mb-2">
             Access Denied
           </h2>
-          <p className="text-muted-foreground mb-4">
-            {access.message}
-          </p>
+          <p className="text-muted-foreground mb-4">{access.message}</p>
           <p className="text-sm text-muted-foreground/70">
             If you believe this is an error, please contact support or the
             meeting host.
@@ -115,14 +116,19 @@ const MeetingPage = () => {
     <main className="h-screen w-full">
       <StreamCall call={call}>
         <StreamTheme>
-          {!isSetupComplete ? (
-            <MeetingSetup
-              setIsSetupComplete={setIsSetupComplete}
-              meetingId={id as string}
-            />
-          ) : (
-            <MeetingRoom />
-          )}
+          {/* Wraps BOTH surfaces: the filter is registered on `call.camera`,
+              so a provider that unmounted between the lobby and the room
+              would unregister it exactly as the person joined. */}
+          <CallFiltersProvider>
+            {!isSetupComplete ? (
+              <MeetingSetup
+                setIsSetupComplete={setIsSetupComplete}
+                meetingId={id as string}
+              />
+            ) : (
+              <MeetingRoom onRejoin={rejoin} />
+            )}
+          </CallFiltersProvider>
         </StreamTheme>
       </StreamCall>
     </main>
