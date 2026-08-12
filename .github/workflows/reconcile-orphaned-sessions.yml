@@ -2,7 +2,15 @@ name: Reconcile Orphaned Meeting Sessions
 
 on:
   schedule:
-    # Every 30 minutes, offset off the busy :00/:15/:30/:45 slots.
+    # Every 30 minutes at :25 and :55.
+    #
+    # NOT :13/:43 — that is reconcile-orphaned-confirmations' slot
+    # (`13-59/30`), and two half-hourly jobs on the same minute start together
+    # every single time rather than occasionally. scripts/ci/check-workflow-
+    # hygiene.ts fails the build on exactly that, which is how this was caught.
+    # Of the sixty minutes, only :00, :03, :10, :15, :25 and :55 are unclaimed
+    # by an existing sub-daily schedule, and :25/:55 is the only pair thirty
+    # minutes apart.
     #
     # #1134 P1-1 — this job has existed since it was written and has NEVER run.
     # Its own docstring claimed "runs every 30 minutes via cleanup API route",
@@ -14,7 +22,7 @@ on:
     #
     # Downstream of an unreconciled session: SlotOfAppointment.completionStatus
     # never leaves SCHEDULED, so the appointment never completes.
-    - cron: "13,43 * * * *"
+    - cron: "25,55 * * * *"
   workflow_dispatch:
 
 # Never overlap: the job claims rows with a cron lock, but a queued run is
