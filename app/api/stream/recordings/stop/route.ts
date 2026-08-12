@@ -67,6 +67,26 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
+                // #1134 P1-6 — mirror the start route: without these the owner
+                // of a 1:1 cannot stop a recording they were able to start.
+                consultation: {
+                  include: {
+                    consultationPlan: {
+                      select: {
+                        consultantProfileId: true,
+                      },
+                    },
+                  },
+                },
+                subscription: {
+                  include: {
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfileId: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },

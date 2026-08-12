@@ -67,6 +67,30 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
+                // #1134 P1-6 — without these two the resolver sees no plan for a
+                // 1:1, so the actual owner fails isAppointmentOwner and start
+                // returns 403. Recording a consultation was not disabled, it was
+                // impossible.
+                consultation: {
+                  include: {
+                    consultationPlan: {
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
+                    },
+                  },
+                },
+                subscription: {
+                  include: {
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },

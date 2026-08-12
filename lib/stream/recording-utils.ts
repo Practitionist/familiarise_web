@@ -9,19 +9,39 @@ import prisma from "@/lib/prisma";
  * Type for appointment with ownership relations
  * Used for checking if a consultant owns a recording/session
  */
+export interface OwnedPlan {
+  consultantProfileId: string | null;
+  recordingEnabled?: boolean;
+}
+
 export interface AppointmentWithOwnership {
-  webinar?: {
-    webinarPlan?: {
-      consultantProfileId: string | null;
-      recordingEnabled?: boolean;
-    } | null;
-  } | null;
-  class?: {
-    classPlan?: {
-      consultantProfileId: string | null;
-      recordingEnabled?: boolean;
-    } | null;
-  } | null;
+  webinar?: { webinarPlan?: OwnedPlan | null } | null;
+  class?: { classPlan?: OwnedPlan | null } | null;
+  // #1134 P1-6 — 1:1 was simply absent here, which is why recording a
+  // consultation or a subscription was impossible rather than merely disabled:
+  // isAppointmentOwner returned false for the actual owner, so start-recording
+  // 403'd, and isRecordingEnabledForAppointment reported false regardless of
+  // what the plan said.
+  consultation?: { consultationPlan?: OwnedPlan | null } | null;
+  subscription?: { subscriptionPlan?: OwnedPlan | null } | null;
+}
+
+/**
+ * The plan behind an appointment, whichever of the four kinds it is.
+ * One resolver so ownership and the recording flag can never disagree about
+ * which plan they are reading — the bug above was exactly that divergence.
+ */
+export function resolveAppointmentPlan(
+  appointment: AppointmentWithOwnership | null | undefined,
+): OwnedPlan | null {
+  if (!appointment) return null;
+  return (
+    appointment.webinar?.webinarPlan ??
+    appointment.class?.classPlan ??
+    appointment.consultation?.consultationPlan ??
+    appointment.subscription?.subscriptionPlan ??
+    null
+  );
 }
 
 /**
@@ -35,26 +55,9 @@ export function isAppointmentOwner(
   appointment: AppointmentWithOwnership | null | undefined,
   consultantProfileId: string | null | undefined,
 ): boolean {
-  if (!appointment || !consultantProfileId) {
-    return false;
-  }
-
-  // Check webinar ownership
-  if (appointment.webinar?.webinarPlan) {
-    return (
-      appointment.webinar.webinarPlan.consultantProfileId ===
-      consultantProfileId
-    );
-  }
-
-  // Check class ownership
-  if (appointment.class?.classPlan) {
-    return (
-      appointment.class.classPlan.consultantProfileId === consultantProfileId
-    );
-  }
-
-  return false;
+  if (!consultantProfileId) return false;
+  const plan = resolveAppointmentPlan(appointment);
+  return !!plan && plan.consultantProfileId === consultantProfileId;
 }
 
 /**
@@ -66,21 +69,7 @@ export function isAppointmentOwner(
 export function isRecordingEnabledForAppointment(
   appointment: AppointmentWithOwnership | null | undefined,
 ): boolean {
-  if (!appointment) {
-    return false;
-  }
-
-  // Check webinar plan
-  if (appointment.webinar?.webinarPlan) {
-    return appointment.webinar.webinarPlan.recordingEnabled === true;
-  }
-
-  // Check class plan
-  if (appointment.class?.classPlan) {
-    return appointment.class.classPlan.recordingEnabled === true;
-  }
-
-  return false;
+  return resolveAppointmentPlan(appointment)?.recordingEnabled === true;
 }
 
 /**
