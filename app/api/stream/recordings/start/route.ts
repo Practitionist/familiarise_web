@@ -8,7 +8,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getRecordingBlock } from "@/lib/stream/recording-consent";
+import {
+  consentRegimeFor,
+  getRecordingBlock,
+} from "@/lib/stream/recording-consent";
+import { RecordingConsentDecision } from "@prisma/client";
 import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
@@ -138,10 +142,8 @@ export async function POST(req: NextRequest) {
     // effect or it is not consent. Group sessions are never blocked here — their
     // recording is the product, disclosed at purchase, and acknowledged rather
     // than consented to.
-    const consentBlock = await getRecordingBlock(
-      meetingSessionId,
-      meetingSession.slotOfAppointment?.appointment,
-    );
+    const appointment = meetingSession.slotOfAppointment?.appointment;
+    const consentBlock = await getRecordingBlock(meetingSessionId, appointment);
     if (consentBlock.blocked) {
       streamLogger.info("Recording refused — participant declined", {
         meetingSessionId,
@@ -149,9 +151,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: consentBlock.reason }, { status: 409 });
     }
 
-    // Atomically set isRecording=true (prevents race condition with concurrent requests)
+    // Claim atomically, and re-assert the consent condition IN the claim.
+    //
+    // The `getRecordingBlock` call above is a separate read, so a participant
+    // could commit a DECLINED decision in the window between that count and this
+    // write, and recording would start despite a refusal that was already in the
+    // database. Check-then-act, with a compliance record as the loser.
+    //
+    // The relation filter closes it without a transaction: Postgres evaluates the
+    // whole predicate at write time, so a decline that commits first makes this
+    // match zero rows. The earlier read stays because it produces the specific
+    // user-facing reason; this is the part that has to be true.
+    const blockOnDecline = consentRegimeFor(appointment) === "OPT_OUT";
     const updated = await prisma.meetingSession.updateMany({
-      where: { id: meetingSessionId, isRecording: false },
+      where: {
+        id: meetingSessionId,
+        isRecording: false,
+        ...(blockOnDecline
+          ? {
+              recordingConsents: {
+                none: { decision: RecordingConsentDecision.DECLINED },
+              },
+            }
+          : {}),
+      },
       data: {
         isRecording: true,
         recordingStartedAt: new Date(),
@@ -160,6 +183,13 @@ export async function POST(req: NextRequest) {
     });
 
     if (updated.count === 0) {
+      // Either a concurrent start won, or a decline landed between the read and
+      // this write. Re-read to say which, so a refused host is not told the
+      // wrong thing.
+      const raced = await getRecordingBlock(meetingSessionId, appointment);
+      if (raced.blocked) {
+        return NextResponse.json({ error: raced.reason }, { status: 409 });
+      }
       return NextResponse.json(
         { error: "Recording is already in progress" },
         { status: 409 },

@@ -156,6 +156,20 @@ export interface RecordingBlock {
  * terminate a host's in-progress recording mid-call, and the failure mode of
  * getting it wrong is a consultant losing a session they believed was recorded.
  * It is tracked rather than guessed at.
+ *
+ * SECOND, LOUDER SCOPE LIMIT — this gate guards an HTTP ROUTE, not Stream.
+ *
+ * `POST /api/stream/recordings/start` is the only caller, and a participant who
+ * can reach the Stream SDK directly does not go through it. On the LIVE call
+ * type, `call_member` — the role every participant is granted at join — still
+ * holds `start-recording` and `stop-recording`, so `call.startRecording()` from
+ * devtools walks straight past this 409.
+ *
+ * #1136 ships `scripts/stream/ensure-call-type-grants.ts`, which strips both
+ * permissions from `user`, `guest` AND `call_member`. That script is an OPERATOR
+ * ACTION and merging #1136 does not run it. Until someone runs it with `--apply`
+ * against the shared Stream app, this consent feature is advisory. Verify with
+ * the dry run before believing otherwise; it prints the live grants.
  */
 export async function getRecordingBlock(
   meetingSessionId: string,
