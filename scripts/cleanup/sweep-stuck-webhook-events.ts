@@ -18,6 +18,7 @@
  */
 import prisma from "@/lib/prisma";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
+import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -105,7 +106,11 @@ async function sweepStuckWebhookEventsUnlocked(
   // and `logWebhookEvent` resets an errored row before reprocessing it.
   const stuck = await prisma.webhookEvent.findMany({
     where: {
-      provider: "razorpay",
+      // #1134 P1-2 — Stream events belong here too. The Stream route now
+      // acknowledges before processing (its retry budget is 15 seconds
+      // total, which a cold instance cannot fit), so a handler failure has
+      // no redelivery to rescue it. This sweep is the only thing that will.
+      provider: { in: ["razorpay", "stream"] },
       receivedAt: { lt: staleBefore },
       OR: [
         // Crashed before recording anything.
@@ -162,10 +167,25 @@ async function sweepStuckWebhookEventsUnlocked(
     } as unknown as RazorpayWebhookEnvelope;
 
     try {
-      // processRazorpayWebhookEvent catches handler errors and marks the row
-      // processed (stamping error on failure) in its finally — so this both
-      // re-runs the side-effects AND clears the stuck flag.
-      await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
+      if (ev.provider === "stream") {
+        // Stream stores the whole event as the payload, so there is no envelope
+        // to rebuild. processStreamEvent owns its own logWebhookEvent /
+        // markWebhookEventProcessed bookkeeping, exactly like the Razorpay
+        // dispatch below.
+        const streamEvent = ev.payload as { call_cid?: string } | null;
+        await processStreamEvent(
+          ev.payload,
+          ev.eventType,
+          ev.eventId,
+          undefined,
+          { call_cid: streamEvent?.call_cid },
+        );
+      } else {
+        // processRazorpayWebhookEvent catches handler errors and marks the row
+        // processed (stamping error on failure) in its finally — so this both
+        // re-runs the side-effects AND clears the stuck flag.
+        await processRazorpayWebhookEvent(envelope, ev.eventType, ev.eventId);
+      }
       const after = await prisma.webhookEvent.findUnique({
         where: { eventId: ev.eventId },
         select: { error: true, processed: true },

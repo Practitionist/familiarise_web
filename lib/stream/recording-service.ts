@@ -7,6 +7,7 @@ import { getStreamVideoClient } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
 import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import type {
@@ -49,11 +50,10 @@ export class RecordingService {
     try {
       const client = getStreamVideoClient();
 
-      // Get call type from call ID (format: "callType:callId" or just "callId")
-      const callType = "default";
-      const callId = streamCallId.includes(":")
-        ? streamCallId.split(":")[1]
-        : streamCallId;
+      // #1134 P1-5 — one helper owns the `type:id` split; three sites here had
+      // each reimplemented it and a fourth (the orphan reconciler) had forgotten.
+      const callType = STREAM_CALL_TYPE;
+      const callId = toCallId(streamCallId);
 
       // Get the call and start recording
       const call = client.video.call(callType, callId);
@@ -86,10 +86,8 @@ export class RecordingService {
     try {
       const client = getStreamVideoClient();
 
-      const callType = "default";
-      const callId = streamCallId.includes(":")
-        ? streamCallId.split(":")[1]
-        : streamCallId;
+      const callType = STREAM_CALL_TYPE;
+      const callId = toCallId(streamCallId);
 
       const call = client.video.call(callType, callId);
       await call.stopRecording({ recording_type: "default" });
@@ -119,10 +117,8 @@ export class RecordingService {
     try {
       const client = getStreamVideoClient();
 
-      const callType = "default";
-      const callId = streamCallId.includes(":")
-        ? streamCallId.split(":")[1]
-        : streamCallId;
+      const callType = STREAM_CALL_TYPE;
+      const callId = toCallId(streamCallId);
 
       const call = client.video.call(callType, callId);
       const response = await call.listRecordings();
