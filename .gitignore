@@ -99,6 +99,13 @@ node-payment-main/
 # Sentry Config File
 .env.sentry-build-plugin
 
+# Stream call-filter assets, copied out of node_modules by `postinstall`
+# (scripts/copy-stream-filter-assets.mjs). Build output, not source: ~32MB of
+# WASM and model files that must match the installed SDK version, so committing
+# them would only create a way for the two to drift apart.
+/public/mediapipe/
+/public/nc-models/
+
 # Agent + scratch artefacts that live in the working tree but are not the app.
 # `.claude/worktrees/` in particular holds OTHER agents' checkouts — committing
 # it drags their in-flight branches into this one. These were swept in once by a

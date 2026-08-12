@@ -7,15 +7,15 @@ import {
   CallingState,
   PaginatedGridLayout,
   SpeakerLayout,
+  SpeakingWhileMutedNotification,
   useCall,
   useCallStateHooks,
   ToggleAudioPublishingButton,
   ToggleVideoPublishingButton,
   ReactionsButton,
   ScreenShareButton,
-  RecordCallButton,
 } from "@stream-io/video-react-sdk";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import {
   Users,
@@ -33,16 +33,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import Loader from "./Loader";
 import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
+import { CallEffectsMenu } from "./CallEffectsMenu";
+import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
+import { ConnectionStateScreen } from "./ConnectionStateScreen";
+import { IncomingVideoQualityMenu } from "./IncomingVideoQualityMenu";
+import { NoiseCancellationGate } from "./NoiseCancellationGate";
 import { useMeetingRecording } from "../hooks/useMeetingRecording";
 import {
   sessionHeading,
   useSessionClock,
   useSessionInfo,
 } from "../session-info";
+import {
+  DISCONNECTION_TIMEOUT_SECONDS,
+  describeCallingState,
+} from "@/lib/stream/connection-state";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
@@ -128,13 +136,20 @@ function SessionClockPill({
   );
 }
 
-const MeetingRoom = () => {
-  const searchParams = useSearchParams();
-  const isPersonalRoom = !!searchParams.get("personal");
+interface MeetingRoomProps {
+  /**
+   * Recovery from a terminal connection state. Re-creating the call is the
+   * SDK's documented requirement — see useGetCallById.
+   */
+  onRejoin: () => void;
+}
+
+const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
   const call = useCall();
   const { useCallCallingState, useCallEndedAt, useParticipantCount } =
     useCallStateHooks();
@@ -146,13 +161,13 @@ const MeetingRoom = () => {
   const callEndedAt = useCallEndedAt();
   const participantCount = useParticipantCount();
 
-  const [isRejoining, setIsRejoining] = useState(false);
-
+  // #1134 — Stream's default disconnection timeout is 0, i.e. a participant
+  // whose connection dies stays in the call indefinitely and never emits
+  // `call.session_participant_left`. That is where the 1,417 MeetingSession
+  // rows that never closed came from, and why attendance cannot be trusted.
   useEffect(() => {
-    if (callEndedAt) {
-      console.log("Call ended at:", callEndedAt);
-    }
-  }, [callEndedAt, callingState]);
+    call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
+  }, [call]);
 
   const { useCallCustomData } = useCallStateHooks();
   const custom = useCallCustomData();
@@ -166,20 +181,6 @@ const MeetingRoom = () => {
   const isGuest = consulteeUserId
     ? session?.user?.id === consulteeUserId
     : session?.user?.role === "CONSULTEE";
-
-  useEffect(() => {
-    if (call) {
-      const handleCallStateUpdated = () => {
-        console.log("Call state updated:", call.state);
-      };
-
-      call.on("call.updated", handleCallStateUpdated);
-
-      return () => {
-        call.off("call.updated", handleCallStateUpdated);
-      };
-    }
-  }, [call]);
 
   // Get proper dashboard URL based on user role and profile
   const getDashboardUrl = () => {
@@ -205,6 +206,10 @@ const MeetingRoom = () => {
   // page unmount and the end-call path so every exit behaves the same way, and
   // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
+    // A deliberate exit passes through LEFT on its way out. Without this it
+    // would flash "You have left this session — Rejoin?" at someone who just
+    // pressed Leave and is already being navigated away.
+    setIsLeaving(true);
     try {
       await leaveCallAndReleaseMedia(call);
     } catch (error) {
@@ -216,34 +221,42 @@ const MeetingRoom = () => {
     }
   };
 
-  const handleRejoinCall = async () => {
-    if (!call) return;
-
-    try {
-      setIsRejoining(true);
-      await call.join();
-    } catch (error) {
-      console.error("Error rejoining call:", error);
-    } finally {
-      setIsRejoining(false);
-    }
-  };
-
   // Handle return to home with proper cleanup
   const handleReturnHome = async () => {
     await cleanupAndNavigate(getDashboardUrl());
   };
 
-  if ((callingState !== CallingState.JOINED && !callEndedAt) || isRejoining) {
-    return <Loader />;
-  }
-
   if (callEndedAt && !isHost) {
     return (
       <CallEnded
         message="The call has been ended by the host"
-        onRejoin={handleRejoinCall}
+        onRejoin={onRejoin}
         onReturnHome={handleReturnHome}
+      />
+    );
+  }
+
+  // #1134 — everything that was not JOINED used to collapse into one
+  // unexplained spinner, so a network blip, an SFU migration and a connection
+  // the SDK had permanently given up on all looked identical, and the terminal
+  // one had no way out. `describeCallingState` owns which is which.
+  const advice = callEndedAt
+    ? null
+    : isLeaving
+      ? {
+          tone: "loading" as const,
+          title: "Leaving…",
+          description: "Releasing your camera and microphone.",
+          canRejoin: false,
+        }
+      : describeCallingState(callingState);
+  if (advice) {
+    return (
+      <ConnectionStateScreen
+        advice={advice}
+        isOffline={callingState === CallingState.OFFLINE}
+        onRejoin={onRejoin}
+        onLeave={handleReturnHome}
       />
     );
   }
@@ -306,8 +319,14 @@ const MeetingRoom = () => {
           <div className="flex items-center justify-center px-4 py-4">
             <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               {/* Custom Call Controls - Replaces default CallControls */}
-              {/* Audio Toggle */}
-              <ToggleAudioPublishingButton />
+              {/* Audio Toggle. The notification came free with the SDK's
+                  `CallControls` and was lost when these buttons were
+                  hand-rolled — so someone talking into a muted mic got no hint
+                  at all, which on a paid consultation is minutes of a session
+                  spent unheard. */}
+              <SpeakingWhileMutedNotification>
+                <ToggleAudioPublishingButton />
+              </SpeakingWhileMutedNotification>
 
               {/* Video Toggle */}
               <ToggleVideoPublishingButton />
@@ -319,17 +338,13 @@ const MeetingRoom = () => {
               <ScreenShareButton />
 
               {/* Recording BUTTON for the host - Left of Leave Call (only if recording enabled) */}
-              {isHost &&
-                recordingEnabled &&
-                (meetingSessionId ? (
-                  <RecordingControls
-                    meetingSessionId={meetingSessionId}
-                    recordingEnabled={recordingEnabled}
-                    showOnlyButton={true}
-                  />
-                ) : (
-                  <RecordCallButton />
-                ))}
+              {isHost && recordingEnabled && meetingSessionId && (
+                <RecordingControls
+                  meetingSessionId={meetingSessionId}
+                  recordingEnabled={recordingEnabled}
+                  showOnlyButton={true}
+                />
+              )}
 
               {/* Leave — the only red control in the bar, and the only exit
                   reachable in one click. */}
@@ -381,6 +396,17 @@ const MeetingRoom = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
+              {/* Incoming video quality — the bandwidth escape hatch, and the
+                  single largest cost lever in the video subsystem. */}
+              <IncomingVideoQualityMenu />
+
+              {/* Background blur + noise cancellation. The gate stays OUTSIDE
+                  the menu: it owns the noise-cancellation provider, and Radix
+                  unmounts closed dropdown content. */}
+              <NoiseCancellationGate>
+                <CallEffectsMenu />
+              </NoiseCancellationGate>
+
               {/* Stats Button */}
               <CallStatsButton />
 
@@ -403,7 +429,7 @@ const MeetingRoom = () => {
               </button>
 
               {/* Divider */}
-              {!isPersonalRoom && <div className="w-px h-8 bg-zinc-700 mx-1" />}
+              <div className="w-px h-8 bg-zinc-700 mx-1" />
 
               {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
               {isHost && meetingSessionId && recordingEnabled && (
@@ -421,7 +447,7 @@ const MeetingRoom = () => {
                   cannot be undone by the people it happens to. Reaching it now
                   takes a deliberate second step, and it still needs the
                   press-and-hold inside. */}
-              {!isPersonalRoom && isHost && (
+              {isHost && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -485,6 +511,14 @@ const MeetingRoom = () => {
           </div>
 
           <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
+        </div>
+
+        {/* Connection notices sit under the header, out of the video's way,
+            and only appear when there is something the person cannot otherwise
+            explain — their own link degrading, or the server pausing incoming
+            video to protect it. */}
+        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex justify-center">
+          <ConnectionQualityNotice />
         </div>
       </section>
     </StreamVideoErrorBoundary>
