@@ -33,7 +33,10 @@ const MAX_DRAIN_BATCH = 200;
 interface DrainResult {
   drained: number;
   recordingsStopped: number;
-  /** Participants warned in-call. The broadcast is counted separately. */
+  /**
+   * Users covered by the maintenance broadcast. NOT a count of people warned
+   * in-call — there is no in-call warning; see the note in step 2.
+   */
   notified: number;
   errors: string[];
 }
@@ -176,20 +179,17 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         STREAM_CALL_TYPE,
         toCallId(session.streamCallId),
       );
-      // Give whoever is mid-sentence a reason for the disconnect. Best-effort:
-      // being unable to warn must never stop the drain.
-      await call
-        .sendCallEvent({
-          custom: {
-            type: "maintenance.draining",
-            message:
-              "This session is ending now for scheduled maintenance. You will be able to rejoin shortly.",
-          },
-        })
-        .then(() => {
-          result.notified++;
-        })
-        .catch(() => {});
+      // #1134 — this used to send a `maintenance.draining` custom event and
+      // increment `notified` on the API call succeeding. Nothing in the client
+      // subscribes to `call.on("custom", …)`, so it warned nobody, and `end()`
+      // fires microseconds later anyway — a toast would not have painted even
+      // with a listener. Counting Stream's acknowledgement as a person warned is
+      // the same fabricated metric this function was just fixed for twenty lines
+      // below, so the call and the counter are both gone rather than left to
+      // imply a courtesy the product does not provide.
+      //
+      // Restore it together with a `call.on("custom")` subscriber in
+      // MeetingRoom.tsx and a short delay before end() — not before.
       // #473 — fast-fail rather than eat a 30s timeout per session while Stream
       // is degraded; the maintenance window is exactly when that matters.
       await withStreamCircuitBreaker(() => call.end());
@@ -232,11 +232,10 @@ export async function drainActiveSessions(): Promise<DrainResult> {
 
   // Step 4: Broadcast the maintenance notice.
   //
-  // #1134 P1-3 — `result.notified = userIdList.length` used to be recorded here,
-  // which was a fabricated metric: notifyMaintenanceStarted is a BROADCAST to
-  // every user on the platform and takes no recipient list, so the count
-  // described a targeted notification that never happened. `notified` now counts
-  // the in-call custom events we actually delivered, above.
+  // #1134 P1-3 — `notifyMaintenanceStarted` is a platform-wide BROADCAST and
+  // takes no recipient list, so this number describes reach, not targeting. It
+  // is recorded only after the broadcast actually succeeds; the previous code
+  // set it unconditionally and called it a per-participant notification count.
   const userIdList = Array.from(allUserIds);
   if (userIdList.length > 0) {
     try {
@@ -244,6 +243,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         phase: "OFFLINE",
         reason: "Platform maintenance starting. Active calls have been ended.",
       });
+      result.notified = userIdList.length;
     } catch (err) {
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" }, level: "warning" });
       result.errors.push(
@@ -273,6 +273,11 @@ export async function drainActiveSessions(): Promise<DrainResult> {
  *
  * Best-effort throughout. A chat freeze failing must never block the OFFLINE
  * transition, which is the whole point of the drain.
+ *
+ * The inverse is `unfreezeChannelsFrozenForMaintenance()` below, wired into the
+ * maintenance exit. Freezing without that was a trap: Stream grants
+ * `use-frozen-channel` to NO role by default, so a channel frozen here stayed
+ * unwritable by everyone INCLUDING admins, permanently.
  */
 async function freezeChannelsForSessions(
   sessions: { slotOfAppointment: { appointmentId: string } }[],
@@ -302,4 +307,67 @@ async function freezeChannelsForSessions(
       `Freeze chat: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Undo the maintenance freeze. Called from the maintenance exit path.
+ *
+ * #1134 — the drain froze group channels and nothing ever unfroze them. Stream
+ * grants `use-frozen-channel` to no role by default, so those channels were
+ * permanently unwritable by every user AND every admin, with no visible cause.
+ *
+ * Scoped to sessions the drain actually ended (`endedReason: "maintenance"`)
+ * within the recent window, so it cannot unfreeze a channel a moderator froze
+ * deliberately. `updatePartial` rather than `update`: the latter is a full
+ * replace and would delete `organizationId`, `appointmentId` and every other
+ * custom field off the channel.
+ */
+export async function unfreezeChannelsAfterMaintenance(): Promise<{
+  unfrozen: number;
+  errors: string[];
+}> {
+  const result = { unfrozen: 0, errors: [] as string[] };
+
+  const drained = await prisma.meetingSession.findMany({
+    where: {
+      endedReason: "maintenance",
+      endedAt: { gte: new Date(Date.now() - LIVE_SESSION_WINDOW_MS) },
+    },
+    take: MAX_DRAIN_BATCH,
+    select: { slotOfAppointment: { select: { appointmentId: true } } },
+  });
+  if (drained.length === 0) return result;
+
+  try {
+    const channelIds = await getEventChannelIdsForAppointment(
+      Array.from(
+        new Set(drained.map((s) => s.slotOfAppointment.appointmentId)),
+      ),
+    );
+    if (channelIds.length === 0) return result;
+
+    const chat = getStreamChatClient();
+    const outcomes = await Promise.allSettled(
+      channelIds.map((channelId) =>
+        withStreamCircuitBreaker(() =>
+          chat
+            .channel(getChannelTypeFromId(channelId), channelId)
+            .updatePartial({ set: { frozen: false } }),
+        ),
+      ),
+    );
+    outcomes.forEach((outcome, i) => {
+      if (outcome.status === "fulfilled") result.unfrozen++;
+      else
+        result.errors.push(
+          `unfreeze ${channelIds[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+        );
+    });
+  } catch (err) {
+    result.errors.push(
+      `Unfreeze chat: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return result;
 }

@@ -1,5 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
-import { drainActiveSessions } from "@/actions/maintenance/drain-sessions";
+import {
+  drainActiveSessions,
+  unfreezeChannelsAfterMaintenance,
+} from "@/actions/maintenance/drain-sessions";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
@@ -351,9 +354,23 @@ export async function DELETE() {
   });
 
   const recoveryResult = await runPostRecovery();
+
+  // #1134 — the drain freezes group chat channels on the way into OFFLINE.
+  // Nothing used to unfreeze them, and Stream grants `use-frozen-channel` to no
+  // role by default, so those channels stayed unwritable by every user AND every
+  // admin, permanently, with no visible cause. Best-effort: a chat failure must
+  // not stop maintenance from ending.
+  let chat: Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>> | undefined;
+  try {
+    chat = await unfreezeChannelsAfterMaintenance();
+  } catch (error) {
+    console.error("[maintenance] unfreeze failed:", error);
+  }
+
   return NextResponse.json({
     phase: "OFF",
     message: "Maintenance mode ended",
     recovery: recoveryResult,
+    chat,
   });
 }

@@ -1,9 +1,9 @@
 /**
  * Stream Webhook Handler — verify and acknowledge only.
  *
- * #1134 P1-2 — Stream retries a failed delivery at most five times inside a
- * FIFTEEN SECOND total budget (six seconds per attempt) and then drops the event
- * permanently. A DB health probe plus an idempotency read plus the handler plus
+ * #1134 P1-2 — Stream retries a failed delivery at most THREE times (two on a
+ * network error) inside a FIFTEEN SECOND total budget, six seconds per attempt,
+ * and then drops the event permanently. A DB health probe plus an idempotency read plus the handler plus
  * the completion mark does not fit in six seconds on a cold Netlify instance,
  * and this repo has already measured ~30s of event-loop stall on instance boot.
  *
@@ -106,9 +106,10 @@ export async function POST(req: NextRequest) {
   }
 
   // #1134 P1-2 — the DB health probe used to run here, on the request path, to
-  // buy a 503 retry. That trade is bad on Stream's budget: it retries at most
-  // five times inside FIFTEEN SECONDS total, six seconds per attempt, then drops
-  // the event forever. A probe plus an idempotency read plus the handler plus
+  // buy a 503 retry. That trade is bad on Stream's budget: three attempts (two
+  // on a network error) inside FIFTEEN SECONDS total, six seconds per attempt,
+  // then the event is dropped forever. Tighter than an earlier draft of this
+  // comment claimed — which makes acking first more necessary, not less. A probe plus an idempotency read plus the handler plus
   // the mark does not fit in six seconds on a cold Netlify instance — and this
   // repo has already measured ~30s of event-loop stall on instance boot.
   //
