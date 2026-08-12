@@ -22,6 +22,8 @@ import {
   applyRateLimit,
   getClientIp,
   isBypassableIp,
+  streamJoinLimiter,
+  streamApiLimiter,
 } from "@/lib/rate-limit";
 import { Ratelimit } from "@upstash/ratelimit";
 
@@ -246,6 +248,25 @@ const RATE_LIMIT_RULES: RateRule[] = [
         p.startsWith("/api/auth/sign-up") ||
         p.startsWith("/api/auth/forget-password")),
     limiter: authLimiter,
+    skipLocalhost: true,
+  },
+  {
+    // #1134 P1-11 — the meeting join gate. Call ids are deterministic
+    // (`slot-<anchorSlotId>`), so this is the enumeration surface: without a
+    // limit, someone holding one slot id can walk neighbours and probe which
+    // meetings they can reach. Authenticated, so keyed per user by the shared
+    // resolver.
+    label: "stream: meeting join",
+    match: (p, m) => m === "POST" && /^\/api\/meetings\/[^/]+\/join$/.test(p),
+    limiter: streamJoinLimiter,
+    skipLocalhost: true,
+  },
+  {
+    // Ordinary authenticated Stream reads/writes — search, channel create,
+    // block. Unbounded before, and each one costs a billable Stream API call.
+    label: "stream: api",
+    match: (p) => p.startsWith("/api/stream/"),
+    limiter: streamApiLimiter,
     skipLocalhost: true,
   },
   {

@@ -943,7 +943,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // cohered. One thread per relationship-context is the whole model now.
         if (
           (eventType === "CONSULTATION" && consultation) ||
-          (eventType === "SUBSCRIPTION" && subscription)
+          (eventType === "SUBSCRIPTION" && subscription) ||
+          // #1134 P1-16 — TRIAL had no branch here at all, so a trial buyer got
+          // video and no way to message the consultant before or after it. A
+          // trial is the platform's first impression; it is the LAST session
+          // type that should be mute. Same DM as any other 1:1, so it merges
+          // with their thread if they go on to book.
+          eventType === "TRIAL"
         ) {
           await createDirectMessageChannel(
             consultantUserId,
