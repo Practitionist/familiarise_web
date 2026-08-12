@@ -3941,8 +3941,9 @@ model MeetingSession {
   endedAt     DateTime? // When session actually ended
   endedReason String? // "call_ended", "session_timeout", "error"
 
-  recordings  Recording[]
-  attendances MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
+  recordings        Recording[]
+  attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
+  recordingConsents MeetingRecordingConsent[] // #1134 P1-7
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentId String            @unique
@@ -3971,6 +3972,52 @@ model MeetingSession {
 /// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
 /// endedAt past the slot end). userId is the Stream user_id, which equals our
 /// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+/// #1134 P1-7 — per-session recording consent.
+///
+/// Before this, a consultee learned a session was being recorded from a passive
+/// `REC hh:mm` pill that appeared AFTER recording had already started. No
+/// pre-join notice, no way to refuse, and no record that anyone had been told —
+/// on a platform whose 1:1 sessions are career and health consultations.
+///
+/// Deliberately its own model rather than columns on MeetingAttendance: those
+/// rows are written by Stream's participant webhooks at join time, while consent
+/// is a lobby decision taken BEFORE joining, and a compliance record should not
+/// depend on a webhook having fired. Deliberately not ConsentArtifact either —
+/// that is account-level with no session key, and per-session rows would swamp
+/// a table meant for standing grants.
+///
+/// `noticeVersion` records which wording the person actually saw, so a later
+/// copy change cannot retroactively reinterpret an old decision.
+model MeetingRecordingConsent {
+  id               String         @id @default(uuid())
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
+  /// Stream user id, which equals User.id. Stored plain, matching
+  /// MeetingAttendance.userId and MeetingSession.recordingStartedBy.
+  userId           String
+
+  decision      RecordingConsentDecision
+  decidedAt     DateTime                 @db.Timestamptz
+  /// Which notice text was shown. Bump RECORDING_NOTICE_VERSION when the wording
+  /// changes materially.
+  noticeVersion Int                      @default(1)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  /// One standing decision per person per session; changing your mind updates it.
+  @@unique([meetingSessionId, userId])
+  @@index([userId])
+  /// Serves the recording gate: "has anyone on this session declined?"
+  @@index([meetingSessionId, decision])
+}
+
+/// Declared below the model that uses it, per the schema convention.
+enum RecordingConsentDecision {
+  GRANTED
+  DECLINED
+}
+
 model MeetingAttendance {
   id               String         @id @default(cuid())
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)

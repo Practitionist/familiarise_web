@@ -47,9 +47,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ExitMeetingButton } from "./ExitMeetingButton";
+import { useRecordingConsent } from "./RecordingConsentNotice";
 
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
+  /** Stream call id, so the lobby can fetch this session's recording notice. */
+  meetingId: string;
 }
 
 const DeviceSelector = () => {
@@ -161,7 +164,7 @@ const DeviceSelector = () => {
   );
 };
 
-const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
+const MeetingSetup = ({ setIsSetupComplete, meetingId }: MeetingSetupProps) => {
   const call = useCall();
   const { useMicrophoneState, useCameraState } = useCallStateHooks();
   const micState = useMicrophoneState();
@@ -181,6 +184,9 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // #1134 P1-7 — nobody reaches the call before seeing the recording notice.
+  const consent = useRecordingConsent(meetingId);
 
   const info = useSessionInfo();
   const clock = useSessionClock(info.startsAt, info.endsAt);
@@ -466,9 +472,11 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               </div>
             )}
 
+            {consent.node && <div className="mt-4">{consent.node}</div>}
+
             <Button
               onClick={handleJoinMeeting}
-              disabled={isJoining}
+              disabled={isJoining || !consent.satisfied}
               className="mt-6 h-12 w-full rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-lg transition-colors hover:bg-primary/90 disabled:opacity-70"
             >
               {isJoining ? (
