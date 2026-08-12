@@ -32,7 +32,6 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -815,15 +814,24 @@ export async function PATCH(
           const consulteeUid = subData.requestedBy?.user?.id;
 
           if (consultantUid && consulteeUid) {
-            await addUserToEventChannel(
-              "subscription",
-              subData.id,
+            // #1134 P0-7 / P0-8 — see the consultation twin. No
+            // `subscription-<id>` channel (the reconciler deleted it on the next
+            // load), and the org is threaded so the DM key matches what
+            // getDmPairsForUser expects.
+            // A subscription carries many appointments but is funded once, so
+            // the first is representative — same rule as bookingOrgId().
+            const dmOrgId =
+              subData.subscriptionPlan?.organizationId ??
+              subData.appointments?.[0]?.organizationId ??
+              null;
+            await createDirectMessageChannel(
+              consultantUid,
               consulteeUid,
+              dmOrgId,
             );
-            await createDirectMessageChannel(consultantUid, consulteeUid);
             streamLogger.info(
-              "Stream channel created on subscription approval",
-              { subscriptionId: subData.id },
+              "Stream DM channel ensured on subscription approval",
+              { subscriptionId: subData.id, organizationId: dmOrgId },
             );
           }
         } catch (channelError) {

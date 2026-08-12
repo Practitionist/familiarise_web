@@ -111,3 +111,62 @@ describe("channel ids stay inside Stream's cap without throwing", () => {
     expect(a.length).toBeLessThanOrEqual(STREAM_CHANNEL_ID_MAX);
   });
 });
+
+/**
+ * #1134 P0-3 — the id must not depend on the runtime's collation.
+ *
+ * `getDmChannelId` sorted the pair with `localeCompare`, which orders by ICU
+ * collation: case-insensitive at the primary level, and dependent on both the
+ * ICU build and the default locale. Better Auth ids are mixed-case and cuids are
+ * lowercase, so commit 01162093 — a "standardize the conventions" refactor that
+ * swapped `.sort()` for `.sort(localeCompare)` — silently re-keyed most pairs.
+ * Their history stayed on the old channel while a new empty one took its place,
+ * and both were still live in the Stream app months later.
+ *
+ * The two ids below are real production values, chosen because they are a case
+ * where the two orderings genuinely disagree.
+ */
+describe("DM ids are collation-independent", () => {
+  const BETTER_AUTH_ID = "KYTVwlQTpJLkpMODAWJD7eapsbUMUHwq";
+  const CUID = "cmn5qd16j000g2lkbx8t4h5i5";
+
+  it("is symmetric regardless of argument order", () => {
+    expect(getDmChannelId(BETTER_AUTH_ID, CUID)).toBe(
+      getDmChannelId(CUID, BETTER_AUTH_ID),
+    );
+  });
+
+  it("orders by code unit, not by locale collation", () => {
+    // Guard the premise: if these ever stop disagreeing the test proves nothing.
+    expect(BETTER_AUTH_ID.localeCompare(CUID) < 0).not.toBe(
+      BETTER_AUTH_ID < CUID,
+    );
+
+    expect(getDmChannelId(BETTER_AUTH_ID, CUID)).toBe(
+      `dm-${BETTER_AUTH_ID}-${CUID}`,
+    );
+  });
+
+  it("does not vary with the process locale", () => {
+    // A machine set to tr-TR dot-less-i, or a Node built with small-icu, must
+    // still produce the same channel as every other deployment.
+    const base = getDmChannelId(BETTER_AUTH_ID, CUID);
+    for (const locale of ["tr-TR", "en-US", "de-DE", "sv-SE"]) {
+      const [a, b] = [BETTER_AUTH_ID, CUID].sort((x, y) =>
+        x.localeCompare(y, locale),
+      );
+      // Whatever that locale would have produced, the real id is unchanged.
+      expect(getDmChannelId(a, b)).toBe(base);
+      expect(getDmChannelId(b, a)).toBe(base);
+    }
+  });
+
+  it("is symmetric for the org-scoped form too", () => {
+    expect(getDmChannelId(BETTER_AUTH_ID, CUID, "org_1")).toBe(
+      getDmChannelId(CUID, BETTER_AUTH_ID, "org_1"),
+    );
+    expect(getDmChannelId(BETTER_AUTH_ID, CUID, "org_1")).not.toBe(
+      getDmChannelId(BETTER_AUTH_ID, CUID),
+    );
+  });
+});

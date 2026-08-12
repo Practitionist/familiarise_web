@@ -70,7 +70,15 @@ export function getDmChannelId(
   userId2: string,
   organizationId?: string | null,
 ): string {
-  const [a, b] = [userId1, userId2].sort((x, y) => x.localeCompare(y));
+  // Code-unit ordering, NOT localeCompare. #1134 P0-3: localeCompare sorts by
+  // ICU collation — case-insensitive at the primary level and dependent on the
+  // runtime's ICU build and default locale — so the same pair yielded different
+  // ids in different environments. Better Auth ids are mixed-case and cuids are
+  // lowercase, so when 01162093 switched `.sort()` to `.sort(localeCompare)` it
+  // silently re-keyed most pairs and orphaned their history behind a new empty
+  // channel. Both variants were still live months later. Pinned by
+  // __tests__/stream/types.test.ts.
+  const [a, b] = userId1 < userId2 ? [userId1, userId2] : [userId2, userId1];
 
   if (!organizationId) {
     return fitOrHash(`dm-${a}-${b}`, `${a}-${b}`);

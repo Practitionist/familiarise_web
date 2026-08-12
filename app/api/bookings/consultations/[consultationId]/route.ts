@@ -26,7 +26,6 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -789,17 +788,24 @@ export async function PATCH(
           const consulteeUserId = consultationData.requestedBy?.userId;
 
           if (consultantUserId && consulteeUserId) {
-            await addUserToEventChannel(
-              "consultation",
-              consultationId,
+            // #1134 P0-7 — no more `consultation-<id>` channel: the reconcile
+            // pass never expected it yet treated its prefix as managed, so it
+            // was deleted on the buyer's next dashboard load. #1134 P0-8 — the
+            // org must be threaded so the DM lands on the key the reconciler
+            // expects. Precedence mirrors bookingOrgId() in
+            // event-channel.action.ts: plan org, then appointment org.
+            const dmOrgId =
+              consultationData.consultationPlan?.organizationId ??
+              consultationData.appointment?.organizationId ??
+              null;
+            await createDirectMessageChannel(
+              consultantUserId,
               consulteeUserId,
+              dmOrgId,
             );
-            await createDirectMessageChannel(consultantUserId, consulteeUserId);
             streamLogger.info(
-              "Stream channel created on consultation approval",
-              {
-                consultationId,
-              },
+              "Stream DM channel ensured on consultation approval",
+              { consultationId, organizationId: dmOrgId },
             );
           }
         } catch (channelError) {

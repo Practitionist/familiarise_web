@@ -902,12 +902,35 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         const webinar = appointmentForChannel.webinar;
         const classEvent = appointmentForChannel.class;
 
-        if (eventType === "CONSULTATION" && consultation) {
-          await addUserToEventChannel("consultation", consultation.id, userId);
-          await createDirectMessageChannel(consultantUserId, userId);
-        } else if (eventType === "SUBSCRIPTION" && subscription) {
-          await addUserToEventChannel("subscription", subscription.id, userId);
-          await createDirectMessageChannel(consultantUserId, userId);
+        // #1134 P0-8 — the org MUST be threaded through. getDmPairsForUser
+        // recomputes the expected id with plan-org-then-appointment-org
+        // precedence, so a DM minted without it landed on the personal `dm-`
+        // key, failed to match the expected `dmo-` one, and — because `dm-` is
+        // a managed prefix — was then treated as stale and the user removed
+        // from the only conversation they had. Precedence must stay identical
+        // to bookingOrgId() in event-channel.action.ts.
+        const dmOrgId =
+          consultation?.consultationPlan?.organizationId ??
+          subscription?.subscriptionPlan?.organizationId ??
+          appointmentForChannel.organizationId ??
+          null;
+
+        // #1134 P0-7 — `consultation-<id>` / `subscription-<id>` channels are
+        // NOT created any more. syncUserEventChannels only ever expected
+        // webinars, classes and DMs, while treating both prefixes as managed,
+        // so every one of these was deleted on the buyer's next dashboard load.
+        // The pair already gets a DM, and createConsultationChannel minted a DM
+        // rather than a `consultation-` channel anyway — the concept never
+        // cohered. One thread per relationship-context is the whole model now.
+        if (
+          (eventType === "CONSULTATION" && consultation) ||
+          (eventType === "SUBSCRIPTION" && subscription)
+        ) {
+          await createDirectMessageChannel(
+            consultantUserId,
+            userId,
+            dmOrgId,
+          );
         } else if (eventType === "WEBINAR" && webinar) {
           await addUserToEventChannel("webinar", webinar.id, userId);
         } else if (eventType === "CLASS" && classEvent) {
@@ -921,9 +944,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         });
       }
     } catch (channelError) {
-      // Log but never fail the payment — sync job will catch up
+      // #1134 P1-15 — this used to say "sync job will catch up". No such job
+      // exists: `stream-sync` only DELETES stale Stream users, and
+      // syncUserEventChannels repairs webinar/class/DM membership on the next
+      // dashboard load but cannot invent a channel for a booking it never saw.
+      // A failure here means the buyer silently has no chat, so it must at
+      // least page. A durable outbox is the real fix and is tracked separately.
+      reportSentryError(channelError, {
+        subsystem: "stream",
+        op: "handlePaymentSuccess.createChannels",
+        extra: { appointmentId, userId },
+      });
       streamLogger.error(
-        "Auto-channel creation failed on payment success",
+        "Auto-channel creation failed on payment success — buyer has no chat",
         channelError,
         { appointmentId, userId },
       );
