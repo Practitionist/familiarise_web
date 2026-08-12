@@ -116,7 +116,10 @@ const MeetingPage = () => {
       <StreamCall call={call}>
         <StreamTheme>
           {!isSetupComplete ? (
-            <MeetingSetup setIsSetupComplete={setIsSetupComplete} />
+            <MeetingSetup
+              setIsSetupComplete={setIsSetupComplete}
+              meetingId={id as string}
+            />
           ) : (
             <MeetingRoom />
           )}

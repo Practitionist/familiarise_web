@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
+import { getRecordingBlock } from "@/lib/stream/recording-consent";
 import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
@@ -130,6 +131,22 @@ export async function POST(req: NextRequest) {
         { error: "Recording is not enabled for this plan" },
         { status: 400 },
       );
+    }
+
+    // #1134 P1-7 — consent gate, BEFORE the claim. A 1:1 participant who
+    // declined in the lobby blocks recording outright; declining has to have an
+    // effect or it is not consent. Group sessions are never blocked here — their
+    // recording is the product, disclosed at purchase, and acknowledged rather
+    // than consented to.
+    const consentBlock = await getRecordingBlock(
+      meetingSessionId,
+      meetingSession.slotOfAppointment?.appointment,
+    );
+    if (consentBlock.blocked) {
+      streamLogger.info("Recording refused — participant declined", {
+        meetingSessionId,
+      });
+      return NextResponse.json({ error: consentBlock.reason }, { status: 409 });
     }
 
     // Atomically set isRecording=true (prevents race condition with concurrent requests)
