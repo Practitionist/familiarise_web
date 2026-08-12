@@ -138,6 +138,23 @@ describe("no site re-types the precedence chain", () => {
     ["creators", "actions/stream/chat/channel.action.ts"],
     ["reconcile", "actions/stream/chat/event-channel.action.ts"],
     ["search", "app/api/stream/channels/search-appointments/route.ts"],
+    ["webhook", "lib/payments/webhooks/handlers.ts"],
+    [
+      "subscription approval",
+      "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
+    ],
+  ])("%s reads appointments in a deterministic order", (_label, rel) => {
+    // Filtering alone is not enough. `take: 1` over an unordered result, or a
+    // `find` over one, can hand two callers different rows if a subscription
+    // ever carries two org-tagged appointments — the same divergence this whole
+    // file exists to close, one layer down.
+    expect(read(rel)).toContain('orderBy: [{ createdAt: "asc" }, { id: "asc" }]');
+  });
+
+  it.each([
+    ["creators", "actions/stream/chat/channel.action.ts"],
+    ["reconcile", "actions/stream/chat/event-channel.action.ts"],
+    ["search", "app/api/stream/channels/search-appointments/route.ts"],
   ])("%s filters its take:1 appointment read", (_label, rel) => {
     // `take: 1` truncates server-side, before bookingOrgId's `find` can run. A
     // site that caps without filtering hands the helper a personal row and

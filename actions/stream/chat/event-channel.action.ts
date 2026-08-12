@@ -746,6 +746,11 @@ async function getDmPairsForUser(
           appointments: {
             where: { organizationId: { not: null } },
             select: { organizationId: true },
+            // Deterministic, not just filtered: `take: 1` over an
+            // unordered result can hand different callers different
+            // rows if a subscription ever carries two org-tagged
+            // appointments, which is the same divergence one layer down.
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             take: 1,
           },
         },
@@ -798,6 +803,11 @@ async function getDmPairsForUser(
           appointments: {
             where: { organizationId: { not: null } },
             select: { organizationId: true },
+            // Deterministic, not just filtered: `take: 1` over an
+            // unordered result can hand different callers different
+            // rows if a subscription ever carries two org-tagged
+            // appointments, which is the same divergence one layer down.
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             take: 1,
           },
         },

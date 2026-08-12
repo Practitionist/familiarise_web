@@ -511,6 +511,11 @@ export async function PATCH(
                 },
               },
               appointments: {
+                // Ordered so bookingOrgId's `find` picks the same org-tagged
+                // appointment the creator's filtered read picks. Unordered, two
+                // callers can resolve different orgs for one subscription and
+                // mint two DM channels for the same pair.
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                 include: {
                   slotsOfAppointment: {
                     include: {
@@ -574,6 +579,11 @@ export async function PATCH(
                 },
               },
               appointments: {
+                // Ordered so bookingOrgId's `find` picks the same org-tagged
+                // appointment the creator's filtered read picks. Unordered, two
+                // callers can resolve different orgs for one subscription and
+                // mint two DM channels for the same pair.
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                 include: {
                   slotsOfAppointment: {
                     include: {
@@ -657,6 +667,11 @@ export async function PATCH(
                     },
                   },
                   appointments: {
+                    // Ordered so bookingOrgId's `find` picks the same org-tagged
+                    // appointment the creator's filtered read picks. Unordered, two
+                    // callers can resolve different orgs for one subscription and
+                    // mint two DM channels for the same pair.
+                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                     include: {
                       slotsOfAppointment: {
                         include: {
