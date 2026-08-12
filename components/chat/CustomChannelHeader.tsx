@@ -1,15 +1,33 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ArrowLeftIcon } from "lucide-react";
 import { useChatContext } from "stream-chat-react";
 import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
+import { useChatPane } from "./ChatPaneContext";
 import {
   getChannelDisplayInfo,
   getTruncatedDisplayName,
 } from "./utils/channelUtils";
 
+/**
+ * The only way back to the channel list below `md`, where the conversation
+ * covers it (#1134). Hidden from `md` up, where both panes are visible.
+ */
+const BackToListButton = ({ onClick }: { onClick: () => void }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-label="Back to conversations"
+    className="-ml-1 mr-1 rounded-full p-2 hover:bg-gray-100 md:hidden"
+  >
+    <ArrowLeftIcon className="h-5 w-5 text-gray-500" />
+  </button>
+);
+
 export const CustomChannelHeader = () => {
   const { channel, client } = useChatContext();
+  const { backToList } = useChatPane();
 
   if (!channel) return null;
 
@@ -22,6 +40,7 @@ export const CustomChannelHeader = () => {
 
     return (
       <div className="flex items-center px-4 py-2 border-b">
+        <BackToListButton onClick={backToList} />
         <div className="relative mr-3">
           <Avatar className="h-8 w-8">
             <AvatarImage
@@ -61,6 +80,7 @@ export const CustomChannelHeader = () => {
 
   return (
     <div className="flex items-center px-4 py-2 border-b">
+      <BackToListButton onClick={backToList} />
       <div className="flex items-center mr-3">
         <span className="text-gray-500 mr-2">#</span>
       </div>

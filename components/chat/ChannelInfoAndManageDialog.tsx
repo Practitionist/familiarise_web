@@ -353,7 +353,12 @@ export const ChannelInfoAndManageDialog = ({
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogTrigger asChild>
-          <button className="p-2 rounded-full hover:bg-gray-100">
+          <button
+            type="button"
+            aria-label="Channel details and settings"
+            title="Channel details and settings"
+            className="p-2 rounded-full hover:bg-gray-100"
+          >
             <InfoIcon className="h-5 w-5 text-gray-500" />
           </button>
         </DialogTrigger>
@@ -614,6 +619,10 @@ export const ChannelInfoAndManageDialog = ({
                           className="h-8 w-8 p-0"
                           onClick={() => handleRemoveMember(member.id)}
                           disabled={isLoading}
+                          // Named, because every row otherwise announced the
+                          // same thing and you could not tell who you removed.
+                          aria-label={`Remove ${member.name || member.id} from this channel`}
+                          title={`Remove ${member.name || member.id}`}
                         >
                           <XIcon className="h-4 w-4 text-gray-500" />
                         </Button>

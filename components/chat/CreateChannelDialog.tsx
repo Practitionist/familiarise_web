@@ -109,10 +109,6 @@ export const CreateChannelDialog = ({
         // Event-linked channel creation - use server-side API with full participant lists
         const [eventType, eventId] = selectedEvent.split("-");
 
-        console.log(
-          `Creating ${eventType} channel for event ${eventId} via API`,
-        );
-
         const response = await fetch("/api/stream/channels/create", {
           method: "POST",
           headers: {
@@ -132,8 +128,6 @@ export const CreateChannelDialog = ({
           throw new Error(result.error || "Failed to create channel");
         }
 
-        console.log("Channel created via API:", result.data);
-
         // Find the created channel and set it as active
         const channelId = `${eventType}-${eventId}`;
         const channel = client.channel("team", channelId);
@@ -141,7 +135,6 @@ export const CreateChannelDialog = ({
         // Query the channel to ensure it's loaded and properly synchronized
         try {
           await channel.query();
-          console.log("Channel queried successfully:", channel.cid);
           setActiveChannel(channel);
         } catch (queryError) {
           console.error("Error querying created channel:", queryError);
@@ -157,10 +150,6 @@ export const CreateChannelDialog = ({
         // Custom channel creation - use client-side creation (no predefined participants)
         const channelId = crypto.randomUUID();
 
-        console.log(
-          `Creating custom team channel: ${channelId} with name: ${channelName}`,
-        );
-
         const channel = client.channel("team", channelId, {
           name: channelName,
           members: [currentUserId], // Only creator for custom channels
@@ -168,7 +157,6 @@ export const CreateChannelDialog = ({
         });
 
         await channel.create();
-        console.log(`Created custom channel ${channel.cid}`);
 
         // Set the new channel as active
         setActiveChannel(channel);

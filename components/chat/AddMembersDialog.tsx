@@ -183,7 +183,10 @@ export const AddMembersDialog = ({
               >
                 {consultee.name || consultee.email}
                 <button
+                  type="button"
                   onClick={() => removeSelection(consultee.id)}
+                  aria-label={`Remove ${consultee.name || consultee.email} from the selection`}
+                  title="Remove from selection"
                   className="hover:bg-blue-200 rounded-full p-0.5"
                 >
                   <XIcon className="h-3 w-3" />

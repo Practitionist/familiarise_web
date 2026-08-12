@@ -1245,15 +1245,10 @@
   animation: count-up 1s ease-out forwards;
 }
 
-/* ======== Stream Chat Thread/Reply Count Overrides ======== */
-/* Hide thread-related elements since we use WhatsApp/Telegram style inline quotes */
-.str-chat__message-replies-count-button,
-.str-chat__message-replies-count,
-.str-chat__thread,
-.str-chat__thread-list,
-.str-chat__thread-container {
-  display: none !important;
-}
+/* ======== Stream Chat Overrides ======== */
+/* Threads are off — see ChatContainer. They used to be hidden with
+   `display: none`, which left the reply-count button rendered and focusable,
+   so a keyboard user tabbed into an invisible control. */
 
 /* Style the quoted reply preview above input (WhatsApp/Telegram style) */
 .str-chat__quoted-message-preview {
