@@ -28,8 +28,31 @@ import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 
 const JOIN_CALL = "join-call";
 
-/** Roles that must never lose the ability to join. */
-const PRIVILEGED_ROLES = ["admin", "moderator", "host", "call_member"];
+/**
+ * Roles that lose `join-call`. Verified against the LIVE call type, not assumed:
+ * the `default` grants map has exactly six keys — guest, user, call_member,
+ * admin, global_read_only, global_admin. There is no `host` and no `moderator`
+ * key, so an earlier draft that tried to "protect" those was a no-op.
+ *
+ * `guest` matters as much as `user`. It holds `join-call`, and the app has
+ * `guest_user_creation_disabled: false` — guest sessions are creatable
+ * client-side with nothing but the public API key, which we ship as
+ * NEXT_PUBLIC_STREAM_API_KEY. Stripping only `user` would have left the hole
+ * wide open behind a fix that claimed to close it.
+ */
+const JOIN_REVOKED_ROLES = ["user", "guest"];
+
+/**
+ * Permissions no ordinary participant should hold, also verified live: `user`
+ * currently has BOTH. Any attendee could end the call for everyone, or start a
+ * recording, straight from devtools — which also walks straight around the
+ * consent gate in /api/stream/recordings/start, since that gate only guards our
+ * own endpoint and not a direct client SDK call.
+ */
+const HOST_ONLY_PERMISSIONS = ["end-call", "start-recording", "stop-recording"];
+
+/** The role every legitimate participant is given by /api/meetings/[id]/join. */
+const MEMBER_ROLE = "call_member";
 
 interface Options {
   apply: boolean;
@@ -56,23 +79,32 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
 
   const before = JSON.stringify(grants, null, 2);
 
-  const userGrants = grants.user ?? [];
-  const memberGrants = grants.call_member ?? [];
-
   if (opts.restore) {
-    if (!userGrants.includes(JOIN_CALL)) grants.user = [...userGrants, JOIN_CALL];
-  } else {
-    grants.user = userGrants.filter((g) => g !== JOIN_CALL);
-    if (!memberGrants.includes(JOIN_CALL)) {
-      grants.call_member = [...memberGrants, JOIN_CALL];
-    }
-    // Never lock ourselves out: an operator or a host must still be able to get
-    // in even if membership was never written for a legacy call.
-    for (const role of PRIVILEGED_ROLES) {
+    for (const role of JOIN_REVOKED_ROLES) {
       const roleGrants = grants[role];
       if (roleGrants && !roleGrants.includes(JOIN_CALL)) {
         grants[role] = [...roleGrants, JOIN_CALL];
       }
+    }
+    // Deliberately does NOT restore end-call / start-recording to `user`.
+    // Reverting the join change is an availability rollback; handing every
+    // participant the ability to end a call again is not part of that.
+  } else {
+    for (const role of JOIN_REVOKED_ROLES) {
+      const roleGrants = grants[role];
+      if (roleGrants) {
+        grants[role] = roleGrants.filter(
+          (g) => g !== JOIN_CALL && !HOST_ONLY_PERMISSIONS.includes(g),
+        );
+      }
+    }
+    // call_member is what /api/meetings/[id]/join assigns, so it MUST keep
+    // join-call. It already holds it on the live type; assert rather than
+    // assume, because getting this wrong locks every paying user out of every
+    // call.
+    const memberGrants = grants[MEMBER_ROLE] ?? [];
+    if (!memberGrants.includes(JOIN_CALL)) {
+      grants[MEMBER_ROLE] = [...memberGrants, JOIN_CALL];
     }
   }
 
@@ -84,8 +116,28 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   }
 
   console.log(`Call type: ${STREAM_CALL_TYPE}`);
-  console.log(`  user.join-call        : ${userGrants.includes(JOIN_CALL)} → ${(grants.user ?? []).includes(JOIN_CALL)}`);
-  console.log(`  call_member.join-call : ${memberGrants.includes(JOIN_CALL)} → ${(grants.call_member ?? []).includes(JOIN_CALL)}`);
+  for (const role of [...JOIN_REVOKED_ROLES, MEMBER_ROLE, "admin"]) {
+    const before = (existing.grants[role] ?? []).includes(JOIN_CALL);
+    const now = (grants[role] ?? []).includes(JOIN_CALL);
+    console.log(
+      `  ${role.padEnd(12)} join-call: ${before} → ${now}` +
+        (grants[role] ? "" : "   (role absent on this call type)"),
+    );
+  }
+  for (const perm of HOST_ONLY_PERMISSIONS) {
+    console.log(
+      `  user.${perm.padEnd(20)}: ${(existing.grants.user ?? []).includes(perm)} → ${(grants.user ?? []).includes(perm)}`,
+    );
+  }
+
+  // Refuse to write a configuration that locks everyone out. The join route
+  // assigns call_member; if that role cannot join, nobody can.
+  if (!opts.restore && !(grants[MEMBER_ROLE] ?? []).includes(JOIN_CALL)) {
+    console.error(
+      `\nREFUSING: ${MEMBER_ROLE} would not hold ${JOIN_CALL}. Every participant would be locked out.`,
+    );
+    return 1;
+  }
 
   if (!opts.apply) {
     console.log("\n(dry run — re-run with --apply to write this to Stream)");

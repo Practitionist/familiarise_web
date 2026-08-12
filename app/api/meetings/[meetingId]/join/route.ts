@@ -93,9 +93,19 @@ export async function POST(
       );
     }
 
-    // Hosts get the elevated role so they can end the call for everyone and
-    // control recording; everyone else joins as a plain member.
-    const role = access.role === "host" ? "host" : "user";
+    // ALWAYS `call_member`, for both sides. Verified against the live call type
+    // rather than assumed: the `default` grants map has exactly six role keys —
+    // guest, user, call_member, admin, global_read_only, global_admin. There is
+    // no `host` key. An earlier draft assigned `"host"` to consultants and
+    // `"user"` to everyone else, which would have locked out BOTH the moment
+    // ensure-call-type-grants strips join-call from `user`: `host` has no grants
+    // at all, and `user` would no longer have any either. That is a total video
+    // outage disguised as a security fix.
+    //
+    // Nothing is lost. `call_member` is a strict superset of `user` on the live
+    // type, and host-ness in the UI is derived from `custom.consultantUserId`
+    // via useCallCustomData(), never from the Stream role.
+    const role = "call_member";
 
     await withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
