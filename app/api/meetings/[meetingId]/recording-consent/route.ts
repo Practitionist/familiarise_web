@@ -201,6 +201,12 @@ export async function POST(
       );
     }
 
+    // Records the decision; does NOT act on a recording already in progress.
+    // `getRecordingBlock` gates the START of a recording, so a decline lands
+    // before one begins in the ordinary lobby flow — but this is an upsert, and
+    // a participant can switch to DECLINED after the host has started. See the
+    // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
+    // a product decision and is deliberately not done here.
     await recordRecordingConsent(
       meetingSession.id,
       session.user.id,

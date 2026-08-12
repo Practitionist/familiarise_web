@@ -133,6 +133,30 @@ export interface RecordingBlock {
  * participant refused would make refusing socially costly, which is the same as
  * not offering the choice.
  */
+/**
+ * SCOPE — enforcement is START-TIME ONLY, deliberately, and the contract should
+ * not be read as stronger than that.
+ *
+ * This is the pre-claim half of what ought to be two-part enforcement. It is
+ * consulted by `POST /api/stream/recordings/start` before the recording claim,
+ * so a session with any DECLINED decision can never BEGIN recording. It does
+ * nothing about a decision that changes after a recording is already live.
+ *
+ * That gap is reachable rather than theoretical. `recordRecordingConsent`
+ * upserts, so a participant who granted in the lobby can switch to DECLINED at
+ * any point, and a participant who joins late can decline while a recording the
+ * host started earlier keeps running. In the OPT_OUT regime that means a refusal
+ * has no effect for the remainder of the session, which is not what "opt out"
+ * promises.
+ *
+ * Closing it means the decline path reading `MeetingSession.isRecording` and, if
+ * a recording is live, stopping it through the same route the stop endpoint uses
+ * and clearing `isRecording` / `recordingStartedAt` / `recordingStartedBy`. That
+ * is a product decision, not a refactor: it hands any participant the ability to
+ * terminate a host's in-progress recording mid-call, and the failure mode of
+ * getting it wrong is a consultant losing a session they believed was recorded.
+ * It is tracked rather than guessed at.
+ */
 export async function getRecordingBlock(
   meetingSessionId: string,
   appointment: AppointmentWithOwnership | null | undefined,
