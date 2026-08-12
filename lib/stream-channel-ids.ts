@@ -9,6 +9,20 @@ export const DM_PREFIX = "dm-";
 export const WEBINAR_PREFIX = "webinar-";
 export const CLASS_PREFIX = "class-";
 export const COLLAB_PREFIX = "collab-";
+/**
+ * Legacy only. #1134 P0-7 — nothing creates these any more.
+ *
+ * They were minted at payment and on approval, but `syncUserEventChannels` built
+ * its expected set from webinars, classes and DMs alone while treating both
+ * prefixes as MANAGED — so every one of them was classified stale and the buyer
+ * was removed from it on their very next dashboard load. The concept never even
+ * cohered internally: `createConsultationChannel` minted a DM, not a
+ * `consultation-` channel. A pair now has exactly one thread per org context.
+ *
+ * The constants stay so `getChannelTypeFromId` can still resolve rows created
+ * before the change; they are deliberately NOT in MANAGED_CHANNEL_PREFIXES, so
+ * surviving channels are left alone rather than swept.
+ */
 export const CONSULTATION_PREFIX = "consultation-";
 export const SUBSCRIPTION_PREFIX = "subscription-";
 
@@ -17,8 +31,6 @@ export const MANAGED_CHANNEL_PREFIXES = [
   WEBINAR_PREFIX,
   CLASS_PREFIX,
   DM_PREFIX,
-  CONSULTATION_PREFIX,
-  SUBSCRIPTION_PREFIX,
 ] as const;
 
 /** Check if channel is a webinar or class event channel (group/team) */

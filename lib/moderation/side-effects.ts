@@ -248,14 +248,22 @@ async function runStreamRevocation(
 ): Promise<void> {
   const { actionType, report } = input;
   try {
-    // revokeUserToken expires every previously-issued Stream token; the
-    // token provider re-mints only for non-banned users, so suspension
-    // self-heals after banExpires without an un-revoke.
+    // revokeUserToken sets revoke_tokens_issued_before = now, which invalidates
+    // every token issued BEFORE that instant. A suspension therefore self-heals:
+    // once banExpires passes, the token provider mints a fresh token whose `iat`
+    // is later than the revoke timestamp, and Stream accepts it.
+    //
+    // That was only true after #1134 P0-4. Chat tokens used to be minted with no
+    // `iat` at all, and Stream treats an iat-less token as INVALID whenever
+    // revocation is active — so every future token was rejected too and a 7-day
+    // suspension was permanent. lib/stream-client.ts now always sets `iat`.
     await withStreamCircuitBreaker(async () => {
       const chat = getStreamChatClient();
       await chat.revokeUserToken(report.targetUserId, new Date());
       if (actionType === "USER_BANNED") {
         // Deactivated users cannot connect at all; history is preserved.
+        // Permanent by design — USER_BANNED sets banExpires null. Lifting one
+        // is an explicit act and must call restoreStreamAccess below.
         await chat.deactivateUser(report.targetUserId, {
           mark_messages_deleted: false,
         });
@@ -328,4 +336,62 @@ function triggerModerationNotification(
     case "NO_ACTION":
       return Promise.resolve(null);
   }
+}
+
+/**
+ * #1134 P0-4 — the inverse of runStreamRevocation, for when a ban is lifted.
+ *
+ * A USER_BANNED action calls `deactivateUser`, which is permanent: a deactivated
+ * user cannot connect to Stream at all, and nothing in this codebase ever undid
+ * it. That is correct while the ban stands, but if an operator lifts a permanent
+ * ban the account is left unable to chat with no visible cause.
+ *
+ * `revokeUserToken(id, null)` is belt-and-braces. Tokens now carry `iat`, so a
+ * freshly-minted one already post-dates the revoke timestamp and would be
+ * accepted regardless — clearing the flag just removes a trap for anyone who
+ * later reintroduces an iat-less token.
+ *
+ * Idempotent: reactivating a live user and clearing an unset revocation are both
+ * no-ops on Stream's side. Callers should invoke this from whatever unban path
+ * they build; there is no automated one today because USER_SUSPENDED expires
+ * lazily at sign-in without ever deactivating.
+ */
+/**
+ * Is this the benign "that user was never deactivated" response?
+ *
+ * Stream documents neither outcome for `reactivateUser` on an active user — not
+ * that it errors, not that it is a no-op — so this matches narrowly and lets
+ * everything else through. The asymmetry is deliberate: swallowing the
+ * already-active case costs nothing, because the account is already in the state
+ * we wanted. Swallowing a timeout, a 429 or a 5xx would report a successful
+ * restore for an account that is still deactivated and still unable to chat,
+ * which is precisely how P0-4 stayed invisible for months.
+ *
+ * Stream's `ErrorFromResponse` carries `status`; a network or timeout failure
+ * carries none, so it falls through to the rethrow.
+ */
+function isAlreadyActiveResponse(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status !== "number" || status < 400 || status >= 500) return false;
+  return /not deactivated|already active/i.test(errMsg(error));
+}
+
+export async function restoreStreamAccess(userId: string): Promise<void> {
+  await withStreamCircuitBreaker(async () => {
+    const chat = getStreamChatClient();
+    await chat.revokeUserToken(userId, null);
+    try {
+      await chat.reactivateUser(userId);
+    } catch (error) {
+      // A lifted SUSPENSION only ever revoked tokens, never deactivated, so
+      // "was not deactivated" is the normal shape there and is a SUCCESS — the
+      // un-revoke above is the part that mattered for that case. Reporting it
+      // would page on the healthy path, which is how a real signal gets tuned
+      // out. Every other failure means the account is still locked out of chat,
+      // so it is both reported and propagated.
+      if (isAlreadyActiveResponse(error)) return;
+      captureModerationError(error);
+      throw error;
+    }
+  });
 }

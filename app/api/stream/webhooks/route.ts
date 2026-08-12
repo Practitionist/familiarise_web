@@ -228,12 +228,32 @@ async function verifyStreamSignature(
   }
 }
 
+/**
+ * #1134 P0-5 — Stream signs webhooks with the **API secret**. There is no
+ * separate "signing secret" field in their dashboard, so requiring a distinct
+ * `STREAM_WEBHOOK_SECRET` meant this route 500'd on every delivery for as long
+ * as it existed: 0 rows in WebhookEvent for provider='stream', 0
+ * MeetingAttendance, and 1,663 MeetingSessions that never ended.
+ *
+ * The override is kept so the value can be rotated independently if Stream ever
+ * ships one, but the API secret is the correct default rather than a fatal gap.
+ */
+function getWebhookSecret(): string | undefined {
+  return process.env.STREAM_WEBHOOK_SECRET || process.env.STREAM_API_SECRET;
+}
+
 export async function POST(req: NextRequest) {
-  const secret = process.env.STREAM_WEBHOOK_SECRET;
+  const secret = getWebhookSecret();
 
   // Validate webhook secret is configured
   if (!secret) {
-    streamLogger.error("STREAM_WEBHOOK_SECRET not configured");
+    streamLogger.error(
+      "Neither STREAM_WEBHOOK_SECRET nor STREAM_API_SECRET is configured — Stream webhooks cannot be verified",
+    );
+    Sentry.captureException(
+      new Error("Stream webhook secret not configured"),
+      { tags: { subsystem: "stream" }, level: "fatal" },
+    );
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 },

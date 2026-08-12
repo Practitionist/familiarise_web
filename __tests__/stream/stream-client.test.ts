@@ -170,7 +170,15 @@ describe("Stream Client Module", () => {
       const token = generateChatToken(mockUserId);
 
       expect(token).toBe(mockToken);
-      expect(mockInstance.createToken).toHaveBeenCalledWith(mockUserId);
+      // #1134 P0-4 — `iat` is mandatory even with no expiry. Stream treats a
+      // token with no `iat` as INVALID once revoke_tokens_issued_before is set
+      // for that user, and that flag never clears itself — so an iat-less token
+      // turned a 7-day suspension into a permanent chat ban.
+      expect(mockInstance.createToken).toHaveBeenCalledWith(
+        mockUserId,
+        undefined,
+        expect.any(Number),
+      );
     });
 
     it("should generate token with custom expiration", async () => {
@@ -191,7 +199,17 @@ describe("Stream Client Module", () => {
       expect(mockInstance.createToken).toHaveBeenCalledWith(
         mockUserId,
         expect.any(Number),
+        expect.any(Number),
       );
+
+      // The `iat` must sit slightly in the past to absorb clock skew, and the
+      // `exp` must be ahead of it — a token whose iat is in the future is
+      // rejected outright.
+      const [, exp, iat] = mockInstance.createToken.mock.calls[0];
+      const now = Math.floor(Date.now() / 1000);
+      expect(iat).toBeLessThanOrEqual(now);
+      expect(iat).toBeGreaterThan(now - 300);
+      expect(exp).toBeGreaterThan(iat);
     });
   });
 

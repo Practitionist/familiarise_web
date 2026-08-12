@@ -70,7 +70,15 @@ export function getDmChannelId(
   userId2: string,
   organizationId?: string | null,
 ): string {
-  const [a, b] = [userId1, userId2].sort((x, y) => x.localeCompare(y));
+  // Code-unit ordering, NOT localeCompare. #1134 P0-3: localeCompare sorts by
+  // ICU collation — case-insensitive at the primary level and dependent on the
+  // runtime's ICU build and default locale — so the same pair yielded different
+  // ids in different environments. Better Auth ids are mixed-case and cuids are
+  // lowercase, so when 01162093 switched `.sort()` to `.sort(localeCompare)` it
+  // silently re-keyed most pairs and orphaned their history behind a new empty
+  // channel. Both variants were still live months later. Pinned by
+  // __tests__/security/dm-channel-org-precedence.test.ts.
+  const [a, b] = userId1 < userId2 ? [userId1, userId2] : [userId2, userId1];
 
   if (!organizationId) {
     return fitOrHash(`dm-${a}-${b}`, `${a}-${b}`);
@@ -86,4 +94,45 @@ export function getDmChannelId(
   // thousands of orgs; at 64 bits it is not a concern. The format still uses
   // only 45 of the 64 available characters.
   return `dmo-${digest(organizationId, 16)}-${digest(`${a}-${b}`, 24)}`;
+}
+
+/**
+ * The org context a DM channel was created under — the second half of the key
+ * `getDmChannelId` builds, and the half that has repeatedly gone wrong.
+ *
+ * Precedence is plan-before-appointment, because these are two distinct cases: a
+ * plan can be org-HOSTED while the booking is self-funded, and a personal plan
+ * can be booked through an org-funded membership. Reading only the appointment
+ * treated every org-hosted-plan booking as personal, so the reconcile set looked
+ * for `dm-<a>-<b>` while the real channel was `dmo-…`. At best the user was
+ * never re-joined; at worst the real channel was classified stale and they were
+ * removed from it.
+ *
+ * This lived privately in event-channel.action.ts while eight sites hand-rolled
+ * the same `??` chain (#1134 P0-8). The chain was identical everywhere; what
+ * diverged was the SELECTION. `createSubscriptionChannel` reads the first
+ * appointment carrying an org (`where: { organizationId: { not: null } }`),
+ * while every consumer read `appointments[0]` from an unordered result — so a
+ * subscription mixing org-funded and personal appointments got `dmo-…` from the
+ * creator and `dm-…` from approval and the reconciler. Hence `find`, not `[0]`:
+ * it converges every caller on the creator's semantics without those callers
+ * having to remember the filter. Queries that additionally `take: 1` still need
+ * the `where`, because the truncation happens server-side before `find` runs.
+ *
+ * A subscription carries many appointments but is funded once, so the first
+ * org-tagged one is representative.
+ */
+export function bookingOrgId(booking: {
+  consultationPlan?: { organizationId: string | null } | null;
+  subscriptionPlan?: { organizationId: string | null } | null;
+  appointment?: { organizationId: string | null } | null;
+  appointments?: { organizationId: string | null }[];
+}): string | null {
+  return (
+    booking.consultationPlan?.organizationId ??
+    booking.subscriptionPlan?.organizationId ??
+    booking.appointment?.organizationId ??
+    booking.appointments?.find((a) => a.organizationId)?.organizationId ??
+    null
+  );
 }

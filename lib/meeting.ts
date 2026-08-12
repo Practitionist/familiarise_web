@@ -225,9 +225,15 @@ export const getOrCreateAppointmentMeeting = async (
           starts_at: startsAt,
           custom,
           // Records who hosts, once, instead of every surface inferring it.
-          // Purely additive: the `default` call type does not restrict entry
-          // to members and no setting here enables that, so naming members
-          // cannot turn a working join into a refusal.
+          //
+          // #1134 P0-1 — this is no longer merely additive, and the comment that
+          // used to say so is now the opposite of true. Once
+          // scripts/stream/ensure-call-type-grants.ts strips `join-call` from
+          // `user` and `guest`, membership is the ONLY thing that admits anyone.
+          // A call minted without members is joinable solely via
+          // POST /api/meetings/[id]/join, which grants membership itself — so
+          // the fallback still works, but naming members here is what makes the
+          // common path cheap rather than what makes it possible.
           //
           // Deliberately NOT sent (deferred to #1070): `backstage`,
           // `join_ahead_time_seconds`, and `settings_override.limits

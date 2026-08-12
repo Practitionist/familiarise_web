@@ -50,7 +50,7 @@
 
 import prisma from "@/lib/prisma";
 import { getStreamChatClient } from "@/lib/stream-client";
-import { getDmChannelId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 
 interface BackfillResult {
   scanned: number;
@@ -124,13 +124,15 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        // Precedence must match the creators: an org-HOSTED plan wins over the
-        // appointment's own tag, or this targets a channel that was never made.
+        // Shared resolver: an org-HOSTED plan wins over the appointment's own
+        // tag, or this targets a channel that was never made.
         channelId: getDmChannelId(
           consultantId,
           consulteeId,
-          consultation?.consultationPlan?.organizationId ??
-            appointment.organizationId,
+          bookingOrgId({
+            consultationPlan: consultation?.consultationPlan,
+            appointment,
+          }),
         ),
       };
     }
@@ -154,12 +156,14 @@ async function resolveChannelTarget(appointment: {
       if (!consultantId || !consulteeId) return null;
       return {
         channelType: "messaging",
-        // Same precedence as createSubscriptionChannel.
+        // Same resolver as createSubscriptionChannel.
         channelId: getDmChannelId(
           consultantId,
           consulteeId,
-          subscription?.subscriptionPlan?.organizationId ??
-            appointment.organizationId,
+          bookingOrgId({
+            subscriptionPlan: subscription?.subscriptionPlan,
+            appointment,
+          }),
         ),
       };
     }

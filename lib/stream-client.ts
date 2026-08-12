@@ -99,13 +99,27 @@ export function generateChatToken(
 ): string {
   const client = getStreamChatClient();
 
+  // #1134 P0-4 — the third argument is `iat`, and omitting it made a ban
+  // permanent. Stream treats a token with no `iat` as INVALID once
+  // `revoke_tokens_issued_before` is set for that user, and that flag persists
+  // until explicitly cleared. So a 7-day suspension revoked every future token
+  // too, forever. Match generateVideoToken's 60s skew allowance.
+  const issued = Math.floor(Date.now() / 1000) - 60;
+
   if (expirationTime) {
     const exp = Math.floor(Date.now() / 1000) + expirationTime;
-    return client.createToken(userId, exp);
+    return client.createToken(userId, exp, issued);
   }
 
-  return client.createToken(userId);
+  return client.createToken(userId, undefined, issued);
 }
+
+// #1134 P0-1 — a `generateCallToken` wrapper (a token carrying a `call_cids`
+// claim) was written for the join gate and then removed unused: the video client
+// is an app-wide singleton holding one user token, and the JS SDK has no
+// per-call token on a shared client, so using one would mean a second client per
+// meeting. /api/meetings/[id]/join grants membership server-side instead. Add
+// call tokens back when guest/magic-link join lands, which genuinely needs them.
 
 /**
  * Generate a video token for a user
