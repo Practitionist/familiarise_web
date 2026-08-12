@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { useChatPane } from "./ChatPaneContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 
 // Custom channel item component for the sidebar - memoized for performance
@@ -75,8 +76,11 @@ const ChannelItem = memo(
     return (
       <button
         onClick={onClick}
-        className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
+        // Hover used to be the same blue-700 as the active row, so pointing at
+        // any conversation made it look selected.
+        className={`w-full text-left px-4 py-2 transition-colors ${isActive ? "bg-blue-800" : "hover:bg-blue-700"}`}
         title={displayName}
+        aria-current={isActive ? "true" : undefined}
       >
         <div className="flex items-center min-w-0">
           {/* Avatar / channel icon */}
@@ -85,9 +89,9 @@ const ChannelItem = memo(
           ) : (
             <div className="relative mr-2 flex-shrink-0">
               <Avatar className="w-6 h-6">
-                <AvatarImage
-                  src={displayImage || "/placeholder-user.jpg"}
-                />
+                {/* No placeholder fallback src — it always loaded, so the
+                    initials below were unreachable. */}
+                <AvatarImage src={displayImage} />
                 <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
               </Avatar>
               {isGroupDM && (
@@ -148,6 +152,7 @@ ChannelItem.displayName = "ChannelItem";
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
+  const { openConversation } = useChatPane();
   const userRole = client?.user?.role as string | undefined;
   // Route-pinned under /dashboard/organization/[orgId]/ — that mount scopes
   // itself to the org and this option is ignored there. Everywhere else this
@@ -199,7 +204,6 @@ export const ChatSidebar = () => {
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
     if (!client?.userID) {
-      console.log("Client or user ID not available yet.");
       // Don't set loading to false here, wait for client
       return;
     }
@@ -216,12 +220,6 @@ export const ChatSidebar = () => {
 
     setIsLoading(true);
     setError(null);
-    console.log(
-      "Fetching channels for user:",
-      client.userID,
-      "with role:",
-      client.user?.role,
-    );
 
     try {
       // #674 org-scope filter — Stream channels created by the
@@ -251,43 +249,11 @@ export const ChatSidebar = () => {
         presence: false, // Disable presence for initial load to improve performance
       };
 
-      console.log("Channel query filter:", filter);
-      console.log("Channel query options:", options);
-
       // Fetch channels in parallel
       const [teamResponse, dmResponse] = await Promise.all([
         client.queryChannels({ ...filter, type: "team" }, sort, options),
         client.queryChannels({ ...filter, type: "messaging" }, sort, options),
       ]);
-
-      console.log(
-        "Team channels found:",
-        teamResponse.length,
-        teamResponse.map((c) => ({
-          id: c.cid,
-          name: c.data?.name,
-          memberCount: Object.keys(c.state.members || {}).length,
-          members: Object.keys(c.state.members || {}),
-          userIsMember: client.userID
-            ? c.state.members?.[client.userID]
-              ? true
-              : false
-            : false,
-        })),
-      );
-      console.log(
-        "DM channels found:",
-        dmResponse.length,
-        dmResponse.map((c) => ({
-          id: c.cid,
-          memberCount: Object.keys(c.state.members || {}).length,
-          userIsMember: client.userID
-            ? c.state.members?.[client.userID]
-              ? true
-              : false
-            : false,
-        })),
-      );
 
       // Staleness guard: if a newer-keyed fetch (e.g. a scope switch) started
       // while this request was in flight, drop this late response instead of
@@ -332,12 +298,6 @@ export const ChatSidebar = () => {
       }
     } catch (err) {
       console.error("Error fetching channels:", err);
-      console.error("Error details:", {
-        error: err,
-        userId: client.userID,
-        userRole: client.user?.role,
-        timestamp: new Date().toISOString(),
-      });
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
@@ -394,8 +354,6 @@ export const ChatSidebar = () => {
           offset,
         };
 
-        console.log(`Loading more ${type} channels from offset ${offset}`);
-
         const response = await client.queryChannels(filter, sort, options);
 
         if (type === "team") {
@@ -405,8 +363,6 @@ export const ChatSidebar = () => {
           setDirectMessages((prev) => [...prev, ...response]);
           setHasMoreDMChannels(response.length === options.limit);
         }
-
-        console.log(`Loaded ${response.length} more ${type} channels`);
       } catch (error) {
         console.error(`Error loading more ${type} channels:`, error);
       } finally {
@@ -427,29 +383,15 @@ export const ChatSidebar = () => {
   // Handle individual channel deletion without full refresh
   const handleChannelDeleted = useCallback(
     (deletedChannelId: string) => {
-      console.log("Individual channel deleted:", deletedChannelId);
-
       // Remove from team channels
-      setTeamChannels((prevChannels) => {
-        const filtered = prevChannels.filter(
-          (ch) => ch.cid !== deletedChannelId,
-        );
-        if (filtered.length !== prevChannels.length) {
-          console.log("Removed team channel:", deletedChannelId);
-        }
-        return filtered;
-      });
+      setTeamChannels((prevChannels) =>
+        prevChannels.filter((ch) => ch.cid !== deletedChannelId),
+      );
 
       // Remove from direct messages
-      setDirectMessages((prevChannels) => {
-        const filtered = prevChannels.filter(
-          (ch) => ch.cid !== deletedChannelId,
-        );
-        if (filtered.length !== prevChannels.length) {
-          console.log("Removed DM channel:", deletedChannelId);
-        }
-        return filtered;
-      });
+      setDirectMessages((prevChannels) =>
+        prevChannels.filter((ch) => ch.cid !== deletedChannelId),
+      );
 
       // Clear active channel if it was the deleted one. Read the ref (not the
       // state) so this handler's identity stays stable across selections and the
@@ -465,7 +407,6 @@ export const ChatSidebar = () => {
   // Handle user being removed from channel
   const handleUserRemovedFromChannel = useCallback(
     (channelId: string) => {
-      console.log("User removed from channel:", channelId);
       handleChannelDeleted(channelId); // Same logic as deletion
     },
     [handleChannelDeleted],
@@ -473,8 +414,6 @@ export const ChatSidebar = () => {
 
   // Handle individual channel creation without full refresh
   const handleChannelCreated = useCallback(async () => {
-    console.log("Individual channel created - checking for new channels");
-
     if (!client?.userID) return;
 
     try {
@@ -505,10 +444,6 @@ export const ChatSidebar = () => {
           (ch) => !existingIds.has(ch.cid),
         );
         if (newChannels.length > 0) {
-          console.log(
-            "Adding new team channels:",
-            newChannels.map((ch) => ch.cid),
-          );
           return [...newChannels, ...prevChannels]; // New channels at top
         }
         return prevChannels;
@@ -520,10 +455,6 @@ export const ChatSidebar = () => {
           (ch) => !existingIds.has(ch.cid),
         );
         if (newChannels.length > 0) {
-          console.log(
-            "Adding new DM channels:",
-            newChannels.map((ch) => ch.cid),
-          );
           return [...newChannels, ...prevChannels]; // New channels at top
         }
         return prevChannels;
@@ -537,7 +468,6 @@ export const ChatSidebar = () => {
 
   // Manual refresh function
   const handleRefresh = () => {
-    console.log("Manual refresh triggered");
     fetchChannels();
   };
 
@@ -574,10 +504,11 @@ export const ChatSidebar = () => {
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (client) {
-      // Listener for events that might require a channel list update
+      // Listener for events that might require a channel list update.
+      // Nothing is logged here on purpose: this is bound to `*.**`, so the
+      // line that used to sit at the top printed EVERY Stream event payload —
+      // message bodies included — to the production browser console.
       const handleEvent = (event: Event) => {
-        console.log("Stream event received:", event.type, event);
-
         let channelUpdated = false;
 
         // Update channel lists based on events
@@ -586,7 +517,6 @@ export const ChatSidebar = () => {
           event.channel &&
           event.user?.id === client.userID
         ) {
-          console.log(`Added to new channel ${event.channel.cid}`);
           const newChannel = client.channel(
             event.channel.type,
             event.channel.id,
@@ -602,11 +532,9 @@ export const ChatSidebar = () => {
           event.channel &&
           event.user?.id === client.userID
         ) {
-          console.log(`Removed from channel ${event.channel.cid}`);
           handleUserRemovedFromChannel(event.channel.cid || event.channel.id);
           channelUpdated = true;
         } else if (event.type === "channel.deleted" && event.channel) {
-          console.log(`Channel deleted ${event.channel.cid}`);
           handleChannelDeleted(event.channel.cid || event.channel.id);
           channelUpdated = true;
         }
@@ -624,9 +552,6 @@ export const ChatSidebar = () => {
           const updatedChannel = client.channel(
             event.channel.type,
             event.channel.id,
-          );
-          console.log(
-            `Updating channel state for ${event.channel.cid} due to ${event.type}`,
           );
           if (event.channel.type === "team") {
             setTeamChannels((prev) =>
@@ -647,7 +572,6 @@ export const ChatSidebar = () => {
       client.on("*.**", handleEvent); // Listen to all events
 
       return () => {
-        console.log("Removing Stream event listener");
         client.off("*.**", handleEvent);
       };
     }
@@ -666,6 +590,9 @@ export const ChatSidebar = () => {
       // Set active channel immediately for instant feedback
       setActiveChannel(channel);
 
+      // Below `md` the conversation replaces this list (#1134). No-op above it.
+      openConversation();
+
       // Mark channel as read asynchronously (only if channel is properly initialized)
       if (channel.initialized && channel.cid) {
         channel.markRead().catch(() => {
@@ -673,7 +600,7 @@ export const ChatSidebar = () => {
         });
       }
     },
-    [setActiveChannel],
+    [setActiveChannel, openConversation],
   );
 
   // #248: keep activeChannelIdRef in lockstep with the state so the stable
@@ -692,7 +619,9 @@ export const ChatSidebar = () => {
   }, []);
 
   return (
-    <div className="w-80 bg-blue-600 text-white flex flex-col h-full">
+    // Width belongs to ChatLayout now: full-bleed below `md`, a 320px column
+    // above it. Hardcoding `w-80` here is what made mobile unusable (#1134).
+    <div className="flex h-full w-full flex-col bg-blue-600 text-white">
       {/* Header with Title and Refresh */}
       <div className="p-4 border-b border-blue-700 flex justify-between items-center">
         <h1 className="text-xl font-bold">Chats</h1>
@@ -782,8 +711,10 @@ export const ChatSidebar = () => {
           </div>
         )}
 
-        {/* Conversations Section (Consultations, Subscriptions) */}
-        <div className="mt-4 px-4 py-2 sticky top-0 bg-blue-600 z-10">
+        {/* Conversations Section (Consultations, Subscriptions).
+            Deliberately NOT sticky: two `sticky top-0` headers in one scroll
+            container pin to the same offset and overlap each other. */}
+        <div className="mt-4 bg-blue-600 px-4 py-2">
           <h2 className="font-semibold">Conversations</h2>
         </div>
         {isLoading ? (
@@ -795,9 +726,10 @@ export const ChatSidebar = () => {
             </div>
           </div>
         ) : error ? (
-          <div className="p-4 text-center text-red-300">
-            {" "}
-            {/* Error already shown above */}{" "}
+          // Was an empty div on the theory that the Channels error above says
+          // enough — so on failure this section just vanished.
+          <div className="p-4 text-center text-sm text-red-300">
+            <p>Conversations could not be loaded.</p>
           </div>
         ) : directMessages.length > 0 ? (
           <div>

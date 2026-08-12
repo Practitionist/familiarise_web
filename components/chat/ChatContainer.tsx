@@ -89,6 +89,12 @@ export const ChatContainer = () => {
       }
     : { Message: CustomMessage };
 
+  // Threads stay off: no `<Thread>` is mounted and `CustomMessage` replaces the
+  // SDK message UI, so neither the thread panel nor its reply-count button is
+  // ever rendered. Inline quote-reply covers the need. The CSS that used to
+  // `display: none` those elements is gone — it hid them while leaving them in
+  // the tab order. Turning `replies` off on the channel type in the Stream
+  // dashboard is the server-side half of this and is not code in this repo.
   return (
     <StreamChatErrorBoundary>
       <div className="flex-1 flex flex-col h-full">
