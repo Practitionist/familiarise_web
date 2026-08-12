@@ -63,13 +63,16 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # The runner holds deploy-scoped secrets, so a compromised transitive
+        # dependency's postinstall would run with them. Nothing here needs
+        # lifecycle scripts. Same posture as expire-reschedule-proposals.yml.
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install --ignore-scripts prisma generate
 
       - name: Run orphaned session reconciliation
-        run: npx --yes tsx@4.23.1 jobs/meetings/reconcile-orphaned-sessions.ts
+        run: npx --yes --ignore-scripts tsx@4.23.1 jobs/meetings/reconcile-orphaned-sessions.ts
 
       - name: Notify on failure
         if: failure()
