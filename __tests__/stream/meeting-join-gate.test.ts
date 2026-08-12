@@ -52,8 +52,16 @@ jest.mock("../../lib/meetings/access", () => ({
   },
 }));
 
+// jest.mock is hoisted above every const in this file, so the class has to be
+// built INSIDE the factory and read back off the mocked module below.
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
+  StreamUnavailableError: class StreamUnavailableError extends Error {
+    constructor() {
+      super("Stream is unavailable");
+      this.name = "StreamUnavailableError";
+    }
+  },
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
   getStreamVideoClient: jest.fn(() => ({
     video: {
@@ -85,6 +93,8 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import { POST } from "../../app/api/meetings/[meetingId]/join/route";
+// The mocked class — `instanceof` in the route must match what we throw here.
+import { StreamUnavailableError } from "../../lib/stream-client";
 
 const params = Promise.resolve({ meetingId: "slot-abc" });
 const req = {} as never;
@@ -186,6 +196,30 @@ describe("POST /api/meetings/[meetingId]/join", () => {
 
     expect(res.status).toBe(403);
     expect(sequence).toEqual([]);
+  });
+
+  it("reports a Stream outage as 503, not 500", async () => {
+    // A provider outage is not our fault and not the caller's. 500 puts it in
+    // the "we broke something" bucket and, worse, the client used to render any
+    // non-ok response as "You are not authorized to join this meeting" — telling
+    // a legitimate participant they had been refused when Stream was simply down.
+    mockGetOrCreate.mockRejectedValue(new StreamUnavailableError());
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/temporarily unavailable/i);
+    // No `reason` — that field marks an authorization verdict, and this is not one.
+    expect(body.reason).toBeUndefined();
+  });
+
+  it("still reports a genuine fault as 500", async () => {
+    mockGetOrCreate.mockRejectedValue(new Error("boom"));
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(500);
   });
 
   it("refuses an unauthenticated caller", async () => {

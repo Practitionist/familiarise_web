@@ -6,6 +6,7 @@ import { resolveMeetingAccess } from "@/lib/meetings/access";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -45,6 +46,9 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
+  // Hoisted for the catch: re-awaiting `params` there would rethrow if `params`
+  // itself was what failed.
+  let meetingIdForLog: string | undefined;
   try {
     const session = await auth.api.getSession({ headers: await headers() });
 
@@ -61,6 +65,7 @@ export async function POST(
     }
 
     const { meetingId } = await params;
+    meetingIdForLog = meetingId;
     if (!meetingId) {
       return NextResponse.json(
         { error: "Meeting ID is required" },
@@ -151,6 +156,20 @@ export async function POST(
       role: access.role,
     });
   } catch (error) {
+    // Stream being down is not our bug and not the caller's fault. 503 says
+    // "try again", which is true, and keeps a provider outage out of the 5xx
+    // bucket that means "we broke something". The circuit breaker throws this
+    // when it is open, so this is also the fast-fail path.
+    if (error instanceof StreamUnavailableError) {
+      streamLogger.warn("Meeting join unavailable — Stream circuit open", {
+        meetingId: meetingIdForLog,
+      });
+      return NextResponse.json(
+        { error: "Video is temporarily unavailable. Please try again." },
+        { status: 503 },
+      );
+    }
+
     reportSentryError(error, {
       subsystem: "stream",
       op: "meetings.join",

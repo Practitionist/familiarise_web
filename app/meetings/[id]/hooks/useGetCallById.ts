@@ -68,12 +68,30 @@ export const useGetCallById = (callId: string) => {
           const message =
             typeof body?.error === "string"
               ? body.error
-              : "You are not authorized to join this meeting";
-          setAccess({ hasAccess: false, role: null, message });
-          setCall(null);
-          // Not an `error`: a refusal is an expected outcome with its own UI,
-          // and rendering it as a crash lost the reason.
-          return;
+              : "Could not join this meeting.";
+
+          // Only an authorization verdict is an access denial. Everything else
+          // — Stream down (503), a server fault (500), a bad id (400) — used to
+          // land here too and render as "You are not authorized to join this
+          // meeting", telling a legitimate participant they had been refused
+          // when the truth was an outage. The join route stamps `reason` on a
+          // real refusal and on nothing else, so that is the discriminator.
+          const refused =
+            response.status === 401 ||
+            response.status === 403 ||
+            response.status === 404;
+
+          if (refused) {
+            setAccess({ hasAccess: false, role: null, message });
+            setCall(null);
+            // Not an `error`: a refusal is an expected outcome with its own UI,
+            // and rendering it as a crash lost the reason.
+            return;
+          }
+
+          // A failure, not a verdict. Surfacing it as an error gets the retry
+          // affordance instead of a dead-end "access denied" screen.
+          throw new Error(message);
         }
 
         const data = (await response.json()) as {
