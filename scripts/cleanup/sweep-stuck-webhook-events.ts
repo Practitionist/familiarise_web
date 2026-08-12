@@ -22,6 +22,19 @@ import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
+
+/**
+ * The terminal marker written when a deferred event ages past the give-up cap.
+ *
+ * Kept in sync with the `NOT: { error: { startsWith: "gave up:" } }` selector
+ * above — the prefix is load-bearing, the suffix is for whoever reads the row.
+ */
+function giveUpReason(provider: string): string {
+  return provider === "stream"
+    ? "gave up: Stream event never became processable"
+    : "gave up: payment never arrived";
+}
+
 export interface SweepResult {
   success: boolean;
   scanned: number;
@@ -31,7 +44,7 @@ export interface SweepResult {
   // a defer-sentinel handler, e.g. refund-before-capture): will retry next sweep.
   deferred: number;
   // #813 — deferred events that aged past giveUpAfterHours and were terminally
-  // capped (processed=true, error='gave up: payment never arrived').
+  // capped (processed=true, error='gave up: …' — see giveUpReason).
   gaveUp: number;
   errors: string[];
 }
@@ -203,12 +216,16 @@ async function sweepStuckWebhookEventsUnlocked(
               where: { eventId: ev.eventId },
               data: {
                 processed: true,
-                error: "gave up: payment never arrived",
+                // Provider-specific: this sweep now covers Stream as well as
+                // Razorpay, and stamping a Stream session event "payment never
+                // arrived" sends whoever reads the row looking for a payment
+                // that was never involved.
+                error: giveUpReason(ev.provider),
               },
             })
             .catch(() => {});
           gaveUp++;
-          errors.push(`${ev.eventId}: gave up: payment never arrived`);
+          errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
           console.warn(
             `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
           );

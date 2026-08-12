@@ -47,7 +47,10 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
-import { logWebhookEvent } from "../../lib/webhooks/event-log";
+import {
+  logWebhookEvent,
+  markWebhookEventProcessed,
+} from "../../lib/webhooks/event-log";
 
 const SIX_MINUTES_AGO = new Date(Date.now() - 6 * 60 * 1000);
 const ONE_MINUTE_AGO = new Date(Date.now() - 60 * 1000);
@@ -162,5 +165,35 @@ describe("the SUCCESS path stays idempotent", () => {
 
     expect(res.isNew).toBe(false);
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("closing a delivery out", () => {
+  const mockUpdate = jest.fn();
+  beforeEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const prisma = require("../../lib/prisma").default;
+    prisma.webhookEvent.update = mockUpdate;
+    mockUpdate.mockResolvedValue({});
+  });
+
+  it("records success as a null error", async () => {
+    await markWebhookEventProcessed("e1", undefined);
+    expect(mockUpdate.mock.calls[0][0].data.error).toBeNull();
+  });
+
+  it("does NOT let an empty error message read as success", async () => {
+    // `new Error("")` yields an empty processingError, and `"" || null`
+    // collapsed to null — the SUCCESS shape. The event failed and was marked
+    // permanently handled, and the sweeper skips processed=true/error=null, so
+    // nothing would ever revisit it.
+    await markWebhookEventProcessed("e1", "");
+    expect(mockUpdate.mock.calls[0][0].data.error).not.toBeNull();
+    expect(mockUpdate.mock.calls[0][0].data.error).toBe("unknown handler error");
+  });
+
+  it("keeps a real error message intact", async () => {
+    await markWebhookEventProcessed("e1", "handler exploded");
+    expect(mockUpdate.mock.calls[0][0].data.error).toBe("handler exploded");
   });
 });

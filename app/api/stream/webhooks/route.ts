@@ -1,11 +1,17 @@
 /**
  * Stream Webhook Handler — verify and acknowledge only.
  *
- * #1134 P1-2 — Stream retries a failed delivery at most five times inside a
- * FIFTEEN SECOND total budget (six seconds per attempt) and then drops the event
- * permanently. A DB health probe plus an idempotency read plus the handler plus
- * the completion mark does not fit in six seconds on a cold Netlify instance,
- * and this repo has already measured ~30s of event-loop stall on instance boot.
+ * #1134 P1-2 — Stream gives a failed delivery a SIX SECOND per-request timeout
+ * inside a FIFTEEN SECOND total budget, then drops the event permanently. The
+ * attempt count is deliberately not asserted here: Stream's own documentation
+ * contradicts itself, with the webhooks overview giving 3 attempts for
+ * 408/429/5xx and 2 for network errors while their retries announcement says "a
+ * maximum of five attempts, whichever comes first". Both agree on the budget,
+ * and the budget is what this design turns on.
+ *
+ * A DB health probe plus an idempotency read plus the handler plus the
+ * completion mark does not fit in six seconds on a cold Netlify instance, and
+ * this repo has already measured ~30s of event-loop stall on instance boot.
  *
  * So this route does the two things that must happen synchronously — verify the
  * signature, and reject a body that can never be valid — then acknowledges and
@@ -107,11 +113,11 @@ export async function POST(req: NextRequest) {
   }
 
   // #1134 P1-2 — the DB health probe used to run here, on the request path, to
-  // buy a 503 retry. That trade is bad on Stream's budget: it retries at most
-  // five times inside FIFTEEN SECONDS total, six seconds per attempt, then drops
-  // the event forever. A probe plus an idempotency read plus the handler plus
-  // the mark does not fit in six seconds on a cold Netlify instance — and this
-  // repo has already measured ~30s of event-loop stall on instance boot.
+  // buy a 503 retry. That trade is bad on Stream's budget: six seconds per
+  // request inside fifteen seconds total, then the event is dropped forever. A
+  // probe plus an idempotency read plus the handler plus the mark does not fit
+  // in six seconds on a cold Netlify instance — and this repo has already
+  // measured ~30s of event-loop stall on instance boot.
   //
   // So: acknowledge first, process in after(). Durability comes from the
   // WebhookEvent row and the stuck-event sweeper (which now covers Stream), not

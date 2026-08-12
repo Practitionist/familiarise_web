@@ -384,9 +384,13 @@ export async function processStreamEvent(
       await markWebhookEventProcessed(eventId, processingError);
     }
   } catch (error) {
-    // Reaching here means the bookkeeping itself failed, so there may be no row
-    // for the sweeper to find. This is the one shape that can still lose an
-    // event — page on it.
+    // Reaching here means the bookkeeping itself failed. That used to be the one
+    // shape that could still lose an event, because the row was written on this
+    // side of the acknowledgement — if this threw, nothing existed for the
+    // sweeper to find. The route now writes the receipt BEFORE acknowledging, so
+    // the row is already there and the sweeper will re-drive it. Still paged on:
+    // it means the completion bookkeeping is broken, which is worth knowing even
+    // though the event itself is no longer at risk.
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "stream" }, level: "error" },

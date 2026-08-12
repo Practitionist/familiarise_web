@@ -173,10 +173,19 @@ export async function logWebhookEvent(
 }
 
 /**
- * Mark webhook event as processed.
- * Only sets processed=true on success (no error).
- * On failure, records the error but leaves processed=true so the
- * retry logic in logWebhookEvent can detect it as a failed attempt.
+ * Close out a delivery: `processed=true` always, plus the error if there was one.
+ *
+ * The docstring used to say "only sets processed=true on success", which the
+ * implementation contradicts and has to — `processed=true` with a non-null
+ * `error` is the FAILED state that `logWebhookEvent` re-drives. Setting it only
+ * on success would leave failures stuck in IN-PROGRESS forever.
+ *
+ * `error ?? null`, not `error || null`. A handler that throws `new Error("")`
+ * yields an empty `processingError`, and `"" || null` collapses to null — which
+ * is the SUCCESS shape. The event failed and was permanently marked handled, and
+ * the sweeper's selector explicitly skips `processed=true, error=null`, so
+ * nothing would ever look at it again. An empty message becomes a readable
+ * placeholder rather than a silent success.
  */
 export async function markWebhookEventProcessed(
   eventId: string,
@@ -187,7 +196,7 @@ export async function markWebhookEventProcessed(
     data: {
       processed: true,
       processedAt: new Date(),
-      error: error || null,
+      error: error === undefined ? null : error || "unknown handler error",
     },
   });
 }
