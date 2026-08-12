@@ -18,7 +18,9 @@ import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  withStreamCircuitBreaker,
 } from "../../lib/stream-client";
+import { STREAM_CALL_TYPE, toCallId } from "../../lib/stream/call-cid";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
@@ -84,9 +86,19 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
 
       if (isStreamConfigured()) {
         try {
+          // #1134 P1-5 — this was the one site that did NOT normalise the cid.
+          // `streamCallId` stores the bare id, but three other sites defensively
+          // split on ":" while this passed the raw value straight through, so a
+          // prefixed value always 404'd here and the session was silently
+          // recorded UNVERIFIED. One helper now owns the split.
           const client = getStreamVideoClient();
-          const call = client.video.call("default", session.streamCallId);
-          const response = await call.get();
+          const call = client.video.call(
+            STREAM_CALL_TYPE,
+            toCallId(session.streamCallId),
+          );
+          // #473 — a Stream outage otherwise means 100 sequential 30s timeouts
+          // per run. Fast-fail into the slot-end fallback instead.
+          const response = await withStreamCircuitBreaker(() => call.get());
 
           if (response.call.ended_at) {
             // Stream confirms the call ended
