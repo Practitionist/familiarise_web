@@ -18,6 +18,12 @@
 
 const mockGetCallType = jest.fn();
 const mockUpdateCallType = jest.fn();
+const mockWriteFileSync = jest.fn();
+
+// The drift branch writes the recovery pre-image to disk. Unmocked, every run of
+// this suite would leave a real file in tmpdir — and the payload, which is the
+// only copy of a config Stream just discarded, would go unasserted.
+jest.mock("node:fs", () => ({ writeFileSync: (...a: unknown[]) => mockWriteFileSync(...a) }));
 
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
@@ -208,6 +214,37 @@ describe("ensure-call-type-grants", () => {
     const code = await ensureCallTypeGrants({ apply: true, restore: false });
 
     expect(code).toBe(1);
+
+    // The pre-image is the recovery path. It must carry the config as it was
+    // BEFORE the write, or the operator has nothing to restore from.
+    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+    const [path, payload] = mockWriteFileSync.mock.calls[0] as [string, string];
+    expect(path).toContain("stream-call-type-default-preimage.json");
+    expect(JSON.parse(payload)).toEqual({
+      callType: "default",
+      settings: LIVE_SETTINGS,
+      notification_settings: LIVE_NOTIFICATIONS,
+    });
+  });
+
+  it("does not report drift when only key ORDER differs", async () => {
+    // Two independent getCallType reads. Key order between them is not
+    // guaranteed, and a false positive here tells the operator Stream wiped a
+    // config it never touched.
+    mockGetCallType
+      .mockResolvedValueOnce(mockCallType(LIVE_GRANTS()))
+      .mockResolvedValueOnce({
+        name: "default",
+        grants: LIVE_GRANTS(),
+        // Same content, keys reversed.
+        settings: { recording: { quality: "720p", mode: "available" } },
+        notification_settings: LIVE_NOTIFICATIONS,
+      });
+
+    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+
+    expect(code).toBe(0);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
   it("restores join-call without handing back recording control", async () => {

@@ -384,12 +384,14 @@ export async function restoreStreamAccess(userId: string): Promise<void> {
       await chat.reactivateUser(userId);
     } catch (error) {
       // A lifted SUSPENSION only ever revoked tokens, never deactivated, so
-      // "was not deactivated" is the normal shape there and must not fail the
-      // restore — the un-revoke above is the part that mattered for that case.
-      // Every other failure means the account is still locked out of chat, so
-      // it has to propagate rather than resolve as a successful restore.
+      // "was not deactivated" is the normal shape there and is a SUCCESS — the
+      // un-revoke above is the part that mattered for that case. Reporting it
+      // would page on the healthy path, which is how a real signal gets tuned
+      // out. Every other failure means the account is still locked out of chat,
+      // so it is both reported and propagated.
+      if (isAlreadyActiveResponse(error)) return;
       captureModerationError(error);
-      if (!isAlreadyActiveResponse(error)) throw error;
+      throw error;
     }
   });
 }

@@ -868,6 +868,18 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               subscriptionPlan: {
                 include: { consultantProfile: true },
               },
+              // The org-tagged sibling, not the appointment being paid for.
+              // `appointmentForChannel` is one appointment of many under a
+              // subscription and may be the personal one, while
+              // createSubscriptionChannel resolves the first ORG-tagged row —
+              // so without this the creator mints `dmo-…` and this path looks
+              // for `dm-…`. Filtered in the query because `take: 1` truncates
+              // server-side, before bookingOrgId's `find` can choose.
+              appointments: {
+                where: { organizationId: { not: null } },
+                select: { organizationId: true },
+                take: 1,
+              },
             },
           },
           webinar: {
@@ -913,6 +925,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         const dmOrgId = bookingOrgId({
           consultationPlan: consultation?.consultationPlan,
           subscriptionPlan: subscription?.subscriptionPlan,
+          appointments: subscription?.appointments,
           appointment: appointmentForChannel,
         });
 

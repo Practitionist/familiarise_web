@@ -81,6 +81,30 @@ const END_CALL = "end-call";
 /** Everything an ordinary participant can hold, recording-wise. */
 const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
 
+/**
+ * Stable stringify for comparing two separate `getCallType` reads.
+ *
+ * Plain `JSON.stringify` preserves key insertion order, and the two snapshots
+ * come from two independent responses — so an identical configuration whose keys
+ * arrived in a different order would report as drift, write a pre-image, and
+ * tell the operator Stream discarded settings it had not touched. A false alarm
+ * on this particular check is expensive: it is the thing that says whether a
+ * production config wipe just happened.
+ *
+ * Code-unit ordering, never `localeCompare` — same rule as the channel ids.
+ */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, val) =>
+    val && typeof val === "object" && !Array.isArray(val)
+      ? Object.fromEntries(
+          Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : val,
+  );
+}
+
 interface Options {
   apply: boolean;
   restore: boolean;
@@ -208,14 +232,14 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   // corrupt the config on its own. Instead: snapshot, apply, re-read, compare.
   // A wipe becomes loud and recoverable rather than silent, and the first real
   // run settles the question for good.
-  const settingsBefore = JSON.stringify(existing.settings);
-  const notificationsBefore = JSON.stringify(existing.notification_settings);
+  const settingsBefore = canonical(existing.settings);
+  const notificationsBefore = canonical(existing.notification_settings);
 
   await client.video.updateCallType({ name: STREAM_CALL_TYPE, grants });
 
   const verify = await client.video.getCallType({ name: STREAM_CALL_TYPE });
-  const settingsAfter = JSON.stringify(verify.settings);
-  const notificationsAfter = JSON.stringify(verify.notification_settings);
+  const settingsAfter = canonical(verify.settings);
+  const notificationsAfter = canonical(verify.notification_settings);
 
   // The one invariant worth checking against real returned data rather than
   // against our own intent: the join route assigns `call_member`, so if Stream
