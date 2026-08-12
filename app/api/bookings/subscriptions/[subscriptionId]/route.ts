@@ -34,6 +34,7 @@ import {
 } from "@/lib/auth-helpers";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
+import { bookingOrgId } from "@/lib/stream-utils";
 
 /**
  * Type for subscription with all related details needed for payment processing.
@@ -819,11 +820,11 @@ export async function PATCH(
             // load), and the org is threaded so the DM key matches what
             // getDmPairsForUser expects.
             // A subscription carries many appointments but is funded once, so
-            // the first is representative — same rule as bookingOrgId().
-            const dmOrgId =
-              subData.subscriptionPlan?.organizationId ??
-              subData.appointments?.[0]?.organizationId ??
-              null;
+            // the first ORG-TAGGED one is representative. `[0]` was wrong: this
+            // query has no `where` and no `orderBy`, so a mixed subscription
+            // could hand back a personal row and resolve `null` where the
+            // creator resolved an org — two different channel ids for one pair.
+            const dmOrgId = bookingOrgId(subData);
             await createDirectMessageChannel(
               consultantUid,
               consulteeUid,

@@ -7,16 +7,31 @@ import prisma from "@/lib/prisma";
  * on a video call: the meeting page rendered "Access Denied" from a React
  * conditional while the Stream token authorized every call in the app, so
  * `client.call(type, id).join()` from devtools walked straight into a private
- * consultation. The join-token route now shares this function, and the token it
- * mints is scoped to the one call — so the answer here is what Stream enforces,
- * not just what the UI draws.
+ * consultation. `POST /api/meetings/[meetingId]/join` now shares this function
+ * and grants Stream call membership only when it says yes — so with `join-call`
+ * moved off the `user` role, this answer is what Stream itself enforces, not
+ * just what the UI draws. `validate-access` shares it too, as a read-only probe,
+ * so the gate and the affordance can never give different answers.
  */
 export type MeetingRole = "host" | "participant" | null;
+
+/**
+ * Why access was granted or refused, as a stable value.
+ *
+ * Callers need this to pick an HTTP status, and both of them used to do it by
+ * comparing `message` to the literal `"Meeting not found"`. Rewording a
+ * user-facing string would have silently turned a 404 into a 403 in two routes
+ * at once — the sort of coupling that survives review because nothing about the
+ * string says it is load-bearing.
+ */
+export type MeetingAccessReason = "granted" | "not_found" | "unauthorized";
 
 export interface MeetingAccess {
   hasAccess: boolean;
   role: MeetingRole;
   message: string;
+  /** Machine-readable verdict. Branch on this, never on `message`. */
+  reason: MeetingAccessReason;
   /** Present only when the meeting exists, regardless of the access verdict. */
   streamCallId?: string;
 }
@@ -63,7 +78,12 @@ export async function resolveMeetingAccess(
   });
 
   if (!meetingSession) {
-    return { hasAccess: false, role: null, message: "Meeting not found" };
+    return {
+      hasAccess: false,
+      role: null,
+      message: "Meeting not found",
+      reason: "not_found",
+    };
   }
 
   const streamCallId = meetingSession.streamCallId;
@@ -93,6 +113,7 @@ export async function resolveMeetingAccess(
       hasAccess: true,
       role: "host",
       message: "Access granted as meeting host",
+      reason: "granted",
       streamCallId,
     };
   }
@@ -116,6 +137,7 @@ export async function resolveMeetingAccess(
           hasAccess: true,
           role: "host",
           message: "Access granted as accepted collaborator",
+          reason: "granted",
           streamCallId,
         };
       }
@@ -126,16 +148,17 @@ export async function resolveMeetingAccess(
   // while the attendee is joined to a separate enrollment slot under the same
   // appointment, so a direct slot check misses them.
   if (!isParticipant && (appointment.class || appointment.webinar)) {
-    const appointmentWithSlots = await prisma.appointment.findUnique({
-      where: { id: appointment.id },
-      include: {
-        slotsOfAppointment: { include: { user: { select: { id: true } } } },
+    // An existence probe, not a fan-out: a 200-attendee webinar used to load
+    // every slot and every joined user id back into the process to answer a
+    // question about one person.
+    const enrolledSlot = await prisma.slotOfAppointment.findFirst({
+      where: {
+        appointmentId: appointment.id,
+        user: { some: { id: userId } },
       },
+      select: { id: true },
     });
-    isParticipant =
-      appointmentWithSlots?.slotsOfAppointment.some((slot) =>
-        slot.user.some((u) => u.id === userId),
-      ) ?? false;
+    isParticipant = enrolledSlot !== null;
   }
 
   if (isParticipant) {
@@ -143,6 +166,7 @@ export async function resolveMeetingAccess(
       hasAccess: true,
       role: "participant",
       message: "Access granted as participant",
+      reason: "granted",
       streamCallId,
     };
   }
@@ -151,6 +175,7 @@ export async function resolveMeetingAccess(
     hasAccess: false,
     role: null,
     message: "You are not authorized to join this meeting",
+    reason: "unauthorized",
     streamCallId,
   };
 }

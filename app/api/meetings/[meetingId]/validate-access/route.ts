@@ -48,8 +48,9 @@ export async function GET(
         hasAccess: access.hasAccess,
         role: access.role,
         message: access.message,
+        reason: access.reason,
       },
-      { status: access.message === "Meeting not found" ? 404 : 200 },
+      { status: access.reason === "not_found" ? 404 : 200 },
     );
   } catch (error) {
     reportSentryError(error, {

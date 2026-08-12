@@ -356,6 +356,26 @@ function triggerModerationNotification(
  * they build; there is no automated one today because USER_SUSPENDED expires
  * lazily at sign-in without ever deactivating.
  */
+/**
+ * Is this the benign "that user was never deactivated" response?
+ *
+ * Stream documents neither outcome for `reactivateUser` on an active user — not
+ * that it errors, not that it is a no-op — so this matches narrowly and lets
+ * everything else through. The asymmetry is deliberate: swallowing the
+ * already-active case costs nothing, because the account is already in the state
+ * we wanted. Swallowing a timeout, a 429 or a 5xx would report a successful
+ * restore for an account that is still deactivated and still unable to chat,
+ * which is precisely how P0-4 stayed invisible for months.
+ *
+ * Stream's `ErrorFromResponse` carries `status`; a network or timeout failure
+ * carries none, so it falls through to the rethrow.
+ */
+function isAlreadyActiveResponse(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status !== "number" || status < 400 || status >= 500) return false;
+  return /not deactivated|already active/i.test(errMsg(error));
+}
+
 export async function restoreStreamAccess(userId: string): Promise<void> {
   await withStreamCircuitBreaker(async () => {
     const chat = getStreamChatClient();
@@ -363,11 +383,13 @@ export async function restoreStreamAccess(userId: string): Promise<void> {
     try {
       await chat.reactivateUser(userId);
     } catch (error) {
-      // Reactivating a user who was never deactivated is an error, not a no-op.
-      // That is the normal shape for a lifted SUSPENSION (which only revokes and
-      // never deactivates), so it must not fail the restore — the un-revoke
-      // above is the part that mattered for that case.
+      // A lifted SUSPENSION only ever revoked tokens, never deactivated, so
+      // "was not deactivated" is the normal shape there and must not fail the
+      // restore — the un-revoke above is the part that mattered for that case.
+      // Every other failure means the account is still locked out of chat, so
+      // it has to propagate rather than resolve as a successful restore.
       captureModerationError(error);
+      if (!isAlreadyActiveResponse(error)) throw error;
     }
   });
 }

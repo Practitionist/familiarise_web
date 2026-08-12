@@ -85,11 +85,11 @@ export async function POST(
       streamLogger.warn("Meeting join refused", {
         userId: session.user.id,
         meetingId,
-        reason: access.message,
+        reason: access.reason,
       });
       return NextResponse.json(
-        { error: access.message },
-        { status: access.message === "Meeting not found" ? 404 : 403 },
+        { error: access.message, reason: access.reason },
+        { status: access.reason === "not_found" ? 404 : 403 },
       );
     }
 
@@ -112,6 +112,26 @@ export async function POST(
         STREAM_CALL_TYPE,
         meetingId,
       );
+
+      // A MeetingSession row does not guarantee the Stream call exists, and
+      // updateCallMembers on a missing call throws — which this route reports as
+      // a 500 after resolveMeetingAccess has already told the user they are
+      // allowed in. Three ways a row outlives (or precedes) its call: the seeds
+      // mint `MeetingSession` rows with faker ids and no Stream object at all;
+      // `createDbMeetingSession` is a "use server" action whose id validator is
+      // `z.string().min(1)`, so an entitled caller can write any string; and
+      // maintenance drain ends the call while keeping the row. lib/meeting.ts
+      // skips its own getOrCreate whenever a row already exists, and P0-2 removed
+      // the client-side getOrCreate that used to paper over all three.
+      //
+      // Creating here is NOT a P0-2 regression. P0-2 was the client minting a
+      // billable call from an effect that raced the access check, so an
+      // unauthorized visitor became `created_by` of a call that should not exist.
+      // This runs only after resolveMeetingAccess has confirmed the caller is on
+      // this appointment — authorization first, creation second, which is the
+      // ordering P0-2 was about.
+      await call.getOrCreate();
+
       // Idempotent: re-adding an existing member updates their role rather than
       // erroring, so a rejoin is a no-op.
       await call.updateCallMembers({

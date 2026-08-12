@@ -17,7 +17,7 @@ Full audit and remediation plan: **issue #1134**.
 This subsystem has repeatedly looked correct in code and been broken in production. Static
 reading is not enough. Before claiming anything works:
 
-```
+```text
 mcp__streamio__video_query_calls    {"ended_at": {"$exists": false}}
 mcp__streamio__chat_query_channels  {"type": {"$eq": "messaging"}}
 mcp__supabase__execute_sql          -- count MeetingSession/MeetingAttendance/WebhookEvent

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { getDmChannelId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   AppointmentSearchResultSchema,
   type AppointmentSearchResult,
@@ -129,17 +129,13 @@ export async function GET(request: NextRequest) {
           consultation.consultationPlan.consultantProfile.user.image ||
           undefined,
         // Funding context is part of the DM key, so a hit must resolve to the
-        // SAME channel the creator made. Precedence matches
-        // createConsultationChannel exactly — plan org first, then the
-        // appointment's. Reading only the appointment sent org-hosted-plan
-        // bookings to a personal channel that was never created, so clicking
-        // the result opened an empty conversation.
+        // SAME channel the creator made. Shared resolver, because reading only
+        // the appointment sent org-hosted-plan bookings to a personal channel
+        // that was never created — clicking the result opened an empty thread.
         channelId: getDmChannelId(
           consultation.consultationPlan.consultantProfile.user.id,
           consultation.requestedBy.user.id,
-          consultation.consultationPlan.organizationId ??
-            consultation.appointment?.organizationId ??
-            null,
+          bookingOrgId(consultation),
         ),
       });
     }
@@ -227,9 +223,15 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        // Needed to resolve which DM thread this hit belongs to. A subscription
-        // is funded once, so every appointment under it shares the org.
-        appointments: { select: { organizationId: true }, take: 1 },
+        // Needed to resolve which DM thread this hit belongs to. Filtered to
+        // org-tagged rows because `take: 1` truncates server-side, before
+        // bookingOrgId can pick — an unfiltered `take: 1` on a mixed
+        // subscription can hand back a personal row and resolve `null`.
+        appointments: {
+          where: { organizationId: { not: null } },
+          select: { organizationId: true },
+          take: 1,
+        },
       },
       take: 10,
     });
@@ -245,13 +247,11 @@ export async function GET(request: NextRequest) {
         consultantImage:
           subscription.subscriptionPlan.consultantProfile.user.image ||
           undefined,
-        // Same precedence as createSubscriptionChannel.
+        // Same resolver as createSubscriptionChannel.
         channelId: getDmChannelId(
           subscription.subscriptionPlan.consultantProfile.user.id,
           subscription.requestedBy.user.id,
-          subscription.subscriptionPlan.organizationId ??
-            subscription.appointments?.[0]?.organizationId ??
-            null,
+          bookingOrgId(subscription),
         ),
       });
     }

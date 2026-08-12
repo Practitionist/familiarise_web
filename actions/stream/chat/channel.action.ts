@@ -6,7 +6,7 @@ import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
-import { getDmChannelId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -399,12 +399,9 @@ export async function createConsultationChannel(
   // Ensure both users exist in Stream before channel creation
   await upsertUsersToStream([consultantId, consulteeId]);
 
+  // `null` from the caller force-omits the org; `undefined` means "resolve it".
   const resolvedOrgId =
-    organizationId === undefined
-      ? (consultation.consultationPlan.organizationId ??
-        consultation.appointment?.organizationId ??
-        null)
-      : organizationId;
+    organizationId === undefined ? bookingOrgId(consultation) : organizationId;
 
   // One DM per pair PER CONTEXT. Still not per event — multiple
   // consultations/subscriptions between the same pair in the same context share
@@ -486,12 +483,9 @@ export async function createSubscriptionChannel(
   // Ensure both users exist in Stream before channel creation
   await upsertUsersToStream([consultantId, consulteeId]);
 
+  // `null` from the caller force-omits the org; `undefined` means "resolve it".
   const resolvedOrgId =
-    organizationId === undefined
-      ? (subscription.subscriptionPlan.organizationId ??
-        subscription.appointments[0]?.organizationId ??
-        null)
-      : organizationId;
+    organizationId === undefined ? bookingOrgId(subscription) : organizationId;
 
   // One DM per pair PER CONTEXT. Still not per event — multiple
   // consultations/subscriptions between the same pair in the same context share

@@ -44,6 +44,7 @@ import {
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
+import { bookingOrgId } from "@/lib/stream-utils";
 import { getAppUrl } from "@/lib/url";
 
 // ============================================================================
@@ -907,13 +908,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // precedence, so a DM minted without it landed on the personal `dm-`
         // key, failed to match the expected `dmo-` one, and — because `dm-` is
         // a managed prefix — was then treated as stale and the user removed
-        // from the only conversation they had. Precedence must stay identical
-        // to bookingOrgId() in event-channel.action.ts.
-        const dmOrgId =
-          consultation?.consultationPlan?.organizationId ??
-          subscription?.subscriptionPlan?.organizationId ??
-          appointmentForChannel.organizationId ??
-          null;
+        // from the only conversation they had. Shared with every other site
+        // that derives this key, so the two can no longer drift.
+        const dmOrgId = bookingOrgId({
+          consultationPlan: consultation?.consultationPlan,
+          subscriptionPlan: subscription?.subscriptionPlan,
+          appointment: appointmentForChannel,
+        });
 
         // #1134 P0-7 — `consultation-<id>` / `subscription-<id>` channels are
         // NOT created any more. syncUserEventChannels only ever expected
