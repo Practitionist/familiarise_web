@@ -119,7 +119,7 @@ export const CustomMessage = () => {
       <div
         className={`flex items-end ${isMyMessage ? "justify-end" : "justify-start"} mb-4`}
       >
-        <div className="italic text-gray-400 text-sm px-3 py-2">
+        <div className="italic text-muted-foreground text-sm px-3 py-2">
           This message was deleted
         </div>
       </div>
@@ -232,7 +232,7 @@ export const CustomMessage = () => {
   // permanent for touch. Both are Radix now, which brings Escape, a focus trap
   // and focus return that the hand-rolled mousedown-only dropdowns never had.
   const actionToolbar = (
-    <div className="flex items-center gap-0.5 rounded-lg border bg-white shadow-lg">
+    <div className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg">
       {/* React with Emoji */}
       <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
         <PopoverTrigger asChild>
@@ -240,9 +240,9 @@ export const CustomMessage = () => {
             type="button"
             aria-label="React to message"
             title="React"
-            className="rounded-l-lg p-1.5 transition-colors hover:bg-gray-100"
+            className="rounded-l-lg p-1.5 transition-colors hover:bg-muted"
           >
-            <SmileIcon className="h-4 w-4 text-gray-600" />
+            <SmileIcon className="h-4 w-4 text-muted-foreground" />
           </button>
         </PopoverTrigger>
         <PopoverContent
@@ -260,7 +260,7 @@ export const CustomMessage = () => {
                   handleReactionClick(reactionType);
                   setShowEmojiPicker(false);
                 }}
-                className="rounded p-1 text-xl transition-colors hover:bg-gray-100"
+                className="rounded p-1 text-xl transition-colors hover:bg-muted"
               >
                 {reactionTypeToEmoji[reactionType]}
               </button>
@@ -275,9 +275,9 @@ export const CustomMessage = () => {
         onClick={handleReplyClick}
         aria-label="Reply to message"
         title="Reply"
-        className="p-1.5 transition-colors hover:bg-gray-100"
+        className="p-1.5 transition-colors hover:bg-muted"
       >
-        <ReplyIcon className="h-4 w-4 text-gray-600" />
+        <ReplyIcon className="h-4 w-4 text-muted-foreground" />
       </button>
 
       {/* More Options (Edit, Delete for own; Report for others) */}
@@ -287,9 +287,9 @@ export const CustomMessage = () => {
             type="button"
             aria-label="More message options"
             title="More options"
-            className="rounded-r-lg p-1.5 transition-colors hover:bg-gray-100"
+            className="rounded-r-lg p-1.5 transition-colors hover:bg-muted"
           >
-            <MoreHorizontalIcon className="h-4 w-4 text-gray-600" />
+            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[140px]">
@@ -301,7 +301,7 @@ export const CustomMessage = () => {
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={handleDeleteClick}
-                className="text-red-600 focus:text-red-600"
+                className="text-destructive focus:text-destructive"
               >
                 <Trash2Icon className="mr-2 h-4 w-4" />
                 Delete
@@ -310,7 +310,7 @@ export const CustomMessage = () => {
           ) : (
             <DropdownMenuItem
               onSelect={() => handleReportMessage()}
-              className="text-red-600 focus:text-red-600"
+              className="text-destructive focus:text-destructive"
             >
               <FlagIcon className="mr-2 h-4 w-4" />
               Report Message
@@ -368,26 +368,26 @@ export const CustomMessage = () => {
 
         {/* Message Bubble */}
         <div
-          className={`${isMyMessage ? "bg-blue-500 text-white" : "bg-gray-100 text-gray-800"} rounded-lg px-3 py-2`}
+          className={`${isMyMessage ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"} rounded-lg px-3 py-2`}
         >
           {/* Quoted/Replied Message (WhatsApp/Telegram style) */}
           {hasQuotedMessage && message.quoted_message && (
             <div
               className={`mb-2 p-2 rounded-md border-l-4 ${
                 isMyMessage
-                  ? "bg-blue-600/40 border-blue-300"
-                  : "bg-gray-300/60 border-gray-500"
+                  ? "bg-primary-foreground/15 border-primary-foreground/50"
+                  : "bg-background/70 border-border"
               }`}
             >
               <div
-                className={`text-xs font-semibold mb-0.5 ${isMyMessage ? "text-blue-100" : "text-gray-700"}`}
+                className={`text-xs font-semibold mb-0.5 ${isMyMessage ? "text-primary-foreground/90" : "text-foreground"}`}
               >
                 {message.quoted_message.user?.name ||
                   message.quoted_message.user?.id ||
                   "Unknown"}
               </div>
               <div
-                className={`text-xs truncate max-w-[250px] ${isMyMessage ? "text-blue-100/80" : "text-gray-600"}`}
+                className={`text-xs truncate max-w-[250px] ${isMyMessage ? "text-primary-foreground/70" : "text-muted-foreground"}`}
               >
                 {message.quoted_message.text || "[Attachment]"}
               </div>
@@ -421,7 +421,7 @@ export const CustomMessage = () => {
               <Input
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
-                className={`w-full min-w-[200px] ${isMyMessage ? "bg-blue-400 text-white placeholder-blue-200 border-blue-300" : "bg-white text-gray-800"}`}
+                className={`w-full min-w-[200px] ${isMyMessage ? "bg-primary-foreground/10 text-primary-foreground placeholder:text-primary-foreground/60 border-primary-foreground/30" : "bg-background text-foreground"}`}
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -438,7 +438,7 @@ export const CustomMessage = () => {
                   size="sm"
                   variant="ghost"
                   onClick={handleEditCancel}
-                  className={`h-6 px-2 ${isMyMessage ? "text-blue-100 hover:bg-blue-400" : "text-gray-600 hover:bg-gray-200"}`}
+                  className={`h-6 px-2 ${isMyMessage ? "text-primary-foreground hover:bg-primary-foreground/20" : "text-muted-foreground hover:bg-background"}`}
                 >
                   <XIcon className="w-3 h-3 mr-1" />
                   Cancel
@@ -446,7 +446,7 @@ export const CustomMessage = () => {
                 <Button
                   size="sm"
                   onClick={handleEditSave}
-                  className={`h-6 px-2 ${isMyMessage ? "bg-blue-300 text-blue-900 hover:bg-blue-200" : "bg-blue-500 text-white hover:bg-blue-600"}`}
+                  className={`h-6 px-2 ${isMyMessage ? "bg-primary-foreground text-primary hover:bg-primary-foreground/90" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
                 >
                   <CheckIcon className="w-3 h-3 mr-1" />
                   Save
@@ -472,7 +472,7 @@ export const CustomMessage = () => {
                         key={reactionType}
                         type="button"
                         className={`text-sm px-2 py-0.5 rounded-full hover:opacity-80 ${
-                          isMyMessage ? "bg-blue-400/50" : "bg-gray-200"
+                          isMyMessage ? "bg-primary-foreground/20" : "bg-background"
                         }`}
                         onClick={() => handleReactionClick(reactionType)}
                         aria-label={`React with ${reactionType} (${count} so far)`}
@@ -490,7 +490,7 @@ export const CustomMessage = () => {
               a touch device never showed a time at all, unlike the WhatsApp
               model this UI copies. */}
           <div
-            className={`text-xs mt-1 text-right ${isMyMessage ? "text-blue-100 opacity-80" : "text-gray-500"}`}
+            className={`text-xs mt-1 text-right ${isMyMessage ? "text-primary-foreground/80" : "text-muted-foreground"}`}
           >
             {message.created_at && format(new Date(message.created_at), "p")}
           </div>
@@ -515,7 +515,7 @@ export const CustomMessage = () => {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
-              className="bg-red-600 hover:bg-red-700 text-white"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Yes, Delete
             </AlertDialogAction>

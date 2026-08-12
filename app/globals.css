@@ -1245,37 +1245,91 @@
   animation: count-up 1s ease-out forwards;
 }
 
-/* ======== Stream Chat Overrides ======== */
-/* Threads are off — see ChatContainer. They used to be hidden with
-   `display: none`, which left the reply-count button rendered and focusable,
-   so a keyboard user tabbed into an invisible control. */
+/* ======== Stream Chat theme ======== */
+/*
+ * The composer, attachment cards, file previews, image gallery, date
+ * separators, scroll-to-bottom pill and typing indicator are all SDK-rendered.
+ * With no `--str-chat__*` variables set they drew Stream's stock blue-on-grey
+ * inside this app's chrome, and that seam was the most obvious "dropped in"
+ * tell in the product.
+ *
+ * Mapping the SDK's theme-v2 palette onto the app's own tokens fixes all of
+ * them at once, and — because those tokens already flip under `.dark` — chat
+ * follows the app for free when a theme provider lands.
+ *
+ * The SDK puts `str-chat` and the theme class on the SAME element, so pairing
+ * them here outranks the SDK's own single-class `.str-chat__theme-light` block
+ * and wins regardless of which stylesheet the bundler emits last (the SDK CSS
+ * ships in a lazy chunk, this file does not). `StreamChatScope` is what puts
+ * the theme class there in the first place — without it `<Chat>` falls back to
+ * a legacy theme string and none of this applies.
+ */
+.str-chat.str-chat__theme-light,
+.str-chat.str-chat__theme-dark {
+  --str-chat__font-family: var(--font-sora), system-ui, sans-serif;
+  --str-chat__border-radius-circle: 999px;
 
-/* Style the quoted reply preview above input (WhatsApp/Telegram style) */
-.str-chat__quoted-message-preview {
-  background: rgba(0, 0, 0, 0.06) !important;
-  border-radius: 8px !important;
-  margin: 8px 8px 0 8px !important;
-  padding: 8px 12px !important;
-  border-left: 4px solid #3b82f6 !important;
-  width: auto !important;
-  max-width: 300px !important;
-  margin-right: auto !important;
+  /* Palette */
+  --str-chat__primary-color: hsl(var(--primary));
+  --str-chat__active-primary-color: hsl(var(--primary));
+  --str-chat__primary-color-low-emphasis: hsl(var(--muted));
+  --str-chat__on-primary-color: hsl(var(--primary-foreground));
+  --str-chat__primary-overlay-color: hsl(var(--primary) / 0.6);
+  --str-chat__primary-surface-color: hsl(var(--accent));
+  --str-chat__primary-surface-color-low-emphasis: hsl(var(--muted));
+
+  --str-chat__background-color: hsl(var(--card));
+  --str-chat__secondary-background-color: hsl(var(--card));
+  --str-chat__surface-color: hsl(var(--border));
+  --str-chat__secondary-surface-color: hsl(var(--muted));
+  --str-chat__tertiary-surface-color: hsl(var(--secondary));
+
+  --str-chat__text-color: hsl(var(--foreground));
+  --str-chat__text-low-emphasis-color: hsl(var(--muted-foreground));
+  --str-chat__disabled-color: hsl(var(--muted-foreground));
+  --str-chat__on-disabled-color: hsl(var(--muted));
+
+  --str-chat__danger-color: hsl(var(--destructive));
+  --str-chat__info-color: hsl(var(--info));
+  --str-chat__message-highlight-color: hsl(var(--warning) / 0.2);
+  --str-chat__unread-badge-color: hsl(var(--destructive));
+  --str-chat__on-unread-badge-color: hsl(var(--destructive-foreground));
+
+  --str-chat__overlay-color: hsl(var(--background) / 0.9);
+  --str-chat__secondary-overlay-color: hsl(var(--foreground) / 0.2);
+  --str-chat__secondary-overlay-text-color: hsl(var(--background));
+  --str-chat__opaque-surface-background-color: hsl(var(--foreground) / 0.85);
+  --str-chat__opaque-surface-text-color: hsl(var(--background));
+  --str-chat__box-shadow-color: hsl(var(--foreground) / 0.12);
 }
 
-.str-chat__quoted-message-preview-content {
-  font-size: 13px !important;
-  color: #4b5563 !important;
-  text-align: left !important;
-  white-space: normal !important;
-  word-wrap: break-word !important;
+/* The quoted reply preview above the input (WhatsApp/Telegram style). Raw hex
+   and eleven `!important`s before; nesting under `.str-chat` outranks every
+   SDK rule that touches these properties without any of them. */
+.str-chat .str-chat__quoted-message-preview {
+  background: hsl(var(--muted));
+  border-radius: var(--radius);
+  margin: 8px auto 0 8px;
+  padding: 8px 12px;
+  border-left: 4px solid hsl(var(--primary));
+  width: auto;
+  max-width: 300px;
 }
 
-.str-chat__quoted-message-preview-header {
-  font-weight: 600 !important;
-  font-size: 12px !important;
-  color: #6b7280 !important;
-  margin-bottom: 2px !important;
-  text-align: left !important;
+.str-chat .str-chat__quoted-message-preview-content {
+  font-size: 13px;
+  color: hsl(var(--foreground));
+  text-align: left;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.str-chat .str-chat__quoted-message-preview-header {
+  font-weight: 600;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 2px;
+  text-align: left;
 }
 
 /* ======== Novu Notification Inbox CSS Overrides ======== */

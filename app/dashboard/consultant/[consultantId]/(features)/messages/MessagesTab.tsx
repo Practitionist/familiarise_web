@@ -1,21 +1,19 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
+import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
 import { useStreamConnection } from "@/providers/StreamProvider";
 import { StreamChatScope } from "@/components/stream/StreamChatScope";
-
-interface MessagesTabProps {
-  userId: string;
-  userRole: string | null;
-}
 
 /**
  * Full-bleed chat surface: cancels PageScaffold padding and fills the
  * content column under the context bar (and above the mobile tab bar).
+ *
+ * Takes no props: the page above used to run a whole consultant-details query
+ * to feed a `userId`/`userRole` pair this component immediately discarded.
  */
-export function MessagesTab({ userId: _userId }: Readonly<MessagesTabProps>) {
+export function MessagesTab() {
   // Connection state from the lazy Stream provider: render the chat UI only
   // once the chat client is live; surface failures instead of a blank box.
   const { chatConnected, error, retryConnection } = useStreamConnection();
@@ -29,10 +27,10 @@ export function MessagesTab({ userId: _userId }: Readonly<MessagesTabProps>) {
           <ChatLayout />
         </StreamChatScope>
       ) : (
-        <div className="flex h-full items-center justify-center text-muted-foreground">
-          <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-          Connecting to chat…
-        </div>
+        // The chat skeleton, so connecting looks like the surface that is
+        // about to arrive rather than a bare centred spinner. Three of these
+        // spinners existed, all slightly different.
+        <ChatSkeletonPanes />
       )}
     </div>
   );
