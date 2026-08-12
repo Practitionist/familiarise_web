@@ -38,9 +38,25 @@ import { HANDLED_EVENT_TYPES } from "../../lib/stream/webhook-events";
  */
 const ADDITIONAL_EVENT_TYPES = ["call.session_started"] as const;
 
+/**
+ * Code-unit ordering, stated explicitly.
+ *
+ * A bare `.sort()` already does exactly this for strings, but SonarCloud's
+ * S2871 flags the missing comparator — and the remedy its message suggests is
+ * `localeCompare`, which would be a real bug here rather than a style change.
+ * These are event-type strings like `call.session_started` and
+ * `message.flagged`: ICU collation treats `.` and `_` as ignorable punctuation
+ * at the primary level, code units do not, so the two orderings genuinely
+ * disagree. This sorted list is compared against the live hook's `event_types`
+ * to decide whether an update is needed, so a locale-dependent order would make
+ * that decision environment-dependent — the same failure mode as the DM channel
+ * ids in #1134 P0-3. Do not "fix" this to localeCompare.
+ */
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 const DESIRED_EVENT_TYPES = Array.from(
   new Set<string>([...HANDLED_EVENT_TYPES, ...ADDITIONAL_EVENT_TYPES]),
-).sort();
+).sort(byCodeUnit);
 
 interface EventHook {
   id: string;
@@ -101,7 +117,7 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
 
     // Union, never replace: another integration may legitimately rely on event
     // types this codebase does not handle.
-    const next = Array.from(new Set([...current, ...missing])).sort();
+    const next = Array.from(new Set([...current, ...missing])).sort(byCodeUnit);
     await client.updateAppSettings({
       event_hooks: [{ ...hook, event_types: next }],
     } as never);
