@@ -24,6 +24,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import {
   HANDLED_EVENT_TYPES,
   processStreamEvent,
+  recordStreamEventReceipt,
   streamBaseEventSchema,
 } from "@/lib/stream/webhook-dispatch";
 
@@ -138,7 +139,10 @@ export async function POST(req: NextRequest) {
     const eventId = webhookId
       ? `stream_${webhookId}`
       : // Fallback for a delivery without the header: include every field that
-        // distinguishes two legitimately-different events.
+        // distinguishes two legitimately-different events. NOT `.filter(Boolean)` —
+        // dropping the empty ones collapses the positions, so a participant event
+        // and a message event with the same timestamp could align their remaining
+        // fields into one key. Empty segments are what keep the slots meaningful.
         [
           "stream",
           eventType,
@@ -149,15 +153,49 @@ export async function POST(req: NextRequest) {
           (event as { user?: { id?: string } }).user?.id ?? "",
           (event as { message?: { id?: string } }).message?.id ?? "",
           baseEvent.created_at,
-        ]
-          .filter(Boolean)
-          .join("_");
+        ].join("_");
 
     const signature = req.headers.get("x-signature") || undefined;
 
+    // Persist BEFORE acknowledging, then process in after().
+    //
+    // The durability argument used to be circular: it said durability comes from
+    // the WebhookEvent row and the sweeper, while the row itself was written
+    // inside `after()` — on the non-durable side of the acknowledgement. If the
+    // instance froze before `after()` ran, or the DB probe inside it returned
+    // unhealthy, no row was ever written; Stream already had its 200 and would
+    // never redeliver; and the sweeper can only re-drive rows that exist. Three
+    // paths, all losing a first delivery silently.
+    //
+    // One indexed insert of an already-parsed body fits inside the six-second
+    // per-request timeout where the full handler does not — which is the whole
+    // reason the handler moved to `after()` in the first place. This keeps that
+    // split and makes the sweeper's guarantee real.
+    //
+    // A failure here is the one case worth a non-2xx: nothing is recorded, so
+    // Stream's redelivery is the only remaining chance.
+    try {
+      await recordStreamEventReceipt(eventId, eventType, event, signature);
+    } catch (persistError) {
+      streamLogger.error(
+        `Failed to persist Stream event ${eventId} before ack`,
+        persistError,
+      );
+      Sentry.captureException(
+        persistError instanceof Error
+          ? persistError
+          : new Error(String(persistError)),
+        { tags: { subsystem: "stream" }, level: "error" },
+      );
+      return NextResponse.json(
+        { error: "Could not record event" },
+        { status: 503 },
+      );
+    }
+
     // Acknowledge now; do the work after the response is sent. Everything below
-    // this point is off Stream's retry budget, and its durability comes from the
-    // WebhookEvent row plus sweep-stuck-webhook-events.
+    // this point is off Stream's retry budget, and its durability now genuinely
+    // comes from the row written above plus sweep-stuck-webhook-events.
     after(async () => {
       await processStreamEvent(event, eventType, eventId, signature, baseEvent);
     });
@@ -168,6 +206,15 @@ export async function POST(req: NextRequest) {
 
     // A malformed body will never become well-formed, so 400 and stop the
     // retries rather than burning the budget on a permanent failure.
+    //
+    // `JSON.parse` throws SyntaxError, not ZodError, so genuinely malformed JSON
+    // used to fall past this branch to the 500 below — and Stream then spent its
+    // whole retry budget redelivering a body that could never parse.
+    if (error instanceof SyntaxError) {
+      streamLogger.error("Stream webhook received unparseable JSON", error);
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+
     if (error instanceof z.ZodError) {
       streamLogger.error("Stream webhook validation error", error);
       return NextResponse.json(

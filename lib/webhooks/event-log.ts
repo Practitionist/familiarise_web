@@ -73,20 +73,37 @@ export async function logWebhookEvent(
         return { isNew: false, eventRecordId: existing.id };
       }
 
-      // If previous attempt failed, allow retry by resetting state
+      // If previous attempt failed, allow retry by resetting state.
+      //
+      // `receivedAt` MUST move with it. The staleness check below measures
+      // `now - receivedAt`, and a retried row keeps its original timestamp — so
+      // every retry was instantly older than the 5-minute threshold and the
+      // in-progress guard fell open for exactly the rows it exists to protect.
+      // Two sweeper workers could then claim the same event simultaneously.
+      //
+      // The `updateMany` + count is the claim: two workers racing here, only one
+      // sees `count === 1`, and the loser is told the row is not new. A bare
+      // `update` cannot express that — it succeeds for both.
       if (existing.error) {
-        console.log(
-          `🔄 Webhook event ${eventId} previously failed, allowing retry`,
-        );
-        await prisma.webhookEvent.update({
-          where: { eventId },
+        const claimed = await prisma.webhookEvent.updateMany({
+          where: { eventId, error: { not: null } },
           data: {
             processed: false,
             processedAt: null,
             error: null,
+            receivedAt: new Date(),
             payload: payload as Prisma.InputJsonValue,
           },
         });
+        if (claimed.count === 0) {
+          console.log(
+            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+          );
+          return { isNew: false, eventRecordId: existing.id };
+        }
+        console.log(
+          `🔄 Webhook event ${eventId} previously failed, allowing retry`,
+        );
         return { isNew: true, eventRecordId: existing.id };
       }
 
@@ -97,18 +114,29 @@ export async function logWebhookEvent(
       const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
       const age = Date.now() - new Date(existing.receivedAt).getTime();
       if (age > STALE_THRESHOLD_MS) {
-        console.log(
-          `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
-        );
-        await prisma.webhookEvent.update({
-          where: { eventId },
+        // Claim it atomically. Reading the age and then writing is check-then-act:
+        // two workers both see the row as stale, both write, and both believe
+        // they own it — so the same event gets processed twice. Scoping the
+        // update to the timestamp we read means exactly one write can land.
+        const claimed = await prisma.webhookEvent.updateMany({
+          where: { eventId, receivedAt: existing.receivedAt },
           data: {
             processed: false,
             processedAt: null,
             error: null,
+            receivedAt: new Date(),
             payload: payload as Prisma.InputJsonValue,
           },
         });
+        if (claimed.count === 0) {
+          console.log(
+            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+          );
+          return { isNew: false, eventRecordId: existing.id };
+        }
+        console.log(
+          `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
+        );
         return { isNew: true, eventRecordId: existing.id };
       }
 

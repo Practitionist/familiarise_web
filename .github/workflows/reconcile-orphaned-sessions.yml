@@ -31,6 +31,12 @@ concurrency:
   group: reconcile-orphaned-sessions
   cancel-in-progress: false
 
+# This job only reads the repo to run a script; it never writes back. Matches
+# expire-reschedule-proposals.yml, and narrows what a compromised dependency
+# could reach with the default token.
+permissions:
+  contents: read
+
 jobs:
   reconcile-orphaned-sessions:
     runs-on: ubuntu-latest

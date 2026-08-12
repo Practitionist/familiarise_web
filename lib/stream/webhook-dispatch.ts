@@ -58,6 +58,18 @@ export const HANDLED_EVENT_TYPES = [
   "message.flagged",
 ] as const;
 
+/**
+ * The one list. `processStreamEvent`'s switch is checked against this at compile
+ * time via the `never` assertion in its default branch, so adding an entry here
+ * without adding a case — or vice versa — fails `tsc` instead of silently
+ * dropping the event at runtime. They were two independent lists before.
+ */
+export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
+
+export function isHandledEventType(t: string): t is HandledEventType {
+  return (HANDLED_EVENT_TYPES as readonly string[]).includes(t);
+}
+
 
 // Base event schema for all Stream webhook events
 // call_cid is optional because chat moderation events don't include it
@@ -190,6 +202,27 @@ const streamMessageFlaggedSchema = streamBaseEventSchema.extend({
  * nobody to signal — a handler failure is stamped on the WebhookEvent row and
  * the sweeper re-drives it.
  */
+/**
+ * Write the delivery down, and nothing else.
+ *
+ * Split out of `processStreamEvent` so the route can call it BEFORE it
+ * acknowledges. Everything the sweeper needs to re-drive an event later is this
+ * row; the handler work is what does not fit in Stream's six-second budget, not
+ * the insert. Deliberately does no DB-health probe and no handler dispatch —
+ * this is the part that must be cheap enough to run on the request path.
+ *
+ * Throws on failure. The caller turns that into a non-2xx so Stream redelivers,
+ * which is correct precisely because nothing was recorded.
+ */
+export async function recordStreamEventReceipt(
+  eventId: string,
+  eventType: string,
+  event: unknown,
+  signature: string | undefined,
+): Promise<void> {
+  await logWebhookEvent("stream", eventId, eventType, event, signature);
+}
+
 export async function processStreamEvent(
   event: unknown,
   eventType: string,
@@ -200,6 +233,12 @@ export async function processStreamEvent(
   try {
     // The health probe moved here from the request path: it is a real signal
     // worth acting on, but not worth spending the acknowledgement budget on.
+    //
+    // Returning here is now safe ONLY because the route persists the receipt
+    // before acknowledging. It was not before: this branch returned without
+    // writing anything, so a DB blip on a first delivery left no row, and
+    // "deferring to the sweeper" deferred to a sweeper that had nothing to find.
+    // The sweeper genuinely owns it now.
     if (!(await isDbHealthy())) {
       streamLogger.warn(
         `DB unhealthy — deferring Stream event ${eventId} to the sweeper`,
@@ -225,6 +264,16 @@ export async function processStreamEvent(
     });
 
     let processingError: string | undefined;
+
+    // Narrow here so the `never` in the default branch is a real exhaustiveness
+    // proof rather than a cast. Both callers hand us a string off the wire, and
+    // asserting `as never` in the default would have compiled unconditionally —
+    // a check that reads as protection and verifies nothing.
+    if (!isHandledEventType(eventType)) {
+      streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
+      await markWebhookEventProcessed(eventId, undefined);
+      return;
+    }
 
     try {
       switch (eventType) {
@@ -306,8 +355,15 @@ export async function processStreamEvent(
           break;
         }
 
-        default:
-          streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
+        default: {
+          // Compile-time proof that the switch covers HANDLED_EVENT_TYPES. The
+          // guard above narrows eventType to that union, so adding an entry to
+          // the list without adding a case here leaves a residual member and
+          // this assignment stops compiling. No cast — a cast would make it
+          // always pass, which is the whole failure mode this replaces.
+          const exhaustive: never = eventType;
+          throw new Error(`Unreachable Stream event type: ${String(exhaustive)}`);
+        }
       }
     } catch (handlerError) {
       processingError =
