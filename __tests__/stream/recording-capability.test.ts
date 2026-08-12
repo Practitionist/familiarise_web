@@ -21,12 +21,14 @@ import {
   isAppointmentOwner,
   isRecordingEnabledForAppointment,
   resolveAppointmentPlan,
+  type AppointmentWithOwnership,
+  type OwnedPlan,
 } from "@/lib/stream/recording-utils";
 
 const OWNER = "consultant-profile-1";
 const OTHER = "consultant-profile-2";
 
-const withPlan = (kind: string, plan: unknown) => {
+const withPlan = (kind: string, plan: OwnedPlan): AppointmentWithOwnership => {
   switch (kind) {
     case "webinar":
       return { webinar: { webinarPlan: plan } };
