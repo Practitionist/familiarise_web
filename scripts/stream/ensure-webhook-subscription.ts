@@ -78,9 +78,12 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
   const app = (await client.getAppSettings()) as unknown as {
     app?: { event_hooks?: EventHook[] };
   };
-  const hooks = (app.app?.event_hooks ?? []).filter(
-    (h) => h.hook_type === "webhook",
-  );
+  // Keep the COMPLETE list. `updateAppSettings({ event_hooks })` replaces the
+  // whole array, so anything missing from the payload is deleted — including the
+  // non-webhook hooks filtered out below (SQS, Pusher) and any second webhook
+  // another integration owns. Widening one hook must not cost the others.
+  const allHooks = app.app?.event_hooks ?? [];
+  const hooks = allHooks.filter((h) => h.hook_type === "webhook");
 
   if (hooks.length === 0) {
     console.error(
@@ -91,6 +94,8 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
   }
 
   let changed = 0;
+  /** hook id -> its widened event_types. Applied in ONE write after the loop. */
+  const widened = new Map<string, string[]>();
 
   for (const hook of hooks) {
     const current = new Set(hook.event_types ?? []);
@@ -115,13 +120,32 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
 
     if (!apply) continue;
 
-    // Union, never replace: another integration may legitimately rely on event
-    // types this codebase does not handle.
+    // Union, never replace — of the event TYPES. The hooks ARRAY is handled
+    // once after the loop; writing here submitted an array of one and deleted
+    // every other hook on the app.
     const next = Array.from(new Set([...current, ...missing])).sort(byCodeUnit);
-    await client.updateAppSettings({
-      event_hooks: [{ ...hook, event_types: next }],
-    } as never);
-    console.log(`  ✅ applied — now ${next.length} event types`);
+    widened.set(hook.id, next);
+    console.log(`  → will widen to ${next.length} event types`);
+  }
+
+  // One write, carrying every hook the app has. Two things went wrong with the
+  // per-hook write this replaces. It submitted `[oneHook]`, which replaces the
+  // entire `event_hooks` array — so a second webhook, or an SQS or Pusher hook,
+  // was silently deleted. And doing it inside the loop meant each iteration
+  // wrote a payload built from data read before the previous iteration's write,
+  // so with two hooks to widen only the last would have survived.
+  //
+  // Latent today: this app has exactly one hook. It is the operator script for a
+  // shared production Stream app with no rehearsal environment, so latent is not
+  // good enough.
+  if (apply && widened.size > 0) {
+    const nextHooks = allHooks.map((h) =>
+      widened.has(h.id) ? { ...h, event_types: widened.get(h.id) } : h,
+    );
+    await client.updateAppSettings({ event_hooks: nextHooks } as never);
+    console.log(
+      `\n✅ applied — ${widened.size} hook(s) widened, ${allHooks.length} preserved`,
+    );
   }
 
   if (changed > 0 && !apply) {
