@@ -3,7 +3,10 @@
  * Provides methods to manage video call recordings
  */
 
-import { getStreamVideoClient } from "@/lib/stream-client";
+import {
+  getStreamVideoClient,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
 import { Prisma, RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -57,7 +60,14 @@ export class RecordingService {
 
       // Get the call and start recording
       const call = client.video.call(callType, callId);
-      await call.startRecording({ recording_type: "default" });
+      // #473 — fast-fail while Stream is degraded instead of eating the 30s
+      // client timeout. This one matters twice over: the maintenance drain calls
+      // stopRecording in a loop of up to MAX_DRAIN_BATCH sessions, so an
+      // unbounded call here holds the OFFLINE transition open for the duration
+      // of the very outage it is transitioning for.
+      await withStreamCircuitBreaker(() =>
+        call.startRecording({ recording_type: "default" }),
+      );
 
       streamLogger.info("Recording started via API", {
         streamCallId: callId,
@@ -90,7 +100,9 @@ export class RecordingService {
       const callId = toCallId(streamCallId);
 
       const call = client.video.call(callType, callId);
-      await call.stopRecording({ recording_type: "default" });
+      await withStreamCircuitBreaker(() =>
+        call.stopRecording({ recording_type: "default" }),
+      );
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,
@@ -121,7 +133,9 @@ export class RecordingService {
       const callId = toCallId(streamCallId);
 
       const call = client.video.call(callType, callId);
-      const response = await call.listRecordings();
+      const response = await withStreamCircuitBreaker(() =>
+        call.listRecordings(),
+      );
 
       return response.recordings.map((r) => ({
         filename: r.filename,

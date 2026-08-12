@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
-import { drainActiveSessions } from "@/actions/maintenance/drain-sessions";
+import {
+  drainActiveSessions,
+  unfreezeChannelsAfterMaintenance,
+} from "@/actions/maintenance/drain-sessions";
+import { reportSentryError } from "@/lib/observability/report";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
@@ -351,9 +355,51 @@ export async function DELETE() {
   });
 
   const recoveryResult = await runPostRecovery();
+
+  // #1134 — the drain freezes group chat channels on the way into OFFLINE, and
+  // Stream grants `use-frozen-channel` to NO role by default, so a channel left
+  // frozen is unwritable by every user AND every admin, with no visible cause.
+  // Shipping the freeze without its inverse would leave a release window in
+  // which ending maintenance silently bricks group chat, which is why both
+  // halves are in this PR rather than four apart.
+  //
+  // Best-effort: a chat failure must not stop maintenance from ending. But it is
+  // REPORTED and returned — a silent unfreeze failure is indistinguishable from
+  // success, and being invisible is the entire problem with a frozen channel.
+  let chat:
+    | Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>>
+    | undefined;
+  try {
+    chat = await unfreezeChannelsAfterMaintenance();
+    if (chat.errors.length > 0) {
+      reportSentryError(
+        new Error(
+          `Maintenance unfreeze partially failed: ${chat.errors.length} channel(s)`,
+        ),
+        {
+          subsystem: "stream",
+          op: "maintenance.unfreeze",
+          extra: { errors: chat.errors.slice(0, 10) },
+        },
+      );
+    }
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "maintenance.unfreeze",
+    });
+    chat = {
+      unfrozen: 0,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+
   return NextResponse.json({
     phase: "OFF",
     message: "Maintenance mode ended",
     recovery: recoveryResult,
+    // Surfaced, not swallowed: the caller is an operator ending maintenance and
+    // needs to know if chat did not come back with it.
+    chat,
   });
 }

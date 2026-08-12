@@ -30,34 +30,6 @@ const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
 /** Hard cap so a backlog can never hold the maintenance transition open. */
 const MAX_DRAIN_BATCH = 200;
 
-/**
- * Ceiling on the courtesy "we are draining" message, per session.
- *
- * Two seconds because it is worth almost nothing and runs up to
- * MAX_DRAIN_BATCH times serially: 200 × an unbounded call is how a five-second
- * maintenance transition becomes a hung one.
- */
-const WARN_DEADLINE_MS = 2_000;
-
-/**
- * Resolve/reject with the promise, or reject at the deadline — whichever first.
- *
- * The underlying request is NOT cancelled; nothing in the Stream SDK exposes an
- * abort signal here. This bounds how long we WAIT, which is the property the
- * drain needs.
- */
-function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`timed out after ${ms}ms`)),
-        ms,
-      );
-    }),
-  ]).finally(() => clearTimeout(timer)) as Promise<T>;
-}
 
 interface DrainResult {
   drained: number;
@@ -214,26 +186,17 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         STREAM_CALL_TYPE,
         toCallId(session.streamCallId),
       );
-      // Give whoever is mid-sentence a reason for the disconnect. Best-effort,
-      // and BOUNDED: this sits outside the circuit breaker, the video client
-      // carries no timeout of its own (the 30s option is on the chat client),
-      // and this loop runs up to MAX_DRAIN_BATCH times serially. An unbounded
-      // courtesy message could hold the maintenance transition open for the
-      // whole outage it is announcing.
-      await withDeadline(
-        call.sendCallEvent({
-          custom: {
-            type: "maintenance.draining",
-            message:
-              "This session is ending now for scheduled maintenance. You will be able to rejoin shortly.",
-          },
-        }),
-        WARN_DEADLINE_MS,
-      )
-        .then(() => {
-          result.notified++;
-        })
-        .catch(() => {});
+      // #1134 — a `maintenance.draining` custom event used to be sent here, and
+      // `notified` incremented when the API call succeeded. Nothing in the
+      // client subscribes to `call.on("custom", …)`, so it warned nobody, and
+      // `end()` fires microseconds later anyway — a toast would not have painted
+      // even with a listener. Counting Stream's acknowledgement as a person
+      // warned is the same fabricated metric this function is fixed for twenty
+      // lines below, so the call and the counter are both gone rather than left
+      // to imply a courtesy the product does not provide.
+      //
+      // Restore it together with a `call.on("custom")` subscriber in
+      // MeetingRoom.tsx and a short delay before end() — not before.
       // #473 — fast-fail rather than eat a 30s timeout per session while Stream
       // is degraded; the maintenance window is exactly when that matters.
       await withStreamCircuitBreaker(() => call.end());
@@ -341,39 +304,96 @@ async function freezeChannelsForSessions(
     if (channelIds.length === 0) return;
 
     const chat = getStreamChatClient();
-    // `Promise.allSettled` never rejects, so wrapping it in the breaker meant the
-    // breaker recorded a success no matter how many channels failed to freeze,
-    // and not one failure reached `result.errors`. The freeze could fail
-    // wholesale and report clean. Inspect the settled results and surface them.
-    const settled = await withStreamCircuitBreaker(
-      () =>
-        Promise.allSettled(
-          channelIds.map((channelId) =>
-            chat
-              .channel(getChannelTypeFromId(channelId), channelId)
-              .updatePartial({ set: { frozen: true } }),
-          ),
+    // The breaker goes INSIDE the map, not around `Promise.allSettled`.
+    // `allSettled` never rejects, so wrapping it meant the breaker recorded a
+    // success however many channels failed — it could not trip during the very
+    // outage it exists for — and not one failure reached `result.errors`. Per
+    // channel, the breaker sees each real failure and each is reported.
+    const outcomes = await Promise.allSettled(
+      channelIds.map((channelId) =>
+        withStreamCircuitBreaker(() =>
+          chat
+            .channel(getChannelTypeFromId(channelId), channelId)
+            .updatePartial({ set: { frozen: true } }),
         ),
-      () => [],
+      ),
     );
-
-    const rejected = settled.filter(
-      (r): r is PromiseRejectedResult => r.status === "rejected",
-    );
-    if (rejected.length > 0) {
-      result.errors.push(
-        `Freeze chat: ${rejected.length}/${channelIds.length} channel(s) failed — ` +
-          rejected
-            .slice(0, 3)
-            .map((r) =>
-              r.reason instanceof Error ? r.reason.message : String(r.reason),
-            )
-            .join("; "),
-      );
-    }
+    outcomes.forEach((outcome, i) => {
+      if (outcome.status === "rejected") {
+        result.errors.push(
+          `freeze ${channelIds[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+        );
+      }
+    });
   } catch (err) {
     result.errors.push(
       `Freeze chat: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Undo the maintenance freeze. Called from the maintenance exit path.
+ *
+ * #1134 — the drain froze group channels and nothing ever unfroze them. Stream
+ * grants `use-frozen-channel` to no role by default, so those channels were
+ * permanently unwritable by every user AND every admin, with no visible cause.
+ * It lives in this PR rather than a later one precisely because this PR
+ * introduces the freeze: shipping the two apart leaves a release window in which
+ * maintenance silently bricks group chat.
+ *
+ * Scoped to sessions the drain actually ended (`endedReason: "maintenance"`)
+ * within the recent window, so it cannot unfreeze a channel a moderator froze
+ * deliberately. `updatePartial` rather than `update`: the latter is a full
+ * replace and would delete `organizationId`, `appointmentId` and every other
+ * custom field off the channel.
+ */
+export async function unfreezeChannelsAfterMaintenance(): Promise<{
+  unfrozen: number;
+  errors: string[];
+}> {
+  const result = { unfrozen: 0, errors: [] as string[] };
+
+  const drained = await prisma.meetingSession.findMany({
+    where: {
+      endedReason: "maintenance",
+      endedAt: { gte: new Date(Date.now() - LIVE_SESSION_WINDOW_MS) },
+    },
+    take: MAX_DRAIN_BATCH,
+    select: { slotOfAppointment: { select: { appointmentId: true } } },
+  });
+  if (drained.length === 0) return result;
+
+  try {
+    const channelIds = await getEventChannelIdsForAppointment(
+      Array.from(
+        new Set(drained.map((s) => s.slotOfAppointment.appointmentId)),
+      ),
+    );
+    if (channelIds.length === 0) return result;
+
+    const chat = getStreamChatClient();
+    const outcomes = await Promise.allSettled(
+      channelIds.map((channelId) =>
+        withStreamCircuitBreaker(() =>
+          chat
+            .channel(getChannelTypeFromId(channelId), channelId)
+            .updatePartial({ set: { frozen: false } }),
+        ),
+      ),
+    );
+    outcomes.forEach((outcome, i) => {
+      if (outcome.status === "fulfilled") result.unfrozen++;
+      else
+        result.errors.push(
+          `unfreeze ${channelIds[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+        );
+    });
+  } catch (err) {
+    result.errors.push(
+      `Unfreeze chat: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return result;
 }
