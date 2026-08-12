@@ -143,13 +143,17 @@ export async function POST(req: NextRequest) {
     // recording is the product, disclosed at purchase, and acknowledged rather
     // than consented to.
     const appointment = meetingSession.slotOfAppointment?.appointment;
-    const consentBlock = await getRecordingBlock(meetingSessionId, appointment);
-    if (consentBlock.blocked) {
+
+    /** One shape for a refusal, used by the pre-claim gate and the race re-read. */
+    const refuse = (reason: string | undefined) => {
       streamLogger.info("Recording refused — participant declined", {
         meetingSessionId,
       });
-      return NextResponse.json({ error: consentBlock.reason }, { status: 409 });
-    }
+      return NextResponse.json({ error: reason }, { status: 409 });
+    };
+
+    const consentBlock = await getRecordingBlock(meetingSessionId, appointment);
+    if (consentBlock.blocked) return refuse(consentBlock.reason);
 
     // Claim atomically, and re-assert the consent condition IN the claim.
     //
@@ -187,9 +191,7 @@ export async function POST(req: NextRequest) {
       // this write. Re-read to say which, so a refused host is not told the
       // wrong thing.
       const raced = await getRecordingBlock(meetingSessionId, appointment);
-      if (raced.blocked) {
-        return NextResponse.json({ error: raced.reason }, { status: 409 });
-      }
+      if (raced.blocked) return refuse(raced.reason);
       return NextResponse.json(
         { error: "Recording is already in progress" },
         { status: 409 },
