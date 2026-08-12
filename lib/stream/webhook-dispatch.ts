@@ -40,7 +40,11 @@ import {
   isDbHealthy,
 } from "@/lib/webhooks/event-log";
 
-export { HANDLED_EVENT_TYPES } from "@/lib/stream/webhook-events";
+// Imported AND re-exported: a bare `export … from` creates no local binding,
+// so the type and the guard below could not see it. #1141 moved the list into
+// its own module so ensure-webhook-subscription.ts can read it too.
+import { HANDLED_EVENT_TYPES } from "@/lib/stream/webhook-events";
+export { HANDLED_EVENT_TYPES };
 
 /**
  * The one list. `processStreamEvent`'s switch is checked against this at compile
