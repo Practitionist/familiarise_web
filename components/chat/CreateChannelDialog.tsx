@@ -2,12 +2,12 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+  ResponsiveModalTrigger,
+} from "@/components/ui/responsive-modal";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -189,7 +189,9 @@ export const CreateChannelDialog = ({
   };
 
   return (
-    <Dialog
+    // ResponsiveModal, so this becomes a bottom sheet on a phone instead of a
+    // 425px-wide centred dialog squeezed onto a 375px screen.
+    <ResponsiveModal
       open={open}
       onOpenChange={(isOpen) => {
         setOpen(isOpen);
@@ -200,19 +202,21 @@ export const CreateChannelDialog = ({
         }
       }}
     >
-      <DialogTrigger asChild>
+      <ResponsiveModalTrigger asChild>
         <Button
           variant="ghost"
           size="sm"
-          className="p-1 text-white hover:bg-blue-700"
+          aria-label="Create a channel"
+          title="Create a channel"
+          className="p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <PlusIcon className="h-4 w-4" />
         </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>Create New Channel</DialogTitle>
-        </DialogHeader>
+      </ResponsiveModalTrigger>
+      <ResponsiveModalContent className="sm:max-w-[425px]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Create New Channel</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
         <form onSubmit={handleCreateChannel} className="space-y-4 pt-4">
           <div className="space-y-2">
             <Label htmlFor="eventSelect">
@@ -256,7 +260,7 @@ export const CreateChannelDialog = ({
               required // Make name required
             />
             {selectedEvent && selectedEvent !== "custom" && (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Channel name is set by the selected event.
               </p>
             )}
@@ -266,7 +270,7 @@ export const CreateChannelDialog = ({
             {isLoading ? "Creating..." : "Create Channel"}
           </Button>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 };

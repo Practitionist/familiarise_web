@@ -39,6 +39,20 @@ export function PageSkeleton() {
 export function ChatSkeleton() {
   return (
     <div className="-m-4 flex h-[calc(100dvh-3.5rem-4rem)] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem)] lg:-m-8">
+      <ChatSkeletonPanes />
+    </div>
+  );
+}
+
+/**
+ * The two panes without the full-bleed wrapper above, for the surfaces that
+ * already supply their own — the Messages tabs, which show this while the
+ * Stream socket connects. Nesting the wrapped version there would apply the
+ * negative margin and the height calc twice.
+ */
+export function ChatSkeletonPanes() {
+  return (
+    <div className="flex h-full w-full overflow-hidden">
       {/* Channel list */}
       <div className="hidden w-72 shrink-0 space-y-4 border-r border-border p-4 sm:block">
         <Skeleton className="h-10 w-full" />
