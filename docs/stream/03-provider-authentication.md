@@ -242,11 +242,18 @@ sequenceDiagram
         Provider->>Provider: setChatConnected(true)
 
         alt Initial sync not completed
+            Provider->>Provider: mark sync as kicked (before the call)
             Provider->>Sync: syncUserEventChannels(userId)
+            Note over Provider,Sync: Not awaited. Chat is usable<br/>as soon as the socket is up.
             Sync->>DB: Fetch user's events
             Sync->>ChatSDK: Create/update channels
-            Sync-->>Provider: Channels synchronized
-            Provider->>Provider: setHasInitialSyncCompleted(true)
+            alt result.success
+                Sync-->>Provider: { success: true }
+                Provider->>Provider: persist the marker to sessionStorage
+            else result.success is false, or the promise rejects
+                Sync-->>Provider: { success: false, error }
+                Provider->>Provider: clear both markers, so a later render retries
+            end
         end
     and Video Client Connection
         Provider->>VideoSDK: new StreamVideoClient(config)
@@ -402,21 +409,35 @@ const connectChat = useCallback(async () => {
     setChatClient(client);
     setChatConnected(true);
 
-    // Initial channel sync only once
-    if (!hasInitialSyncCompleted) {
-      try {
-        console.log(
-          `Performing initial channel sync for user ${userDetails.id}`,
-        );
-        await syncUserEventChannels(userDetails.id);
-        setHasInitialSyncCompleted(true);
-        console.log(`Completed initial sync for user ${userDetails.id}`);
-      } catch (syncError) {
-        console.warn(
-          `Channel sync failed for user ${userDetails.id}:`,
-          syncError,
-        );
-      }
+    // Initial channel sync, once per user per browser session.
+    //
+    // Deliberately NOT awaited. The sync costs roughly 1 + W + C + D + ceil(N/100)
+    // Stream round trips, so a consultant with two hundred clients waited eight
+    // to twenty seconds with chat apparently dead before it was ever marked
+    // connected. Chat is usable the moment the socket is up, and channels stream
+    // into the sidebar as they land.
+    if (!alreadySynced) {
+      // Marked BEFORE the call, not after. This flag means "we have kicked the
+      // sync for this user"; marking on completion let a re-render start a
+      // second one while the first was still in flight.
+      clientSyncCompletedUsers.add(userDetails.id);
+
+      void syncUserEventChannels(userDetails.id)
+        .then((result) => {
+          // syncUserEventChannels reports failure by RESOLVING with
+          // { success: false }, not by rejecting. A `.then` that ignores its
+          // argument therefore treats a failed sync as a completed one, and the
+          // sessionStorage marker then suppresses the retry for the rest of the
+          // tab's life. The `.catch` below only ever sees the thrown case.
+          if (!result?.success) {
+            markSyncIncomplete(userDetails.id, syncKey);
+            return;
+          }
+          sessionStorage.setItem(syncKey, "1");
+        })
+        .catch(() => {
+          markSyncIncomplete(userDetails.id, syncKey);
+        });
     }
 
     console.log(`Chat connection successful for user ${userDetails.id}`);
