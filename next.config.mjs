@@ -178,6 +178,13 @@ const nextConfig = {
   // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +
   // `npx eslint .` as their own steps). Local `npm run build` and CI's own build keep
   // the checks on, so nothing loses its safety net off-Netlify. (#932)
+  // Browser-only assets, kept out of the traced server output. Netlify builds
+  // its server function from this, and 32MB of WASM and Krisp models pushed the
+  // Lambda past AWS's size limit — the deploy failed while the build passed.
+  // The CDN still serves them from `public/`; see the note in netlify.toml.
+  outputFileTracingExcludes: {
+    "*": ["./public/mediapipe/**", "./public/nc-models/**"],
+  },
   eslint: { ignoreDuringBuilds: !!process.env.NETLIFY },
   typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
