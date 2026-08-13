@@ -229,6 +229,23 @@ export async function processStreamEvent(
   eventId: string,
   signature: string | undefined,
   baseEvent: { call_cid?: string },
+  opts: {
+    /**
+     * The caller already wrote the receipt and therefore owns the claim.
+     *
+     * The route does: it persists before acknowledging, then dispatches in
+     * `after()`. Without this, that second call re-enters `logWebhookEvent` for
+     * an id whose row it just created — a row in the IN-PROGRESS state, aged
+     * milliseconds — and the staleness escape correctly refuses it as another
+     * worker's in-flight work. `isNew` comes back false and dispatch returns
+     * having done nothing. The sweeper still rescues it, so nothing is lost, but
+     * every event waits a full sweep cycle instead of running inline.
+     *
+     * The sweeper passes nothing and claims normally, which is what makes the
+     * concurrency guard meaningful for the caller that actually competes.
+     */
+    claimAlreadyHeld?: boolean;
+  } = {},
 ): Promise<void> {
   try {
     // The health probe moved here from the request path: it is a real signal
@@ -246,17 +263,19 @@ export async function processStreamEvent(
       return;
     }
 
-    const { isNew } = await logWebhookEvent(
-      "stream",
-      eventId,
-      eventType,
-      event,
-      signature,
-    );
+    if (!opts.claimAlreadyHeld) {
+      const { isNew } = await logWebhookEvent(
+        "stream",
+        eventId,
+        eventType,
+        event,
+        signature,
+      );
 
-    if (!isNew) {
-      streamLogger.debug(`Duplicate Stream webhook event: ${eventId}`);
-      return;
+      if (!isNew) {
+        streamLogger.debug(`Duplicate Stream webhook event: ${eventId}`);
+        return;
+      }
     }
 
     streamLogger.info(`Processing Stream webhook: ${eventType}`, {

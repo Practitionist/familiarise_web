@@ -103,6 +103,38 @@ describe("processStreamEvent — safe to defer, now that the receipt exists", ()
     expect(sequence).not.toContain("persist");
   });
 
+  it("dispatches inline when the caller already holds the claim", async () => {
+    // The regression this pins: the route persists the receipt, then dispatches
+    // in after(). Re-claiming there means logWebhookEvent sees the row it just
+    // created — IN-PROGRESS, aged milliseconds — and correctly refuses it as
+    // another worker's in-flight work. `isNew` came back false and dispatch
+    // returned having handled nothing, so every event waited for the sweeper.
+    mockLogWebhookEvent.mockResolvedValue({ isNew: false });
+
+    await processStreamEvent({}, "call.ended", "stream_abc", undefined, {}, {
+      claimAlreadyHeld: true,
+    });
+
+    // It must NOT have consulted the claim, and must have reached dispatch
+    // rather than bailing out. The payload here is a bare `{}`, so the handler's
+    // Zod schema rejects it and the completion carries that error — which is
+    // itself the proof: reaching validation means the early return did not fire.
+    expect(sequence).not.toContain("persist");
+    expect(mockMarkProcessed).toHaveBeenCalledTimes(1);
+    expect(mockMarkProcessed.mock.calls[0][0]).toBe("stream_abc");
+  });
+
+  it("still yields to a real competitor when it does NOT hold the claim", async () => {
+    // The sweeper path. Here `isNew: false` genuinely means another worker owns
+    // it, and returning is correct — this is the case the earlier stub hid by
+    // always answering true.
+    mockLogWebhookEvent.mockResolvedValue({ isNew: false });
+
+    await processStreamEvent({}, "call.ended", "stream_abc", undefined, {});
+
+    expect(mockMarkProcessed).not.toHaveBeenCalled();
+  });
+
   it("never throws — the response is already sent, so there is nobody to signal", async () => {
     mockLogWebhookEvent.mockRejectedValue(new Error("boom"));
 
