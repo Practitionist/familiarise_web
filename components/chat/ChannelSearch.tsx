@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
+import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,10 @@ type GroupedConsultant = {
 
 export const ChannelSearch = () => {
   const { client, setActiveChannel } = useChatContext();
+  // Below `md` the conversation pane is `hidden` until this runs — see
+  // ChatLayout. Selecting a channel without it leaves the person staring at
+  // the list they just searched, with the channel silently active behind it.
+  const { openConversation } = useChatPane();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
@@ -132,6 +137,7 @@ export const ChannelSearch = () => {
       const channel = client.channel("messaging", consultant.channelId);
       await channel.watch();
       setActiveChannel(channel);
+      openConversation();
     } catch (error) {
       console.error("Error opening channel:", error);
     }
@@ -150,6 +156,7 @@ export const ChannelSearch = () => {
       const channel = client.channel("team", result.channelId);
       await channel.watch();
       setActiveChannel(channel);
+      openConversation();
     } catch (error) {
       console.error("Error opening channel:", error);
     }

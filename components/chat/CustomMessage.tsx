@@ -60,7 +60,17 @@ export const CustomMessage = () => {
   // Hover is the ONLY way these actions were reachable, so on a touch device
   // react/reply/edit/delete/report did not exist at all (#1134). Default to
   // the hover shape on the server so desktop hydrates without a flash.
-  const isFinePointer = useMediaQuery("(pointer: fine)", true);
+  //
+  // Both halves are needed. `(pointer: fine)` alone matches devices with a
+  // precise pointer and NO hover — a stylus, some TV remotes — where
+  // `group-hover` can never fire, so the floating toolbar would stay
+  // transparent and the actions would be unreachable all over again. Hover
+  // capability is the thing actually being branched on; pointer precision only
+  // decides whether the small hit targets are usable.
+  const isFinePointer = useMediaQuery(
+    "(hover: hover) and (pointer: fine)",
+    true,
+  );
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {

@@ -53,8 +53,11 @@ export function ChatSkeleton() {
 export function ChatSkeletonPanes() {
   return (
     <div className="flex h-full w-full overflow-hidden">
-      {/* Channel list */}
-      <div className="hidden w-72 shrink-0 space-y-4 border-r border-border p-4 sm:block">
+      {/* Channel list. Mirrors ChatLayout: full-width and visible below `md`,
+          a fixed rail above it. The old `hidden sm:block` was the inverse of
+          the loaded state — under 640px it showed the conversation and hid the
+          list, which is the one pane the chat actually shows there. */}
+      <div className="w-full shrink-0 space-y-4 border-r border-border p-4 md:w-80">
         <Skeleton className="h-10 w-full" />
         <div className="space-y-2">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
@@ -69,8 +72,9 @@ export function ChatSkeletonPanes() {
         </div>
       </div>
 
-      {/* Conversation */}
-      <div className="flex flex-1 flex-col">
+      {/* Conversation. Hidden below `md`, exactly as ChatLayout hides it until
+          openConversation() runs. */}
+      <div className="hidden flex-1 flex-col md:flex">
         <div className="flex items-center gap-3 border-b border-border p-4">
           <Skeleton className="h-10 w-10 rounded-full" />
           <Skeleton className="h-5 w-40" />

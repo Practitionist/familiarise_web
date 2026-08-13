@@ -1321,7 +1321,7 @@
   color: hsl(var(--foreground));
   text-align: left;
   white-space: normal;
-  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .str-chat .str-chat__quoted-message-preview-header {

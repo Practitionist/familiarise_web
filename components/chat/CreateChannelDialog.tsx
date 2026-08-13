@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useEventsByUser } from "@/hooks/useEvents";
 import { PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
@@ -35,6 +36,10 @@ export const CreateChannelDialog = ({
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { client, setActiveChannel } = useChatContext();
+  // Creating a channel is an explicit "take me there". Below `md` the
+  // conversation pane stays hidden until this runs, so without it the new
+  // channel opens behind the list the dialog just closed over.
+  const { openConversation } = useChatPane();
   const { toast } = useToast();
 
   // Fetch user's events
@@ -136,6 +141,7 @@ export const CreateChannelDialog = ({
         try {
           await channel.query();
           setActiveChannel(channel);
+          openConversation();
         } catch (queryError) {
           console.error("Error querying created channel:", queryError);
           // Still show success but mention refresh might be needed
@@ -160,6 +166,7 @@ export const CreateChannelDialog = ({
 
         // Set the new channel as active
         setActiveChannel(channel);
+        openConversation();
 
         toast({
           title: "Success",
