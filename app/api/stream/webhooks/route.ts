@@ -203,7 +203,13 @@ export async function POST(req: NextRequest) {
     // this point is off Stream's retry budget, and its durability now genuinely
     // comes from the row written above plus sweep-stuck-webhook-events.
     after(async () => {
-      await processStreamEvent(event, eventType, eventId, signature, baseEvent);
+      // `claimAlreadyHeld` because the receipt above created this row. Without
+      // it, dispatch re-claims an id it already owns, sees its own IN-PROGRESS
+      // row, and returns without handling anything — which left every event to
+      // the sweeper, six to sixteen minutes later, instead of running inline.
+      await processStreamEvent(event, eventType, eventId, signature, baseEvent, {
+        claimAlreadyHeld: true,
+      });
     });
 
     return NextResponse.json({ status: "ok", accepted: true });
