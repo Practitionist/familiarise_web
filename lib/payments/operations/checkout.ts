@@ -33,6 +33,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
@@ -689,7 +690,18 @@ export async function validateSlotAvailability(
       AND: [
         { startsAt: { lt: slotEnd } },
         { endsAt: { gt: slotStart } },
-        { isTentative: false }, // Only confirmed bookings
+        // #1169 PR 2 — LIVE tentative holds are visible to this check. An
+        // in-flight checkout's hold previously passed unseen (confirmed-only
+        // filter here, NOT-isTentative predicate on the exclusion constraint),
+        // so two overlapping holds could both reach payment and both charge.
+        // The occupancy statuses drop released/expired holds automatically,
+        // and cleanup-tentative-slots bounds any stale remainder.
+        {
+          OR: [
+            { isTentative: false },
+            { appointment: { OR: buildOccupiedAppointmentFilter() } },
+          ],
+        },
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
@@ -2256,7 +2268,11 @@ export async function handleCheckout(
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
-      const result = await prisma.$transaction(
+      // #1093 tail — the ONLY Serializable site that wasn't retried: a P2034
+      // under hot-webinar contention surfaced as a generic failure instead of
+      // being retried into the sibling's committed state.
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
         async (tx) => {
           // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
           // tx. The pre-lock check ran on the global client before this tx, so
@@ -2826,6 +2842,7 @@ export async function handleCheckout(
           // safety for edge cases like lock expiry under high load.
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
+        ),
       );
 
       const logMessage = isZeroAmountPayment

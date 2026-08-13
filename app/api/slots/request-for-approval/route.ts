@@ -49,7 +49,40 @@ export async function POST(req: NextRequest) {
       slotOfAvailabilityWeeklyId,
       slotOfAvailabilityCustomId,
       consultationPlanId,
+      organizationId,
     } = parseResult.data;
+
+    // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
+    // the request carried no org, so the approved booking billed the member's
+    // personal card with no wallet debit, seat consumption, or attribution.
+    // The request now carries it, stamped onto the Appointment below; the
+    // approval pay-link and Payment row inherit it from there.
+    if (organizationId) {
+      const [org, membership] = await Promise.all([
+        prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: { canSponsor: true },
+        }),
+        prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId,
+            },
+          },
+          select: { status: true },
+        }),
+      ]);
+      if (!org?.canSponsor || membership?.status !== "ACTIVE") {
+        return NextResponse.json(
+          {
+            error:
+              "This organization cannot sponsor your booking (it is not a sponsor org, or you are not an active member).",
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     const startTime = new Date(startsAt);
     const endTime = new Date(endsAt);
@@ -199,6 +232,9 @@ export async function POST(req: NextRequest) {
           appointment: {
             create: {
               appointmentType: "CONSULTATION",
+              // #1166 ORG-9 — org attribution rides the appointment from the
+              // moment the request exists.
+              organizationId: organizationId ?? null,
               slotsOfAppointment: {
                 create: slotChunksToCreate,
               },

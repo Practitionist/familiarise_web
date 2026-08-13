@@ -8,6 +8,9 @@ export const RequestForApprovalSchema = z
     consultationPlanId: z.string().min(1, "Consultation plan ID is required"),
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
+    // #1166 ORG-9 — an org member may request a sponsored booking; validated
+    // against an ACTIVE membership of a canSponsor org in the route.
+    organizationId: z.string().optional(),
   })
   .refine(
     (data) =>

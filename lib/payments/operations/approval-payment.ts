@@ -37,6 +37,15 @@ export interface CreateApprovalPaymentParams {
    * subscriptions leave this unset — their appointment is made on capture.
    */
   appointmentId?: string;
+  /**
+   * #1166 ORG-9 — org sponsorship used to be silently DROPPED by the approval
+   * flow (no organizationId anywhere in the chain, so an org member's approved
+   * request billed their personal card with no attribution). Callers pass the
+   * appointment's organizationId; it rides the Payment row and the gateway
+   * metadata. Wallet-debit/skip-gateway parity with checkout is tracked in
+   * #1166.
+   */
+  organizationId?: string;
   paymentGateway: PaymentGateway;
   startsAt?: string;
   endsAt?: string;
@@ -156,6 +165,7 @@ export async function createApprovalPaymentIntent(
         paymentIntent: paymentResponse.id,
         paymentGateway: params.paymentGateway,
         paymentStatus: PaymentStatus.PENDING,
+        organizationId: params.organizationId ?? null,
         userId: params.userId,
         expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
         isMockPayment: false,
@@ -315,6 +325,12 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   // Add trial-specific fields — the webhook resolves the TrialSession from this.
   if (params.trialId) {
     metadata.trialId = params.trialId;
+  }
+
+  // #1166 ORG-9 — org attribution survives into the gateway round-trip so the
+  // capture side can verify it against the Payment row.
+  if (params.organizationId) {
+    metadata.organizationId = params.organizationId;
   }
 
   // Add slot times if provided
