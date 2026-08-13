@@ -26,6 +26,8 @@
  */
 import "dotenv/config";
 
+import type { EventHook } from "stream-chat";
+
 import { getStreamChatClient, isStreamConfigured } from "../../lib/stream-client";
 import { HANDLED_EVENT_TYPES } from "../../lib/stream/webhook-events";
 
@@ -58,13 +60,14 @@ const DESIRED_EVENT_TYPES = Array.from(
   new Set<string>([...HANDLED_EVENT_TYPES, ...ADDITIONAL_EVENT_TYPES]),
 ).sort(byCodeUnit);
 
-interface EventHook {
-  id: string;
-  hook_type?: string;
-  enabled?: boolean;
-  webhook_url?: string;
-  event_types?: string[];
-}
+/**
+ * A hook we can address by id.
+ *
+ * The SDK declares `EventHook.id` optional because the id is server-generated —
+ * you may omit it when creating one. Everything read back from `getAppSettings`
+ * has one, but the type cannot say so, and `widened` is keyed by it.
+ */
+type IdentifiedHook = EventHook & { id: string };
 
 export async function ensureWebhookSubscription(apply: boolean): Promise<number> {
   if (!isStreamConfigured()) {
@@ -75,15 +78,16 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
   }
 
   const client = getStreamChatClient();
-  const app = (await client.getAppSettings()) as unknown as {
-    app?: { event_hooks?: EventHook[] };
-  };
+  const app = await client.getAppSettings();
   // Keep the COMPLETE list. `updateAppSettings({ event_hooks })` replaces the
   // whole array, so anything missing from the payload is deleted — including the
   // non-webhook hooks filtered out below (SQS, Pusher) and any second webhook
   // another integration owns. Widening one hook must not cost the others.
   const allHooks = app.app?.event_hooks ?? [];
-  const hooks = allHooks.filter((h) => h.hook_type === "webhook");
+  const hooks = allHooks.filter(
+    (h): h is IdentifiedHook =>
+      h.hook_type === "webhook" && typeof h.id === "string",
+  );
 
   if (hooks.length === 0) {
     console.error(
@@ -139,10 +143,11 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
   // shared production Stream app with no rehearsal environment, so latent is not
   // good enough.
   if (apply && widened.size > 0) {
-    const nextHooks = allHooks.map((h) =>
-      widened.has(h.id) ? { ...h, event_types: widened.get(h.id) } : h,
-    );
-    await client.updateAppSettings({ event_hooks: nextHooks } as never);
+    const nextHooks = allHooks.map((h) => {
+      const next = h.id ? widened.get(h.id) : undefined;
+      return next ? { ...h, event_types: next } : h;
+    });
+    await client.updateAppSettings({ event_hooks: nextHooks });
     console.log(
       `\n✅ applied — ${widened.size} hook(s) widened, ${allHooks.length} preserved`,
     );
