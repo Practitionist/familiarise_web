@@ -8,6 +8,10 @@ on:
 
 # #1134 P1-17 — queue rather than cancel: a run part-way through a delete batch
 # must finish, and both stages are idempotent so a queued run simply resumes.
+# Read-only: this job runs a script and writes nothing back to the repo.
+permissions:
+  contents: read
+
 concurrency:
   group: expire-event-channels
   cancel-in-progress: false
@@ -36,6 +40,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # The job only reads the repo to run a script; it never pushes. Leaving
+          # the token in .git/config lets any later step — or a compromised
+          # dependency — use it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5

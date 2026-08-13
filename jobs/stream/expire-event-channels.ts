@@ -42,6 +42,28 @@ export const DEFAULT_RETENTION_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How far back to look for events still needing a stage applied.
+ *
+ * Without a lower bound this scanned EVERY ended webinar and class in history on
+ * every daily run, and re-issued `deleteChannels` for channels deleted months
+ * ago. Both stages are idempotent so nothing broke, but the work grew
+ * monotonically with the product and every run paid for it in Stream API calls.
+ *
+ * An event is fully handled once `endsAt + retentionDays` has passed, so
+ * anything older than the longest retention we honour has nothing left to do.
+ * The margin is what makes that safe: the job can be down for a month, or an org
+ * can carry a longer dial than the default, and the window still covers it.
+ * `MAX_RETENTION_DAYS` is deliberately generous rather than derived — being
+ * wrong in this direction costs one wasted query, being wrong the other way
+ * leaves a channel undeleted forever.
+ */
+const MAX_RETENTION_DAYS = 365;
+const LOOKBACK_MARGIN_DAYS = 60;
+
+/** Backstop so one pathological run cannot hold the cron open indefinitely. */
+const MAX_EVENTS_PER_RUN = 5_000;
+
 export interface ExpireEventChannelsResult {
   frozen: number;
   deleted: number;
@@ -61,11 +83,19 @@ interface EventRow {
  * over the whole history, so N+1 here would be thousands of round-trips.
  */
 async function loadEndedEvents(): Promise<EventRow[]> {
+  const now = new Date();
+  const lookbackFrom = new Date(
+    now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
+  );
   const appointments = await prisma.appointment.findMany({
     where: {
       OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
-      slotsOfAppointment: { some: { endsAt: { lt: new Date() } } },
+      slotsOfAppointment: {
+        some: { endsAt: { lt: now, gte: lookbackFrom } },
+      },
     },
+    take: MAX_EVENTS_PER_RUN,
+    orderBy: { createdAt: "desc" },
     select: {
       webinar: { select: { id: true } },
       class: { select: { id: true } },
