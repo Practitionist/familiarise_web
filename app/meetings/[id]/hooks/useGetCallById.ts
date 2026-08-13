@@ -41,6 +41,18 @@ interface DeviceSnapshot {
  * rather than around it — that route is what grants Stream membership, and
  * `call.join()` on a fresh handle without it would be refused by Stream itself.
  */
+/**
+ * How long to wait for the video client before calling it a failure.
+ *
+ * Sized against the provider, not picked round: `StreamProviderImpl` retries up
+ * to five times with `min(1000 * 2^n, 30_000)` backoff, so its ladder is
+ * 2 + 4 + 8 + 16 = 30 seconds of waiting plus the connect attempts themselves.
+ * A shorter bound would fire while the provider was still legitimately retrying
+ * and would have succeeded. This only elapses once it has genuinely given up,
+ * or never started.
+ */
+const CLIENT_WAIT_TIMEOUT_MS = 45_000;
+
 export const useGetCallById = (callId: string) => {
   const [call, setCall] = useState<Call | null>(null);
   const [isCallLoading, setIsCallLoading] = useState(true);
@@ -67,6 +79,31 @@ export const useGetCallById = (callId: string) => {
     }
     setRejoinKey((key) => key + 1);
   }, []);
+
+  /**
+   * The client may never arrive — Stream unconfigured, a token fetch that keeps
+   * failing, a provider that errored out. The resolution effect below returns
+   * early in that case and re-runs only when `client` or `callId` changes, so
+   * `isCallLoading` stayed true forever and `page.tsx` rendered
+   * `MeetingRoomSkeleton` with no error, no message and no way out.
+   *
+   * Waiting is still the right default — see the comment on the early return —
+   * so this bounds the wait rather than removing it.
+   */
+  useEffect(() => {
+    if (client || !callId) return;
+
+    const timer = setTimeout(() => {
+      setError(
+        new Error(
+          "Could not connect to the video service. Check your connection and try again.",
+        ),
+      );
+      setIsCallLoading(false);
+    }, CLIENT_WAIT_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+  }, [client, callId]);
 
   useEffect(() => {
     if (!callId) {
