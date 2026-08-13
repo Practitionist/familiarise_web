@@ -248,7 +248,7 @@ sequenceDiagram
 ```typescript
 const MeetingPage = () => {
   const { id } = useParams();
-  const { data: session, status } = useSession();
+  const { data: session, isPending } = useSession(); // from "@/lib/auth-client"
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
 
@@ -346,7 +346,7 @@ const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
   const router = useRouter();
-  const { data: session } = useSession();
+  const { data: session } = useSession(); // from "@/lib/auth-client"
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
   const call = useCall();
