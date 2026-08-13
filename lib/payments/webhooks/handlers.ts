@@ -901,6 +901,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               },
             },
           },
+          // A trial appointment has none of the four relations above — the
+          // consultant hangs off TrialSession directly. Without this the
+          // resolution below yields undefined, the guard fails, and the TRIAL
+          // branch added below never executes for the only appointments that
+          // can reach it.
+          trialSession: {
+            include: { consultantProfile: true },
+          },
         },
       });
 
@@ -910,7 +918,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         appointmentForChannel?.subscription?.subscriptionPlan
           ?.consultantProfile ||
         appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
-        appointmentForChannel?.class?.classPlan?.consultantProfile;
+        appointmentForChannel?.class?.classPlan?.consultantProfile ||
+        // `TrialSession.consultantProfile` is the required, authoritative
+        // relation — not `trialSession.subscriptionPlan.consultantProfile`,
+        // which is the plan author and can differ.
+        appointmentForChannel?.trialSession?.consultantProfile;
 
       const consultantUserId = consultantProfile?.userId;
 
