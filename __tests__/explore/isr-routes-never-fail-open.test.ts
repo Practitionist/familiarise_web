@@ -65,7 +65,13 @@ describe("#1119 — a cacheable route must never fail open", () => {
     // Guards against the walk silently matching nothing and passing vacuously.
     expect(files.length).toBeGreaterThan(50);
     expect(files.some((f) => isCacheable(f.src))).toBe(true);
-    expect(files.some((f) => degrades(f.src))).toBe(true);
+    // No live degrading route remains: /explore/programs, the last one, went
+    // ISR-and-rethrow — the very sweep this file enforces. Anchor the detector
+    // on a fixture instead (the hasBareCatch pattern below), so the guard
+    // stays non-vacuous without requiring a standing offender.
+    expect(
+      degrades('getX().catch(emptyOnTransientDbError("x", { perRequest: true }))'),
+    ).toBe(true);
   });
 
   it("no route with a revalidate export opts into degrading", () => {
