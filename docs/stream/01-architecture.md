@@ -77,16 +77,16 @@ graph TB
 
 #### Client Components
 
-| Component              | Location                                    | Purpose                                                    |
-| ---------------------- | ------------------------------------------- | ---------------------------------------------------------- |
-| **StreamProvider**     | `providers/StreamProvider.tsx`              | Thin, SDK-free shell that lazy-loads the implementation    |
+| Component              | Location                                    | Purpose                                                                          |
+| ---------------------- | ------------------------------------------- | -------------------------------------------------------------------------------- |
+| **StreamProvider**     | `providers/StreamProvider.tsx`              | Thin, SDK-free shell that lazy-loads the implementation                          |
 | **StreamProviderImpl** | `providers/StreamProviderImpl.tsx`          | Heavy implementation: initializes Chat & Video clients, manages connection state |
-| **Disconnect Module**  | `lib/stream/disconnect.ts`                  | SDK-free shared client refs + `disconnectStreamClients`    |
-| **Chat Client**        | Stream SDK                                  | Manages real-time messaging connections                    |
-| **Video Client**       | Stream SDK                                  | Manages video call connections                             |
-| **Meeting Components** | `app/meetings/[id]/`                        | Video call UI (Setup, Room, Controls)                      |
-| **Error Boundary**     | `components/stream/StreamErrorBoundary.tsx` | Catches and recovers from Stream errors                    |
-| **Custom Hooks**       | `app/meetings/[id]/hooks/`                  | React hooks for Stream operations                          |
+| **Disconnect Module**  | `lib/stream/disconnect.ts`                  | SDK-free shared client refs + `disconnectStreamClients`                          |
+| **Chat Client**        | Stream SDK                                  | Manages real-time messaging connections                                          |
+| **Video Client**       | Stream SDK                                  | Manages video call connections                                                   |
+| **Meeting Components** | `app/meetings/[id]/`                        | Video call UI (Setup, Room, Controls)                                            |
+| **Error Boundary**     | `components/stream/StreamErrorBoundary.tsx` | Catches and recovers from Stream errors                                          |
+| **Custom Hooks**       | `app/meetings/[id]/hooks/`                  | React hooks for Stream operations                                                |
 
 > **Provider split (PR #887, nav-perf):** The provider is split for bundle reasons. `providers/StreamProvider.tsx` is a thin, SDK-free shell that lazy-loads the heavy implementation `providers/StreamProviderImpl.tsx` via `next/dynamic(..., { ssr: false })`. All Stream SDK imports and the two SDK stylesheets live only in that lazy chunk, so routes that merely mount the provider no longer ship the SDK synchronously. The SDK-free module `lib/stream/disconnect.ts` owns the shared module-level client refs (chat, video, current user ID) plus `disconnectStreamClients`, so SDK-free callers (the navbar, other dashboards) can disconnect on logout without statically linking the SDK. See [Navigation Performance](../performance/navigation-performance.md) for the full rationale.
 
@@ -110,7 +110,7 @@ graph TB
 ```mermaid
 graph TD
     App[Next.js App]
-    Auth[NextAuth Session Provider]
+    Auth[Better Auth Session]
     Stream["StreamProvider (SDK-free shell)"]
     Impl["StreamProviderImpl (lazy SDK chunk)"]
     Pages[Application Pages]
@@ -179,14 +179,14 @@ graph LR
 ```mermaid
 sequenceDiagram
     participant User
-    participant NextAuth
+    participant BetterAuth as Better Auth
     participant StreamProvider
     participant TokenProvider
     participant StreamCloud
     participant Database
 
-    User->>NextAuth: Login
-    NextAuth->>User: Session created
+    User->>BetterAuth: Login
+    BetterAuth->>User: Session created
 
     User->>StreamProvider: Page loads
     StreamProvider->>Database: Fetch user details
@@ -337,11 +337,11 @@ model MeetingSession {
 - Webinars → Group team channels
 - Classes → Group team channels
 
-### 2. NextAuth Session Management
+### 2. Better Auth Session Management
 
 ```typescript
 // StreamProvider uses session for initialization
-const { data: session } = useSession();
+const { data: session } = useSession(); // from "@/lib/auth-client"
 
 if (session?.user?.id) {
   // Initialize Stream with authenticated user
@@ -596,7 +596,7 @@ Promise.all([
 
 **Deferred initial connect (PR #887, #248):** The initial connect (`connectUser` plus the one-time `syncUserEventChannels`) is deferred off the dashboard-home critical path via `requestIdleCallback` (with a `setTimeout` fallback). This removes the prior storm of roughly 50–100 `queryChannels` and video-connect calls that fired on dashboard load. The chat sidebar's channel fetch is now split into an initial fetch keyed on the client plus the org scope, and a separate listener effect keyed on the client alone. An in-flight fetch-key guard ensures that rapid channel clicks and mid-fetch org-scope switches no longer refire the storm or strand the wrong tenant's data: a duplicate fetch for the same key is skipped, while a fetch for a new key (an org-scope switch during an in-flight fetch) proceeds so the new scope actually loads. See [Navigation Performance](../performance/navigation-performance.md) for the measured impact.
 
-**Connection robustness (PR #887):** On a user switch the *global* clients are disconnected, not just local React state, so a stale connection cannot survive the swap. Logout teardown uses `Promise.allSettled` and always clears global state even if an individual disconnect rejects. A Join click awaits a short readiness window (`waitForGlobalVideoClient`) so a click that lands during the deferred connect does not fail; if the client is still not ready it falls back to a soft "Connecting…" toast. `useStreamConnection` returns a safe default when called outside the provider, which keeps consumers from crashing during the lazy-load window (only the development `DebugDialog` relies on this hook).
+**Connection robustness (PR #887):** On a user switch the _global_ clients are disconnected, not just local React state, so a stale connection cannot survive the swap. Logout teardown uses `Promise.allSettled` and always clears global state even if an individual disconnect rejects. A Join click awaits a short readiness window (`waitForGlobalVideoClient`) so a click that lands during the deferred connect does not fail; if the client is still not ready it falls back to a soft "Connecting…" toast. `useStreamConnection` returns a safe default when called outside the provider, which keeps consumers from crashing during the lazy-load window (only the development `DebugDialog` relies on this hook).
 
 ### Token Caching
 
