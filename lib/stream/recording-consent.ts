@@ -3,7 +3,6 @@ import { RecordingConsentDecision } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   isRecordingEnabledForAppointment,
-  resolveAppointmentPlan,
   type AppointmentWithOwnership,
 } from "@/lib/stream/recording-utils";
 
@@ -192,4 +191,4 @@ export async function getRecordingBlock(
 }
 
 /** Re-exported so callers need one import for the whole consent surface. */
-export { resolveAppointmentPlan };
+export { resolveAppointmentPlan } from "@/lib/stream/recording-utils";
