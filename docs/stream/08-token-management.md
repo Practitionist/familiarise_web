@@ -435,12 +435,14 @@ await chatClient.connectUser(
 // app/api/stream/video/token/route.ts
 import { tokenProvider } from "@/actions/stream/chat/stream.action";
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
+import { headers } from "next/headers";
+
+import { auth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
     // 1. Verify user is authenticated
-    const session = await getServerSession();
+    const session = await auth.api.getSession({ headers: await headers() });
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -628,7 +630,7 @@ Always verify the user requesting a token is authenticated:
 
 ```typescript
 // ✅ CORRECT: Verify session
-const session = await getServerSession();
+const session = await auth.api.getSession({ headers: await headers() });
 if (!session?.user?.id) {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
