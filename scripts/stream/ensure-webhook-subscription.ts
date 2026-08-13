@@ -69,6 +69,43 @@ const DESIRED_EVENT_TYPES = Array.from(
  */
 type IdentifiedHook = EventHook & { id: string };
 
+/**
+ * Event types are partitioned by PRODUCT, and a hook may only carry events from
+ * its own.
+ *
+ * This is not a detail. The live app has exactly one hook, scoped to `video`,
+ * and `updateAppSettings` refuses the whole write — atomically, so nothing
+ * lands — if the payload gives it a chat event:
+ *
+ *   invalid event types for hook 44a1d716-…: event types
+ *   [message.flagged user.flagged] do not belong to product 'video'
+ *
+ * The first version of this script had no concept of `product`. It reported all
+ * five unsubscribed events as simply "missing", which read as one write away
+ * from fixed, when two of them could never live on that hook at all. Chat
+ * moderation would have stayed dead with the script reporting success.
+ */
+const CHAT_EVENT_PREFIXES = ["user.", "message.", "channel.", "member."];
+
+function productFor(eventType: string): "chat" | "video" {
+  return CHAT_EVENT_PREFIXES.some((p) => eventType.startsWith(p))
+    ? "chat"
+    : "video";
+}
+
+/**
+ * Whether a hook may carry an event type.
+ *
+ * A hook with no `product` is treated as unconstrained: the field is optional in
+ * the SDK, and refusing to widen a hook we cannot classify would be worse than
+ * letting Stream reject it with a precise message.
+ */
+function hookAccepts(hook: EventHook, eventType: string): boolean {
+  const product = (hook as { product?: string }).product;
+  if (!product || product === "all") return true;
+  return product === productFor(eventType);
+}
+
 export async function ensureWebhookSubscription(apply: boolean): Promise<number> {
   if (!isStreamConfigured()) {
     console.error(
@@ -100,21 +137,29 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
   let changed = 0;
   /** hook id -> its widened event_types. Applied in ONE write after the loop. */
   const widened = new Map<string, string[]>();
+  /** Events no hook on this app is allowed to carry. */
+  const unplaceable = new Set(DESIRED_EVENT_TYPES);
 
   for (const hook of hooks) {
     const current = new Set(hook.event_types ?? []);
     // A hook subscribed to "*" already receives everything.
     const receivesAll = current.has("*");
-    const missing = DESIRED_EVENT_TYPES.filter(
-      (t) => !receivesAll && !current.has(t),
-    );
 
-    console.log(`\nhook ${hook.id}  enabled=${hook.enabled}`);
+    // Only events this hook's product permits. Offering it anything else makes
+    // Stream refuse the ENTIRE update, so one impossible event silently costs
+    // every possible one in the same write.
+    const eligible = DESIRED_EVENT_TYPES.filter((t) => hookAccepts(hook, t));
+    for (const t of eligible) unplaceable.delete(t);
+
+    const missing = eligible.filter((t) => !receivesAll && !current.has(t));
+    const product = (hook as { product?: string }).product ?? "unscoped";
+
+    console.log(`\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`);
     console.log(`  url: ${hook.webhook_url}`);
     console.log(`  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`);
 
     if (missing.length === 0) {
-      console.log("  ✅ already covers every handled event");
+      console.log(`  ✅ already covers every handled ${product} event`);
       continue;
     }
 
@@ -130,6 +175,30 @@ export async function ensureWebhookSubscription(apply: boolean): Promise<number>
     const next = Array.from(new Set([...current, ...missing])).sort(byCodeUnit);
     widened.set(hook.id, next);
     console.log(`  → will widen to ${next.length} event types`);
+  }
+
+  // Events with nowhere to go. This is a configuration gap the script cannot
+  // close: creating a hook decides a public URL and starts real deliveries, so
+  // it belongs to a human, in the dashboard, the same way the "no webhook at
+  // all" case above does.
+  if (unplaceable.size > 0) {
+    const byProduct = new Map<string, string[]>();
+    for (const t of unplaceable) {
+      const p = productFor(t);
+      byProduct.set(p, [...(byProduct.get(p) ?? []), t]);
+    }
+    console.error(
+      `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
+    );
+    for (const [product, types] of byProduct) {
+      console.error(`\n  product '${product}' — no hook on this app is scoped to it:`);
+      for (const t of [...types].sort(byCodeUnit)) console.error(`    · ${t}`);
+      console.error(
+        `  Create a '${product}' webhook in the Stream dashboard pointing at\n` +
+          `  <origin>/api/stream/webhooks, then re-run. Until then these events are\n` +
+          `  never delivered and the features behind them stay dead.`,
+      );
+    }
   }
 
   // One write, carrying every hook the app has. Two things went wrong with the
