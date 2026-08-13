@@ -56,6 +56,20 @@ import "@stream-io/video-react-sdk/dist/css/styles.css";
 // browser tab's module lifecycle. Separate from the server-side Set in stream-cache.ts.
 const clientSyncCompletedUsers = new Set<string>();
 
+/**
+ * Undo the "sync kicked" marks so a later render can retry.
+ *
+ * Safe to clear the in-memory marker here despite it meaning "kicked, possibly
+ * in flight" — this runs only once the promise has settled, so there is nothing
+ * left in flight to double up on.
+ */
+function markSyncIncomplete(userId: string, syncKey: string) {
+  clientSyncCompletedUsers.delete(userId);
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.removeItem(syncKey);
+  }
+}
+
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 
 /**
@@ -261,7 +275,20 @@ const StreamProviderImpl = ({
         // start a second one while the first was still in flight.
         clientSyncCompletedUsers.add(userDetails.id);
         void syncUserEventChannels(userDetails.id)
-          .then(() => {
+          .then((result) => {
+            // `syncUserEventChannels` reports failure by RESOLVING with
+            // `{ success: false }` rather than rejecting, so a `.then` that
+            // ignores its argument treats a failed sync as a completed one —
+            // and `sessionStorage` then suppresses the retry for the rest of
+            // the tab's life. The `.catch` below only ever saw the thrown case.
+            if (!result?.success) {
+              markSyncIncomplete(userDetails.id, syncKey);
+              streamLogger.warn("Channel sync reported failure", {
+                userId: userDetails.id,
+                error: result?.error,
+              });
+              return;
+            }
             if (typeof sessionStorage !== "undefined") {
               sessionStorage.setItem(syncKey, "1");
             }
@@ -272,6 +299,7 @@ const StreamProviderImpl = ({
           .catch((syncError) => {
             // Deliberately not persisted to sessionStorage, so the next load
             // retries rather than assuming this user is reconciled.
+            markSyncIncomplete(userDetails.id, syncKey);
             streamLogger.warn("Channel sync failed", {
               userId: userDetails.id,
               error: syncError,

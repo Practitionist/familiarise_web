@@ -52,7 +52,7 @@ export interface SyncOptions {
   excludeUserIds?: string[];
   /** Delay between batch deletions in ms (default: 500) */
   batchDelayMs?: number;
-  /** Fail if lock cannot be acquired (default: false) */
+  /** Fail if the lock cannot be acquired (default: true) */
   requireLock?: boolean;
 }
 
@@ -174,10 +174,10 @@ export async function performStreamUserSync(
       () => null, // Fallback if Redis is down
     );
   } catch (error) {
-    console.warn(
-      "⚠️ Failed to acquire lock, proceeding without distributed lock:",
-      error,
-    );
+    // Not "proceeding without" — the default now throws below. Saying
+    // otherwise in the log sends whoever reads it looking for a run that
+    // never happened.
+    console.warn("⚠️ Failed to acquire lock:", error);
   }
 
   if (lockToken === null) {

@@ -19,6 +19,13 @@ interface Notice {
 export interface ConsentGate {
   /** False while we are still asking, or while a decision is outstanding. */
   satisfied: boolean;
+  /**
+   * True only for the fetch. `satisfied` is false in this window too, so the
+   * Join button is disabled while `node` is still null — the caller needs to
+   * tell that apart from a real outstanding decision, or the button sits dead
+   * with nothing on screen accounting for it.
+   */
+  loading: boolean;
   node: React.ReactNode;
 }
 
@@ -65,7 +72,13 @@ export function useRecordingConsent(meetingId: string): ConsentGate {
           });
           return;
         }
-        setNotice((await res.json()) as Notice);
+        // Second await, second check. `res.json()` is a fresh suspension point,
+        // so a meetingId change between the header arriving and the body
+        // parsing would land the OLD meeting's notice in state — and this
+        // component decides whether the Join button unlocks.
+        const body = (await res.json()) as Notice;
+        if (cancelled) return;
+        setNotice(body);
       } catch {
         if (!cancelled) {
           setNotice({
@@ -115,14 +128,15 @@ export function useRecordingConsent(meetingId: string): ConsentGate {
   );
 
   // Still loading, or nothing to disclose: do not block, do not render.
-  if (!notice) return { satisfied: false, node: null };
-  if (!notice.required) return { satisfied: true, node: null };
+  if (!notice) return { satisfied: false, loading: true, node: null };
+  if (!notice.required) return { satisfied: true, loading: false, node: null };
 
   const isOptOut = notice.regime === "OPT_OUT";
   const answered = notice.decision !== null;
 
   return {
     satisfied: answered,
+    loading: false,
     node: (
       <div
         className={cn(

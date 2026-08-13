@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import prisma from "@/lib/prisma";
 
 /**
@@ -26,23 +28,54 @@ export type MeetingRole = "host" | "participant" | null;
  */
 export type MeetingAccessReason = "granted" | "not_found" | "unauthorized";
 
-export interface MeetingAccess {
+/** The meeting row does not exist. Nothing further is known about it. */
+interface MeetingNotFound {
+  hasAccess: false;
+  role: null;
+  message: string;
+  reason: "not_found";
+}
+
+/**
+ * The meeting exists — so the session and its appointment are always present,
+ * whether or not this caller may join.
+ *
+ * A union rather than one interface with optional fields, because the caller
+ * that needs the appointment needs it exactly when `hasAccess` is true, and an
+ * optional field forces a `!` or a redundant re-check at every use. Narrowing
+ * on `hasAccess` eliminates `MeetingNotFound` and leaves these non-optional.
+ */
+interface MeetingResolved {
   hasAccess: boolean;
   role: MeetingRole;
   message: string;
   /** Machine-readable verdict. Branch on this, never on `message`. */
-  reason: MeetingAccessReason;
-  /** Present only when the meeting exists, regardless of the access verdict. */
-  streamCallId?: string;
+  reason: "granted" | "unauthorized";
+  streamCallId: string;
+  meetingSessionId: string;
+  /**
+   * The appointment this meeting belongs to, with each plan's owner and
+   * `recordingEnabled` — the shape `lib/stream/recording-utils` consumes.
+   *
+   * Handed back because the consent endpoints were re-querying the same row
+   * immediately after the access check. The four plan relations are already
+   * joined for the ownership test, so carrying one more column each costs
+   * nothing and removes a whole round trip from both handlers.
+   */
+  appointment: MeetingAppointment;
 }
 
-export async function resolveMeetingAccess(
-  meetingId: string,
-  userId: string,
-): Promise<MeetingAccess> {
-  const meetingSession = await prisma.meetingSession.findUnique({
-    where: { streamCallId: meetingId },
-    include: {
+export type MeetingAccess = MeetingNotFound | MeetingResolved;
+
+/** Inferred from the resolver's own query — never hand-maintained. */
+type ResolvedMeetingSession = NonNullable<
+  Awaited<ReturnType<typeof loadMeetingSession>>
+>;
+export type MeetingAppointment =
+  ResolvedMeetingSession["slotOfAppointment"]["appointment"];
+
+/** Hoisted so `MeetingAppointment` can be inferred from the real query. */
+const MEETING_SESSION_INCLUDE = {
       slotOfAppointment: {
         include: {
           user: { select: { id: true } },
@@ -50,32 +83,64 @@ export async function resolveMeetingAccess(
             include: {
               consultation: {
                 include: {
-                  consultationPlan: { select: { consultantProfileId: true } },
+                  consultationPlan: {
+                    select: {
+                      consultantProfileId: true,
+                      recordingEnabled: true,
+                    },
+                  },
                 },
               },
               subscription: {
                 include: {
-                  subscriptionPlan: { select: { consultantProfileId: true } },
+                  subscriptionPlan: {
+                    select: {
+                      consultantProfileId: true,
+                      recordingEnabled: true,
+                    },
+                  },
                 },
               },
               webinar: {
                 include: {
                   webinarPlan: {
-                    select: { id: true, consultantProfileId: true },
+                    select: {
+                      id: true,
+                      consultantProfileId: true,
+                      recordingEnabled: true,
+                    },
                   },
                 },
               },
               class: {
                 include: {
-                  classPlan: { select: { id: true, consultantProfileId: true } },
+                  classPlan: {
+                    select: {
+                      id: true,
+                      consultantProfileId: true,
+                      recordingEnabled: true,
+                    },
+                  },
                 },
               },
             },
           },
         },
       },
-    },
+    } satisfies Prisma.MeetingSessionInclude;
+
+function loadMeetingSession(meetingId: string) {
+  return prisma.meetingSession.findUnique({
+    where: { streamCallId: meetingId },
+    include: MEETING_SESSION_INCLUDE,
   });
+}
+
+export async function resolveMeetingAccess(
+  meetingId: string,
+  userId: string,
+): Promise<MeetingAccess> {
+  const meetingSession = await loadMeetingSession(meetingId);
 
   if (!meetingSession) {
     return {
@@ -87,6 +152,8 @@ export async function resolveMeetingAccess(
   }
 
   const streamCallId = meetingSession.streamCallId;
+  const meetingSessionId = meetingSession.id;
+  const appointment = meetingSession.slotOfAppointment.appointment;
 
   const userProfile = await prisma.user.findUnique({
     where: { id: userId },
@@ -97,7 +164,6 @@ export async function resolveMeetingAccess(
     (u: { id: string }) => u.id === userId,
   );
 
-  const appointment = meetingSession.slotOfAppointment.appointment;
   const consultantProfileId =
     appointment.consultation?.consultationPlan?.consultantProfileId ??
     appointment.subscription?.subscriptionPlan?.consultantProfileId ??
@@ -115,6 +181,8 @@ export async function resolveMeetingAccess(
       message: "Access granted as meeting host",
       reason: "granted",
       streamCallId,
+      meetingSessionId,
+      appointment,
     };
   }
 
@@ -139,6 +207,8 @@ export async function resolveMeetingAccess(
           message: "Access granted as accepted collaborator",
           reason: "granted",
           streamCallId,
+      meetingSessionId,
+      appointment,
         };
       }
     }
@@ -168,6 +238,8 @@ export async function resolveMeetingAccess(
       message: "Access granted as participant",
       reason: "granted",
       streamCallId,
+      meetingSessionId,
+      appointment,
     };
   }
 
@@ -177,5 +249,7 @@ export async function resolveMeetingAccess(
     message: "You are not authorized to join this meeting",
     reason: "unauthorized",
     streamCallId,
+    meetingSessionId,
+    appointment,
   };
 }

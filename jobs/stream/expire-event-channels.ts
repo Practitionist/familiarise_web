@@ -154,7 +154,12 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   };
 
   if (!isStreamConfigured()) {
+    // Not a no-op success. The cron reports `success` and exits 0 on it, so a
+    // Stream config that silently went missing — the exact failure #1134 found
+    // in production, where the webhook secret was simply unset on Netlify —
+    // would show up as a green nightly run for as long as it lasted.
     result.errors.push("Stream is not configured — nothing to do");
+    result.success = false;
     return result;
   }
 
@@ -246,11 +251,16 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
 if (require.main === module) {
   runJob("expire-event-channels", async () => {
     await abortIfMaintenance("expire-event-channels");
-    const result = await expireEventChannels();
-    console.log(
-      `Frozen: ${result.frozen}  Deleted: ${result.deleted}  Errors: ${result.errors.length}`,
-    );
-    if (!result.success) process.exitCode = 1;
-    await prisma.$disconnect();
+    try {
+      const result = await expireEventChannels();
+      console.log(
+        `Frozen: ${result.frozen}  Deleted: ${result.deleted}  Errors: ${result.errors.length}`,
+      );
+      if (!result.success) process.exitCode = 1;
+    } finally {
+      // In a `finally` so a throw cannot leak the pool. `runJob` reports the
+      // error and lets it propagate, which skipped this line entirely.
+      await prisma.$disconnect();
+    }
   });
 }
