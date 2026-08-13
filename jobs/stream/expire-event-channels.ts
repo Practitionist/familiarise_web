@@ -29,7 +29,11 @@ import {
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
 import { getChannelTypeFromId, CLASS_PREFIX, WEBINAR_PREFIX } from "../../lib/stream-channel-ids";
-import { chunk, STREAM_BATCH_LIMIT } from "../../lib/stream/batch";
+import {
+  chunk,
+  STREAM_BATCH_LIMIT,
+  STREAM_CONCURRENCY_LIMIT,
+} from "../../lib/stream/batch";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
@@ -173,9 +177,12 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
 
   const chat = getStreamChatClient();
 
-  // Freeze. Per-channel rather than bulk because Stream has no batch freeze;
-  // allSettled so one missing channel cannot abort the run.
-  for (const batch of chunk(toFreeze, STREAM_BATCH_LIMIT)) {
+  // Freeze. Per-channel rather than bulk because Stream has no batch freeze, so
+  // the chunk size here is a CONCURRENCY width and not a payload ceiling —
+  // chunking by STREAM_BATCH_LIMIT fired a hundred simultaneous requests at an
+  // app that also serves live user traffic. allSettled so one missing channel
+  // cannot abort the run.
+  for (const batch of chunk(toFreeze, STREAM_CONCURRENCY_LIMIT)) {
     const outcomes = await Promise.allSettled(
       batch.map((channelId) =>
         withStreamCircuitBreaker(() =>

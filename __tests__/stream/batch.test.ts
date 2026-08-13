@@ -11,7 +11,12 @@
  * attendee silently got no chat.
  */
 
-import { chunk, forEachChunk, STREAM_BATCH_LIMIT } from "@/lib/stream/batch";
+import {
+  chunk,
+  forEachChunk,
+  STREAM_BATCH_LIMIT,
+  STREAM_CONCURRENCY_LIMIT,
+} from "@/lib/stream/batch";
 
 describe("chunk", () => {
   it("defaults to Stream's documented ceiling", () => {
@@ -89,5 +94,26 @@ describe("forEachChunk", () => {
     ).rejects.toThrow("stream 429");
     // Stopped at the failure; the caller decides whether to retry.
     expect(seen).toEqual([0, 1]);
+  });
+});
+
+describe("payload ceiling vs fan-out width", () => {
+  it("keeps them as separate constants", () => {
+    // They answer different questions and only coincidentally started the same.
+    // STREAM_BATCH_LIMIT is how many items fit in ONE request (upsertUsers,
+    // addMembers, deleteChannels). STREAM_CONCURRENCY_LIMIT is how many separate
+    // requests to have in flight for operations Stream gives no bulk endpoint
+    // for — freezing a channel being the one that bit.
+    expect(STREAM_CONCURRENCY_LIMIT).toBeLessThan(STREAM_BATCH_LIMIT);
+    expect(Number.isInteger(STREAM_CONCURRENCY_LIMIT)).toBe(true);
+    expect(STREAM_CONCURRENCY_LIMIT).toBeGreaterThan(0);
+  });
+
+  it("rejects a non-integer chunk size instead of silently misbehaving", () => {
+    // `items.slice(i, i + 2.5)` does not throw; it produces uneven chunks and a
+    // caller that thinks it bounded a payload has not.
+    expect(() => chunk([1, 2, 3], 2.5)).toThrow(/positive integer/);
+    expect(() => chunk([1, 2, 3], 0)).toThrow(/positive integer/);
+    expect(() => chunk([1, 2, 3], -1)).toThrow(/positive integer/);
   });
 });
