@@ -14,24 +14,26 @@
   # The standard build image has 8 GB, so this stays inside the container cap.
   NODE_OPTIONS = "--max-old-space-size=6144"
 
-# The call-filter assets are browser-only, and must not ride into the server
+# The call-filter packages are browser-only and must not ride into the server
 # function (#1134).
 #
-# `postinstall` copies ~32MB of MediaPipe WASM and Krisp models into `public/`
-# so the browser fetches them from us instead of unpkg. Netlify builds
-# `___netlify-server-handler` from Next's standalone output, which copies
-# `public/` wholesale — so all 32MB landed inside a Lambda that never serves
-# them, and AWS rejected the upload:
+# `___netlify-server-handler` is built from Next's output trace, and AWS refuses
+# the upload once it is too large:
 #
 #   Failed to create function: invalid parameter for function creation:
 #   Invalid AWS Lambda parameters used in this request.
 #
-# The build itself SUCCEEDS. This fails at the deploy stage, which is why every
-# required check stayed green while the deploy preview failed seven times in a
-# row — and why `next build` reproduces nothing locally.
+# The BUILD succeeds; this fails at the deploy stage. That is why every required
+# check stayed green through seven consecutive failures and why `next build`
+# reproduces nothing locally — the broken stage never runs on a laptop.
 #
-# Excluded here rather than moved out of `public/`: the CDN still serves them at
-# `/mediapipe` and `/nc-models`, which is exactly what `basePath` expects.
+# The real weight is 74MB of node_modules (audio-filters-web 44MB,
+# video-filters-web 30MB), excluded via `outputFileTracingExcludes` in
+# next.config.mjs. The `public/` exclusion below is kept because 32MB of WASM
+# and models have no business in a Lambda either — but it was NOT the fix, and
+# saying so here matters: the resolved Netlify config showed it applied while
+# the deploy still failed.
+#
 # Netlify has no `excluded_files` key; exclusion is a `!` entry in
 # `included_files`.
 [functions]

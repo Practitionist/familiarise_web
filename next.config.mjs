@@ -178,12 +178,34 @@ const nextConfig = {
   // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +
   // `npx eslint .` as their own steps). Local `npm run build` and CI's own build keep
   // the checks on, so nothing loses its safety net off-Netlify. (#932)
-  // Browser-only assets, kept out of the traced server output. Netlify builds
-  // its server function from this, and 32MB of WASM and Krisp models pushed the
-  // Lambda past AWS's size limit — the deploy failed while the build passed.
-  // The CDN still serves them from `public/`; see the note in netlify.toml.
+  /**
+   * Keep the call-filter packages out of the traced SERVER output (#1134).
+   *
+   * Netlify builds `___netlify-server-handler` from this trace, and AWS refuses
+   * the upload once it is too large:
+   *
+   *   Failed to create function: invalid parameter for function creation:
+   *   Invalid AWS Lambda parameters used in this request.
+   *
+   * The build SUCCEEDS — this fails at the deploy stage, which is why every
+   * required check stayed green and `next build` reproduced nothing locally.
+   *
+   * The two packages are 74MB in node_modules (audio-filters-web is 44MB, of
+   * which 33MB is Krisp model data; video-filters-web is 30MB). Both are
+   * `"use client"` only — grep confirms no file under app/api, lib, actions,
+   * jobs or scripts imports either — so the server bundles 74MB it can never
+   * execute. Their WASM and models reach the browser from `public/`, copied
+   * there by `postinstall`, and served by the CDN.
+   *
+   * Excluding `public/` was the first attempt and was wrong: the resolved
+   * Netlify config showed the exclusion applied and the Lambda still failed.
+   * The weight is in node_modules, not in the static assets.
+   */
   outputFileTracingExcludes: {
-    "*": ["./public/mediapipe/**", "./public/nc-models/**"],
+    "*": [
+      "node_modules/@stream-io/audio-filters-web/**",
+      "node_modules/@stream-io/video-filters-web/**",
+    ],
   },
   eslint: { ignoreDuringBuilds: !!process.env.NETLIFY },
   typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
