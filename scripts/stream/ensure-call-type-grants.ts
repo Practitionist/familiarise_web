@@ -23,6 +23,7 @@
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply
+ *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --join-route-is-deployed
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join
  */
 import "dotenv/config";
@@ -108,16 +109,59 @@ function canonical(value: unknown): string {
 interface Options {
   apply: boolean;
   restore: boolean;
+  deployConfirmed: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
   return {
     apply: argv.includes("--apply"),
     restore: argv.includes("--restore-user-join"),
+    deployConfirmed: argv.includes("--join-route-is-deployed"),
   };
 }
 
+/**
+ * The order this script runs in relative to the deploy is load-bearing, and
+ * getting it wrong locks every user out of every call.
+ *
+ * Applying strips `join-call` from the `user` role. Nobody can then join except
+ * as a `call_member`, and the ONLY thing that makes anyone a `call_member` is
+ * `POST /api/meetings/[meetingId]/join`. Run this before that route is live and
+ * there is a window in which no one can join anything.
+ *
+ * The post-apply guard below does not catch it. That guard checks whether
+ * Stream stored `join-call` on `call_member`, which it will have — the grant is
+ * present, there is simply nobody holding the role. It passes, and reports
+ * success, for exactly the failure that matters here.
+ *
+ * This cannot be verified automatically. Every route on the production origin
+ * answers 404 to an unauthenticated request, deployed or not, so there is no
+ * external probe that distinguishes them. So the operator asserts it, with a
+ * flag named after the thing being asserted.
+ */
+function requireDeployConfirmation(opts: Options): boolean {
+  if (!opts.apply || opts.restore || opts.deployConfirmed) return true;
+
+  console.error(
+    "\n🛑 Refusing to apply.\n" +
+      "\nThis strips `join-call` from the `user` role. After it, the only way to\n" +
+      "join a call is to hold `call_member`, and the only thing that grants that\n" +
+      "is POST /api/meetings/[meetingId]/join. If that route is not deployed and\n" +
+      "serving traffic RIGHT NOW, every user is locked out of every call from the\n" +
+      "moment this write lands.\n" +
+      "\nDeploy first. Confirm the route is live. Then re-run with:\n" +
+      "  npx tsx scripts/stream/ensure-call-type-grants.ts --apply --join-route-is-deployed\n" +
+      "\nIf you get it wrong, the rollback is:\n" +
+      "  npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join\n",
+  );
+  return false;
+}
+
 export async function ensureCallTypeGrants(opts: Options): Promise<number> {
+  // Before anything else, including the read — a refusal should not depend on
+  // Stream being reachable.
+  if (!requireDeployConfirmation(opts)) return 1;
+
   if (!isStreamConfigured()) {
     console.error("Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET");
     return 1;

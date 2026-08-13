@@ -89,14 +89,14 @@ beforeEach(() => {
 
 describe("ensure-call-type-grants", () => {
   it("is a dry run by default and writes nothing", async () => {
-    const code = await ensureCallTypeGrants({ apply: false, restore: false });
+    const code = await ensureCallTypeGrants({ apply: false, restore: false, deployConfirmed: false });
 
     expect(code).toBe(0);
     expect(mockUpdateCallType).not.toHaveBeenCalled();
   });
 
   it("takes join-call off user AND guest", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     // `guest` matters as much as `user`: the app has
     // guest_user_creation_disabled: false, so guest sessions are creatable
@@ -107,7 +107,7 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("leaves call_member able to join — the whole system depends on it", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     // The join route assigns call_member to EVERY participant. If this role
     // cannot join, nobody can join anything.
@@ -115,7 +115,7 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("takes recording control off call_member, not just off user", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     // The live type grants call_member start-recording and stop-recording, and
     // the join route hands call_member to everyone — so revoking these from
@@ -131,7 +131,7 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("leaves end-call on call_member, because EndCallButton needs it", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     // EndCallButton.tsx calls call.endCall() client-side and the Stream role no
     // longer separates host from participant, so revoking this would take the
@@ -143,13 +143,13 @@ describe("ensure-call-type-grants", () => {
   });
 
   it("does not touch admin", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(applied().admin).toEqual(LIVE_GRANTS().admin);
   });
 
   it("does not invent role keys the call type does not have", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     // Review suggested initialising `host` and `moderator`, on the strength of
     // Stream's docs. Neither key exists on this app's `default` type, and the
@@ -161,7 +161,7 @@ describe("ensure-call-type-grants", () => {
   it("heals a call type that arrives without a joinable member role", async () => {
     delete (stored as Record<string, string[] | undefined>).call_member;
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+    const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(code).toBe(0);
     expect(applied().call_member).toContain("join-call");
@@ -182,16 +182,16 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+    const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(code).toBe(1);
   });
 
   it("is idempotent — a second run over its own output is a no-op", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
     mockUpdateCallType.mockClear();
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+    const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(code).toBe(0);
     expect(mockUpdateCallType).not.toHaveBeenCalled();
@@ -211,7 +211,7 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+    const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(code).toBe(1);
 
@@ -241,17 +241,17 @@ describe("ensure-call-type-grants", () => {
         notification_settings: LIVE_NOTIFICATIONS,
       });
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: false });
+    const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
 
     expect(code).toBe(0);
     expect(mockWriteFileSync).not.toHaveBeenCalled();
   });
 
   it("restores join-call without handing back recording control", async () => {
-    await ensureCallTypeGrants({ apply: true, restore: false });
+    await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
     mockUpdateCallType.mockClear();
 
-    const code = await ensureCallTypeGrants({ apply: true, restore: true });
+    const code = await ensureCallTypeGrants({ apply: true, restore: true, deployConfirmed: false });
 
     expect(code).toBe(0);
     // Rolling the join change back is an availability rollback. Handing every
