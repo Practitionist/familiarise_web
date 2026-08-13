@@ -85,6 +85,20 @@ flowchart TD
 
 ---
 
+## Changelog: 2026-08-14 — documentation refresh
+
+Docs-only pass shipped as the final PR of the #1169 booking + maintenance productionization train, closing the long-standing booking-docs drift item #1013. No code changed in this entry.
+
+| Change | Area | Description |
+| --- | --- | --- |
+| Collaborators de-drift | `docs/collaborators/` | All seven files rewritten against the merged `Collaborator` model (#784): typed permission booleans replacing the JSON override (#768), basis-point shares (#772 B5), pool-based split with floors (#778 §C-2), and the enforced co-host availability guard (AE-2). |
+| Org-funded checkout documented | `docs/booking/17-org-funded-checkout.md` | New page covering the sponsored rail end to end — resolution chain, gateway skip, wallet/engagement debits, inline settlement, internal refunds — previously documented nowhere in this folder. |
+| Funding-seam citations | `docs/payments/05-b2c-b2b-funding-seam.md` | Stale file:line references re-verified and corrected. |
+| Prompts corpus | `prompts/` | New index README; enterprise shared-setup corrected (deleted three-ledger models replaced by the double-entry journal, seed cohort reconciled with the verification guide); two new booking case files (007 reschedule-response loop for #1162, 008 maintenance-freeze correctness for #1163). |
+| Booking doctrine skill | `.claude/skills/booking-doctrine/` | The subsystem's invariants (CAS transitions, nothing-is-deleted, refund front doors, lock namespaces, sidecars, org scoping, testing recipes) captured for future agents. |
+
+---
+
 ## Changelog: July 2026
 
 Booking-calendar correctness sweep (branch `fix/booking-algorithm-calendar`, tracking the Request Calendar work under #997).
