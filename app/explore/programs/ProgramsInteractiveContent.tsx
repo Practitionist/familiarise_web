@@ -3,7 +3,7 @@
 import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
+import { GraduationCap, Video, Users } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
@@ -16,6 +16,7 @@ import {
   useProgramsFilters,
   useTopicsWithCount,
 } from "./hooks";
+import { ProgramsHeroCopy } from "./components/HeroCopy";
 import ProgramTabs from "./components/ProgramTabs";
 import SectionHeader from "./components/SectionHeader";
 import AdvancedFilters from "./components/AdvancedFilters";
@@ -211,21 +212,7 @@ export default function ProgramsInteractiveContent({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
+            <ProgramsHeroCopy />
 
             <div className="flex flex-wrap justify-center gap-8 md:gap-16">
               {stats.map((stat, index) => (

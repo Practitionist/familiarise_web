@@ -1,5 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles } from "lucide-react";
+import { ProgramsHeroCopy } from "./components/HeroCopy";
 
 /** Explore programs list: dark hero + tabs/filters + carousel rows.
  *
@@ -12,21 +12,7 @@ export function ProgramsExploreSkeleton() {
     <main className="min-h-screen bg-background">
       <section className="relative bg-zinc-950 px-4 pb-20 pt-32 md:px-8 lg:px-12">
         <div className="mx-auto max-w-4xl text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-            <Sparkles className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-zinc-300">
-              Learn from the Best
-            </span>
-          </div>
-
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-            Classes & <span className="silver-text">Webinars</span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-            Expand your knowledge with expert-led classes and live webinars.
-            Learn at your own pace or join interactive sessions.
-          </p>
+          <ProgramsHeroCopy />
 
           <div className="flex flex-wrap justify-center gap-8 md:gap-16">
             {["Classes Available", "Live Webinars", "Students Enrolled"].map(
