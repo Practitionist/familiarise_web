@@ -126,122 +126,46 @@ if (registeredCount === 1) {
 
 **File**: `actions/stream/chat/event-channel.action.ts`
 
+The real signature and contract matter more than the body, because callers get
+both wrong in ways that are invisible until production:
+
 ```typescript
-export const syncUserEventChannels = async (userId: string) => {
-  try {
-    // Get user details
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        consulteeProfile: true,
-        consultantProfile: true,
-      },
-    });
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    // WEBINARS: every webinar the user holds a session slot on
-    const webinarsFromAppointments = await prisma.webinar.findMany({
-      where: {
-        appointment: {
-          slotsOfAppointment: {
-            some: {
-              user: {
-                some: { id: userId },
-              },
-            },
-          },
-        },
-      },
-      select: { id: true },
-    });
-
-    const allWebinarIds = Array.from(
-      new Set(webinarsFromAppointments.map((w) => w.id)),
-    );
-
-    console.log(
-      `User ${userId}: Found ${allWebinarIds.length} webinars`,
-    );
-
-    // Add user to all webinar channels
-    for (const webinarId of allWebinarIds) {
-      await addUserToEventChannel("webinar", webinarId, userId);
-    }
-
-    // CLASSES: every class the user holds session slots on
-    const classesFromAppointments = await prisma.class.findMany({
-      where: {
-        appointments: {
-          some: {
-            slotsOfAppointment: {
-              some: {
-                user: {
-                  some: { id: userId },
-                },
-              },
-            },
-          },
-        },
-      },
-      select: { id: true },
-    });
-
-    const allClassIds = Array.from(
-      new Set(classesFromAppointments.map((c) => c.id)),
-    );
-
-    console.log(`User ${userId}: Found ${allClassIds.length} classes`);
-
-    // Add user to all class channels
-    for (const classId of allClassIds) {
-      await addUserToEventChannel("class", classId, userId);
-    }
-
-    // CONSULTANT CHANNELS: If user is a consultant
-    if (user.consultantProfile) {
-      const consultantId = user.consultantProfile.id;
-
-      // Get all hosted webinars
-      const hostedWebinars = await prisma.webinar.findMany({
-        where: {
-          webinarPlan: {
-            consultantProfileId: consultantId,
-          },
-        },
-        select: { id: true },
-      });
-
-      // Add to webinar channels
-      for (const webinar of hostedWebinars) {
-        await addUserToEventChannel("webinar", webinar.id, userId);
-      }
-
-      // Get all hosted classes
-      const hostedClasses = await prisma.class.findMany({
-        where: {
-          classPlan: {
-            consultantProfileId: consultantId,
-          },
-        },
-        select: { id: true },
-      });
-
-      // Add to class channels
-      for (const classItem of hostedClasses) {
-        await addUserToEventChannel("class", classItem.id, userId);
-      }
-    }
-
-    return { success: true };
-  } catch (error) {
-    console.error("Error synchronizing user event channels:", error);
-    throw error;
-  }
-};
+export async function syncUserEventChannels(
+  userId: string,
+  force = false,
+): Promise<{
+  success: boolean;
+  skipped?: boolean;
+  error?: string;
+  channelsSynced?: number;
+  failed?: number;
+  staleChannelsRemoved?: number;
+  durationMs?: number;
+}>;
 ```
+
+Three properties of this contract are load-bearing.
+
+**It reports failure by resolving, not by rejecting.** A missing user returns
+`{ success: false, error: "User not found" }` rather than throwing. A caller
+written as `sync(id).then(markDone).catch(logIt)` therefore marks a failed sync
+as done, because the `catch` only ever sees the thrown case. That is exactly the
+bug fixed in `providers/StreamProviderImpl.tsx`, where the success marker was
+persisted to `sessionStorage` for a sync that had failed, suppressing every
+retry for the rest of the tab's life. Branch on `result.success`.
+
+**It can no-op.** A recent successful sync for the same user returns
+`{ success: true, skipped: true }` without doing any work, unless `force` is
+passed. Treat `skipped` as success, because it means the state is already
+correct.
+
+**It fans out in bounded chunks.** Channel membership is applied through chunked
+`Promise.allSettled` rather than a sequential loop, so one channel that fails
+does not abandon the rest — hence `failed` alongside `channelsSynced`. A partial
+result is the normal shape, not an error.
+
+For the current body, read the function itself. It is long, it changes with the
+event model, and a transcribed copy here has drifted every time.
 
 ---
 
@@ -249,7 +173,7 @@ export const syncUserEventChannels = async (userId: string) => {
 
 ### Who May Talk to Whom (Policy)
 
-The platform deliberately supports only three conversation shapes. First, a consultant and a consultee who transact together share exactly one direct-message channel: consultations, subscriptions, and ad-hoc DMs between the same pair all reuse the deterministic `dm-<idA>-<idB>` channel id (the two user ids are sorted before joining, so the pair can never produce a duplicate channel regardless of who initiates). Second, group events — webinars and classes — put every booked attendee and the host into one shared event channel, and this is the sanctioned space where consultees can talk alongside other consultees. Third, consultants collaborating on a joint webinar or class get a plan-scoped `collab-{webinar|class}-{planId}` channel that is reconciled against the accepted collaborator list.
+The platform deliberately supports only three conversation shapes. First, a consultant and a consultee who transact together share exactly one direct-message channel: consultations, subscriptions, trials, and ad-hoc DMs between the same pair all reuse the deterministic `dm-<idA>-<idB>` channel id (the two user ids are put into code-unit order before joining, so the pair can never produce a duplicate channel regardless of who initiates). An organization-scoped conversation uses the `dmo-` form instead; see [Direct Messages](./04-chat-implementation.md#direct-messages) for why the ordering must not use `localeCompare`. Trials were absent from this list until recently, and the omission was accidentally accurate: the trial branch in the payment webhook existed but could never execute, because the consultant could not be resolved for a trial appointment. A trial now opens the same conversation as any other one-to-one booking. Second, group events — webinars and classes — put every booked attendee and the host into one shared event channel, and this is the sanctioned space where consultees can talk alongside other consultees. Third, consultants collaborating on a joint webinar or class get a plan-scoped `collab-{webinar|class}-{planId}` channel that is reconciled against the accepted collaborator list.
 
 Consultee↔consultee direct messages are intentionally not supported. This is a decision, not a gap: peer-to-peer DMs on a marketplace are only safe with mature moderation infrastructure, and the block stays until the moderation enforcement shipped for #693 and the #899 hardening have settled in production. The full rationale is recorded in `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`. There is no consultee↔consultee code path to disable — reviewers should keep it that way.
 
