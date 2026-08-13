@@ -2,7 +2,9 @@
 
 import ExploreError from "../components/ExploreError";
 
-export default function Error(
+// Named ProgramsError, not Error — shadowing the Error global is a Sonar
+// reliability bug (S2137), and Next.js only requires the default export.
+export default function ProgramsError(
   props: Readonly<{
     error: Error & { digest?: string };
     reset: () => void;
