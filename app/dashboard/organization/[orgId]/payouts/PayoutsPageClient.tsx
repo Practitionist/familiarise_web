@@ -149,7 +149,8 @@ export function PayoutsPageClient({
   livePayoutsEnabled: boolean;
 }) {
   const { orgId } = use(params);
-  const { isAtLeast } = useOrgRole(orgId);
+  // #1132 — payout batches are `payouts.manage` (OWNER + BILLING_ADMIN).
+  const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
     permission: "payouts.read",
     canHost: true,
@@ -285,7 +286,7 @@ export function PayoutsPageClient({
               )}
 
             {/* Create payout button */}
-            {isAtLeast("OWNER") && (
+            {can("payouts.manage") && (
               <div className="mt-4 flex items-center gap-3">
                 <Button
                   onClick={() => createBatch.mutate()}

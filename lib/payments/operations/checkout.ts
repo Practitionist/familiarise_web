@@ -2852,7 +2852,10 @@ export async function handleCheckout(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,
             referralError,
           );
-          reportSentryError(referralError, { subsystem: "payments", level: "warning" });
+          reportSentryError(referralError, {
+            subsystem: "payments",
+            level: "warning",
+          });
         }
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
@@ -3030,6 +3033,14 @@ export async function handleCheckout(
         "overlapping dates",
         "insufficient credits",
         "session cap", // ProgramAssignmentLimitError-derived message, above
+        // #1132 — slot contention is a modelled outcome, not a fault. These
+        // were added to `preservedMessages` below so the user gets a real
+        // message, but tagging is a separate list by design (see comment
+        // above), so without them here every lost slot raced to Sentry as
+        // `expected: false` and normal contention looked like a payment
+        // incident.
+        "already booked",
+        "no longer available",
       ];
       // Typed errors and stable codes first — a substring is a last resort,
       // not the mechanism. recordOverageAtCheckout stamps
@@ -3046,7 +3057,10 @@ export async function handleCheckout(
             // "ended" match "unintended", tagging real faults as routine.
             new RegExp(`\\b${msg}\\b`, "i").test(dbError.message),
           ));
-      reportSentryError(dbError, { subsystem: "payments", expected: isModelledOutcome });
+      reportSentryError(dbError, {
+        subsystem: "payments",
+        expected: isModelledOutcome,
+      });
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
@@ -3077,6 +3091,14 @@ export async function handleCheckout(
           "already have a session booked", // consultee double-book (FAMILIARISE_WEB-P)
           "overlapping dates",
           "insufficient credits",
+          // #1132 — validateSlotAvailability throws these from INSIDE the
+          // transaction, so without them here a genuine slot conflict was
+          // rewritten to "Failed to record payment information" → UNKNOWN →
+          // "Something Went Wrong", and the user had no idea to pick another
+          // slot. ADR 16's clean-error claim only held for the pre-transaction
+          // check.
+          "already booked",
+          "no longer available",
         ];
         if (
           preservedMessages.some((msg) =>

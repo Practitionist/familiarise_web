@@ -87,6 +87,23 @@ export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
  */
 export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
 
+/**
+ * #1134 P1-11 — Stream had NO rate limiting on any route or server action.
+ *
+ * Two shapes, two budgets:
+ *
+ * `streamJoinLimiter` guards the meeting join gate. It is the enumeration
+ * surface: call ids are deterministic (`slot-<anchorSlotId>`), so an attacker
+ * who has one slot id can walk neighbours. Generous enough that a flaky network
+ * retrying a join never trips it, tight enough that scanning is useless.
+ *
+ * `streamApiLimiter` guards the search / channel-create / block routes, which
+ * are ordinary authenticated reads and writes but were completely unbounded —
+ * every one of them costs a Stream API call we are billed for.
+ */
+export const streamJoinLimiter = makeLimiter(20, "1 m", "rl:stream-join");
+export const streamApiLimiter = makeLimiter(60, "1 m", "rl:stream-api");
+
 /** 3 per 24 hours — POST /api/trials (prevents flooding consultant inboxes) */
 export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");
 

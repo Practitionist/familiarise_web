@@ -1180,6 +1180,9 @@ model BillingSubscription {
 
   currentCycleStart DateTime
   currentCycleEnd   DateTime
+  // #1132 — this model carried no index at all while the cycle-close and
+  // invoice-generation crons scan it by nextInvoiceDate / currentCycleEnd on
+  // every run, so each run was a sequential scan. See @@index below.
   nextInvoiceDate   DateTime
   startsAt          DateTime
   endsAt            DateTime?
@@ -1189,6 +1192,9 @@ model BillingSubscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([nextInvoiceDate])
+  @@index([currentCycleEnd])
 }
 
 enum SubscriptionModel {
@@ -2832,27 +2838,36 @@ model SlotOfAvailabilityCustom {
 // 1-1 Consultation
 
 model ConsultationPlan {
-  id               String    @id @default(cuid())
-  title            String
+  id              String   @id @default(cuid())
+  title           String
   // One-line pitch rendered under the title. Distinct from `description`,
   // which is long-form and gets truncated in cards.
-  subtitle         String?   @db.VarChar(160)
-  description      String?   @db.Text
-  durationInHours  Float     @default(1)
-  price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency    Currency  @default(INR)
-  language         String    @default("English")
-  level            PlanLevel @default(BEGINNER)
-  prerequisites    String?   @default("None")
-  materialProvided String?   @default("None")
-  learningOutcomes String[]  @default([])
+  subtitle        String?  @db.VarChar(160)
+  description     String?  @db.Text
+  durationInHours Float    @default(1)
+  price           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency   Currency @default(INR)
+
+  // #1134 P1-6 — 1:1 recording was structurally impossible: isAppointmentOwner
+  // and isRecordingEnabledForAppointment only understood webinar and class, so
+  // a consultation or subscription always 403'd on start and reported
+  // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
+  // OFF — a 1:1 is the most sensitive session type on the platform, so
+  // recording it stays an explicit per-plan opt-in by the consultant.
+  recordingEnabled       Boolean                @default(false)
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  language               String                 @default("English")
+  level                  PlanLevel              @default(BEGINNER)
+  prerequisites          String?                @default("None")
+  materialProvided       String?                @default("None")
+  learningOutcomes       String[]               @default([])
   // Buyer-facing positioning: who the offering is for, and what the price buys.
-  targetAudience   String[]  @default([])
-  whatsIncluded    String[]  @default([])
-  imageUrl         String?
+  targetAudience         String[]               @default([])
+  whatsIncluded          String[]               @default([])
+  imageUrl               String?
   // Reserved for SEO-friendly plan URLs. Nullable until routing lands (#696).
-  slug             String?   @unique
-  topics           Topic[]   @relation("TopicToConsultationPlan")
+  slug                   String?                @unique
+  topics                 Topic[]                @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -2923,32 +2938,41 @@ model Consultation {
 }
 
 model SubscriptionPlan {
-  id                     String           @id @default(cuid())
-  title                  String
+  id               String   @id @default(cuid())
+  title            String
   // See ConsultationPlan.subtitle.
-  subtitle               String?          @db.VarChar(160)
-  description            String?          @db.Text
-  durationInMonths       Int              @default(1)
-  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          Currency         @default(INR)
+  subtitle         String?  @db.VarChar(160)
+  description      String?  @db.Text
+  durationInMonths Int      @default(1)
+  price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency    Currency @default(INR)
+
+  // #1134 P1-6 — 1:1 recording was structurally impossible: isAppointmentOwner
+  // and isRecordingEnabledForAppointment only understood webinar and class, so
+  // a consultation or subscription always 403'd on start and reported
+  // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
+  // OFF — a 1:1 is the most sensitive session type on the platform, so
+  // recording it stays an explicit per-plan opt-in by the consultant.
+  recordingEnabled       Boolean                @default(false)
+  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   // #1011 — was `callsPerWeek`. Renamed to match ClassPlan so both recurring
   // plan types name the same quantity the same way before the schema freeze.
-  sessionsPerWeek        Int              @default(1)
-  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
-  totalSessions          Int              @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport           PlanEmailSupport @default(GENERAL)
-  language               String           @default("English")
-  level                  PlanLevel        @default(BEGINNER)
-  prerequisites          String?          @default("None")
-  materialProvided       String?          @default("None")
-  learningOutcomes       String[]         @default([])
+  sessionsPerWeek        Int                    @default(1)
+  sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
+  totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport           PlanEmailSupport       @default(GENERAL)
+  language               String                 @default("English")
+  level                  PlanLevel              @default(BEGINNER)
+  prerequisites          String?                @default("None")
+  materialProvided       String?                @default("None")
+  learningOutcomes       String[]               @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]         @default([])
-  whatsIncluded          String[]         @default([])
+  targetAudience         String[]               @default([])
+  whatsIncluded          String[]               @default([])
   imageUrl               String?
-  slug                   String?          @unique
-  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
+  slug                   String?                @unique
+  topics                 Topic[]                @relation("TopicToSubscriptionPlan")
 
   // Trial session offer. Free by default ONLY until paid-trial checkout is
   // wired (booking rejects paid trials today); the wiring PR flips the
@@ -3616,9 +3640,9 @@ model RescheduleRequest {
   /// withdraw route and slotsAllowReschedule all read "at most one" as given.
   openForAppointmentId String? @unique
 
-  resolvedAt   DateTime? @db.Timestamptz
-  resolvedBy   User?     @relation("RescheduleResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
-  resolvedById String?
+  resolvedAt     DateTime? @db.Timestamptz
+  resolvedBy     User?     @relation("RescheduleResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedById   String?
   /// The answering party's reply. `reason` runs consultee -> consultant; this
   /// is the return leg, and it is the difference between "your sessions moved"
   /// and "moved to Thursdays, I have blocked Tuesdays from September".
@@ -3917,8 +3941,9 @@ model MeetingSession {
   endedAt     DateTime? // When session actually ended
   endedReason String? // "call_ended", "session_timeout", "error"
 
-  recordings  Recording[]
-  attendances MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
+  recordings        Recording[]
+  attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
+  recordingConsents MeetingRecordingConsent[] // #1134 P1-7
 
   slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentId String            @unique
@@ -3947,6 +3972,52 @@ model MeetingSession {
 /// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
 /// endedAt past the slot end). userId is the Stream user_id, which equals our
 /// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+/// #1134 P1-7 — per-session recording consent.
+///
+/// Before this, a consultee learned a session was being recorded from a passive
+/// `REC hh:mm` pill that appeared AFTER recording had already started. No
+/// pre-join notice, no way to refuse, and no record that anyone had been told —
+/// on a platform whose 1:1 sessions are career and health consultations.
+///
+/// Deliberately its own model rather than columns on MeetingAttendance: those
+/// rows are written by Stream's participant webhooks at join time, while consent
+/// is a lobby decision taken BEFORE joining, and a compliance record should not
+/// depend on a webhook having fired. Deliberately not ConsentArtifact either —
+/// that is account-level with no session key, and per-session rows would swamp
+/// a table meant for standing grants.
+///
+/// `noticeVersion` records which wording the person actually saw, so a later
+/// copy change cannot retroactively reinterpret an old decision.
+model MeetingRecordingConsent {
+  id               String         @id @default(uuid())
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
+  /// Stream user id, which equals User.id. Stored plain, matching
+  /// MeetingAttendance.userId and MeetingSession.recordingStartedBy.
+  userId           String
+
+  decision      RecordingConsentDecision
+  decidedAt     DateTime                 @db.Timestamptz
+  /// Which notice text was shown. Bump RECORDING_NOTICE_VERSION when the wording
+  /// changes materially.
+  noticeVersion Int                      @default(1)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  /// One standing decision per person per session; changing your mind updates it.
+  @@unique([meetingSessionId, userId])
+  @@index([userId])
+  /// Serves the recording gate: "has anyone on this session declined?"
+  @@index([meetingSessionId, decision])
+}
+
+/// Declared below the model that uses it, per the schema convention.
+enum RecordingConsentDecision {
+  GRANTED
+  DECLINED
+}
+
 model MeetingAttendance {
   id               String         @id @default(cuid())
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4541,17 +4612,22 @@ model PayoutAccount {
 ////////////////////////////////////////// TAX & COMPLIANCE //////////////////////////////////////////
 
 model ConsultantTaxInfo {
-  id                  String    @id @default(cuid())
-  consultantProfileId String    @unique
+  id                  String         @id @default(cuid())
+  consultantProfileId String         @unique
   panEncrypted        Bytes? // AES-256-GCM encrypted PAN. Format: [12B IV][ciphertext][16B auth tag]
-  panLast4            String?   @db.VarChar(4) // Cleartext last 4 chars for masked display
-  panVerified         Boolean   @default(false)
+  panLast4            String?        @db.VarChar(4) // Cleartext last 4 chars for masked display
+  panVerified         Boolean        @default(false)
   gstin               String? // GSTIN for registered consultants
-  gstinVerified       Boolean   @default(false)
-  country             String    @default("IN") // ISO 3166-1 alpha-2
-  isIndianResident    Boolean   @default(true)
+  gstinVerified       Boolean        @default(false)
+  country             String         @default("IN") // ISO 3166-1 alpha-2
+  isIndianResident    Boolean        @default(true)
   lutNumber           String? // Letter of Undertaking for export zero-rating
   lutValidUntil       DateTime?
+  /// #1132 — limb 1 of the 194-O ₹5L exemption: only INDIVIDUAL/HUF get a
+  /// threshold, everyone else is withheld from the first rupee. Nullable and
+  /// read as ineligible when absent — under-withholding is our s.201 liability,
+  /// over-withholding the consultant reclaims at assessment.
+  taxEntityType       TaxEntityType?
 
   consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 

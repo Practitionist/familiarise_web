@@ -32,9 +32,9 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
+import { bookingOrgId } from "@/lib/stream-utils";
 
 /**
  * Type for subscription with all related details needed for payment processing.
@@ -511,6 +511,11 @@ export async function PATCH(
                 },
               },
               appointments: {
+                // Ordered so bookingOrgId's `find` picks the same org-tagged
+                // appointment the creator's filtered read picks. Unordered, two
+                // callers can resolve different orgs for one subscription and
+                // mint two DM channels for the same pair.
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                 include: {
                   slotsOfAppointment: {
                     include: {
@@ -574,6 +579,11 @@ export async function PATCH(
                 },
               },
               appointments: {
+                // Ordered so bookingOrgId's `find` picks the same org-tagged
+                // appointment the creator's filtered read picks. Unordered, two
+                // callers can resolve different orgs for one subscription and
+                // mint two DM channels for the same pair.
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                 include: {
                   slotsOfAppointment: {
                     include: {
@@ -657,6 +667,11 @@ export async function PATCH(
                     },
                   },
                   appointments: {
+                    // Ordered so bookingOrgId's `find` picks the same org-tagged
+                    // appointment the creator's filtered read picks. Unordered, two
+                    // callers can resolve different orgs for one subscription and
+                    // mint two DM channels for the same pair.
+                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                     include: {
                       slotsOfAppointment: {
                         include: {
@@ -815,15 +830,24 @@ export async function PATCH(
           const consulteeUid = subData.requestedBy?.user?.id;
 
           if (consultantUid && consulteeUid) {
-            await addUserToEventChannel(
-              "subscription",
-              subData.id,
+            // #1134 P0-7 / P0-8 — see the consultation twin. No
+            // `subscription-<id>` channel (the reconciler deleted it on the next
+            // load), and the org is threaded so the DM key matches what
+            // getDmPairsForUser expects.
+            // A subscription carries many appointments but is funded once, so
+            // the first ORG-TAGGED one is representative. `[0]` was wrong: this
+            // query has no `where` and no `orderBy`, so a mixed subscription
+            // could hand back a personal row and resolve `null` where the
+            // creator resolved an org — two different channel ids for one pair.
+            const dmOrgId = bookingOrgId(subData);
+            await createDirectMessageChannel(
+              consultantUid,
               consulteeUid,
+              dmOrgId,
             );
-            await createDirectMessageChannel(consultantUid, consulteeUid);
             streamLogger.info(
-              "Stream channel created on subscription approval",
-              { subscriptionId: subData.id },
+              "Stream DM channel ensured on subscription approval",
+              { subscriptionId: subData.id, organizationId: dmOrgId },
             );
           }
         } catch (channelError) {

@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { UserRole } from "@prisma/client";
 import { experienceValidation } from "./shared";
+import { DateOfBirthSchema } from "@/lib/compliance/age";
 
 // #region Enums
 
@@ -103,7 +104,7 @@ export const PersonalInfoAndRoleSchema = z.object({
   onboardingCompleted: z.boolean().optional().default(false),
   role: UserRoleEnum,
   // New fields
-  dateOfBirth: z.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: GenderEnum.optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -234,7 +235,6 @@ export const ConsultantProfileSchema = z.object({
   certifications: z.array(CertificationSchema).optional(),
   education: z.array(EducationSchema).optional(),
 });
-
 
 // #endregion
 

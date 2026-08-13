@@ -8,6 +8,7 @@ import {
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
+import { DateOfBirthSchema } from "@/lib/compliance/age";
 import {
   WeeklySlotSchema,
   CustomSlotSchema,
@@ -40,9 +41,7 @@ export const AchievementCreateInputSchema = z.object({
   description: z.string().optional(),
   url: z.string().url().or(z.literal("")).optional(),
   imageUrl: z.string().url().or(z.literal("")).optional(),
-  achievementType: z
-    .nativeEnum(AchievementType)
-    .default(AchievementType.OTHER),
+  achievementType: z.nativeEnum(AchievementType).default(AchievementType.OTHER),
 });
 
 // Scalar consultant fields — picked from the single source of truth
@@ -103,8 +102,8 @@ const prismaRelationsSchema = z.object({
 // SERVER INPUT SCHEMAS (Prisma-shaped, used by server processing)
 // ============================================================================
 
-export const BaseConsultantProfileCreateInputSchema = consultantScalarFields
-  .merge(prismaRelationsSchema);
+export const BaseConsultantProfileCreateInputSchema =
+  consultantScalarFields.merge(prismaRelationsSchema);
 
 export const ConsultantProfileCreateObjectSchema = z.object({
   create: BaseConsultantProfileCreateInputSchema,
@@ -140,7 +139,7 @@ export const OnboardingBaseSchema = z.object({
   timezone: z.string().optional(),
   onlineStatus: z.boolean().optional().default(false),
   onboardingCompleted: z.boolean().optional().default(false),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -217,7 +216,7 @@ export const FrontendOnboardingBaseSchema = z.object({
   onlineStatus: z.boolean().default(false),
   onboardingCompleted: z.boolean().default(false),
   role: z.nativeEnum(UserRole),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -237,7 +236,7 @@ export const PersonalInfoAndRoleFormSchema = z.object({
   role: z.nativeEnum(UserRole),
   onlineStatus: z.boolean().optional(),
   onboardingCompleted: z.boolean().optional(),
-  dateOfBirth: z.coerce.date().optional().nullable(),
+  dateOfBirth: DateOfBirthSchema,
   gender: z.nativeEnum(Gender).optional().nullable(),
   city: z.string().optional(),
   country: z.string().optional(),
@@ -246,15 +245,14 @@ export const PersonalInfoAndRoleFormSchema = z.object({
 });
 
 // Consultant form: scalar fields from source + frontend relational fields + stricter description
-export const ConsultantProfileFormSchema = consultantScalarFields
-  .extend({
-    description: z.string().min(1, "Description is required"),
-    domain: domainRefSchema,
-    subDomains: z.array(subDomainRefSchema).optional(),
-    tags: z.array(tagRefSchema).optional(),
-    weeklySlots: z.array(WeeklySlotSchema).optional(),
-    customSlots: z.array(CustomSlotSchema).optional(),
-  });
+export const ConsultantProfileFormSchema = consultantScalarFields.extend({
+  description: z.string().min(1, "Description is required"),
+  domain: domainRefSchema,
+  subDomains: z.array(subDomainRefSchema).optional(),
+  tags: z.array(tagRefSchema).optional(),
+  weeklySlots: z.array(WeeklySlotSchema).optional(),
+  customSlots: z.array(CustomSlotSchema).optional(),
+});
 
 // Consultee form: derived from base with stricter validation
 export const ConsulteeProfileFormSchema = ConsulteeProfileSchema.extend({
@@ -639,6 +637,9 @@ export function transformFrontendToServerData(
     onlineStatus: frontendData.onlineStatus,
     onboardingCompleted: frontendData.onboardingCompleted,
     role: frontendData.role,
+    // #1132 — carried through every role branch: the age gate is only a gate
+    // if the value it validated is the one that reaches the database.
+    dateOfBirth: frontendData.dateOfBirth,
   };
 
   switch (frontendData.role) {
@@ -749,9 +750,7 @@ export function transformFrontendToServerData(
 
 export function validateOnboardingData(
   data: unknown,
-):
-  | { success: true; data: OnboardingData }
-  | { success: false; error: string } {
+): { success: true; data: OnboardingData } | { success: false; error: string } {
   const validationResult = OnboardingDataSchema.safeParse(data);
 
   if (!validationResult.success) {

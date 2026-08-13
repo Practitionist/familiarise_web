@@ -24,16 +24,18 @@ import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
 
 type FormData = z.infer<typeof PersonalInfoAndRoleFormSchema>;
+// #1132 — DateOfBirthSchema accepts a Date OR a `YYYY-MM-DD` string (the wizard
+// round-trips values through JSON between steps) and always yields a Date, so
+// the schema's input and output types differ. useForm needs both spelled out;
+// inferring from the output alone makes the resolver unassignable.
+type FormInput = z.input<typeof PersonalInfoAndRoleFormSchema>;
 
 interface Props {
   onNext: (data: FormData) => void;
   initialData: Partial<FormData>;
 }
 
-const ROLE_INFO: Record<
-  string,
-  { title: string; description: string }
-> = {
+const ROLE_INFO: Record<string, { title: string; description: string }> = {
   CONSULTANT: {
     title: "Consultant",
     description: "Share your expertise and mentor others",
@@ -71,7 +73,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     watch,
     reset,
     formState: { errors },
-  } = useForm<FormData>({
+  } = useForm<FormInput, unknown, FormData>({
     resolver: zodResolver(PersonalInfoAndRoleFormSchema),
     mode: "onChange",
     defaultValues: {
@@ -165,6 +167,61 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
               Email cannot be changed
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* #1132 — DPDP age gate. India's age of majority is 18 (s.2(f)), and
+          below it processing needs verifiable parental consent (s.9); there was
+          no age check anywhere in the product before this. Collecting the DOB
+          solely to run the check is an exempt purpose (Fourth Schedule Part B
+          item 6).
+
+          Deliberately OUTSIDE the optional collapsible below: the field is
+          required, so behind a closed disclosure labelled "optional" a submit
+          failed with both the input and its error invisible. */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="dateOfBirth">
+            Date of birth <span className="text-destructive">*</span>
+          </Label>
+          <Controller
+            name="dateOfBirth"
+            control={control}
+            render={({ field }) => (
+              <Input
+                id="dateOfBirth"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                // Handles both shapes the schema accepts: a Date from this
+                // input, or a `YYYY-MM-DD` string restored from the wizard's
+                // JSON round-trip on back-navigation.
+                value={
+                  field.value instanceof Date
+                    ? isNaN(field.value.getTime())
+                      ? ""
+                      : field.value.toISOString().slice(0, 10)
+                    : typeof field.value === "string"
+                      ? field.value.slice(0, 10)
+                      : ""
+                }
+                onChange={(e) =>
+                  field.onChange(
+                    e.target.value ? new Date(e.target.value) : undefined,
+                  )
+                }
+                aria-invalid={!!errors.dateOfBirth}
+              />
+            )}
+          />
+          {errors.dateOfBirth ? (
+            <p className="text-sm text-destructive">
+              {errors.dateOfBirth.message}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              You must be at least 18 to use Familiarise.
+            </p>
+          )}
         </div>
       </div>
 
@@ -302,7 +359,9 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           name="role"
           control={control}
           render={({ field }) => (
-            <div className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+            <div
+              className={`grid gap-3 ${Object.keys(ROLE_INFO).length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+            >
               {Object.entries(ROLE_INFO).map(([role, info]) => (
                 <button
                   key={role}

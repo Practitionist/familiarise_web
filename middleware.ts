@@ -22,6 +22,8 @@ import {
   applyRateLimit,
   getClientIp,
   isBypassableIp,
+  streamJoinLimiter,
+  streamApiLimiter,
 } from "@/lib/rate-limit";
 import { Ratelimit } from "@upstash/ratelimit";
 
@@ -246,6 +248,48 @@ const RATE_LIMIT_RULES: RateRule[] = [
         p.startsWith("/api/auth/sign-up") ||
         p.startsWith("/api/auth/forget-password")),
     limiter: authLimiter,
+    skipLocalhost: true,
+  },
+  {
+    // #1134 P1-11 — the meeting join gate. Call ids are deterministic
+    // (`slot-<anchorSlotId>`), so this is the enumeration surface: without a
+    // limit, someone holding one slot id can walk neighbours and probe which
+    // meetings they can reach.
+    //
+    // Keyed by IP, NOT by user — an earlier version of this comment claimed the
+    // opposite. `applyEdgeRateLimits` falls back to the client IP whenever a
+    // rule supplies no `key`, and this rule supplies none. Per-user keying is
+    // not available here by design: this middleware is cookie-presence only,
+    // with no DB hit and no JWT parsing, so it cannot resolve a user id cheaply.
+    //
+    // IP-keying is the right shape for enumeration anyway, since a walker works
+    // from one address. The cost is that users behind a shared NAT share a
+    // bucket, which is why the limit is generous rather than tight.
+    label: "stream: meeting join",
+    match: (p, m) => m === "POST" && /^\/api\/meetings\/[^/]+\/join$/.test(p),
+    limiter: streamJoinLimiter,
+    skipLocalhost: true,
+  },
+  {
+    // Ordinary authenticated Stream reads/writes — search, channel create,
+    // block. Unbounded before, and each one costs a billable Stream API call.
+    //
+    // EXCLUDES the webhook endpoint. Stream POSTs every delivery from its own
+    // infrastructure, so they all collapse onto one rate-limit key, and a burst
+    // is the normal shape — a 200-attendee webinar emits 200
+    // `call.session_participant_joined` events at once. A 429 there is not a
+    // deferral: Stream retries inside a fifteen-second total budget and then
+    // DROPS the event permanently, which is precisely the loss #1137's
+    // ack-first/persist-first work exists to prevent. Throttling it would have
+    // undone that from the middleware, before the route ever ran.
+    //
+    // Safe to exclude because the endpoint is not open: it verifies an HMAC
+    // signature against the API secret and 401s anything unsigned before doing
+    // any work. The signature is the gate, not the limiter.
+    label: "stream: api",
+    match: (p) =>
+      p.startsWith("/api/stream/") && !p.startsWith("/api/stream/webhooks"),
+    limiter: streamApiLimiter,
     skipLocalhost: true,
   },
   {

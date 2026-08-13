@@ -8,6 +8,7 @@ import {
   withStreamCircuitBreaker,
   StreamUnavailableError,
 } from "@/lib/stream-client";
+import { forEachChunk } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
@@ -214,18 +215,24 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       droppedNoConsent: droppedIds.length,
     });
 
-    // Single batch API call
-    // Cast to satisfy TypeScript (custom user data in stream-chat v9)
-    // #473 — fast-fail the batch upsert under a Stream outage.
-    const result = await withStreamCircuitBreaker(
-      () =>
-        client.upsertUsers(
-          streamUsers as Parameters<typeof client.upsertUsers>[0],
-        ),
-      () => {
-        throw new StreamUnavailableError();
-      },
-    );
+    // #1134 P1-20 — chunked at Stream's documented 100-users-per-request
+    // ceiling. This used to hand the whole array to one call, so a webinar
+    // roster above 100 (the plan default, and Webinar.maxParticipants is
+    // unbounded) produced an oversized request that threw — and the attendee
+    // silently got no chat.
+    // #473 — fast-fail each batch under a Stream outage.
+    let result: Awaited<ReturnType<typeof client.upsertUsers>> | undefined;
+    await forEachChunk(streamUsers, async (batch) => {
+      result = await withStreamCircuitBreaker(
+        () =>
+          client.upsertUsers(
+            batch as Parameters<typeof client.upsertUsers>[0],
+          ),
+        () => {
+          throw new StreamUnavailableError();
+        },
+      );
+    });
 
     // Mark all as synced
     consenters.forEach((user) => markUserSynced(user.id));

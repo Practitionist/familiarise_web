@@ -29,6 +29,18 @@ const ChatProvider = dynamic(
   { ssr: false },
 );
 
+/**
+ * The class the SDK stamps on its container, which selects the theme-v2
+ * variable block. Without it `<Chat>` falls back to the legacy
+ * `"messaging light"` string and none of the `--str-chat__*` palette applies.
+ *
+ * `app/globals.css` overrides that block with this app's own tokens, and those
+ * tokens already flip under `.dark`, so chat will follow the app the moment a
+ * theme provider lands — at which point this becomes a lookup rather than a
+ * constant.
+ */
+const STREAM_CHAT_THEME = "str-chat__theme-light";
+
 export function StreamChatScope({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -39,5 +51,9 @@ export function StreamChatScope({
   );
 
   if (!clients?.chat) return <>{children}</>;
-  return <ChatProvider client={clients.chat}>{children}</ChatProvider>;
+  return (
+    <ChatProvider client={clients.chat} theme={STREAM_CHAT_THEME}>
+      {children}
+    </ChatProvider>
+  );
 }

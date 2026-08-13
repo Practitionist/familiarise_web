@@ -48,10 +48,25 @@
  *        GUARDIAN_VERIFIED` (deferred; add if targeting students).
  *
  * 6. Significant Data Fiduciary (SDF):
- *      - Thresholds not fully finalised as of Nov 2025 Rules.
- *      - Familiarise likely NOT an SDF until ≥ 5M active users.
- *      - If designated SDF: annual DPIA, DPO-in-India, independent audit.
- *      - Defer; revisit when nearing threshold.
+ *      - There is NO user-count trigger. An earlier version of this comment
+ *        claimed "not an SDF until >= 5M active users"; that number appears
+ *        nowhere in the Act or the Rules and was wrong (corrected in #1132).
+ *      - SDF status is conferred by Central Government notification under
+ *        s.10(1), on qualitative factors: volume AND SENSITIVITY of the data,
+ *        risk to data principals' rights, sovereignty and integrity of India,
+ *        electoral democracy, security of the State, and public order.
+ *      - Sensitivity alone can reach us: we hold recorded 1:1 mentoring and
+ *        counselling sessions. Do not assume scale is the only path in.
+ *      - If designated SDF: annual DPIA, DPO based in India, independent audit,
+ *        and algorithmic due diligence (Rule 13).
+ *      - Rule 13(4) (the SDF cross-border restriction on notified categories of
+ *        personal data and the traffic data about its flow) already EXISTS in
+ *        the Rules as notified on 13 Nov 2025 — what is deferred is its
+ *        commencement, along with Rules 3 and 5-16, to 13 May 2027.
+ *      - Watch: MeitY consulted in early 2026 on compressing the SDF duties and
+ *        bringing Rule 13(4) and Rule 15 into force ahead of that date. It is
+ *        the ACCELERATION that is unnotified, not the rule itself. Confirm
+ *        against the gazette before relying on either date.
  *
  * 7. Data breach notification:
  *      - Within 72 hours of detection, notify Data Protection Board of
@@ -120,7 +135,9 @@ export interface ConsentArtifactDraft {
  * What's deferred is the surrounding workflow (purpose-code taxonomy,
  * notice rendering, withdrawal UX, cron cleanup).
  */
-export function buildConsentArtifact(input: ConsentGrantInput): ConsentArtifactDraft {
+export function buildConsentArtifact(
+  input: ConsentGrantInput,
+): ConsentArtifactDraft {
   const grantedAt = input.grantedAt ?? new Date();
   const auditRetainedUntil = new Date(grantedAt);
   auditRetainedUntil.setFullYear(auditRetainedUntil.getFullYear() + 7);

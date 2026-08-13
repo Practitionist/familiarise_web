@@ -26,9 +26,10 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
+import { bookingOrgId } from "@/lib/stream-utils";
+import { reportSentryError } from "@/lib/observability/report";
 
 /**
  * Type for consultation with all related details needed for payment processing.
@@ -781,7 +782,7 @@ export async function PATCH(
       }
 
       // --- Stream channel creation (fire-and-forget, only on approval) ---
-      if (!result.duplicate && status === AppointmentStatus.APPROVED)
+      if (!result.duplicate && status === AppointmentStatus.APPROVED) {
         try {
           const consultationData = result.data;
           const consultantUserId =
@@ -789,26 +790,38 @@ export async function PATCH(
           const consulteeUserId = consultationData.requestedBy?.userId;
 
           if (consultantUserId && consulteeUserId) {
-            await addUserToEventChannel(
-              "consultation",
-              consultationId,
+            // #1134 P0-7 — no more `consultation-<id>` channel: the reconcile
+            // pass never expected it yet treated its prefix as managed, so it
+            // was deleted on the buyer's next dashboard load. #1134 P0-8 — the
+            // org must be threaded so the DM lands on the key the reconciler
+            // expects — via the one shared resolver, so it cannot drift.
+            const dmOrgId = bookingOrgId(consultationData);
+            await createDirectMessageChannel(
+              consultantUserId,
               consulteeUserId,
+              dmOrgId,
             );
-            await createDirectMessageChannel(consultantUserId, consulteeUserId);
             streamLogger.info(
-              "Stream channel created on consultation approval",
-              {
-                consultationId,
-              },
+              "Stream DM channel ensured on consultation approval",
+              { consultationId, organizationId: dmOrgId },
             );
           }
         } catch (channelError) {
+          // The subscription twin reports this and the payment-success handler
+          // pages on it: a failure here leaves the buyer with no chat at all,
+          // and a log line alone means nobody finds out.
+          reportSentryError(channelError, {
+            subsystem: "stream",
+            op: "consultationApproval.createChannels",
+            extra: { consultationId },
+          });
           streamLogger.error(
             "Auto-channel creation failed on consultation approval",
             channelError,
             { consultationId },
           );
         }
+      }
 
       // Return success response (exclude emailData from response)
       const { emailData: _emailData, ...responseData } =

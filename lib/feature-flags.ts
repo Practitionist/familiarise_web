@@ -63,6 +63,48 @@ export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
 /**
+ * Section 194-O withholding base (#1132). OFF by default — flipping it changes
+ * how much tax is withheld from real consultants, so it needs written CA
+ * sign-off first.
+ *
+ * Today the base is `payout.amount`, i.e. the consultant's share NET of our
+ * platform commission. Section 194-O — now s.393(1) Table Sl. 8(v) of the
+ * Income-tax Act 2025 — requires deduction on the GROSS amount of the sale, and
+ * CBDT Circulars 17/2020 and 20/2021 are explicit that the operator's retained
+ * commission is not deductible from that base. So the current computation
+ * under-withholds by the commission fraction, with s.201 interest at 1%/month
+ * and a 30% expense disallowance as the downside.
+ *
+ * When true, the payout path sums `ConsultantEarnings.grossAmount` over the
+ * earnings in the payout and uses that as the base, and applies the statutory
+ * ₹5,00,000 exemption (see TDS_194O_EXEMPTION_PAISE) which only holds when all
+ * three limbs are satisfied: individual/HUF, cumulative ≤ ₹5L, and PAN on file.
+ *
+ * Requires TDS_ENGINE=194O as well — the gross base is a refinement of the
+ * 194-O engine, not an independent one.
+ *
+ * PRECONDITIONS FOR ENABLING (both, not just the first):
+ *
+ *   1. Written CA approval of the gross base and the three-limb ₹5L threshold.
+ *
+ *   2. The cumulative-gross read must be made race-safe. `priorGrossAgg` counts
+ *      earnings that are already PAID, and earnings only become PAID when a
+ *      completion webhook lands. `processApprovedPayouts` serialises its own
+ *      workers, but completion webhooks do not serialise against it, and the
+ *      schema permits several payouts per consultant per financial year. Two
+ *      payouts either side of an in-flight PROCESSING one can therefore both
+ *      read a prior-gross below ₹5L and both under-withhold. Reserve the
+ *      cumulative gross atomically per (consultant, financial year), or include
+ *      locked in-flight payouts in the aggregate, before flipping this on.
+ *
+ * Until then the legacy base (consultant share net of platform commission) and
+ * the 194J ₹50,000 threshold remain in force, which over-withholds relative to
+ * the statute rather than under-withholding — the safe direction to be wrong in.
+ */
+export const ENABLE_TDS_194O_GROSS =
+  process.env.ENABLE_TDS_194O_GROSS === "true";
+
+/**
  * IRP (Invoice Registration Portal) live e-invoice integration.
  *
  * ClearTax GSP connector is wired (`lib/compliance/irp.ts`,
@@ -105,7 +147,8 @@ export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
  *   2. Confirm the assigned ADMIN's session has the decryption key
  *   3. See Issue #737 for the Form 26Q quarterly cadence
  */
-export const ENABLE_TDS_ADMIN_VIEW = process.env.ENABLE_TDS_ADMIN_VIEW === "true";
+export const ENABLE_TDS_ADMIN_VIEW =
+  process.env.ENABLE_TDS_ADMIN_VIEW === "true";
 
 /**
  * Better Stack Telemetry (logs) sink for operational events (#776 §K).
@@ -143,4 +186,3 @@ export const ENABLE_BETTERSTACK_TELEMETRY =
  */
 export const ENABLE_DUNNING_SUSPEND =
   process.env.ENABLE_DUNNING_SUSPEND === "true";
-

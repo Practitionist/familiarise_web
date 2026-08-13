@@ -26,6 +26,23 @@ jest.mock("../../lib/prisma", () => ({
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
   },
 }));
+// #1132 — the consultant rail is now gated on ENABLE_LIVE_PAYOUTS (ADR 11), the
+// same freeze the org rail already had. These tests are about the false-FAILED
+// guard and the CAS claim, both of which only run once the freeze is lifted, so
+// the flag is forced on here. The freeze itself is asserted in
+// __tests__/security/audit-1132-security.test.ts.
+jest.mock("../../lib/feature-flags", () => ({
+  ...jest.requireActual("../../lib/feature-flags"),
+  ENABLE_LIVE_PAYOUTS: true,
+}));
+// #1132 — with ENABLE_LIVE_PAYOUTS forced on above, assertPayoutBalance stops
+// short-circuiting and issues its own RazorpayX balance GET. That is a real
+// behaviour change, but it is not what these tests assert (they check that the
+// PAYOUT submission never reaches the gateway), and leaving it live would make
+// the "fetch never called" assertion measure the wrong call.
+jest.mock("../../lib/payments/payouts/balance-preflight", () => ({
+  assertPayoutBalance: jest.fn().mockResolvedValue({ ok: true }),
+}));
 jest.mock("../../lib/redis", () => ({
   acquireLock: jest.fn().mockResolvedValue("tok"),
   releaseLock: jest.fn().mockResolvedValue(undefined),

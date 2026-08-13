@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
+import { isRecordingEnabledForAppointment } from "@/lib/stream/recording-utils";
 import { isPrivileged } from "@/lib/auth-helpers";
 
 import { getSession } from "@/lib/auth-server";
@@ -60,7 +61,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 consultation: {
                   include: {
                     consultationPlan: {
-                      select: { consultantProfileId: true },
+                      // #1134 P1-6 — recordingEnabled is new on the 1:1 plans;
+                      // without selecting it the resolver reports recording as
+                      // unavailable for every consultation.
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
                     },
                     requestedBy: {
                       select: { userId: true },
@@ -70,7 +77,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 subscription: {
                   include: {
                     subscriptionPlan: {
-                      select: { consultantProfileId: true },
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
                     },
                     requestedBy: {
                       select: { userId: true },
@@ -173,15 +183,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    // Determine if recording is enabled based on appointment type
-    let recordingEnabled = false;
-
-    if (appointment?.webinar?.webinarPlan) {
-      recordingEnabled = appointment.webinar.webinarPlan.recordingEnabled;
-    } else if (appointment?.class?.classPlan) {
-      recordingEnabled = appointment.class.classPlan.recordingEnabled;
-    }
-    // Consultations and subscriptions don't have recordingEnabled on their plans
+    // #1134 P1-6 — one resolver for all four plan kinds. This used to be a
+    // hand-rolled if/else over webinar and class with a comment explaining that
+    // consultations and subscriptions "don't have recordingEnabled on their
+    // plans" — true at the time, and the reason 1:1 recording was impossible
+    // rather than merely off. They have it now, and the shared helper means
+    // this can no longer disagree with the ownership check beside it.
+    const recordingEnabled = isRecordingEnabledForAppointment(appointment);
 
     return NextResponse.json({
       meetingSessionId: meetingSession.id,

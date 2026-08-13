@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import { getMaintenanceState } from "@/lib/maintenance";
+import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
 
 type BetterStackHealth = {
@@ -88,8 +89,12 @@ export async function GET(request: Request) {
     database = "unreachable";
   }
 
-  const [maintenanceState, betterstack] = await Promise.all([
+  const [maintenanceState, stream, betterstack] = await Promise.all([
     getMaintenanceState(),
+    // #473 — the last unmet acceptance criterion on that issue. The breaker
+    // existed but nothing surfaced its state, so a Stream outage was invisible
+    // until users reported it.
+    getStreamStatus(),
     includeBetterStack
       ? checkBetterStack()
       : Promise.resolve({
@@ -98,6 +103,8 @@ export async function GET(request: Request) {
         }),
   ]);
 
+  // Stream being down degrades chat and video but leaves booking, payments and
+  // every read path working, so it is reported without failing the check.
   const status = database === "unreachable" ? "degraded" : "healthy";
 
   return NextResponse.json({
@@ -108,6 +115,7 @@ export async function GET(request: Request) {
       reason: maintenanceState.reason,
       estimatedEnd: maintenanceState.estimatedEnd,
     },
+    stream,
     betterstack,
     timestamp: new Date().toISOString(),
   });

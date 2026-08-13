@@ -52,7 +52,7 @@ export interface SyncOptions {
   excludeUserIds?: string[];
   /** Delay between batch deletions in ms (default: 500) */
   batchDelayMs?: number;
-  /** Fail if lock cannot be acquired (default: false) */
+  /** Fail if the lock cannot be acquired (default: true) */
   requireLock?: boolean;
 }
 
@@ -76,7 +76,13 @@ const SYSTEM_USER_PREFIXES = ["system-", "recording-egress-"];
 
 // Distributed lock configuration
 const SYNC_LOCK_KEY = "stream-sync:lock";
-const SYNC_LOCK_TTL = 10 * 60 * 1000; // 10 minutes max runtime
+// #1134 P1-21 — was 10 minutes, which is SHORTER than the run it guards. At
+// 100k users this walks 1,000 pages with a 500ms sleep between deletions (8
+// minutes of sleep alone) plus a Stream round-trip and a Prisma query per page:
+// 15-30 minutes realistically. The lock expired mid-run and a second scheduled
+// run could start deleting concurrently. Matched to the workflow's own
+// timeout-minutes so the lock outlives any run that can exist.
+const SYNC_LOCK_TTL = 40 * 60 * 1000;
 
 /**
  * Check if a user ID should be excluded from deletion
@@ -151,7 +157,11 @@ export async function performStreamUserSync(
     dryRun = false,
     excludeUserIds = [],
     batchDelayMs = 500,
-    requireLock = false,
+    // #1134 P1-21 — was false, so the job proceeded even when the lock was held
+    // or Redis was down: the one guard against two concurrent deletion runs was
+    // advisory. This job soft-deletes Stream users; overlapping runs is not a
+    // risk worth taking for availability of a nightly sweep.
+    requireLock = true,
   } = options;
 
   const excludedSet = getExcludedUserIds();
@@ -164,10 +174,10 @@ export async function performStreamUserSync(
       () => null, // Fallback if Redis is down
     );
   } catch (error) {
-    console.warn(
-      "⚠️ Failed to acquire lock, proceeding without distributed lock:",
-      error,
-    );
+    // Not "proceeding without" — the default now throws below. Saying
+    // otherwise in the log sends whoever reads it looking for a run that
+    // never happened.
+    console.warn("⚠️ Failed to acquire lock:", error);
   }
 
   if (lockToken === null) {

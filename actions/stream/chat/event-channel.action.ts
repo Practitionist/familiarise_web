@@ -19,7 +19,7 @@ import {
 } from "@/lib/stream-cache";
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
 import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
-import { getDmChannelId } from "@/lib/stream-utils";
+import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 
 // Validation schemas
@@ -707,38 +707,6 @@ interface DmPair {
   organizationId: string | null;
 }
 
-/**
- * The org context a DM channel was created under.
- *
- * Precedence MUST match `createConsultationChannel` / `createSubscriptionChannel`
- * exactly — `plan.organizationId ?? appointment.organizationId ?? null` — because
- * this function recomputes the channel id those creators already used. They are
- * two distinct cases: a plan can be org-HOSTED while the booking is self-funded,
- * and a personal plan can be booked through an org-funded membership.
- *
- * Reading only the appointment treated every org-hosted-plan booking as
- * personal, so the reconcile set looked for `dm-<a>-<b>` while the real channel
- * was `dmo-…`. At best it was never re-joined; at worst the real one was treated
- * as stale and the user removed from it.
- *
- * Subscriptions carry many appointments but are funded once, so the first is
- * representative.
- */
-function bookingOrgId(booking: {
-  consultationPlan?: { organizationId: string | null } | null;
-  subscriptionPlan?: { organizationId: string | null } | null;
-  appointment?: { organizationId: string | null } | null;
-  appointments?: { organizationId: string | null }[];
-}): string | null {
-  return (
-    booking.consultationPlan?.organizationId ??
-    booking.subscriptionPlan?.organizationId ??
-    booking.appointment?.organizationId ??
-    booking.appointments?.[0]?.organizationId ??
-    null
-  );
-}
-
 async function getDmPairsForUser(
   userId: string,
   user: {
@@ -775,7 +743,16 @@ async function getDmPairsForUser(
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
           subscriptionPlan: { select: { organizationId: true } },
-          appointments: { select: { organizationId: true }, take: 1 },
+          appointments: {
+            where: { organizationId: { not: null } },
+            select: { organizationId: true },
+            // Deterministic, not just filtered: `take: 1` over an
+            // unordered result can hand different callers different
+            // rows if a subscription ever carries two org-tagged
+            // appointments, which is the same divergence one layer down.
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            take: 1,
+          },
         },
       }),
     ]);
@@ -823,7 +800,16 @@ async function getDmPairsForUser(
               },
             },
           },
-          appointments: { select: { organizationId: true }, take: 1 },
+          appointments: {
+            where: { organizationId: { not: null } },
+            select: { organizationId: true },
+            // Deterministic, not just filtered: `take: 1` over an
+            // unordered result can hand different callers different
+            // rows if a subscription ever carries two org-tagged
+            // appointments, which is the same divergence one layer down.
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            take: 1,
+          },
         },
       }),
     ]);

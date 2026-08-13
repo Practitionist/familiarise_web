@@ -1,8 +1,8 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { ChatUnavailable } from "@/components/chat/ChatUnavailable";
+import { ChatSkeletonPanes } from "@/components/dashboard/DashboardSkeletons";
 import { useStreamConnection } from "@/providers/StreamProvider";
 import { StreamChatScope } from "@/components/stream/StreamChatScope";
 
@@ -25,10 +25,7 @@ export default function MessagesTab() {
           <ChatLayout />
         </StreamChatScope>
       ) : (
-        <div className="flex h-full items-center justify-center text-muted-foreground">
-          <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-          Connecting to chat…
-        </div>
+        <ChatSkeletonPanes />
       )}
     </div>
   );

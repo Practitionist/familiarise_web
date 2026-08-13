@@ -69,6 +69,15 @@ export const TDS_RATE_WITH_PAN = 10;
 /** TDS rate without PAN (20%) — Section 206AA */
 export const TDS_RATE_WITHOUT_PAN = 20;
 
+// #1132 — the 194-O taxable-base rules live in lib/compliance/tds-194o.ts so
+// they stay unit-testable without pulling Prisma into the test. Re-exported
+// here because the payout services already import from this module.
+export {
+  resolve194OTaxablePaise,
+  TDS_194O_EXEMPTION_PAISE,
+  TDS_194O_EXEMPT_ENTITY_TYPES,
+} from "@/lib/compliance/tds-194o";
+
 // ============================================================================
 // Financial Year Utilities
 // ============================================================================

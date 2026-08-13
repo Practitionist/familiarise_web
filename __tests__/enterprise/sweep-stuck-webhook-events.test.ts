@@ -86,7 +86,11 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     // inside handleRefundCreated meant the gateway had refunded the customer
     // and the platform kept no record of it at all.
     const where = mockWe.findMany.mock.calls[0][0].where;
-    expect(where).toMatchObject({ provider: "razorpay" });
+    // #1134 P1-2 — Stream joined the sweep. Its route acknowledges before
+    // processing (a 15-second total retry budget that a cold instance cannot
+    // fit), so a failed Stream handler has no redelivery to rescue it and this
+    // is the only thing that will re-drive it.
+    expect(where).toMatchObject({ provider: { in: ["razorpay", "stream"] } });
     expect(where.OR).toEqual([
       { processed: false, error: null },
       expect.objectContaining({ error: { not: null } }),

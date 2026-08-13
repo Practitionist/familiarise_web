@@ -16,51 +16,15 @@ import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
 import { useSession } from "@/lib/auth-client";
 
-interface AccessValidation {
-  hasAccess: boolean;
-  role: "host" | "participant" | null;
-  message: string;
-}
-
 const MeetingPage = () => {
   const { id } = useParams();
   const { data: session, isPending: isSessionPending } = useSession();
-  const { call, isCallLoading, error } = useGetCallById(id as string);
+  // #1134 P0-2 — access and call resolution are ONE server round-trip now. They
+  // used to be two effects racing each other: the call was created client-side
+  // before the access check came back, so an unauthorized visitor minted a real
+  // Stream call and only then saw "Access Denied".
+  const { call, isCallLoading, error, access } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
-  const [accessValidation, setAccessValidation] =
-    useState<AccessValidation | null>(null);
-  const [isValidatingAccess, setIsValidatingAccess] = useState(true);
-
-  // Validate meeting access
-  useEffect(() => {
-    const validateAccess = async () => {
-      if (!id || !session?.user?.id) {
-        setIsValidatingAccess(false);
-        return;
-      }
-
-      try {
-        const response = await fetch(`/api/meetings/${id}/validate-access`);
-        const data = await response.json();
-        setAccessValidation(data);
-      } catch (err) {
-        console.error("Error validating meeting access:", err);
-        setAccessValidation({
-          hasAccess: false,
-          role: null,
-          message: "Failed to validate access. Please try again.",
-        });
-      } finally {
-        setIsValidatingAccess(false);
-      }
-    };
-
-    if (session?.user?.id) {
-      validateAccess();
-    } else if (!isSessionPending) {
-      setIsValidatingAccess(false);
-    }
-  }, [id, session?.user?.id, isSessionPending]);
 
   // Release the camera and microphone on ANY exit from this page, not just the
   // explicit Leave button: navigating away and the browser Back button both
@@ -91,7 +55,7 @@ const MeetingPage = () => {
   }, [call]);
 
   // Loading states — lobby anatomy matches MeetingSetup to avoid spinner flash
-  if (isSessionPending || isValidatingAccess || isCallLoading) {
+  if (isSessionPending || isCallLoading) {
     return <MeetingRoomSkeleton />;
   }
 
@@ -101,7 +65,7 @@ const MeetingPage = () => {
   }
 
   // Access denied
-  if (accessValidation && !accessValidation.hasAccess) {
+  if (access && !access.hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
         <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
@@ -112,7 +76,7 @@ const MeetingPage = () => {
             Access Denied
           </h2>
           <p className="text-muted-foreground mb-4">
-            {accessValidation.message}
+            {access.message}
           </p>
           <p className="text-sm text-muted-foreground/70">
             If you believe this is an error, please contact support or the
@@ -152,7 +116,10 @@ const MeetingPage = () => {
       <StreamCall call={call}>
         <StreamTheme>
           {!isSetupComplete ? (
-            <MeetingSetup setIsSetupComplete={setIsSetupComplete} />
+            <MeetingSetup
+              setIsSetupComplete={setIsSetupComplete}
+              meetingId={id as string}
+            />
           ) : (
             <MeetingRoom />
           )}

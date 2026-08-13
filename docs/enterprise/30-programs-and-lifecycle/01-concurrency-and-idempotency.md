@@ -10,7 +10,7 @@ last-reviewed: 2026-06-05
 
 This document covers the atomic patterns that keep enterprise mutations correct under concurrency, and the idempotency keys that let every side-effect survive a duplicate call. It merges the former concurrency-and-locking and idempotency-keys documents into one reference.
 
-The layer leans on Prisma transactions plus a few conditional raw-SQL `UPDATE`s for its hottest mutations, and it deliberately uses no Redis locks. These are point mutations on rows whose identity is already known, so a Redis lock would add latency for no safety gain. Money idempotency is anchored by `LedgerTransaction.idempotencyKey @unique` together with a handful of other unique constraints.
+The layer leans on Prisma transactions plus a few conditional `updateMany` compare-and-set writes for its hottest mutations. These are point mutations on rows whose identity is already known, so a Redis lock would add latency for no safety gain, and the enterprise write paths therefore take none. Two clarifications, because an earlier revision of this page overstated both (corrected in #1132): the CAS writes go through the Prisma ORM rather than `$executeRaw`, and Redis locks *are* used elsewhere in the codebase — every cron wraps in `withCronLock`, and the booking checkout takes slot, consultee and event locks. ADR 13 describes those as its Layer 4. Money idempotency is anchored by `LedgerTransaction.idempotencyKey @unique` together with a handful of other unique constraints.
 
 ## How this band fits together
 
@@ -98,7 +98,7 @@ Audit writes are append-only — a single `.create()` runs inside the business t
 
 ## What the layer avoids
 
-The layer deliberately sidesteps three heavier mechanisms. It avoids Redis locks because row-scoped mutations do not need slot-discovery locking. It avoids Postgres advisory locks because they are out of scope for this transactional surface. And it avoids serializable isolation on the hot paths, relying instead on conditional UPDATEs, unique constraints, and immutable ledger rows rather than raising the isolation level (the nightly lifecycle crons are the exception — each runs its per-row claim inside a `Serializable` transaction, covered below).
+The layer deliberately sidesteps three heavier mechanisms. It avoids Redis locks *on these row-scoped mutations* because they do not need slot-discovery locking — the cron and booking layers do take them. It avoids Postgres advisory locks because they are out of scope for this transactional surface. And it avoids serializable isolation on the hot paths, relying instead on conditional UPDATEs, unique constraints, and immutable ledger rows rather than raising the isolation level (the nightly lifecycle crons are the exception — each runs its per-row claim inside a `Serializable` transaction, covered below).
 
 ---
 

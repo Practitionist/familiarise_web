@@ -49,6 +49,7 @@ import {
   signPayload,
   WEBHOOK_ROTATION_GRACE_MS,
 } from "./signing";
+import { assertPublicUrl } from "./ssrf-guard";
 
 // Re-export silenced — the worker doesn't generate secrets; this keeps
 // the module's surface area clean while preventing an unused-import lint.
@@ -98,9 +99,15 @@ export async function runDispatchTick(params: {
   now?: () => number;
   /// Batch ceiling override; defaults to MAX_BATCH.
   maxBatch?: number;
+  /// Inject for testing — production uses the real SSRF guard. Fixture
+  /// endpoints use reserved non-resolving hosts (`*.example`), which the guard
+  /// correctly refuses, so tests exercising delivery pass a no-op here. Never
+  /// override this in production code.
+  assertUrlFn?: (url: string) => Promise<void>;
 }): Promise<WorkerRunResult> {
   const { prisma } = params;
   const fetchImpl = params.fetchFn ?? globalThis.fetch;
+  const assertUrl = params.assertUrlFn ?? assertPublicUrl;
   const now = params.now ?? (() => Date.now());
   const batchLimit = params.maxBatch ?? MAX_BATCH;
 
@@ -206,6 +213,13 @@ export async function runDispatchTick(params: {
     let networkError: string | undefined;
 
     try {
+      // #1132 — re-verify immediately before dialling. Registration-time
+      // validation alone is defeated by DNS rebinding: a host that answered
+      // with a public address at create time can answer with 169.254.169.254
+      // now. Treated as a delivery failure, so it retries and eventually
+      // disables the endpoint rather than 500-ing the tick.
+      await assertUrl(row.endpoint.url);
+
       // AbortController + timer: fetch's default has no per-request
       // timeout in the Node runtime. A receiver hanging at the TCP
       // layer would stall the whole tick.
@@ -221,6 +235,10 @@ export async function runDispatchTick(params: {
           },
           body,
           signal: ac.signal,
+          // Do not follow redirects: a public host must not be able to bounce
+          // us to a private one after assertPublicUrl has passed. A 3xx is
+          // surfaced as its own status and counts as a delivery failure.
+          redirect: "manual",
         });
         httpStatusCode = res.status;
       } finally {
