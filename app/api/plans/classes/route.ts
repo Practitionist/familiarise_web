@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
+import { PlanEmailSupport, Prisma } from "@prisma/client";
 import {
   parsePlanFilters,
   buildPlanWhereClause,
@@ -8,6 +8,7 @@ import {
   paginatedResponse,
   rankAndPaginate,
 } from "../shared/plan-filters";
+import { classPlanListInclude } from "@/lib/api/plans/plan-includes";
 import {
   requireApiAuth,
   isPrivileged,
@@ -28,80 +29,11 @@ export async function GET(request: NextRequest) {
       | Prisma.ClassPlanOrderByWithRelationInput
       | undefined;
 
-    // Build classes include based on whether registration data is requested
-    let classesInclude: boolean | Record<string, unknown> = true;
-    if (includeRegistration) {
-      classesInclude = {
-        include: {
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true } },
-                },
-              },
-            },
-          },
-        },
-      };
-    }
-
-    const includeOptions = {
-      consultantProfile: {
-        include: {
-          user: {
-            select: {
-              name: true,
-              image: true,
-              workExperiences: {
-                select: {
-                  company: true,
-                  companyDomain: true,
-                  isCurrent: true,
-                },
-                orderBy: [
-                  { isCurrent: "desc" as const },
-                  { startDate: "desc" as const },
-                ],
-                take: 3,
-              },
-            },
-          },
-        },
-      },
-      topics: true,
-      classContents: true,
-      collaborators: {
-        where: { status: CollaboratorStatus.ACCEPTED },
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  image: true,
-                  workExperiences: {
-                    select: {
-                      company: true,
-                      companyDomain: true,
-                      isCurrent: true,
-                    },
-                    orderBy: [
-                      { isCurrent: "desc" as const },
-                      { startDate: "desc" as const },
-                    ],
-                    take: 3,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      ...((includeClasses || includeRegistration) && {
-        classes: classesInclude,
-      }),
-    };
+    // Shared with the /explore/programs RSC seed — see plan-includes.ts.
+    const includeOptions = classPlanListInclude({
+      includeClasses: !!includeClasses,
+      includeRegistration,
+    });
 
     // For trending sort, use a two-step Prisma approach:
     // 1. Lightweight select (IDs + nested slot IDs only) to rank by enrollment count

@@ -27,7 +27,9 @@ import { join } from "path";
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
 const CATALOG_ROUTE = "app/api/organizations/[orgId]/catalog/route.ts";
-const PLAN_FILTERS = "app/api/plans/shared/plan-filters.ts";
+// Moved from app/api/plans/shared/plan-filters.ts (now a re-export shim) so
+// lib/data/explore-programs.ts can share the builders without importing app/.
+const PLAN_FILTERS = "lib/api/plans/plan-filters.ts";
 const VISIBILITY = "lib/api/plans/visibility.ts";
 const EXPLORE = "lib/data/explore-programs.ts";
 const SCHEMA = "prisma/schema.prisma";

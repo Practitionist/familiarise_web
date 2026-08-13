@@ -1,5 +1,6 @@
 import {
   getCuratedPrograms,
+  getDefaultProgramsPage,
   getTopicsWithCount,
 } from "@/lib/data/explore-programs";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
@@ -34,14 +35,24 @@ export default async function ExplorePrograms() {
   // ISR, a degraded 200 would be written to the durable cache and replayed to
   // everyone until the window expired (#1123) — so retry once during build and
   // otherwise throw, which caches nothing and lands in error.tsx instead.
-  const [trendingPrograms, newestPrograms, topicsWithCount, stats, levels] =
-    await Promise.all([
-      withBuildTimeRetry(() => getCuratedPrograms("all", "trending", 8)),
-      withBuildTimeRetry(() => getCuratedPrograms("all", "newest", 8)),
-      withBuildTimeRetry(() => getTopicsWithCount("all")),
-      withBuildTimeRetry(getCachedProgramCounts),
-      withBuildTimeRetry(getCachedProgramLevels),
-    ]);
+  const [
+    trendingPrograms,
+    newestPrograms,
+    topicsWithCount,
+    stats,
+    levels,
+    defaultProgramsPage,
+  ] = await Promise.all([
+    withBuildTimeRetry(() => getCuratedPrograms("all", "trending", 8)),
+    withBuildTimeRetry(() => getCuratedPrograms("all", "newest", 8)),
+    withBuildTimeRetry(() => getTopicsWithCount("all")),
+    withBuildTimeRetry(getCachedProgramCounts),
+    withBuildTimeRetry(getCachedProgramLevels),
+    // Page 1 of the anonymous default grid — seeds the client usePrograms
+    // query so the All Programs section paints with the HTML instead of a
+    // second skeleton-then-fetch pass.
+    withBuildTimeRetry(getDefaultProgramsPage),
+  ]);
 
   return (
     <ProgramsInteractiveContent
@@ -49,6 +60,7 @@ export default async function ExplorePrograms() {
       initialNewest={newestPrograms}
       initialTopics={topicsWithCount}
       initialStats={stats}
+      initialProgramsPage={defaultProgramsPage}
       availableLevels={levels}
     />
   );

@@ -7,6 +7,7 @@ import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
+import type { DefaultProgramsPage } from "@/lib/data/explore-programs";
 import {
   useCuratedPrograms,
   useInfiniteScroll,
@@ -32,6 +33,9 @@ interface ProgramsInteractiveContentProps {
   initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
+  /** Server-rendered page 1 of the default All Programs grid — seeds the
+   *  main listing query so first paint skips the client fetch. */
+  initialProgramsPage?: DefaultProgramsPage;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
 }
@@ -63,6 +67,7 @@ export default function ProgramsInteractiveContent({
   initialNewest,
   initialTopics,
   initialStats,
+  initialProgramsPage,
   availableLevels = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
@@ -113,6 +118,7 @@ export default function ProgramsInteractiveContent({
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
     filters,
+    initialPage: initialProgramsPage,
   });
 
   const { programs: trendingPrograms, isLoading: trendingLoading } =
