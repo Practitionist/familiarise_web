@@ -72,10 +72,13 @@ const liveConsultantWhere = {
  * count of 0 and stay in the ranking — dropping them empties the Trending row
  * in a quiet window.
  *
- * The scan is shared across requests for 60s via unstable_cache; the cached
+ * The scan is shared across requests for 300s via unstable_cache; the cached
  * value is the FULL ranked id array (callers slice — passing limit as an arg
  * would key separate entries). Staleness is harmless: trending order changing
- * 60s late is invisible.
+ * a few minutes late is invisible. The window matches /explore/programs'
+ * `revalidate = 300` — a route's effective revalidate is the MIN of its
+ * segment value and every data-cache window read during the render (#1110),
+ * so a shorter window here would silently cap the route.
  */
 /** Slot window shared by both plan families. */
 const recentSlotWindow = () => {
@@ -128,7 +131,7 @@ const getTrendingClassPlanIds = unstable_cache(
     );
   },
   ["trending-class-plan-ids"],
-  { revalidate: 60 },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 const getTrendingWebinarPlanIds = unstable_cache(
@@ -156,7 +159,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
     );
   },
   ["trending-webinar-plan-ids"],
-  { revalidate: 60 },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 /**
@@ -241,7 +244,7 @@ export const getCuratedPrograms = unstable_cache(
       let webinarPlans;
 
       if (sort === "trending") {
-        // Shared 60s ranking cache — full list, sliced per caller (see the
+        // Shared 300s ranking cache — full list, sliced per caller (see the
         // class-plan twin above for why no limit arg).
         const sortedIds = (await getTrendingWebinarPlanIds()).slice(0, limit);
 
@@ -300,7 +303,7 @@ export const getCuratedPrograms = unstable_cache(
     return toPlain(programs.slice(0, limit));
   },
   ["curated-programs"],
-  { revalidate: 120, tags: ["programs"] },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 // ---------------------------------------------------------------------------

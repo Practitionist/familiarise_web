@@ -2,41 +2,22 @@ import {
   getCuratedPrograms,
   getTopicsWithCount,
 } from "@/lib/data/explore-programs";
-import {
-  emptyOnTransientDbError,
-  fallbackOnTransientDbError,
-} from "@/lib/data/fail-open";
+import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
 import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
 
-// #664 — the viewer's ACTIVE org memberships, as { orgId: orgName }. Viewer-
-// specific, so it must NOT enter the shared curated cache — it's fetched
-// per-request here and prop-drilled to the card, which badges a plan
-// "Recommended by <org>" when the viewer's org sponsors that plan's program.
-//
-// Signed-out returns {} here because that is an ANSWER, not a failure. Failure
-// is handled at the call site by the same fail-open helper the four sibling
-// reads use — this used to be a bare `catch { return {} }`, which swallowed
-// every error class and would have silently dropped every org badge on a mapper
-// or schema regression, indefinitely and with no signal. (#1125)
-async function getViewerOrgs(): Promise<Record<string, string>> {
-  const session = await getSession();
-  const userId = session?.user?.id;
-  if (!userId) return {};
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    select: { organization: { select: { id: true, name: true } } },
-  });
-  return Object.fromEntries(
-    memberships.map((m) => [m.organization.id, m.organization.name]),
-  );
-}
-
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// ISR: every read below is viewer-agnostic, so the page is the same for every
+// visitor and an ISR copy served from the durable cache skips the function
+// invocation entirely — the only lever that avoids the cold-instance stall
+// (#1124). The one per-viewer bit, the "Recommended by <org>" badge (#664),
+// resolves in the browser from session.user.organizationMemberships inside
+// ProgramsInteractiveContent; nothing viewer-specific may re-enter this
+// server render or the route silently pins back to dynamic.
+// 300 matches the data-layer windows: the route's effective revalidate is the
+// MIN of this and every unstable_cache window read during the render (#1110).
+export const revalidate = 300;
 
 /**
  * Server-fetch the trending / newest curated rows, the topic list, and the
@@ -49,44 +30,18 @@ export const dynamic = "force-dynamic";
  * `useCuratedPrograms` / `useTopicsWithCount` hooks.
  */
 export default async function ExplorePrograms() {
-  // Degrade gracefully: a heavy curated read that times out (cold query brushing
-  // the pg query budget) renders an empty row instead of erroring the whole page.
-  const [
-    trendingPrograms,
-    newestPrograms,
-    topicsWithCount,
-    stats,
-    viewerOrgs,
-    levels,
-  ] = await Promise.all([
-    getCuratedPrograms("all", "trending", 8).catch(
-      emptyOnTransientDbError("trending programs", { perRequest: true }),
-    ),
-    getCuratedPrograms("all", "newest", 8).catch(
-      emptyOnTransientDbError("newest programs", { perRequest: true }),
-    ),
-    getTopicsWithCount("all").catch(
-      emptyOnTransientDbError("topics", { perRequest: true }),
-    ),
-    // `null` here means "show the marketing numbers instead", which the client
-    // already handles. Routed through the helper rather than a local catch so a
-    // real defect surfaces instead of quietly pinning the hero to placeholders.
-    getCachedProgramCounts().catch(
-      fallbackOnTransientDbError("program stats", null, { perRequest: true }),
-    ),
-    getViewerOrgs().catch(
-      fallbackOnTransientDbError<Record<string, string>>(
-        "viewer orgs",
-        {},
-        {
-          perRequest: true,
-        },
-      ),
-    ),
-    getCachedProgramLevels().catch(
-      emptyOnTransientDbError("program levels", { perRequest: true }),
-    ),
-  ]);
+  // These used to degrade to empty rows per-request. Now that this route is
+  // ISR, a degraded 200 would be written to the durable cache and replayed to
+  // everyone until the window expired (#1123) — so retry once during build and
+  // otherwise throw, which caches nothing and lands in error.tsx instead.
+  const [trendingPrograms, newestPrograms, topicsWithCount, stats, levels] =
+    await Promise.all([
+      withBuildTimeRetry(() => getCuratedPrograms("all", "trending", 8)),
+      withBuildTimeRetry(() => getCuratedPrograms("all", "newest", 8)),
+      withBuildTimeRetry(() => getTopicsWithCount("all")),
+      withBuildTimeRetry(getCachedProgramCounts),
+      withBuildTimeRetry(getCachedProgramLevels),
+    ]);
 
   return (
     <ProgramsInteractiveContent
@@ -94,7 +49,6 @@ export default async function ExplorePrograms() {
       initialNewest={newestPrograms}
       initialTopics={topicsWithCount}
       initialStats={stats}
-      viewerOrgs={viewerOrgs}
       availableLevels={levels}
     />
   );

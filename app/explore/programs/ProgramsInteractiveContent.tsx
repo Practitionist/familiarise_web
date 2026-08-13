@@ -32,8 +32,6 @@ interface ProgramsInteractiveContentProps {
   initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
-  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
-  viewerOrgs?: Record<string, string>;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
 }
@@ -65,12 +63,27 @@ export default function ProgramsInteractiveContent({
   initialNewest,
   initialTopics,
   initialStats,
-  viewerOrgs = {},
   availableLevels = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const { formatPrice } = useCurrency();
+
+  // #664 — viewer's ACTIVE org memberships as { orgId: orgName }, for the
+  // "Recommended by <org>" card badge. Resolved client-side from the session
+  // payload (the same memberships OrgSwitcher and checkout trust) rather than
+  // server-side: this page is ISR, so its shared HTML must stay free of
+  // viewer-specific markup. Badges appear once the session hydrates.
+  const viewerOrgs = useMemo<Record<string, string>>(
+    () =>
+      Object.fromEntries(
+        (session?.user?.organizationMemberships ?? []).map((m) => [
+          m.organizationId,
+          m.organizationName,
+        ]),
+      ),
+    [session],
+  );
 
   // All UI state lives in one hook so the orchestrator stays thin.
   const {
