@@ -9,7 +9,12 @@ on:
 jobs:
   sync-stream-users:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # #1134 P1-21 — must stay BELOW the job's 40-minute Redis lock TTL, so the
+    # lock always outlives any run that can exist and two runs can never
+    # overlap. Raised from 30 because a 100k-user walk does not fit in 30
+    # minutes: 1,000 pages, a 500ms sleep per deletion (8 minutes of sleep
+    # alone) plus a Stream round-trip and a Prisma query each.
+    timeout-minutes: 35
 
     env:
       # #1066 — jobs run as bare Node processes, so Sentry.init only sees

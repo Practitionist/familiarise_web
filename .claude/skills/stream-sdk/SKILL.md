@@ -56,6 +56,19 @@ that get recorded as `UNVERIFIED` completions.
 **Never `await` a Stream call inside a DB transaction**, and never leave channel provisioning as
 `void (async () => {…})()` — the Lambda can freeze before it settles. It needs an outbox.
 
+
+**Trust `node_modules`, not `package.json`.** The ranges are carets; the installed
+versions run ahead of them. `@stream-io/video-filters-web` is a hard dependency of
+the video SDK and is already on disk, so background blur needs no install — only
+`@stream-io/audio-filters-web` does, and that one is a **paid** add-on billed per
+participant-minute while the call type already advertises `noise_cancellation:
+auto-on`.
+
+**The CSP blocker for filters is `connect-src`, not `worker-src`.** Both filter
+packages fetch WASM and models from `unpkg.com` at runtime unless `basePath` is
+set. Neither constructs a `Worker`; Krisp uses an AudioWorklet, which CSP checks
+under `script-src`.
+
 ## Where things live
 
 | Concern | File |
