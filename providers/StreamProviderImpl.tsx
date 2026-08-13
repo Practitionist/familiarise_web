@@ -243,27 +243,40 @@ const StreamProviderImpl = ({
           sessionStorage.getItem(syncKey) === "1");
 
       if (!alreadySynced) {
-        try {
-          streamLogger.info("Starting initial channel sync", {
-            userId: userDetails.id,
+        // #1134 P1-19 — NOT awaited. This used to block the connect: the sync
+        // costs roughly `1 + W + C + D + ceil(N/100)` Stream round-trips in
+        // batches of five, so a consultant with 200 clients waited 8-20 seconds
+        // with chat apparently dead before `chatConnected` ever went true.
+        //
+        // Chat is usable the moment the socket is up; channels stream into the
+        // sidebar as they land, because it already re-renders on Stream events.
+        // A tab closed mid-sync is caught by the reconcile cron, which is where
+        // eventual correctness belongs — not on the critical path of every
+        // dashboard load.
+        streamLogger.info("Starting initial channel sync (background)", {
+          userId: userDetails.id,
+        });
+        // Marked BEFORE the call, not after: this flag means "we have kicked
+        // the sync for this user", and marking on completion let a re-render
+        // start a second one while the first was still in flight.
+        clientSyncCompletedUsers.add(userDetails.id);
+        void syncUserEventChannels(userDetails.id)
+          .then(() => {
+            if (typeof sessionStorage !== "undefined") {
+              sessionStorage.setItem(syncKey, "1");
+            }
+            streamLogger.info("Initial channel sync completed", {
+              userId: userDetails.id,
+            });
+          })
+          .catch((syncError) => {
+            // Deliberately not persisted to sessionStorage, so the next load
+            // retries rather than assuming this user is reconciled.
+            streamLogger.warn("Channel sync failed", {
+              userId: userDetails.id,
+              error: syncError,
+            });
           });
-          await syncUserEventChannels(userDetails.id);
-          clientSyncCompletedUsers.add(userDetails.id);
-          if (typeof sessionStorage !== "undefined") {
-            sessionStorage.setItem(syncKey, "1");
-          }
-          streamLogger.info("Initial channel sync completed", {
-            userId: userDetails.id,
-          });
-        } catch (syncError) {
-          streamLogger.warn("Channel sync failed", {
-            userId: userDetails.id,
-            error: syncError,
-          });
-          // Mark in-memory to avoid retry within same component lifecycle,
-          // but don't persist to sessionStorage so next load retries.
-          clientSyncCompletedUsers.add(userDetails.id);
-        }
       } else {
         streamLogger.debug("Skipping channel sync (already completed)", {
           userId: userDetails.id,
