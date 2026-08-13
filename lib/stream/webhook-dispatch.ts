@@ -40,23 +40,11 @@ import {
   isDbHealthy,
 } from "@/lib/webhooks/event-log";
 
-// Stream webhook event types we handle
-export const HANDLED_EVENT_TYPES = [
-  // Recording events
-  "call.recording_started",
-  "call.recording_stopped",
-  "call.recording_ready",
-  "call.recording_failed",
-  // Session events
-  "call.session_ended",
-  "call.ended",
-  // STR-4 — per-attendee presence (unblocks #471 no-show / #472 overrun)
-  "call.session_participant_joined",
-  "call.session_participant_left",
-  // Chat moderation events
-  "user.flagged",
-  "message.flagged",
-] as const;
+// Imported AND re-exported: a bare `export … from` creates no local binding,
+// so the type and the guard below could not see it. #1141 moved the list into
+// its own module so ensure-webhook-subscription.ts can read it too.
+import { HANDLED_EVENT_TYPES } from "@/lib/stream/webhook-events";
+export { HANDLED_EVENT_TYPES };
 
 /**
  * The one list. `processStreamEvent`'s switch is checked against this at compile
