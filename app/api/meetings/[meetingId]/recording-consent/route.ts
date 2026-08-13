@@ -4,7 +4,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import {
   getRecordingNotice,
@@ -28,65 +27,6 @@ const bodySchema = z.object({
   decision: z.nativeEnum(RecordingConsentDecision),
 });
 
-/** The appointment shape the consent helpers need, fetched once. */
-async function loadAppointment(meetingId: string) {
-  const meetingSession = await prisma.meetingSession.findUnique({
-    where: { streamCallId: meetingId },
-    select: {
-      id: true,
-      slotOfAppointment: {
-        select: {
-          appointment: {
-            select: {
-              webinar: {
-                select: {
-                  webinarPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              class: {
-                select: {
-                  classPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              consultation: {
-                select: {
-                  consultationPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              subscription: {
-                select: {
-                  subscriptionPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-  return meetingSession;
-}
-
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
@@ -105,19 +45,15 @@ export async function GET(
     if (!access.hasAccess) {
       return NextResponse.json(
         { error: access.message },
-        { status: access.message === "Meeting not found" ? 404 : 403 },
+        { status: access.reason === "not_found" ? 404 : 403 },
       );
     }
 
-    const meetingSession = await loadAppointment(meetingId);
-    if (!meetingSession) {
-      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
-    }
 
     const notice = await getRecordingNotice(
-      meetingSession.id,
+      access.meetingSessionId,
       session.user.id,
-      meetingSession.slotOfAppointment?.appointment,
+      access.appointment,
     );
 
     return NextResponse.json(notice);
@@ -151,7 +87,7 @@ export async function POST(
     if (!access.hasAccess) {
       return NextResponse.json(
         { error: access.message },
-        { status: access.message === "Meeting not found" ? 404 : 403 },
+        { status: access.reason === "not_found" ? 404 : 403 },
       );
     }
 
@@ -163,14 +99,10 @@ export async function POST(
       );
     }
 
-    const meetingSession = await loadAppointment(meetingId);
-    if (!meetingSession) {
-      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
-    }
 
-    const appointment = meetingSession.slotOfAppointment?.appointment;
+    const appointment = access.appointment;
     const notice = await getRecordingNotice(
-      meetingSession.id,
+      access.meetingSessionId,
       session.user.id,
       appointment,
     );
@@ -208,7 +140,7 @@ export async function POST(
     // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
     // a product decision and is deliberately not done here.
     await recordRecordingConsent(
-      meetingSession.id,
+      access.meetingSessionId,
       session.user.id,
       parsed.data.decision,
     );
