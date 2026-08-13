@@ -5,8 +5,10 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
+  getDefaultConsultantsPage,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { CONSULTANTS_PER_PAGE } from "./utils";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -99,13 +101,27 @@ export default async function ExploreExperts() {
   // These used to degrade to empty rows on a transient timeout. This route is ISR,
   // so that empty page would be cached and served to everyone until the window
   // expired; retry once and otherwise throw, which caches nothing (#1119).
-  const [metadata, featuredExperts, trendingExperts, newestExperts] =
-    await Promise.all([
-      withBuildTimeRetry(getExpertsMetadata),
-      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
-      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
-      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
-    ]);
+  const [
+    metadata,
+    featuredExperts,
+    trendingExperts,
+    newestExperts,
+    initialConsultantsPage,
+  ] = await Promise.all([
+    withBuildTimeRetry(getExpertsMetadata),
+    withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
+    withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+    withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
+    // Page 1 of the default grid — the same cached read the API's default
+    // view serves. Seeds the client useConsultants query so the browse grid
+    // paints with the HTML instead of a second skeleton-then-fetch pass.
+    // "nameAsc" must stay in sync with DEFAULT_EXPERT_FILTERS.sort: the
+    // client only applies this seed when its filters are exactly the
+    // defaults, so a mismatched sort here would go unused, not mis-render.
+    withBuildTimeRetry(() =>
+      getDefaultConsultantsPage("nameAsc", CONSULTANTS_PER_PAGE),
+    ),
+  ]);
 
   return (
     <main className="min-h-screen bg-background">
@@ -142,6 +158,7 @@ export default async function ExploreExperts() {
           metadata={metadata}
           trendingExperts={trendingExperts}
           newestExperts={newestExperts}
+          initialConsultantsPage={initialConsultantsPage}
         />
       </Suspense>
     </main>

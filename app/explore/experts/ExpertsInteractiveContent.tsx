@@ -14,6 +14,7 @@ import {
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
+import type { ConsultantsPage } from "./hooks/useConsultants";
 import type { IExpertsMetaData, AffiliationType } from "./utils";
 import { FilterPanel } from "./components/FilterPanel";
 import { SearchBar, type SortOption } from "./components/SearchBar";
@@ -34,12 +35,16 @@ interface ExpertsInteractiveContentProps {
   metadata: IExpertsMetaData | null;
   trendingExperts: IConsultantCardData[];
   newestExperts: IConsultantCardData[];
+  /** Server-rendered page 1 of the default (unfiltered) grid — seeds the
+   *  main listing query so first paint skips the client fetch. */
+  initialConsultantsPage?: ConsultantsPage;
 }
 
 export default function ExpertsInteractiveContent({
   metadata,
   trendingExperts,
   newestExperts,
+  initialConsultantsPage,
 }: ExpertsInteractiveContentProps) {
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
   const browseSectionRef = useRef<HTMLDivElement>(null);
@@ -54,7 +59,7 @@ export default function ExpertsInteractiveContent({
     isRefetching,
     hasMore,
     loadMore,
-  } = useConsultants(filters);
+  } = useConsultants(filters, initialConsultantsPage);
 
   // Sentinel-driven infinite scroll. The hook owns the IntersectionObserver
   // lifecycle (one observer per hasMore/isLoading transition, not one per
