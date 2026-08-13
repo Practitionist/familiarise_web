@@ -28,6 +28,11 @@ import {
   unlockSlotBooking,
   type ApprovalLock,
 } from "../../../../../utils/appointmentlock.js";
+// #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
+// single 30-minute atom, so the interval is [start, start+30m).
+const thirtyAfter = (iso: string): string =>
+  new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
+
 import {
   generateTestSlot,
   generateConsultantId,
@@ -86,13 +91,13 @@ async function runTest() {
     networkDelay: number,
   ): Promise<BookingResult> => {
     const requestStart = Date.now();
-    let lock: ApprovalLock | null = null;
+    let lock: ApprovalLock[] | null = null;
 
     try {
       // Simulate network delay before lock acquisition
       await new Promise((resolve) => setTimeout(resolve, networkDelay));
 
-      lock = await lockSlotBooking(consultantId, slot.start, 15000);
+      lock = await lockSlotBooking(consultantId, slot.start, thirtyAfter(slot.start), 15000);
 
       // Check if slot already booked using SHARED registry
       const slotKey = `${consultantId}:${slot.start}`;

@@ -96,9 +96,10 @@ export async function POST(req: NextRequest) {
     let lock;
 
     try {
-      // ACQUIRE LOCK for this specific slot
+      // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
+      // per 30-min atom, so overlapping requests with different starts collide)
       // Use default 60s TTL (15s was too short for slow database operations)
-      lock = await lockSlotBooking(consultantProfileId, startsAt);
+      lock = await lockSlotBooking(consultantProfileId, startsAt, endsAt);
 
       console.log(
         JSON.stringify({

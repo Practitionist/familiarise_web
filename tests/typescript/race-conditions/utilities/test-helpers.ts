@@ -8,6 +8,11 @@ import {
   unlockSlotBooking,
   type ApprovalLock,
 } from "../../../../utils/appointmentlock.js";
+// #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
+// single 30-minute atom, so the interval is [start, start+30m).
+const thirtyAfter = (iso: string): string =>
+  new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
+
 import type {
   BookingResult,
   TestReport,
@@ -39,11 +44,11 @@ export async function simulateBookingAttempt(
   userId: string,
 ): Promise<BookingResult> {
   const startTime = Date.now();
-  let lock: ApprovalLock | null = null;
+  let lock: ApprovalLock[] | null = null;
 
   try {
     // Acquire lock for this specific slot (15s TTL, matching production)
-    lock = await lockSlotBooking(consultantId, slotTime, 15000);
+    lock = await lockSlotBooking(consultantId, slotTime, thirtyAfter(slotTime), 15000);
 
     // Simulate validation check (like SlotValidationService does)
     const slotKey = `${consultantId}:${slotTime}`;

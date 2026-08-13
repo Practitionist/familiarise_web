@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
 import {
@@ -20,10 +20,11 @@ import {
   logTrialConverted,
 } from "@/lib/activity/log-activity";
 import {
-  lockTrialSlot,
-  unlockTrialSlot,
+  lockSlotBooking,
+  unlockSlotBooking,
   ApprovalLock,
 } from "@/utils/appointmentlock";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   notifyTrialSessionScheduled,
   notifyTrialSessionCompleted,
@@ -126,21 +127,33 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 }
 
+// #1169 PR 1 — thrown inside the scheduling transaction so the availability
+// check shares the transaction's snapshot instead of racing ahead of it
+// (#1093 §1 check-then-act), and mapped to the same 409 the old pre-check
+// returned.
+class TrialSlotUnavailableError extends Error {
+  constructor() {
+    super("Selected slot is no longer available. Please choose a different time.");
+    this.name = "TrialSlotUnavailableError";
+  }
+}
+
 /**
- * Validates that a time slot is still available (no overlapping appointments)
+ * Validates that a time slot is still available for BOTH participants.
+ * Runs on the scheduling transaction's client — never the global one — so the
+ * check and the slot write commit or fail together.
  */
 async function validateSlotAvailability(
+  db: Tx,
   consultantProfileId: string,
-  startsAt: string,
-  endsAt: string,
+  consulteeUserId: string,
+  startTime: Date,
+  endTime: Date,
 ): Promise<boolean> {
-  const startTime = new Date(startsAt);
-  const endTime = new Date(endsAt);
-
   // Use canonical occupancy policy for consistent conflict detection
   const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
 
-  const overlapping = await prisma.slotOfAppointment.findFirst({
+  const overlapping = await db.slotOfAppointment.findFirst({
     where: {
       appointment: {
         OR: occupiedFilter,
@@ -150,8 +163,22 @@ async function validateSlotAvailability(
       endsAt: { gt: startTime },
     },
   });
+  if (overlapping) return false;
 
-  return !overlapping;
+  // #1093 §1 follow-through — the consultee's own calendar. The GiST
+  // constraint is consultant-keyed, so a consultee double-booked across two
+  // consultants is only ever caught here (mirrors validateNoConflicts).
+  const consulteeConflict = await db.slotOfAppointment.findFirst({
+    where: {
+      user: { some: { id: consulteeUserId } },
+      completionStatus: "SCHEDULED",
+      appointment: { deletedAt: null },
+      startsAt: { lt: endTime },
+      endsAt: { gt: startTime },
+    },
+  });
+
+  return !consulteeConflict;
 }
 
 /**
@@ -337,12 +364,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
         }
 
-        // 1. Acquire distributed lock to prevent race conditions
-        let lock: ApprovalLock | null = null;
+        // 1. Acquire the shared slot-interval lock (#1169 PR 1 — same
+        // `slot-booking:` atom keys checkout and request-for-approval take,
+        // so a trial finally contends with every other writer for the minute)
+        let lock: ApprovalLock[] | null = null;
         try {
-          lock = await lockTrialSlot(
+          lock = await lockSlotBooking(
             existingTrial.consultantProfileId,
             startTime.toISOString(),
+            endTime.toISOString(),
           );
         } catch {
           return NextResponse.json(
@@ -355,25 +385,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         }
 
         try {
-          // 2. Validate slot availability (within lock)
-          const isAvailable = await validateSlotAvailability(
-            existingTrial.consultantProfileId,
-            startTime.toISOString(),
-            endTime.toISOString(),
-          );
-
-          if (!isAvailable) {
-            return NextResponse.json(
-              {
-                error:
-                  "Selected slot is no longer available. Please choose a different time.",
-              },
-              { status: 409 },
-            );
-          }
-
-          // 3. Create appointment + update trial atomically using transaction
+          // 2+3. Validate and write in ONE transaction — the availability
+          // check previously ran on the global client before the transaction
+          // opened, a classic check-then-act window (#1093 §1).
           const result = await prisma.$transaction(async (tx) => {
+            const isAvailable = await validateSlotAvailability(
+              tx,
+              existingTrial.consultantProfileId,
+              existingTrial.consulteeProfile.user.id,
+              startTime,
+              endTime,
+            );
+            if (!isAvailable) {
+              throw new TrialSlotUnavailableError();
+            }
+
             // Create an appointment for the trial
             const appointment = await tx.appointment.create({
               data: {
@@ -383,6 +409,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,
+                    // #1093 §1 — without this the slot falls outside the
+                    // slot_no_confirmed_overlap exclusion constraint's WHERE
+                    // clause and the DB accepts a trial on top of a confirmed
+                    // consultation for the same consultant.
+                    consultantProfileId: existingTrial.consultantProfileId,
                     user: {
                       connect: [
                         { id: existingTrial.consulteeProfile.user.id },
@@ -522,10 +553,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           );
 
           return NextResponse.json({ data: result });
+        } catch (error) {
+          // In-transaction availability failure, or the #440 exclusion
+          // constraint rejecting a concurrent overlap now that trial slots
+          // carry consultantProfileId — both are "slot taken", a 409.
+          if (
+            error instanceof TrialSlotUnavailableError ||
+            isExclusionViolation(error)
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "Selected slot is no longer available. Please choose a different time.",
+              },
+              { status: 409 },
+            );
+          }
+          throw error;
         } finally {
           // 5. Always release lock
           if (lock) {
-            await unlockTrialSlot(lock);
+            await unlockSlotBooking(lock);
           }
         }
       }
