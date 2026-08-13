@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
+import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -12,14 +13,10 @@ const EVENT_TYPE_CONFIG = {
   webinar: {
     label: "Webinar",
     icon: VideoIcon,
-    bgColor: "bg-orange-100",
-    textColor: "text-orange-700",
   },
   class: {
     label: "Class",
     icon: BookOpenIcon,
-    bgColor: "bg-green-100",
-    textColor: "text-green-700",
   },
 } as const;
 
@@ -36,6 +33,10 @@ type GroupedConsultant = {
 
 export const ChannelSearch = () => {
   const { client, setActiveChannel } = useChatContext();
+  // Below `md` the conversation pane is `hidden` until this runs — see
+  // ChatLayout. Selecting a channel without it leaves the person staring at
+  // the list they just searched, with the channel silently active behind it.
+  const { openConversation } = useChatPane();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
@@ -136,6 +137,7 @@ export const ChannelSearch = () => {
       const channel = client.channel("messaging", consultant.channelId);
       await channel.watch();
       setActiveChannel(channel);
+      openConversation();
     } catch (error) {
       console.error("Error opening channel:", error);
     }
@@ -154,6 +156,7 @@ export const ChannelSearch = () => {
       const channel = client.channel("team", result.channelId);
       await channel.watch();
       setActiveChannel(channel);
+      openConversation();
     } catch (error) {
       console.error("Error opening channel:", error);
     }
@@ -168,30 +171,30 @@ export const ChannelSearch = () => {
   return (
     <div className="channel-search relative">
       <form onSubmit={handleSearchSubmit} className="relative">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300" />
+        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           type="text"
           placeholder="Search..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="pl-9 w-full text-sm bg-blue-700 border-blue-600 text-white placeholder-blue-300 focus:border-blue-500 focus:ring-blue-500 normal-case"
+          className="pl-9 w-full text-sm normal-case"
         />
       </form>
 
       {hasResults && (
-        <div className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-xl border max-h-72 overflow-auto">
+        <div className="absolute z-50 mt-1 w-full bg-popover text-popover-foreground rounded-md shadow-xl border border-border max-h-72 overflow-auto">
           {/* Conversations Section (Consultants with consultations/subscriptions) */}
           {groupedConsultants.length > 0 && (
             <>
-              <div className="px-3 py-2 bg-gray-50 border-b">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <div className="px-3 py-2 bg-muted border-b border-border">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Conversations
                 </span>
               </div>
               {groupedConsultants.map((consultant) => (
                 <button
                   key={consultant.consultantName}
-                  className="p-3 hover:bg-gray-50 cursor-pointer w-full text-left border-b last:border-b-0"
+                  className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
                   onClick={() => handleConsultantClick(consultant)}
                 >
                   <div className="flex items-center gap-3">
@@ -205,8 +208,8 @@ export const ChannelSearch = () => {
                         className="w-10 h-10 rounded-full flex-shrink-0"
                       />
                     ) : (
-                      <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                        <span className="text-gray-600 font-medium">
+                      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                        <span className="text-muted-foreground font-medium">
                           {consultant.consultantName.charAt(0)}
                         </span>
                       </div>
@@ -214,14 +217,14 @@ export const ChannelSearch = () => {
 
                     <div className="flex-1 min-w-0">
                       {/* Consultant Name */}
-                      <div className="font-semibold text-gray-900 truncate">
+                      <div className="font-semibold text-foreground truncate">
                         {consultant.consultantName}
                       </div>
 
                       {/* Type indicators */}
                       <div className="flex items-center gap-1 mt-1">
-                        <UserIcon className="w-3 h-3 text-gray-400" />
-                        <span className="text-xs text-gray-500">
+                        <UserIcon className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">
                           {consultant.hasConsultation &&
                           consultant.hasSubscription
                             ? "Consultation & Subscription"
@@ -240,8 +243,8 @@ export const ChannelSearch = () => {
           {/* Events Section (Webinars/Classes) */}
           {events.length > 0 && (
             <>
-              <div className="px-3 py-2 bg-gray-50 border-b">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <div className="px-3 py-2 bg-muted border-b border-border">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Events
                 </span>
               </div>
@@ -253,7 +256,7 @@ export const ChannelSearch = () => {
                 return (
                   <button
                     key={`${event.type}-${event.id}`}
-                    className="p-3 hover:bg-gray-50 cursor-pointer w-full text-left border-b last:border-b-0"
+                    className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
                     onClick={() => handleEventClick(event)}
                   >
                     <div className="flex items-start gap-3">
@@ -267,8 +270,8 @@ export const ChannelSearch = () => {
                           className="w-10 h-10 rounded-full flex-shrink-0"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                          <span className="text-gray-600 font-medium">
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                          <span className="text-muted-foreground font-medium">
                             {event.consultantName.charAt(0)}
                           </span>
                         </div>
@@ -276,19 +279,17 @@ export const ChannelSearch = () => {
 
                       <div className="flex-1 min-w-0">
                         {/* Event Name */}
-                        <div className="font-semibold text-gray-900 truncate">
+                        <div className="font-semibold text-foreground truncate">
                           {event.name}
                         </div>
 
                         {/* Type Badge + Consultant Name */}
                         <div className="flex items-center gap-2 mt-1">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${config.bgColor} ${config.textColor}`}
-                          >
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
                             <Icon className="w-3 h-3" />
                             {config.label}
                           </span>
-                          <span className="text-sm text-gray-500 truncate">
+                          <span className="text-sm text-muted-foreground truncate">
                             {event.consultantName}
                           </span>
                         </div>
@@ -304,8 +305,8 @@ export const ChannelSearch = () => {
 
       {/* No results message */}
       {query.trim().length >= 2 && !loading && !hasResults && (
-        <div className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-xl border p-4 text-center text-gray-500 text-sm">
-          No results found for "{query}"
+        <div className="absolute z-50 mt-1 w-full bg-popover text-muted-foreground rounded-md shadow-xl border border-border p-4 text-center text-sm">
+          No results found for &ldquo;{query}&rdquo;
         </div>
       )}
     </div>

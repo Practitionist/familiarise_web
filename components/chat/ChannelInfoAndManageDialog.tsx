@@ -13,14 +13,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+  ResponsiveModalTrigger,
+} from "@/components/ui/responsive-modal";
+import { ResponsiveTable } from "@/components/ui/responsive-table";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/dashboard/DataCard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -351,30 +354,35 @@ export const ChannelInfoAndManageDialog = ({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogTrigger asChild>
-          <button className="p-2 rounded-full hover:bg-gray-100">
-            <InfoIcon className="h-5 w-5 text-gray-500" />
+      <ResponsiveModal open={open} onOpenChange={handleOpenChange}>
+        <ResponsiveModalTrigger asChild>
+          <button
+            type="button"
+            aria-label="Channel details and settings"
+            title="Channel details and settings"
+            className="p-2 rounded-full hover:bg-muted"
+          >
+            <InfoIcon className="h-5 w-5 text-muted-foreground" />
           </button>
-        </DialogTrigger>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>
+        </ResponsiveModalTrigger>
+        <ResponsiveModalContent className="sm:max-w-[500px]">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>
               {isTeamChannel ? (
                 <div className="flex items-center">
-                  <span className="text-gray-500 mr-2">#</span>
+                  <span className="text-muted-foreground mr-2">#</span>
                   <span>{displayName}</span>
                 </div>
               ) : displayInfo.isGroupDM ? (
                 <div className="flex items-center">
-                  <UsersIcon className="h-4 w-4 text-gray-500 mr-2" />
+                  <UsersIcon className="h-4 w-4 text-muted-foreground mr-2" />
                   <span className="truncate">{displayName}</span>
                 </div>
               ) : (
                 <span>{displayName}</span>
               )}
-            </DialogTitle>
-          </DialogHeader>
+            </ResponsiveModalTitle>
+          </ResponsiveModalHeader>
 
           <Tabs defaultValue="info" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
@@ -385,7 +393,7 @@ export const ChannelInfoAndManageDialog = ({
             <TabsContent value="info" className="space-y-4 py-4">
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Channel Type</h3>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   {isTeamChannel
                     ? "Group Chat"
                     : displayInfo.isGroupDM
@@ -396,7 +404,7 @@ export const ChannelInfoAndManageDialog = ({
 
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Created</h3>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   {channel.data?.created_at &&
                   typeof channel.data.created_at === "string"
                     ? new Date(channel.data.created_at).toLocaleString()
@@ -518,7 +526,7 @@ export const ChannelInfoAndManageDialog = ({
                         <Button
                           variant="outline"
                           size="sm"
-                          className="w-full flex items-center justify-center gap-2 text-red-600 hover:text-red-700"
+                          className="w-full flex items-center justify-center gap-2 text-destructive hover:text-destructive/90"
                           onClick={handleBlockUser}
                           disabled={isLoading || !otherUserId}
                         >
@@ -568,59 +576,88 @@ export const ChannelInfoAndManageDialog = ({
 
             <TabsContent value="members" className="space-y-4 py-4">
               {isLoading ? (
-                <div className="py-4 text-center text-gray-500">
-                  Loading members...
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                  {members.map((member) => (
-                    <div
-                      key={member.id}
-                      className="flex items-center justify-between p-2 hover:bg-gray-50 rounded"
-                    >
-                      <div className="flex items-center">
-                        <div className="w-8 h-8 rounded-full bg-gray-200 mr-3 flex items-center justify-center">
-                          {member.image ? (
-                            <Image
-                              src={member.image ?? ""}
-                              alt={member.name ?? ""}
-                              width={32}
-                              height={32}
-                              className="w-8 h-8 rounded-full"
-                            />
-                          ) : (
-                            <span>
-                              {member.name?.charAt(0) ||
-                                member.id?.charAt(0) ||
-                                "?"}
-                            </span>
-                          )}
-                        </div>
-                        <div>
-                          <div className="font-medium">
-                            {member.name || member.id}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {member.online ? "Online" : "Offline"}
-                          </div>
-                        </div>
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+                      <div className="flex-1 space-y-1">
+                        <Skeleton className="h-4 w-1/2" />
+                        <Skeleton className="h-3 w-1/4" />
                       </div>
-
-                      {/* Show remove button for event owner consultants */}
-                      {isEventOwner && member.id !== client?.userID && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleRemoveMember(member.id)}
-                          disabled={isLoading}
-                        >
-                          <XIcon className="h-4 w-4 text-gray-500" />
-                        </Button>
-                      )}
                     </div>
                   ))}
                 </div>
+              ) : (
+                <ResponsiveTable<ChannelMember>
+                  className="max-h-[300px] overflow-y-auto"
+                  rows={members}
+                  getRowId={(member) => member.id}
+                  columns={[
+                    {
+                      key: "member",
+                      header: "Member",
+                      primary: true,
+                      cell: (member) => (
+                        <div className="flex items-center">
+                          <div className="mr-3 flex h-8 w-8 items-center justify-center rounded-full bg-muted">
+                            {member.image ? (
+                              <Image
+                                src={member.image ?? ""}
+                                alt={member.name ?? ""}
+                                width={32}
+                                height={32}
+                                className="h-8 w-8 rounded-full"
+                              />
+                            ) : (
+                              <span>
+                                {member.name?.charAt(0) ||
+                                  member.id?.charAt(0) ||
+                                  "?"}
+                              </span>
+                            )}
+                          </div>
+                          <span className="truncate font-medium">
+                            {member.name || member.id}
+                          </span>
+                        </div>
+                      ),
+                    },
+                    {
+                      key: "presence",
+                      header: "Status",
+                      cell: (member) => (
+                        <span className="text-xs text-muted-foreground">
+                          {member.online ? "Online" : "Offline"}
+                        </span>
+                      ),
+                    },
+                  ]}
+                  /* Show remove button for event owner consultants */
+                  rowActions={(member) =>
+                    isEventOwner && member.id !== client?.userID ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => handleRemoveMember(member.id)}
+                        disabled={isLoading}
+                        // Named, because every row otherwise announced the
+                        // same thing and you could not tell who you removed.
+                        aria-label={`Remove ${member.name || member.id} from this channel`}
+                        title={`Remove ${member.name || member.id}`}
+                      >
+                        <XIcon className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    ) : null
+                  }
+                  empty={
+                    <EmptyState
+                      icon={UsersIcon}
+                      title="No members"
+                      description="This channel has no members yet."
+                    />
+                  }
+                />
               )}
 
               {isTeamChannel && (
@@ -639,33 +676,35 @@ export const ChannelInfoAndManageDialog = ({
               )}
             </TabsContent>
           </Tabs>
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Loading dialog for leaving channel */}
-      <Dialog open={isLeavingChannel} onOpenChange={() => {}}>
-        <DialogContent className="sm:max-w-[300px] [&>button]:hidden">
-          <DialogHeader>
-            <DialogTitle className="sr-only">Leaving Channel</DialogTitle>
-          </DialogHeader>
+      <ResponsiveModal open={isLeavingChannel} onOpenChange={() => {}}>
+        <ResponsiveModalContent className="sm:max-w-[300px] [&>button]:hidden">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle className="sr-only">
+              Leaving Channel
+            </ResponsiveModalTitle>
+          </ResponsiveModalHeader>
           <div className="flex flex-col items-center justify-center py-6 space-y-4">
-            <Loader2Icon className="h-8 w-8 animate-spin text-blue-500" />
-            <p className="text-sm text-gray-600">Leaving channel...</p>
+            <Loader2Icon className="h-8 w-8 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Leaving channel...</p>
           </div>
-        </DialogContent>
-      </Dialog>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Clear Chat Confirmation Dialog */}
-      <Dialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Clear chat history?</DialogTitle>
-            <DialogDescription>
+      <ResponsiveModal open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+        <ResponsiveModalContent className="sm:max-w-[400px]">
+          <ResponsiveModalHeader>
+            <ResponsiveModalTitle>Clear chat history?</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
               This will remove all messages from this conversation. This action
               cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
+          <ResponsiveModalFooter className="gap-2 sm:gap-0">
             <Button
               variant="outline"
               onClick={() => setShowClearConfirm(false)}
@@ -683,9 +722,9 @@ export const ChannelInfoAndManageDialog = ({
               ) : null}
               Clear Chat
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
       {/* Add Members Dialog */}
       <AddMembersDialog
@@ -712,7 +751,7 @@ export const ChannelInfoAndManageDialog = ({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleLeaveChannel}
-              className="bg-red-600 hover:bg-red-700 text-white"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Yes, Leave
             </AlertDialogAction>
