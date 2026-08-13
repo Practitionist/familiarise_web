@@ -81,15 +81,30 @@ export function HowItWorksSection() {
               Get started in minutes. Our streamlined process makes it easy to
               connect with the right expert for your needs.
             </p>
-            <Link href="/explore/experts">
-              <Button
-                size="lg"
-                className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
-              >
-                Start Your Journey
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-            </Link>
+            {/* Both CTAs live here because this section is unconditional —
+                the only other /explore/programs link on the landing page sits
+                inside the reviews section's Suspense boundary and disappears
+                entirely when there are no reviews to show. */}
+            <div className="flex flex-wrap gap-4">
+              <Link href="/explore/experts">
+                <Button
+                  size="lg"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
+                >
+                  Start Your Journey
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Button>
+              </Link>
+              <Link href="/explore/programs">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="border-border hover:bg-muted"
+                >
+                  Browse Classes &amp; Webinars
+                </Button>
+              </Link>
+            </div>
           </motion.div>
 
           <div>

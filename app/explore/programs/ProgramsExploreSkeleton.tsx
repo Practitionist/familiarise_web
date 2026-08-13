@@ -1,21 +1,43 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sparkles } from "lucide-react";
 
-/** Explore programs list: dark hero + tabs/filters + carousel rows. */
+/** Explore programs list: dark hero + tabs/filters + carousel rows.
+ *
+ * The hero's static copy is rendered for real — identical to
+ * ProgramsInteractiveContent's hero — because a skeleton made only of pulsing
+ * boxes cannot fire First Contentful Paint (#1102): FCP needs text, an image,
+ * canvas or SVG. Only the data-dependent parts stay as skeletons. */
 export function ProgramsExploreSkeleton() {
   return (
     <main className="min-h-screen bg-background">
       <section className="relative bg-zinc-950 px-4 pb-20 pt-32 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1600px] space-y-6">
-          <Skeleton className="h-6 w-28 rounded-full bg-zinc-800" />
-          <Skeleton className="h-12 w-full max-w-xl bg-zinc-800" />
-          <Skeleton className="h-5 w-full max-w-lg bg-zinc-800" />
-          <div className="grid max-w-xl grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="space-y-2">
-                <Skeleton className="h-8 w-14 bg-zinc-800" />
-                <Skeleton className="h-3 w-20 bg-zinc-800" />
-              </div>
-            ))}
+        <div className="mx-auto max-w-4xl text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
+            <Sparkles className="w-4 h-4 text-white" />
+            <span className="text-sm font-medium text-zinc-300">
+              Learn from the Best
+            </span>
+          </div>
+
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
+            Classes & <span className="silver-text">Webinars</span>
+          </h1>
+
+          <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
+            Expand your knowledge with expert-led classes and live webinars.
+            Learn at your own pace or join interactive sessions.
+          </p>
+
+          <div className="flex flex-wrap justify-center gap-8 md:gap-16">
+            {["Classes Available", "Live Webinars", "Students Enrolled"].map(
+              (label) => (
+                <div key={label} className="text-center">
+                  <Skeleton className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50" />
+                  <Skeleton className="h-8 w-16 bg-zinc-800 rounded-lg mx-auto mb-1" />
+                  <div className="text-sm text-zinc-500">{label}</div>
+                </div>
+              ),
+            )}
           </div>
         </div>
       </section>
