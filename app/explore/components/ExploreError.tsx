@@ -27,9 +27,16 @@ export default function ExploreError({
           <CardTitle>Something went wrong!</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground">
-            {error.message || fallbackMessage}
-          </p>
+          {/* Always the route-specific copy: in production Next.js replaces a
+              Server Component error's message with a generic string, so
+              error.message never says anything useful to a visitor. The digest
+              correlates a user report with the server-side log entry. */}
+          <p className="text-muted-foreground">{fallbackMessage}</p>
+          {error.digest && (
+            <p className="mt-2 text-xs text-muted-foreground/70">
+              Reference: {error.digest}
+            </p>
+          )}
         </CardContent>
         <CardFooter className="justify-center space-x-4">
           <Button variant="outline" onClick={() => reset()}>

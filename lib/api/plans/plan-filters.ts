@@ -25,20 +25,37 @@ export interface PlanFilterParams {
   skip: number;
 }
 
+// Public pagination inputs are clamped, not rejected: malformed values fall
+// back to the defaults and oversized ones are bounded, so a crafted query
+// cannot reach Prisma with a negative `skip` (it throws), a negative `take`
+// (it reads from the END of the table), or an arbitrarily large slice.
+const MAX_PAGE = 10_000;
+const MAX_LIMIT = 100;
+
+function clampPositiveInt(
+  raw: string | null,
+  fallback: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (Number.isNaN(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
 /**
  * Parse filter query params from a URLSearchParams with NaN guards on numeric values.
  */
 export function parsePlanFilters(
   searchParams: URLSearchParams,
 ): PlanFilterParams {
-  const page = parseInt(searchParams.get("page") || "1") || 1;
-  const limit = parseInt(searchParams.get("limit") || "10") || 10;
+  const page = clampPositiveInt(searchParams.get("page"), 1, MAX_PAGE);
+  const limit = clampPositiveInt(searchParams.get("limit"), 10, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
   const rawMin = searchParams.get("minPrice");
   const rawMax = searchParams.get("maxPrice");
-  const parsedMin = rawMin ? parseInt(rawMin) : undefined;
-  const parsedMax = rawMax ? parseInt(rawMax) : undefined;
+  const parsedMin = rawMin ? Number.parseInt(rawMin, 10) : undefined;
+  const parsedMax = rawMax ? Number.parseInt(rawMax, 10) : undefined;
 
   return {
     consultantId: searchParams.get("consultantId"),

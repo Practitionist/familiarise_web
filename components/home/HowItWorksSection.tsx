@@ -85,25 +85,29 @@ export function HowItWorksSection() {
                 the only other /explore/programs link on the landing page sits
                 inside the reviews section's Suspense boundary and disappears
                 entirely when there are no reviews to show. */}
+            {/* asChild so Button renders the Link itself — a <button> nested
+                inside an <a> is invalid, inaccessible HTML. */}
             <div className="flex flex-wrap gap-4">
-              <Link href="/explore/experts">
-                <Button
-                  size="lg"
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
-                >
+              <Button
+                size="lg"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
+                asChild
+              >
+                <Link href="/explore/experts">
                   Start Your Journey
                   <ArrowRight className="ml-2 w-5 h-5" />
-                </Button>
-              </Link>
-              <Link href="/explore/programs">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="border-border hover:bg-muted"
-                >
+                </Link>
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="border-border hover:bg-muted"
+                asChild
+              >
+                <Link href="/explore/programs">
                   Browse Classes &amp; Webinars
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </div>
           </motion.div>
 
