@@ -8,9 +8,19 @@ import {
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import type { EventType } from "@/utils/slotAllocation/types";
 
 const RespondSchema = z.object({ action: z.enum(["accept", "decline"]) });
+
+/** Why an accept was refused, in the counterparty's words. */
+const ACCEPT_FAILURE_COPY: Record<string, string> = {
+  NO_PROPOSED_TIMES:
+    "This request proposes no concrete times — place times on the calendar instead.",
+  PROPOSAL_EXPIRED:
+    "This proposal has expired. The released times are back with the consultant to place.",
+};
+const ACCEPT_FAILURE_FALLBACK = "The proposed times could not be confirmed.";
 
 /**
  * POST /api/appointments/[appointmentId]/reschedule/respond
@@ -75,15 +85,16 @@ export async function POST(
     // Same anti-oracle discipline as the withdraw route: "no open request",
     // "not a participant" and "you are the initiator" all answer 404, so this
     // route cannot be walked to learn which bookings hold live reschedules.
-    const booking =
-      open?.appointment?.consultation ?? open?.appointment?.subscription;
+    // Read each relation on its own rather than casting the union: a cast still
+    // compiles when the select shape changes, and would silently drop the
+    // consultant from the authorization set.
+    const consultation = open?.appointment?.consultation;
+    const subscription = open?.appointment?.subscription;
     const participants = [
-      booking?.requestedBy?.userId,
-      (booking as { consultationPlan?: { consultantProfile: { userId: string } } })
-        ?.consultationPlan?.consultantProfile?.userId ??
-        (booking as { subscriptionPlan?: { consultantProfile: { userId: string } } })
-          ?.subscriptionPlan?.consultantProfile?.userId,
-    ].filter(Boolean);
+      consultation?.requestedBy?.userId ?? subscription?.requestedBy?.userId,
+      consultation?.consultationPlan?.consultantProfile?.userId ??
+        subscription?.subscriptionPlan?.consultantProfile?.userId,
+    ].filter((id): id is string => !!id);
     const isCounterparty =
       !!open &&
       participants.includes(session.user.id) &&
@@ -113,11 +124,30 @@ export async function POST(
       });
     }
 
-    const eventType: EventType | null = open.appointment?.consultationId
-      ? "consultation"
-      : open.appointment?.subscriptionId
-        ? "subscription"
-        : null;
+    // #1008 — accept MOVES the booking's slots to new times, and a booking with
+    // a live payment dispute is frozen: its state is evidence and must not move
+    // while the dispute is contested. Both sibling routes (cancel, reschedule)
+    // refuse the same movement.
+    //
+    // Deliberately placed AFTER the counterparty gate, not before it: answering
+    // 409 to an unauthorized caller would turn this route into the dispute
+    // oracle the 404 discipline above exists to prevent. Decline is exempt —
+    // it moves nothing (the slots were released when the proposal opened, and
+    // the hourly expiry job reaches the same terminal state regardless).
+    if (await hasActiveDisputeForAppointment(appointmentId)) {
+      return NextResponse.json(
+        {
+          error:
+            "This appointment has an open payment dispute and can't be rescheduled until it resolves.",
+          code: "DISPUTE_ACTIVE",
+        },
+        { status: 409 },
+      );
+    }
+
+    let eventType: EventType | null = null;
+    if (open.appointment?.consultationId) eventType = "consultation";
+    else if (open.appointment?.subscriptionId) eventType = "subscription";
     const eventId =
       open.appointment?.consultationId ?? open.appointment?.subscriptionId;
     if (!eventType || !eventId) {
@@ -134,18 +164,12 @@ export async function POST(
       resolvedById: session.user.id,
     });
     if (!result.done) {
-      const status =
-        result.reason === "PROPOSAL_NOT_OPEN"
-          ? 409
-          : result.reason === "NO_PROPOSED_TIMES"
-            ? 422
-            : 409;
+      // Only "there is nothing here to accept" is a request-shape problem; every
+      // other refusal is a state conflict.
+      const status = result.reason === "NO_PROPOSED_TIMES" ? 422 : 409;
       return NextResponse.json(
         {
-          error:
-            result.reason === "NO_PROPOSED_TIMES"
-              ? "This request proposes no concrete times — place times on the calendar instead."
-              : "The proposed times could not be confirmed.",
+          error: ACCEPT_FAILURE_COPY[result.reason] ?? ACCEPT_FAILURE_FALLBACK,
           code: result.reason,
         },
         { status },

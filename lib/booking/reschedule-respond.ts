@@ -41,6 +41,7 @@ export async function acceptProposal(args: {
     select: {
       id: true,
       status: true,
+      expiresAt: true,
       proposedSlots: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true },
@@ -50,6 +51,19 @@ export async function acceptProposal(args: {
   if (!request) return { done: false, reason: "PROPOSAL_NOT_FOUND" };
   if (request.status !== "PENDING_REVIEW") {
     return { done: false, reason: "PROPOSAL_NOT_OPEN" };
+  }
+  // The status alone does not mean "still answerable": `expireRescheduleProposals`
+  // runs hourly, so a lapsed proposal stays PENDING_REVIEW for up to an hour.
+  // Honouring the deadline here matters beyond tidiness — expiry is
+  // min(now + 72h, earliest released session − 24h), so accepting a lapsed
+  // proposal is exactly how a booking lands inside the 24-hour window the
+  // reschedule route refuses to move it into.
+  //
+  // The window between this read and the ACCEPTED write needs no lock of its
+  // own: EXPIRED is not in `RESCHEDULE_ALLOWED_FROM.ACCEPTED`, so a cron that
+  // wins that race makes the final CAS transition fail rather than accept.
+  if (request.expiresAt.getTime() <= Date.now()) {
+    return { done: false, reason: "PROPOSAL_EXPIRED" };
   }
   if (request.proposedSlots.length === 0) {
     // A preference-only request (#1065) proposes no concrete times — there is

@@ -474,13 +474,23 @@ export async function POST(
         // undelivered share of the plan price; the policy tier then applies to
         // that base. A fully-undelivered subscription reduces to the old
         // whole-price behavior.
-        const totalSessions =
-          bookingCtx.sessionsCompleted + bookingCtx.sessionsRemaining;
+        // The denominator is every session the plan ever held time for, which
+        // is `slotsTotal` — NOT completed+live. Summing only those two drops
+        // every terminal-but-not-completed session out of the plan, and the
+        // undelivered share is then measured against a plan that has shrunk:
+        // three UNVERIFIED past sessions (held offline, no MeetingSession row)
+        // and seven live ones scored 7/7 and refunded the whole price for a
+        // plan that was 30% consumed.
+        //
+        // `slotsTotal === 0` keeps the full gross deliberately: that is the
+        // never-scheduled plan, which `neverScheduled` above already tiers at
+        // 100%. Zeroing the base there would refund nothing for a plan the
+        // buyer paid for and never received a minute of.
         const proratedBasePaise =
-          appointment.subscription && totalSessions > 0
+          appointment.subscription && bookingCtx.slotsTotal > 0
             ? Math.floor(
                 (paidPayment.amountPaise * bookingCtx.sessionsRemaining) /
-                  totalSessions,
+                  bookingCtx.slotsTotal,
               )
             : paidPayment.amountPaise;
         const refundAmount = Math.min(
@@ -495,13 +505,17 @@ export async function POST(
         if (isFreeCreditFunded) {
           if (refundPct === 100) {
             try {
-              await refundBookingPayment({
+              const restored = await refundBookingPayment({
                 paymentId: paidPayment.id,
                 reason: "cancellation (credit-funded booking, full restoration)",
                 initiatedByUserId: session.user.id,
               });
               refund = {
-                amountRefundedPaise: 0,
+                // Report what the restoration actually returned. Hardcoding 0
+                // reintroduced the ambiguity this field exists to remove — the
+                // status says REFUNDED while the amount reads like the policy
+                // owed nothing.
+                amountRefundedPaise: restored.amountRefundedPaise,
                 refundPct: 100,
                 status: "REFUNDED",
                 requiresManualReview: false,

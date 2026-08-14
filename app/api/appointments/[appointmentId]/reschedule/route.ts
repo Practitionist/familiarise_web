@@ -144,6 +144,22 @@ export async function POST(
       // No body or invalid JSON - that's fine, every field here is optional
     }
 
+    // #1166 — resolve the funding org's admin membership BEFORE the interactive
+    // transaction opens. `isOrgAdminOfAppointment` runs on the global client, so
+    // calling it from inside the callback issues a query on a SECOND pooled
+    // connection while this transaction is already holding one — the exact
+    // shape #908 documents (below, on the auto-confirm check) as having 500'd
+    // with "Unable to start a transaction in the given time". A membership row
+    // is not transaction state, so reading it early costs nothing.
+    const orgScope = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      select: { organizationId: true },
+    });
+    const actorIsFundingOrgAdmin = await isOrgAdminOfAppointment(
+      session.user.id,
+      orgScope?.organizationId,
+    );
+
     // Start transaction
     const result = await prisma.$transaction(
       async (tx) => {
@@ -242,12 +258,7 @@ export async function POST(
         // act on the payer side, so their proposals carry the CONSULTEE role:
         // same auto-confirm consent semantics as the buyer they act for.
         const isOrgAdminActor =
-          !isParticipant &&
-          !isPrivilegedUser &&
-          (await isOrgAdminOfAppointment(
-            session.user.id,
-            appointment.organizationId,
-          ));
+          !isParticipant && !isPrivilegedUser && actorIsFundingOrgAdmin;
         if (isOrgAdminActor) {
           initiatorRole = "CONSULTEE";
         }

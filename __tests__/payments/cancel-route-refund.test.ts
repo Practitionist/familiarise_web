@@ -25,6 +25,7 @@ const mockPaymentFindMany = jest.fn();
 const mockRefundBookingPayment = jest.fn();
 const mockRecordSystemError = jest.fn();
 const mockGetSession = jest.fn();
+const mockMembershipFindUnique = jest.fn();
 
 /** Flipped by the $transaction stub, mirroring the slot terminalisation. */
 let txCommitted = false;
@@ -54,6 +55,8 @@ jest.mock("../../lib/prisma", () => ({
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    // #1166 — what `isOrgAdminOfAppointment` reads.
+    membership: { findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a) },
   },
 }));
 
@@ -164,8 +167,15 @@ function subscriptionAppointment() {
 function bookingRows(opts: {
   liveSlotHours?: number[];
   completedSlotHours?: number[];
+  /** Sessions terminalised BEFORE this cancellation — a session the plan held. */
+  cancelledSlotHours?: number[];
+  /** Past sessions with no MeetingSession row (offline, most likely held). */
+  unverifiedSlotHours?: number[];
   paymentRefunds?: { amountPaise: number; status: string }[];
   noPayment?: boolean;
+  /** Defaults to a gateway-funded payment. */
+  paymentAmount?: number;
+  paymentIntent?: string;
 }) {
   const live = (opts.liveSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
@@ -174,6 +184,14 @@ function bookingRows(opts: {
   const done = (opts.completedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
     completionStatus: "COMPLETED",
+  }));
+  const gone = (opts.cancelledSlotHours ?? []).map((h) => ({
+    startsAt: new Date(Date.now() + h * HOUR),
+    completionStatus: "CANCELLED",
+  }));
+  const unverified = (opts.unverifiedSlotHours ?? []).map((h) => ({
+    startsAt: new Date(Date.now() + h * HOUR),
+    completionStatus: "UNVERIFIED",
   }));
   return [
     {
@@ -184,12 +202,13 @@ function bookingRows(opts: {
         : [
             {
               id: "pay-1",
-              amount: GROSS,
+              amount: opts.paymentAmount ?? GROSS,
+              paymentIntent: opts.paymentIntent ?? "pi_gateway_1",
               refunds: opts.paymentRefunds ?? [],
               disputes: [],
             },
           ],
-      slotsOfAppointment: [...done, ...live],
+      slotsOfAppointment: [...done, ...gone, ...unverified, ...live],
     },
   ];
 }
@@ -232,6 +251,7 @@ beforeEach(() => {
   txStub.slotOfAppointment.updateMany.mockResolvedValue({ count: 2 });
   txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
   mockPaymentFindMany.mockResolvedValue([]);
+  mockMembershipFindUnique.mockResolvedValue(null);
   mockRecordSystemError.mockResolvedValue(undefined);
   mockRefundBookingPayment.mockImplementation(
     async ({ amountPaise }: { amountPaise: number }) => ({
@@ -404,6 +424,200 @@ describe("subscriptions", () => {
     );
     // The rule is agreed now, so nothing is owed to an ops queue.
     expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("measures the undelivered share against the WHOLE plan, not the surviving part", async () => {
+    // A session cancelled earlier still belongs to the plan the buyer bought.
+    // Summing only completed + live drops it out of the denominator, and the
+    // remaining share is then measured against a plan that has shrunk.
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(subscriptionAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        completedSlotHours: [-48],
+        cancelledSlotHours: [-24],
+        liveSlotHours: [72, 96],
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    // 4 sessions bought, 2 still owed: the 100% tier applies to HALF the price.
+    // Against a completed+live denominator of 3 this would pay floor(2/3) —
+    // ₹833 more than the plan's per-session price justifies.
+    expect(body.refund.amountRefundedPaise).toBe(GROSS / 2);
+    expect(body.refund.amountRefundedPaise).not.toBe(Math.floor((GROSS * 2) / 3));
+  });
+
+  it("counts an unverified past session as delivered, not as owed", async () => {
+    // UNVERIFIED is "past, no MeetingSession row" — an offline session that most
+    // likely happened. It is neither COMPLETED nor live, so a completed+live
+    // denominator made a 30%-consumed plan score 7/7 and refund the whole price.
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(subscriptionAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        unverifiedSlotHours: [-72, -48, -24],
+        liveSlotHours: [72, 96, 120, 144, 168, 192, 216],
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(body.refund.refundPct).toBe(100);
+    expect(body.refund.amountRefundedPaise).toBe(Math.floor((GROSS * 7) / 10));
+    expect(body.refund.amountRefundedPaise).not.toBe(GROSS);
+  });
+});
+
+describe("#1161 — a credit-funded booking refunds as a credit restoration", () => {
+  /** Fully covered by referral credits: zero captured, synthetic intent. */
+  const freeFunded = {
+    paymentAmount: 0,
+    paymentIntent: "free_1730000000000_ab12cd34",
+  };
+
+  it("restores in full and reports what came back, not a hardcoded zero", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120], ...freeFunded }),
+    );
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r-internal",
+      amountRefundedPaise: 25_000,
+      rail: "INTERNAL",
+    });
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    // The restoration rail is reached at all — the amount floor on the payment
+    // lookup used to make this branch dead code.
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay-1" }),
+    );
+    expect(body.refund.status).toBe("REFUNDED");
+    expect(body.refund.amountRefundedPaise).toBe(25_000);
+  });
+
+  it("escalates a partial window instead of guessing a partial restoration", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    // Inside the day: a partial tier, which credit restoration has no rule for.
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [12], ...freeFunded }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(body.refund.status).toBe("MANUAL_REVIEW");
+    expect(body.refund.requiresManualReview).toBe(true);
+    expect(mockRecordSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "PAYMENT" }),
+    );
+  });
+
+  it("surfaces a failed restoration rather than reporting it as refunded", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120], ...freeFunded }),
+    );
+    mockRefundBookingPayment.mockRejectedValue(new Error("no refundable balance"));
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.refund.status).toBe("FAILED");
+    expect(body.refund.requiresManualReview).toBe(true);
+  });
+});
+
+describe("#1166 — an admin of the funding org acts on the payer side", () => {
+  function orgFundedAppointment() {
+    return { ...consultationAppointment(), organizationId: "org-1" };
+  }
+
+  it("lets an OWNER of the funding org cancel, and tiers them as the buyer", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "org-owner-1",
+        name: "Org Owner",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(orgFundedAppointment());
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+    // Inside the final two hours: the buyer's own tier pays nothing here, while
+    // the consultant tier would pay in full. The org admin must score as the
+    // buyer they act for.
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [1] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.refund.refundPct).toBe(0);
+    expect(body.refund.amountRefundedPaise).toBe(0);
+  });
+
+  it("refuses an EXPERT of the same org", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "org-expert-1",
+        name: "Org Expert",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(orgFundedAppointment());
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "EXPERT",
+    });
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(403);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invited-but-inactive admin", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "org-owner-2",
+        name: "Pending Owner",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(orgFundedAppointment());
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "INVITED",
+      role: "OWNER",
+    });
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(403);
   });
 });
 
