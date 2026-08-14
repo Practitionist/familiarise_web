@@ -837,7 +837,10 @@ export class RecordingService {
             const streamUrlExpiresAt = new Date();
             streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
 
-            // Create recording record
+            // Create recording record. #1166 ORG-6 — mirror the parent
+            // appointment's org tag, as the webhook writer does: the personal
+            // recordings read now filters on this column, so a sync that left
+            // it null would surface an org session under "personal".
             const recording = await prisma.recording.create({
               data: {
                 title,
@@ -850,6 +853,7 @@ export class RecordingService {
                 status: "READY",
                 streamUrlExpiresAt,
                 meetingSessionId: session.id,
+                organizationId: appointment?.organizationId ?? null,
               },
             });
 
@@ -1044,7 +1048,10 @@ export class RecordingService {
             const streamUrlExpiresAt = new Date();
             streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
 
-            // Create recording record
+            // Create recording record. #1166 ORG-6 — mirror the parent
+            // appointment's org tag, as the webhook writer does: the personal
+            // recordings read now filters on this column, so a sync that left
+            // it null would surface an org session under "personal".
             const recording = await prisma.recording.create({
               data: {
                 title,
@@ -1057,6 +1064,7 @@ export class RecordingService {
                 status: "READY",
                 streamUrlExpiresAt,
                 meetingSessionId: session.id,
+                organizationId: appointment?.organizationId ?? null,
               },
             });
 

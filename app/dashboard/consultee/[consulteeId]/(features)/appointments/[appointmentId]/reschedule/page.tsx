@@ -7,6 +7,7 @@ import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { safeReturnTo } from "@/lib/navigation/safe-return-to";
 import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
@@ -21,7 +22,8 @@ import { RescheduleClient } from "./RescheduleClient";
  */
 type PageProps = {
   params: Promise<{ consulteeId: string; appointmentId: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  // `string[]` is not hypothetical: a repeated ?returnTo= arrives as an array.
+  searchParams: Promise<{ returnTo?: string | string[] }>;
 };
 
 // React.cache so generateMetadata() and the page body share one query per request.
@@ -113,12 +115,12 @@ export default async function RescheduleAppointmentPage({
 
   // #1166 — org detail pages send ?returnTo= so finishing (or backing out of)
   // a reschedule lands back in the org context instead of this personal list.
-  // Relative-only: must start with "/" and not "//" or "/\" (protocol-
-  // relative escapes), so the param can never leave the site.
-  const backHref =
-    returnTo && /^\/(?![/\\])/.test(returnTo)
-      ? returnTo
-      : `/dashboard/consultee/${consulteeId}/appointments`;
+  // RescheduleClient router.push()es this, so an off-site value would be an
+  // open redirect; safeReturnTo() decides it by parsing, not by prefix.
+  const backHref = safeReturnTo(
+    returnTo,
+    `/dashboard/consultee/${consulteeId}/appointments`,
+  );
 
   return (
     <DashboardViewportFill className="gap-4">

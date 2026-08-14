@@ -538,6 +538,11 @@ export async function getConsultantDashboard(
       _count: true,
       where: {
         appointment: {
+          // #1166 ORG-1 — this predicate is rebuilt rather than shared with
+          // consultantAppointmentScope (different status rules), so the
+          // personal pin has to be repeated or Home's completion rate counts
+          // org sessions the rest of the page excludes.
+          organizationId: null,
           OR: [
             { consultation: { consultationPlan: { consultantProfileId } } },
             { subscription: { subscriptionPlan: { consultantProfileId } } },
