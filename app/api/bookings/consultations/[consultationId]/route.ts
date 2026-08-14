@@ -1,14 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
-  AppointmentsType,
   PaymentGateway,
   PaymentStatus,
   Prisma,
   AppointmentStatus,
 } from "@prisma/client";
 import { z } from "zod";
-import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
@@ -649,30 +647,39 @@ export async function PATCH(
             if (hasPayment) {
               // Payment already exists - check if tentative appointment exists
               if (consultation.appointment) {
-                // Confirm existing tentative appointment by setting slots to non-tentative
+                // Confirm existing tentative appointment. RESCHEDULED rows are
+                // excluded (#1169 PR 2): they keep their ORIGINAL startsAt, so
+                // flipping them re-confirms exactly the time the consultee
+                // asked to move away from.
                 await tx.slotOfAppointment.updateMany({
-                  where: { appointmentId: consultation.appointment.id },
+                  where: {
+                    appointmentId: consultation.appointment.id,
+                    completionStatus: "SCHEDULED",
+                  },
                   data: { isTentative: false },
                 });
               } else {
-                // Only create new appointment if none exists (direct checkout flow)
-                await createAppointmentForConsultation(consultation);
+                // Paid but no appointment row: the capture webhook that
+                // creates the appointment has not landed (or died mid-flight).
+                // The old fallback fabricated a confirmed slot at now+1h on
+                // the GLOBAL client — no availability check, no lock, no
+                // consultantProfileId, and it survived this transaction's
+                // rollback (#1169 PR 2 / CORE-3). Refuse instead: the
+                // reconcile-orphaned-confirmations sweep (#830) settles this
+                // exact state, after which approval succeeds normally.
+                throw new PaidWithoutAppointmentError(consultation.id);
               }
               return { data: consultation, duplicate: false };
             } else {
-              // No payment - generate payment link
-              const paymentResult = await generatePaymentLink(consultation);
-
-              // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
+              // No payment — record the approval now; the pay-link is minted
+              // AFTER commit (#1169 PR 2). A gateway round-trip inside a
+              // Serializable transaction pinned a pooled connection for
+              // seconds, could blow the 30s budget, and on rollback left a
+              // live payment link for an approval that never persisted. The
+              // trial path documents the same rule.
               await transitionConsultationRequest(tx, {
                 where: { id: consultationId },
                 to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-                data: {
-                  pendingPaymentUrl: paymentResult.checkoutUrl,
-                  requestNotes: consultation.requestNotes
-                    ? `${consultation.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                    : `[System] Payment link generated and sent to user.`,
-                },
               });
               const updatedConsultation = await tx.consultation.findUniqueOrThrow({
                 where: { id: consultationId },
@@ -703,30 +710,12 @@ export async function PATCH(
                 },
               });
 
-              // Return email data to send AFTER transaction commits
-              // This prevents holding serializable locks during slow email network calls
               return {
                 data: updatedConsultation,
                 message: "Consultation approved. Payment link sent to user.",
-                paymentUrl: paymentResult.checkoutUrl,
                 requiresPayment: true,
-                paymentAmount: paymentResult.amount,
-                paymentCurrency: paymentResult.currency,
+                needsPaymentLink: true,
                 duplicate: false,
-                emailData: {
-                  email: updatedConsultation.requestedBy.user.email || "",
-                  name: updatedConsultation.requestedBy.user.name || "User",
-                  consultantName:
-                    updatedConsultation.consultationPlan.consultantProfile.user
-                      .name || "Consultant",
-                  appointmentType: "consultation" as const,
-                  amount: paymentResult.amount,
-                  currency: paymentResult.currency,
-                  paymentUrl: paymentResult.checkoutUrl,
-                  expiresAt: new Date(
-                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
-                  ),
-                },
               };
             }
           }
@@ -740,8 +729,15 @@ export async function PATCH(
         },
       );
 
-      // If duplicate, return early
-      if (result.duplicate) {
+      // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
+      // pay-link mint previously failed (#1169 PR 2): fall through so a
+      // re-approval actually re-mints the link instead of parroting
+      // "already in progress" forever.
+      const needsLinkRetry =
+        result.duplicate &&
+        result.data.status === AppointmentStatus.APPROVED_PENDING_PAYMENT &&
+        !result.data.pendingPaymentUrl;
+      if (result.duplicate && !needsLinkRetry) {
         return NextResponse.json({
           data: result.data,
           message: result.message,
@@ -764,15 +760,90 @@ export async function PATCH(
             })
           : null;
 
-      // Send email AFTER transaction commits - prevents holding locks during slow network calls
-      // User can still find the payment link on their dashboard via pendingPaymentUrl if email fails
-      if ("emailData" in result && result.emailData) {
+      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
+      // in-tx comment for why). On mint failure the consultation stays
+      // APPROVED_PENDING_PAYMENT with no link — the same failure mode the
+      // trial path chose — and the consultant is told to retry the approval,
+      // which re-enters here idempotently.
+      let mintedLink: {
+        paymentUrl: string;
+        paymentAmount: number;
+        paymentCurrency: string;
+      } | null = null;
+      if (
+        ("needsPaymentLink" in result && result.needsPaymentLink) ||
+        needsLinkRetry
+      ) {
+        // The 502 below invites a retry, and the retry re-mints — so it may
+        // only ever be reached while NO link exists. Everything after a
+        // successful mint therefore reports and continues: a 502 past this
+        // point would hand the consultee a second live link (the duplicate
+        // guard walks appointment.payment, which approval payments never
+        // populate — see #1166).
+        let paymentResult;
         try {
-          await sendPaymentLinkEmail(result.emailData);
+          paymentResult = await generatePaymentLink(result.data);
+        } catch (linkError) {
+          Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
+          return NextResponse.json(
+            {
+              data: result.data,
+              error:
+                "The approval was recorded, but generating the payment link failed. Approve again to retry generating the link.",
+              requiresPayment: true,
+              paymentUrl: null,
+            },
+            { status: 502 },
+          );
+        }
+
+        mintedLink = {
+          paymentUrl: paymentResult.checkoutUrl,
+          paymentAmount: paymentResult.amount,
+          paymentCurrency: paymentResult.currency,
+        };
+
+        try {
+          await prisma.consultation.update({
+            where: { id: consultationId },
+            data: {
+              pendingPaymentUrl: paymentResult.checkoutUrl,
+              requestNotes: result.data.requestNotes
+                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                : `[System] Payment link generated and sent to user.`,
+            },
+          });
+        } catch (persistError) {
+          // The link is live and rides the response + email; only the
+          // dashboard copy is missing.
+          console.error(
+            `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
+            persistError instanceof Error
+              ? persistError.message
+              : "Unknown error",
+          );
+          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+        }
+
+        try {
+          await sendPaymentLinkEmail({
+            email: result.data.requestedBy.user.email || "",
+            name: result.data.requestedBy.user.name || "User",
+            consultantName:
+              result.data.consultationPlan.consultantProfile.user.name ||
+              "Consultant",
+            appointmentType: "consultation" as const,
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            paymentUrl: paymentResult.checkoutUrl,
+            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+          });
           console.log(
             `📧 Payment link email sent for consultation ${consultationId}`,
           );
         } catch (emailError) {
+          // Link exists on the dashboard via pendingPaymentUrl; email is
+          // best-effort.
           console.error(
             `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
@@ -823,10 +894,12 @@ export async function PATCH(
         }
       }
 
-      // Return success response (exclude emailData from response)
-      const { emailData: _emailData, ...responseData } =
-        result as typeof result & { emailData?: unknown };
-      return NextResponse.json({ ...responseData, refund: rejectionRefund });
+      // Return success response
+      return NextResponse.json({
+        ...result,
+        ...mintedLink,
+        refund: rejectionRefund,
+      });
     } catch (error) {
       console.error(
         "Transaction error:",
@@ -847,6 +920,9 @@ export async function PATCH(
         { status: error.httpStatus },
       );
     }
+    if (error instanceof PaidWithoutAppointmentError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error(
       "Error updating consultation:",
       error instanceof Error ? error.message : "Unknown error",
@@ -856,6 +932,17 @@ export async function PATCH(
       { error: "An error occurred while updating consultation" },
       { status: 500 },
     );
+  }
+}
+
+// #1169 PR 2 — thrown inside the approval transaction so the APPROVED
+// transition rolls back; mapped to a 409 that names the reconciliation path.
+class PaidWithoutAppointmentError extends Error {
+  constructor(readonly consultationId: string) {
+    super(
+      "This consultation is paid but its appointment has not been created yet (the payment confirmation is still being processed). The reconciliation sweep completes it within minutes — approve again after that.",
+    );
+    this.name = "PaidWithoutAppointmentError";
   }
 }
 
@@ -903,73 +990,23 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
     appointmentType: "CONSULTATION",
     consultationId: consultation.id,
     planId: consultationPlan.id,
-    paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
+    // #1165 — settlement is INR-only and Razorpay is the KYC'd primary
+    // gateway; the trial path already minted on it. Param stays configurable
+    // for a future scale decision.
+    paymentGateway: PaymentGateway.RAZORPAY,
+    // #1166 ORG-9 — org sponsorship survives the approval flow: the request
+    // stamped the appointment, and the payment carries it from there.
+    organizationId: appointment?.organizationId ?? undefined,
     startsAt,
     endsAt,
     notes: consultation.requestNotes ?? undefined,
   });
 }
 
-async function createAppointmentForConsultation(
-  consultation: ConsultationWithDetails,
-) {
-  const { consultationPlan, requestedBy } = consultation;
-
-  if (!consultationPlan?.durationInHours) {
-    console.error("Missing consultation plan details:", consultationPlan);
-    throw new Error("Invalid consultation plan details");
-  }
-
-  if (
-    !requestedBy?.user?.id ||
-    !consultationPlan?.consultantProfile?.user?.id
-  ) {
-    console.error("Missing user information:", {
-      requestedBy,
-      consultantProfile: consultationPlan.consultantProfile,
-    });
-    throw new Error("Missing user information");
-  }
-
-  // Set default appointment time to now + 1 hour
-  const startDate = new Date();
-  startDate.setMinutes(0); // Reset minutes to start of hour
-  startDate.setHours(startDate.getHours() + 1); // Start next hour
-
-  try {
-    const appointment = await prisma.appointment.create({
-      data: {
-        appointmentType: AppointmentsType.CONSULTATION,
-        consultation: {
-          connect: { id: consultation.id },
-        },
-        slotsOfAppointment: {
-          create: {
-            startsAt: startDate,
-            endsAt: addHours(startDate, consultationPlan.durationInHours),
-            isTentative: false,
-            user: {
-              connect: [
-                { id: requestedBy.user.id },
-                { id: consultationPlan.consultantProfile.user.id },
-              ],
-            },
-          },
-        },
-      },
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    return appointment;
-  } catch (error) {
-    console.error(`Error creating appointment:`, error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-    throw error;
-  }
-}
+// (removed) createAppointmentForConsultation — #1169 PR 2 / CORE-3.
+// It fabricated a confirmed slot at now+1h with no availability check, no
+// lock, no consultantProfileId, using the GLOBAL client from inside the
+// Serializable approval transaction (the row survived rollback). The paid-
+// without-appointment state it papered over is settled by
+// scripts/payments/reconcile-orphaned-confirmations.ts (#830); the approval
+// route now refuses with PaidWithoutAppointmentError instead.

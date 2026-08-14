@@ -37,6 +37,15 @@ export interface CreateApprovalPaymentParams {
    * subscriptions leave this unset — their appointment is made on capture.
    */
   appointmentId?: string;
+  /**
+   * #1166 ORG-9 — org sponsorship used to be silently DROPPED by the approval
+   * flow (no organizationId anywhere in the chain, so an org member's approved
+   * request billed their personal card with no attribution). Callers pass the
+   * appointment's organizationId; it rides the Payment row and the gateway
+   * metadata. Wallet-debit/skip-gateway parity with checkout is tracked in
+   * #1166.
+   */
+  organizationId?: string;
   paymentGateway: PaymentGateway;
   startsAt?: string;
   endsAt?: string;
@@ -156,12 +165,27 @@ export async function createApprovalPaymentIntent(
         paymentIntent: paymentResponse.id,
         paymentGateway: params.paymentGateway,
         paymentStatus: PaymentStatus.PENDING,
+        organizationId: params.organizationId ?? null,
         userId: params.userId,
         expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
         isMockPayment: false,
         // Null for consultations/subscriptions, whose appointment is created
         // on capture; trials pass the appointment they already hold.
         appointmentId: params.appointmentId ?? null,
+        // Every Payment must carry at least one PaymentLeg
+        // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
+        // writes it at creation so the invariant holds before capture, and
+        // this flow was the one gateway path that never did. Always CARD: the
+        // approval flow charges the buyer even when an org is tagged (the
+        // wallet-debit/skip-gateway parity is #1166). Nested so a Payment can
+        // never exist legless.
+        legs: {
+          create: {
+            source: "CARD",
+            amountPaise: amount,
+            sourceRef: paymentResponse.id,
+          },
+        },
       },
     });
 
@@ -315,6 +339,12 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   // Add trial-specific fields — the webhook resolves the TrialSession from this.
   if (params.trialId) {
     metadata.trialId = params.trialId;
+  }
+
+  // #1166 ORG-9 — org attribution survives into the gateway round-trip so the
+  // capture side can verify it against the Payment row.
+  if (params.organizationId) {
+    metadata.organizationId = params.organizationId;
   }
 
   // Add slot times if provided

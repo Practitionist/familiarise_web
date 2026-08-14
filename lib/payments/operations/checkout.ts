@@ -33,6 +33,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
@@ -689,7 +690,14 @@ export async function validateSlotAvailability(
       AND: [
         { startsAt: { lt: slotEnd } },
         { endsAt: { gt: slotStart } },
-        { isTentative: false }, // Only confirmed bookings
+        // #1169 PR 2 — the `{ isTentative: false }` filter that used to sit
+        // here hid LIVE tentative holds: an in-flight checkout's hold passed
+        // unseen (the exclusion constraint carries the same NOT-isTentative
+        // predicate), so two overlapping holds both reached payment and both
+        // charged. The occupancy term below is the whole check now — it admits
+        // live holds and drops released/expired ones by status, and
+        // cleanup-tentative-slots bounds any stale remainder. Re-adding a
+        // confirmed-only predicate here reopens the double-charge.
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
@@ -2256,7 +2264,14 @@ export async function handleCheckout(
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
-      const result = await prisma.$transaction(
+      // #1093 tail — the ONLY Serializable site that wasn't retried: a P2034
+      // under hot-webinar contention surfaced as a generic failure instead of
+      // being retried into the sibling's committed state. Anything the body
+      // does on the OUTER prisma client therefore has to be idempotent across
+      // attempts — see capNearNotified.
+      let capNearNotified = false;
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
         async (tx) => {
           // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
           // tx. The pre-lock check ran on the global client before this tx, so
@@ -2589,8 +2604,14 @@ export async function handleCheckout(
                 capAfter != null &&
                 capAfter > 0 &&
                 before * 5 < capAfter * 4 &&
-                after * 5 >= capAfter * 4
+                after * 5 >= capAfter * 4 &&
+                // #1169 PR 2 — this fires on the OUTER client and is not
+                // rolled back, so a P2034 retry of this tx would ring the
+                // 80% bell twice for one booking. Once per request, matching
+                // the "once per cycle" intent above.
+                !capNearNotified
               ) {
+                capNearNotified = true;
                 const usedPct = Math.round((after / capAfter) * 100);
                 const reportUsed = isCredit ? Math.round(after / 100) : after;
                 const reportCap = isCredit
@@ -2826,6 +2847,7 @@ export async function handleCheckout(
           // safety for edge cases like lock expiry under high load.
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
+        ),
       );
 
       const logMessage = isZeroAmountPayment
