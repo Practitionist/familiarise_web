@@ -269,6 +269,12 @@ export class RecordingService {
       search?: string;
       page?: number;
       limit?: number;
+      /**
+       * #1166 ORG-6 — view scope on Recording.organizationId (indexed).
+       * `null` pins personal (B2C), a string pins that org, omitted = no
+       * filter. Same convention as consultant-earnings-analytics.
+       */
+      organizationId?: string | null;
     },
   ): Promise<{ recordings: ConsultantRecordingWithDetails[]; total: number }> {
     try {
@@ -354,6 +360,9 @@ export class RecordingService {
         OR: typeConditions,
         ...statusFilter,
         ...searchFilter,
+        ...(filters?.organizationId !== undefined
+          ? { organizationId: filters.organizationId }
+          : {}),
       };
 
       const [recordings, total] = await Promise.all([
