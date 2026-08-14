@@ -774,47 +774,15 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
+        // The 502 below invites a retry, and the retry re-mints — so it may
+        // only ever be reached while NO link exists. Everything after a
+        // successful mint therefore reports and continues: a 502 past this
+        // point would hand the consultee a second live link (the duplicate
+        // guard walks appointment.payment, which approval payments never
+        // populate — see #1166).
+        let paymentResult;
         try {
-          const paymentResult = await generatePaymentLink(result.data);
-          mintedLink = {
-            paymentUrl: paymentResult.checkoutUrl,
-            paymentAmount: paymentResult.amount,
-            paymentCurrency: paymentResult.currency,
-          };
-          await prisma.consultation.update({
-            where: { id: consultationId },
-            data: {
-              pendingPaymentUrl: paymentResult.checkoutUrl,
-              requestNotes: result.data.requestNotes
-                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                : `[System] Payment link generated and sent to user.`,
-            },
-          });
-          try {
-            await sendPaymentLinkEmail({
-              email: result.data.requestedBy.user.email || "",
-              name: result.data.requestedBy.user.name || "User",
-              consultantName:
-                result.data.consultationPlan.consultantProfile.user.name ||
-                "Consultant",
-              appointmentType: "consultation" as const,
-              amount: paymentResult.amount,
-              currency: paymentResult.currency,
-              paymentUrl: paymentResult.checkoutUrl,
-              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-            });
-            console.log(
-              `📧 Payment link email sent for consultation ${consultationId}`,
-            );
-          } catch (emailError) {
-            // Link exists on the dashboard via pendingPaymentUrl; email is
-            // best-effort.
-            console.error(
-              `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
-              emailError instanceof Error ? emailError.message : "Unknown error",
-            );
-            Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
-          }
+          paymentResult = await generatePaymentLink(result.data);
         } catch (linkError) {
           Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
           return NextResponse.json(
@@ -827,6 +795,60 @@ export async function PATCH(
             },
             { status: 502 },
           );
+        }
+
+        mintedLink = {
+          paymentUrl: paymentResult.checkoutUrl,
+          paymentAmount: paymentResult.amount,
+          paymentCurrency: paymentResult.currency,
+        };
+
+        try {
+          await prisma.consultation.update({
+            where: { id: consultationId },
+            data: {
+              pendingPaymentUrl: paymentResult.checkoutUrl,
+              requestNotes: result.data.requestNotes
+                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                : `[System] Payment link generated and sent to user.`,
+            },
+          });
+        } catch (persistError) {
+          // The link is live and rides the response + email; only the
+          // dashboard copy is missing.
+          console.error(
+            `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
+            persistError instanceof Error
+              ? persistError.message
+              : "Unknown error",
+          );
+          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+        }
+
+        try {
+          await sendPaymentLinkEmail({
+            email: result.data.requestedBy.user.email || "",
+            name: result.data.requestedBy.user.name || "User",
+            consultantName:
+              result.data.consultationPlan.consultantProfile.user.name ||
+              "Consultant",
+            appointmentType: "consultation" as const,
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            paymentUrl: paymentResult.checkoutUrl,
+            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+          });
+          console.log(
+            `📧 Payment link email sent for consultation ${consultationId}`,
+          );
+        } catch (emailError) {
+          // Link exists on the dashboard via pendingPaymentUrl; email is
+          // best-effort.
+          console.error(
+            `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
+            emailError instanceof Error ? emailError.message : "Unknown error",
+          );
+          Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
         }
       }
 
@@ -875,7 +897,7 @@ export async function PATCH(
       // Return success response
       return NextResponse.json({
         ...result,
-        ...(mintedLink ?? {}),
+        ...mintedLink,
         refund: rejectionRefund,
       });
     } catch (error) {

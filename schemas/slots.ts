@@ -9,8 +9,9 @@ export const RequestForApprovalSchema = z
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
     // #1166 ORG-9 — an org member may request a sponsored booking; validated
-    // against an ACTIVE membership of a canSponsor org in the route.
-    organizationId: z.string().optional(),
+    // against an ACTIVE membership of a canSponsor org in the route. min(1)
+    // because "" would skip that check and then be written as the FK.
+    organizationId: z.string().min(1).optional(),
   })
   .refine(
     (data) =>

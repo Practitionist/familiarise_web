@@ -690,18 +690,14 @@ export async function validateSlotAvailability(
       AND: [
         { startsAt: { lt: slotEnd } },
         { endsAt: { gt: slotStart } },
-        // #1169 PR 2 — LIVE tentative holds are visible to this check. An
-        // in-flight checkout's hold previously passed unseen (confirmed-only
-        // filter here, NOT-isTentative predicate on the exclusion constraint),
-        // so two overlapping holds could both reach payment and both charge.
-        // The occupancy statuses drop released/expired holds automatically,
-        // and cleanup-tentative-slots bounds any stale remainder.
-        {
-          OR: [
-            { isTentative: false },
-            { appointment: { OR: buildOccupiedAppointmentFilter() } },
-          ],
-        },
+        // #1169 PR 2 — the `{ isTentative: false }` filter that used to sit
+        // here hid LIVE tentative holds: an in-flight checkout's hold passed
+        // unseen (the exclusion constraint carries the same NOT-isTentative
+        // predicate), so two overlapping holds both reached payment and both
+        // charged. The occupancy term below is the whole check now — it admits
+        // live holds and drops released/expired ones by status, and
+        // cleanup-tentative-slots bounds any stale remainder. Re-adding a
+        // confirmed-only predicate here reopens the double-charge.
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
@@ -2270,7 +2266,10 @@ export async function handleCheckout(
     try {
       // #1093 tail — the ONLY Serializable site that wasn't retried: a P2034
       // under hot-webinar contention surfaced as a generic failure instead of
-      // being retried into the sibling's committed state.
+      // being retried into the sibling's committed state. Anything the body
+      // does on the OUTER prisma client therefore has to be idempotent across
+      // attempts — see capNearNotified.
+      let capNearNotified = false;
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
         async (tx) => {
@@ -2605,8 +2604,14 @@ export async function handleCheckout(
                 capAfter != null &&
                 capAfter > 0 &&
                 before * 5 < capAfter * 4 &&
-                after * 5 >= capAfter * 4
+                after * 5 >= capAfter * 4 &&
+                // #1169 PR 2 — this fires on the OUTER client and is not
+                // rolled back, so a P2034 retry of this tx would ring the
+                // 80% bell twice for one booking. Once per request, matching
+                // the "once per cycle" intent above.
+                !capNearNotified
               ) {
+                capNearNotified = true;
                 const usedPct = Math.round((after / capAfter) * 100);
                 const reportUsed = isCredit ? Math.round(after / 100) : after;
                 const reportCap = isCredit

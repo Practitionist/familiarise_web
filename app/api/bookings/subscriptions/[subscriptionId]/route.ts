@@ -620,18 +620,19 @@ export async function PATCH(
                 subscription.appointments &&
                 subscription.appointments.length > 0
               ) {
-                for (const appointment of subscription.appointments) {
-                  // RESCHEDULED rows keep their ORIGINAL startsAt; flipping
-                  // them re-confirms the time the consultee asked to leave
-                  // (#1169 PR 2).
-                  await tx.slotOfAppointment.updateMany({
-                    where: {
-                      appointmentId: appointment.id,
-                      completionStatus: "SCHEDULED",
+                // RESCHEDULED rows keep their ORIGINAL startsAt; flipping them
+                // re-confirms the time the consultee asked to leave (#1169
+                // PR 2). One statement, not one per appointment — the loop
+                // multiplied round-trips against the 30s tx budget.
+                await tx.slotOfAppointment.updateMany({
+                  where: {
+                    appointmentId: {
+                      in: subscription.appointments.map((a) => a.id),
                     },
-                    data: { isTentative: false },
-                  });
-                }
+                    completionStatus: "SCHEDULED",
+                  },
+                  data: { isTentative: false },
+                });
               }
               return { data: subscription, duplicate: false };
             } else {
@@ -727,49 +728,19 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
+        // The 502 below invites a retry, and the retry re-mints — so it may
+        // only ever be reached while NO link exists. Everything after a
+        // successful mint therefore reports and continues (#1166).
+        let paymentResult;
         try {
-          const paymentResult = await generatePaymentLinkForSubscription(
+          paymentResult = await generatePaymentLinkForSubscription(
             result.data,
-            startDate,
-            endDate,
+            // On a retry the period was already committed by the first
+            // approval; recomputing it would drift the gateway metadata away
+            // from the row.
+            result.data.schedulingPeriodStartsAt ?? startDate,
+            result.data.schedulingPeriodEndsAt ?? endDate,
           );
-          mintedLink = {
-            paymentUrl: paymentResult.checkoutUrl,
-            paymentAmount: paymentResult.amount,
-            paymentCurrency: paymentResult.currency,
-          };
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
-            data: {
-              pendingPaymentUrl: paymentResult.checkoutUrl,
-              requestNotes: result.data.requestNotes
-                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                : `[System] Payment link generated and sent to user.`,
-            },
-          });
-          try {
-            await sendPaymentLinkEmail({
-              email: result.data.requestedBy.user.email || "",
-              name: result.data.requestedBy.user.name || "User",
-              consultantName:
-                result.data.subscriptionPlan.consultantProfile.user.name ||
-                "Consultant",
-              appointmentType: "subscription" as const,
-              amount: paymentResult.amount,
-              currency: paymentResult.currency,
-              paymentUrl: paymentResult.checkoutUrl,
-              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-            });
-            console.log(
-              `📧 Payment link email sent for subscription ${subscriptionId}`,
-            );
-          } catch (emailError) {
-            Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
-            console.error(
-              `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
-              emailError instanceof Error ? emailError.message : "Unknown error",
-            );
-          }
         } catch (linkError) {
           Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
           return NextResponse.json(
@@ -781,6 +752,56 @@ export async function PATCH(
               paymentUrl: null,
             },
             { status: 502 },
+          );
+        }
+
+        mintedLink = {
+          paymentUrl: paymentResult.checkoutUrl,
+          paymentAmount: paymentResult.amount,
+          paymentCurrency: paymentResult.currency,
+        };
+
+        try {
+          await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: {
+              pendingPaymentUrl: paymentResult.checkoutUrl,
+              requestNotes: result.data.requestNotes
+                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                : `[System] Payment link generated and sent to user.`,
+            },
+          });
+        } catch (persistError) {
+          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+          console.error(
+            `⚠️ Failed to persist payment link for subscription ${subscriptionId}:`,
+            persistError instanceof Error
+              ? persistError.message
+              : "Unknown error",
+          );
+        }
+
+        try {
+          await sendPaymentLinkEmail({
+            email: result.data.requestedBy.user.email || "",
+            name: result.data.requestedBy.user.name || "User",
+            consultantName:
+              result.data.subscriptionPlan.consultantProfile.user.name ||
+              "Consultant",
+            appointmentType: "subscription" as const,
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            paymentUrl: paymentResult.checkoutUrl,
+            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+          });
+          console.log(
+            `📧 Payment link email sent for subscription ${subscriptionId}`,
+          );
+        } catch (emailError) {
+          Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
+          console.error(
+            `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
+            emailError instanceof Error ? emailError.message : "Unknown error",
           );
         }
       }
@@ -903,7 +924,7 @@ export async function PATCH(
       // Return success response (exclude emailData from response)
       return NextResponse.json({
         ...result,
-        ...(mintedLink ?? {}),
+        ...mintedLink,
         refund: rejectionRefund,
       });
     } catch (error) {

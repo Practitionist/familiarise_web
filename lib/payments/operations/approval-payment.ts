@@ -172,6 +172,20 @@ export async function createApprovalPaymentIntent(
         // Null for consultations/subscriptions, whose appointment is created
         // on capture; trials pass the appointment they already hold.
         appointmentId: params.appointmentId ?? null,
+        // Every Payment must carry at least one PaymentLeg
+        // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
+        // writes it at creation so the invariant holds before capture, and
+        // this flow was the one gateway path that never did. Always CARD: the
+        // approval flow charges the buyer even when an org is tagged (the
+        // wallet-debit/skip-gateway parity is #1166). Nested so a Payment can
+        // never exist legless.
+        legs: {
+          create: {
+            source: "CARD",
+            amountPaise: amount,
+            sourceRef: paymentResponse.id,
+          },
+        },
       },
     });
 

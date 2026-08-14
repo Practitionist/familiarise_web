@@ -70,7 +70,11 @@ describe("approval confirm excludes RESCHEDULED slots", () => {
 describe("no gateway call inside the approval transaction", () => {
   it.each([
     ["consultations", consultationsRoute, "generatePaymentLink("],
-    ["subscriptions", subscriptionsRoute, "generatePaymentLinkForSubscription("],
+    [
+      "subscriptions",
+      subscriptionsRoute,
+      "generatePaymentLinkForSubscription(",
+    ],
   ])("%s mints AFTER commit with a retry marker", (_name, src, mintCall) => {
     const txStart = src.indexOf("prisma.$transaction(");
     const txOptions = src.indexOf(
@@ -96,7 +100,9 @@ describe("#1165 — approval gateway unified on RAZORPAY", () => {
 describe("#1166 ORG-9 — org sponsorship survives the approval flow", () => {
   it("the request validates and stamps organizationId", () => {
     expect(requestForApproval).toContain("canSponsor");
-    expect(requestForApproval).toContain("organizationId: organizationId ?? null");
+    expect(requestForApproval).toContain(
+      "organizationId: organizationId ?? null",
+    );
   });
 
   it("the approval payment carries organizationId to the Payment row and metadata", () => {
@@ -112,9 +118,18 @@ describe("#1166 ORG-9 — org sponsorship survives the approval flow", () => {
 
 describe("checkout hardening (#1093 tail + tentative visibility)", () => {
   it("the pre-booking conflict check sees live tentative holds", () => {
-    expect(checkout).toContain(
-      "{ appointment: { OR: buildOccupiedAppointmentFilter() } }",
+    const start = checkout.indexOf(
+      "const existingBooking = await tx.slotOfAppointment.findFirst(",
     );
+    expect(start).toBeGreaterThan(-1);
+    const query = checkout
+      .slice(start, checkout.indexOf("if (existingBooking)", start))
+      // Comments in this window explain the removed predicate by name.
+      .replace(/^\s*\/\/.*$/gm, "");
+    // A confirmed-only predicate here hides an in-flight hold; occupancy
+    // status is the whole check.
+    expect(query).not.toContain("isTentative");
+    expect(query).toContain("OR: buildOccupiedAppointmentFilter()");
   });
 
   it("the STEP-5 Serializable transaction is retried on P2034", () => {

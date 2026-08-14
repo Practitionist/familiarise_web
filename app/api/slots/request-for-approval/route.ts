@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
       const [org, membership] = await Promise.all([
         prisma.organization.findUnique({
           where: { id: organizationId },
-          select: { canSponsor: true },
+          select: { canSponsor: true, status: true },
         }),
         prisma.membership.findUnique({
           where: {
@@ -73,11 +73,21 @@ export async function POST(req: NextRequest) {
           select: { status: true },
         }),
       ]);
-      if (!org?.canSponsor || membership?.status !== "ACTIVE") {
+      // Same gate the checkout path applies: PENDING_VERIFICATION orgs may
+      // still transact, anything else (suspended/inactive) may not. Without
+      // it a suspended org rides the Appointment and then the Payment row,
+      // and nothing re-checks status downstream.
+      const orgTransactable =
+        org?.status === "ACTIVE" || org?.status === "PENDING_VERIFICATION";
+      if (
+        !org?.canSponsor ||
+        !orgTransactable ||
+        membership?.status !== "ACTIVE"
+      ) {
         return NextResponse.json(
           {
             error:
-              "This organization cannot sponsor your booking (it is not a sponsor org, or you are not an active member).",
+              "This organization cannot sponsor your booking (it is not a sponsor org, it is not in good standing, or you are not an active member).",
           },
           { status: 403 },
         );
