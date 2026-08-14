@@ -445,8 +445,9 @@ export async function createOrgPayoutBatch(
               tdsAmountPaise: tds.tdsAmountPaise,
               tdsFallback: tds.fallbackApplied,
               tdsReason: tds.reason,
-              // #1093 §3 — never null: a keyless manual payout had no replay guard.
-            idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
+              // #1093 §3 — echo the payout's own key; a fresh mint here would
+              // stamp the audit row with a UUID matching no payout.
+              idempotencyKey: created.idempotencyKey,
             },
           },
         });

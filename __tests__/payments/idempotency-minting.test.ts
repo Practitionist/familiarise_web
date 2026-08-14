@@ -18,13 +18,16 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     );
   });
 
-  it("org payouts never write a null idempotencyKey", () => {
+  it("org payouts mint the key once, at the writer, and echo it into the audit row", () => {
     const src = read("lib/payments/payouts/org-payout-service.ts");
-    expect(src).not.toContain("idempotencyKey: opts.idempotencyKey ?? null");
+    expect(src).not.toMatch(/idempotencyKey:\s*[^,\n]*\?\?\s*null/);
+    // Exactly one mint, on the payout row. A second mint had landed in the
+    // audit payload, stamping details with a UUID matching no payout row.
     expect(
       src.split("idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID()")
         .length,
-    ).toBe(3);
+    ).toBe(2);
+    expect(src).toContain("idempotencyKey: created.idempotencyKey");
   });
 
   it("the sidecar stages the NOT NULL flips for the reset", () => {
