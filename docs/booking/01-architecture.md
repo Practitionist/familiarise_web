@@ -166,6 +166,10 @@ Uses server-calculated `bookingStatus` (available / partially-booked / fully-boo
 
 Subscription-specific frontend validation: `validateSlots()`, `getAvailableWeeks()`, `canScheduleInWeek()`.
 
+### Where allocation happens
+
+There is one allocator and it lives on the server. The client engine that used to pick slots — strategies, time-of-day and day-of-week scoring, weekly distribution, same-day spacing — was deleted in PR #1178 along with the tests that could only have exercised it, because product code has submitted `isAuto: true` and left the picking to `SlotAllocationService`, under its Redis locks and timezone-aware caps, since #997 Phase 1. What survives in `lib/scheduling/allocationAlgorithms.ts` is pre-submission validation for the manual and requested modes alone, so nothing on the client can any longer be mistaken for a second engine. The hooks above are correspondingly a selection and display layer: `useSlotAllocation` guards selection and submits, while `useCalendarData` polls date-dependent availability every 60 seconds whenever the tab is visible (#1164), so the heatmap reflects slots other people have taken instead of staying green until allocation rejects the choice.
+
 ---
 
 ## Data Model
