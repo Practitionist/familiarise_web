@@ -488,10 +488,10 @@ export async function POST(
           paidPayment.refundablePaise,
         );
 
-        // #1006 — a subscription that has already delivered sessions has no
-        // agreed proration rule, and the tier alone would hand back the full
-        // plan price for sessions the consultant has already held. The
-        // cancellation stands; the refund is escalated rather than guessed.
+        // Credit-funded first: its refund is a credit restoration, which is
+        // all-or-nothing, so the tiered amount above does not apply to it.
+        // (#1006's partly-consumed escalation used to branch here; the linear
+        // proration in `proratedBasePaise` replaced it — see the PR for why.)
         if (isFreeCreditFunded) {
           if (refundPct === 100) {
             try {

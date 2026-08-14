@@ -379,7 +379,11 @@ describe("subscriptions", () => {
     expect(body.refund.amountRefundedPaise).toBe(GROSS);
   });
 
-  it("escalates a partly-consumed plan instead of guessing a proration", async () => {
+  it("prorates a partly-consumed plan to the undelivered share (#1006)", async () => {
+    // This case used to escalate to MANUAL_REVIEW and refund ₹0, which killed
+    // the remaining sessions while returning nothing. #1006 replaced the
+    // escalation with the linear rule: the base is the undelivered share, and
+    // the frozen policy tier applies to that base.
     mockGetSession.mockResolvedValue(sessionAs("consultee"));
     mockAppointmentFindUnique.mockResolvedValue(subscriptionAppointment());
     mockAppointmentFindMany.mockImplementation(async () =>
@@ -389,19 +393,17 @@ describe("subscriptions", () => {
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
     const body = await res.json();
 
-    expect(body.refund.requiresManualReview).toBe(true);
-    expect(body.refund.status).toBe("MANUAL_REVIEW");
-    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
-    // A Sentry breadcrumb is not a queue — this has to be durable.
-    expect(mockRecordSystemError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        category: "PAYMENT",
-        context: expect.objectContaining({
-          sessionsCompleted: 1,
-          sessionsRemaining: 2,
-        }),
-      }),
+    // 1 of 3 delivered, next session 72h out, so the 100% tier applies to
+    // two-thirds of the price: floor(500000 × 2/3) = 333333.
+    const undeliveredShare = Math.floor((GROSS * 2) / 3);
+    expect(body.refund.status).toBe("REFUNDED");
+    expect(body.refund.refundPct).toBe(100);
+    expect(body.refund.amountRefundedPaise).toBe(undeliveredShare);
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: undeliveredShare }),
     );
+    // The rule is agreed now, so nothing is owed to an ops queue.
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
 });
 
