@@ -737,8 +737,12 @@ export async function handleRefundCreated(
               ],
             });
           }
+          const shortfallNote =
+            shortfallPaise > 0
+              ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE`
+              : "";
           console.log(
-            `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallPaise > 0 ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE` : ""}`,
+            `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallNote}`,
           );
         }
         return;

@@ -83,6 +83,9 @@ export async function refundWholeEventPayments(
       paymentStatus: "SUCCEEDED",
       // #1161 — no amount filter: free_ (credit-funded) seats refund too, via
       // credit restoration.
+      // #781 §B — retired rows stay out: the front door refuses them, so a
+      // soft-deleted seat would only surface as a false failure.
+      deletedAt: null,
     },
     select: { id: true, amount: true, paymentIntent: true },
   });
