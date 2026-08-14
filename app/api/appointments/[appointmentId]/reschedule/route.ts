@@ -33,6 +33,7 @@ import {
   RESCHEDULABLE_FROM,
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
+import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 
@@ -237,7 +238,21 @@ export async function POST(
         // Allow ADMIN/STAFF bypass
         const isPrivilegedUser = isPrivileged(session.user.role);
 
-        if (!isParticipant && !isPrivilegedUser) {
+        // #1166 — an admin of the FUNDING org may reschedule the booking. They
+        // act on the payer side, so their proposals carry the CONSULTEE role:
+        // same auto-confirm consent semantics as the buyer they act for.
+        const isOrgAdminActor =
+          !isParticipant &&
+          !isPrivilegedUser &&
+          (await isOrgAdminOfAppointment(
+            session.user.id,
+            appointment.organizationId,
+          ));
+        if (isOrgAdminActor) {
+          initiatorRole = "CONSULTEE";
+        }
+
+        if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
           throw new RescheduleAuthorizationError();
         }
 

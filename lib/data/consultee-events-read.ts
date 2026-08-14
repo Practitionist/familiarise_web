@@ -119,6 +119,28 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              // #1163 — the live proposal, so the consultee SEES a
+              // consultant-initiated reschedule and can answer it (accept /
+              // decline / withdraw), instead of "Awaiting schedule
+              // confirmation" forever.
+              rescheduleRequests: {
+                where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: {
+                  id: true,
+                  status: true,
+                  reason: true,
+                  round: true,
+                  expiresAt: true,
+                  initiatorRole: true,
+                  initiatedById: true,
+                  proposedSlots: {
+                    orderBy: { startsAt: "asc" },
+                    select: { startsAt: true, endsAt: true },
+                  },
+                },
+              },
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -228,6 +250,28 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              // #1163 — the live proposal, so the consultee SEES a
+              // consultant-initiated reschedule and can answer it (accept /
+              // decline / withdraw), instead of "Awaiting schedule
+              // confirmation" forever.
+              rescheduleRequests: {
+                where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: {
+                  id: true,
+                  status: true,
+                  reason: true,
+                  round: true,
+                  expiresAt: true,
+                  initiatorRole: true,
+                  initiatedById: true,
+                  proposedSlots: {
+                    orderBy: { startsAt: "asc" },
+                    select: { startsAt: true, endsAt: true },
+                  },
+                },
+              },
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
                 include: {

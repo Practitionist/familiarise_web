@@ -1148,3 +1148,8 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 - [API Reference](./04-api-reference.md) -- Validate and allocate endpoints (used after reschedule)
 - [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- Payment reuse details
 - [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- When user cancels instead of rescheduling
+
+## The response loop (2026-08-14, #1163 / #1169 PR 4)
+
+A proposal can now be answered by the other side. `POST /api/appointments/[appointmentId]/reschedule/respond` with `{ "action": "accept" }` re-validates the proposed times through the full allocator (manual mode under the consultant-wide lock — the same machinery auto-confirm uses, so nothing is written unless validation commits) and finalizes the request to `ACCEPTED`; `{ "action": "decline" }` is a guarded transition to `DECLINED` that deliberately leaves the released slots in the consultant's allocate queue, because the initiator still wants to move. The initiator's own exit remains `withdraw`, which restores the booking. Authorization is the counterparty alone, with the withdraw route's anti-oracle 404 discipline. The consultee's event reads now carry the live proposal (`rescheduleRequests` with `proposedSlots`), so a consultant-initiated reschedule finally renders on the consultee side instead of an indefinite "Awaiting schedule confirmation". Admins of the organization funding a booking may cancel and reschedule it, acting on the payer side of the policy tiers; their proposals carry the consultee role, so the same auto-confirm consent rules apply.
+
