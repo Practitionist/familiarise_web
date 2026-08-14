@@ -713,7 +713,8 @@ export async function GET(
           // staleness is safe — allocation re-validates server-side — and the
           // one caller that must never see it, the post-allocation refetch,
           // asks for `cache: "no-store"` (AllocationService, #1164).
-          "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+          // #1164 — no SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old (adversarial review)
+          "Cache-Control": "private, max-age=30",
         },
       },
     );

@@ -479,8 +479,8 @@ export class AllocationService {
     consulteeUserId?: string,
     /**
      * #1164 — skip the browser's HTTP cache for this request. The route now
-     * answers `max-age=30, stale-while-revalidate=60`, which is right for
-     * navigation and polling and wrong immediately after a mutation: the
+     * answers `private, max-age=30`, which is right for navigation and polling
+     * and wrong immediately after a mutation: the
      * post-allocation refetch would be served the pre-allocation body and the
      * consultant would not see the slots they just booked.
      */
