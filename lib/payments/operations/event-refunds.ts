@@ -12,7 +12,11 @@ import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { applyReversal } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
-import { isInternalFundedIntent, refundBookingPayment } from "./booking-refund";
+import {
+  isFreeCreditIntent,
+  isInternalFundedIntent,
+  refundBookingPayment,
+} from "./booking-refund";
 import {
   computeRefundPct,
   parsePolicySnapshot,
@@ -37,9 +41,12 @@ import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
  *     (createRefund throws UNKNOWN_GATEWAY on a synthetic id), so they reverse
  *     purely in-ledger via one CLASS_MULTI transaction.
  *
- * Idempotency: this fans out NEW refunds each call, so callers must invoke it at
- * most once per event — the appointment-cancel CAS and the moderation
- * `moved === 0` guard both provide that. A second call would double-refund.
+ * Idempotency: callers still gate on the appointment-cancel CAS / moderation
+ * `moved === 0` guard, but a second call is now structurally harmless too —
+ * every rail re-derives the refundable balance under Serializable isolation,
+ * so an already-refunded seat surfaces as a skip, not a second payout
+ * (#1169 PR 3; the old "a second call would double-refund" note predated the
+ * balance clamps).
  */
 
 export type WholeEventRefundSummary = {
@@ -47,6 +54,8 @@ export type WholeEventRefundSummary = {
   refundedPaise: number;
   childRefundIds: string[];
   failures: { paymentId: string; error: string }[];
+  /** Seats whose balance was already fully refunded — a re-run, not an error. */
+  skippedAlreadyRefunded: number;
 };
 
 function errMsg(e: unknown): string {
@@ -64,6 +73,7 @@ export async function refundWholeEventPayments(
     refundedPaise: 0,
     childRefundIds: [],
     failures: [],
+    skippedAlreadyRefunded: 0,
   };
 
   const payments = await prisma.payment.findMany({
@@ -71,7 +81,8 @@ export async function refundWholeEventPayments(
       appointment:
         kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
       paymentStatus: "SUCCEEDED",
-      amount: { gt: 0 },
+      // #1161 — no amount filter: free_ (credit-funded) seats refund too, via
+      // credit restoration.
     },
     select: { id: true, amount: true, paymentIntent: true },
   });
@@ -80,9 +91,39 @@ export async function refundWholeEventPayments(
   const internal = payments.filter((p) =>
     isInternalFundedIntent(p.paymentIntent),
   );
+  const credits = payments.filter((p) => isFreeCreditIntent(p.paymentIntent));
   const gateway = payments.filter(
-    (p) => !isInternalFundedIntent(p.paymentIntent),
+    (p) =>
+      !isInternalFundedIntent(p.paymentIntent) &&
+      !isFreeCreditIntent(p.paymentIntent),
   );
+
+  // Credit-funded seats — restoration through the front door (#1161).
+  for (const p of credits) {
+    try {
+      const r = await refundBookingPayment({
+        paymentId: p.id,
+        reason,
+        initiatedByUserId,
+      });
+      summary.refundsIssued += 1;
+      summary.childRefundIds.push(r.refundId);
+    } catch (err) {
+      if (
+        err instanceof RefundValidationError &&
+        err.code === "ALREADY_FULLY_REFUNDED"
+      ) {
+        summary.skippedAlreadyRefunded += 1;
+        continue;
+      }
+      summary.failures.push({ paymentId: p.id, error: errMsg(err) });
+      reportSentryError(err, {
+        subsystem: "payments",
+        tags: { feature: "whole-event-refund" },
+        extra: { paymentId: p.id, eventId, kind },
+      });
+    }
+  }
 
   // Gateway / mock seats — one gateway-aware refund each (refundPayment also
   // handles any CHARGE_MEMBER overage credit-back internally).
@@ -93,6 +134,15 @@ export async function refundWholeEventPayments(
       summary.refundedPaise += r.amountRefundedPaise;
       summary.childRefundIds.push(r.refundId);
     } catch (err) {
+      if (
+        err instanceof RefundValidationError &&
+        err.code === "ALREADY_FULLY_REFUNDED"
+      ) {
+        // A re-run over an already-settled seat (e.g. maintenance freeze
+        // followed by a manual cancel) — the clamp held; not a failure.
+        summary.skippedAlreadyRefunded += 1;
+        continue;
+      }
       summary.failures.push({ paymentId: p.id, error: errMsg(err) });
       reportSentryError(err, {
         subsystem: "payments",
@@ -236,6 +286,10 @@ export async function refundRemovedAttendeeSeat(args: {
         userId: args.attendeeUserId,
         appointment: eventFilter,
         paymentStatus: "SUCCEEDED",
+        // #1161 residual — attendee-leave refunds are TIERED by notice, and
+        // partial restoration of a credit-funded (free_) seat is a product
+        // call not yet made; whole-event cancellation restores such seats in
+        // full via the credits bucket above.
         amount: { gt: 0 },
         deletedAt: null,
       },

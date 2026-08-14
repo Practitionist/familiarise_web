@@ -20,12 +20,13 @@
  *     wallet / invoice accrual / license ledger, so it reverses purely
  *     in-ledger through the reversal engine's BOOKING source.
  *
- * NOT yet a universal front door. A booking whose price was fully covered by
- * referral credits carries a `free_` intent and `Payment.amount === 0`, so it
- * has no refundable balance and never arrives here — its credits go
- * unrestored and its BookingUtilization unreversed when it is cancelled.
- * Callers filter those out upstream on `amount > 0`. That third rail is an
- * open question on the cancellation audit, not something to guess at here.
+ * #1161 — this IS the universal front door now. The third rail, a booking
+ * fully covered by referral credits (`free_` intent, `Payment.amount === 0`),
+ * restores its credits here: no gateway leg, no ledger money to move, just
+ * the full credit restoration that cancellation owes the buyer. Callers must
+ * stop filtering on `amount > 0` and send every SUCCEEDED payment through.
+ * (Referral credits are refused for org-funded checkouts, so a free_ payment
+ * never carries BookingUtilization — nothing org-side to reverse.)
  */
 
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
@@ -39,13 +40,18 @@ import { RefundValidationError, refundPayment } from "./refund";
 export type BookingRefundResult = {
   refundId: string;
   amountRefundedPaise: number;
-  /** Which rail actually returned the money. */
-  rail: "GATEWAY" | "INTERNAL";
+  /** Which rail actually returned the money (CREDITS = referral restoration). */
+  rail: "GATEWAY" | "INTERNAL" | "CREDITS";
 };
 
 /** Org-funded bookings carry a synthetic paymentIntent no gateway can refund. */
 export function isInternalFundedIntent(paymentIntent: string): boolean {
   return paymentIntent.startsWith("org_");
+}
+
+/** Fully credit-funded bookings — zero gateway money, credits to restore. */
+export function isFreeCreditIntent(paymentIntent: string): boolean {
+  return paymentIntent.startsWith("free_");
 }
 
 export async function refundBookingPayment(input: {
@@ -66,6 +72,10 @@ export async function refundBookingPayment(input: {
     );
   }
 
+  if (isFreeCreditIntent(payment.paymentIntent)) {
+    return refundFreeCreditPayment(input);
+  }
+
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
     return {
@@ -76,6 +86,89 @@ export async function refundBookingPayment(input: {
   }
 
   return refundInternalFundedPayment(input);
+}
+
+/**
+ * #1161 — restore the referral credits behind a fully-credit-funded booking.
+ *
+ * There is no money to move: `Payment.amount` is 0 and the value lives in the
+ * consumed `ReferralCreditUsage` rows. A zero-amount Refund row is minted so
+ * the cancellation leaves the same audit shape as every other rail, and its
+ * existence doubles as the idempotency claim — a second cancellation of the
+ * same booking restores nothing twice.
+ */
+async function refundFreeCreditPayment(input: {
+  paymentId: string;
+  reason: string;
+  initiatedByUserId?: string | null;
+}): Promise<BookingRefundResult> {
+  const payment = await prisma.payment.findUnique({
+    where: { id: input.paymentId },
+    select: {
+      id: true,
+      currency: true,
+      paymentStatus: true,
+      paymentGateway: true,
+    },
+  });
+  if (!payment) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} not found`,
+      "PAYMENT_NOT_FOUND",
+    );
+  }
+  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} is not SUCCEEDED (status=${payment.paymentStatus}); cannot refund`,
+      "PAYMENT_NOT_SUCCEEDED",
+    );
+  }
+
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.refund.findFirst({
+          where: {
+            paymentId: payment.id,
+            status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          throw new RefundValidationError(
+            `Payment ${payment.id} already has its credit restoration`,
+            "ALREADY_FULLY_REFUNDED",
+          );
+        }
+
+        const refundRow = await tx.refund.create({
+          data: {
+            paymentId: payment.id,
+            amountPaise: 0,
+            currency: payment.currency,
+            reason: input.reason,
+            status: RefundStatus.SUCCEEDED,
+            refundId: `credits_${globalThis.crypto.randomUUID()}`,
+            paymentGateway: payment.paymentGateway,
+            metadata: {
+              initiatedByUserId: input.initiatedByUserId ?? null,
+              source: "free-credit",
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        // No amounts → full restoration of every usage row on the payment.
+        await reverseCreditsForPayment(payment.id, tx);
+
+        return {
+          refundId: refundRow.id,
+          amountRefundedPaise: 0,
+          rail: "CREDITS" as const,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 }
 
 /**

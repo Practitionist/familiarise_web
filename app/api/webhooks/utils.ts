@@ -689,15 +689,56 @@ export async function handleRefundCreated(
           // `Payment` table. The TOPUP_REFUND journal transaction
           // (idempotencyKey topup-refund:<rzp payment id>) is the
           // authoritative record; reconcile jobs index on it.
-          // ORM decrement (no raw SQL); WALLET accounts carry a non-null balance.
-          // May go negative by design (org already spent the credited funds) — a
-          // real reconcile signal, handled above, not an error.
-          await tx.billingAccount.update({
+          // #1093 §2 (decision 2026-08-13) — the wallet floor WINS. The old
+          // unconditional decrement could drive walletBalance below zero when
+          // the org had already spent the credited funds, which the
+          // billing_account_wallet_nonnegative CHECK rejects — rolling this
+          // webhook back and redelivering it into the same failure forever.
+          // Claw back only what the wallet still holds; the shortfall books
+          // as an ORG_RECEIVABLE posting (the org owes the platform), which
+          // reconciliation actually consumes — a negative cached balance is a
+          // signal nothing reads.
+          const account = await tx.billingAccount.findUniqueOrThrow({
             where: { id: topUp.billingAccountId },
-            data: { walletBalance: { decrement: refundAmt } },
+            select: { walletBalance: true, ownerOrgId: true },
           });
+          const balancePaise = Number(account.walletBalance ?? 0);
+          const clawbackPaise = Math.min(Math.max(balancePaise, 0), refundAmt);
+          const shortfallPaise = refundAmt - clawbackPaise;
+          if (clawbackPaise > 0) {
+            await tx.billingAccount.update({
+              where: { id: topUp.billingAccountId },
+              data: { walletBalance: { decrement: clawbackPaise } },
+            });
+          }
+          if (shortfallPaise > 0 && account.ownerOrgId) {
+            await postLedgerTxn(tx, {
+              idempotencyKey: `topup-refund-shortfall:${refundId}`,
+              kind: "TOPUP_REFUND",
+              description:
+                "Top-up refunded after the credited funds were spent — unrecovered portion receivable from the org",
+              postings: [
+                {
+                  account: {
+                    kind: "ORG_RECEIVABLE",
+                    organizationId: account.ownerOrgId,
+                  },
+                  direction: "DEBIT",
+                  amountPaise: shortfallPaise,
+                },
+                {
+                  account: {
+                    kind: "WALLET",
+                    organizationId: account.ownerOrgId,
+                  },
+                  direction: "CREDIT",
+                  amountPaise: shortfallPaise,
+                },
+              ],
+            });
+          }
           console.log(
-            `💸 Top-up refund ${refundId} booked: -${refundAmt} paise on billingAccount ${topUp.billingAccountId}`,
+            `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallPaise > 0 ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE` : ""}`,
           );
         }
         return;

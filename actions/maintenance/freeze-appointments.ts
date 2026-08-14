@@ -7,14 +7,25 @@
  * cancels them with a system-initiated reason, and notifies affected users.
  */
 
-import crypto from "crypto";
-
 import * as Sentry from "@sentry/nextjs";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import { createRefund } from "@/lib/payments";
+import {
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
+import { RefundValidationError } from "@/lib/payments/operations/refund";
+import {
+  transitionConsultationRequest,
+  transitionSubscriptionRequest,
+  transitionWebinarEvent,
+  transitionClassEvent,
+  RESCHEDULE_OPEN_STATUSES,
+  SLOT_RESCHEDULABLE_FROM,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import prisma from "@/lib/prisma";
 
 type NotificationPayload = {
@@ -145,14 +156,19 @@ export async function freezeAppointments(
               },
             },
           },
+          // #1162 — UNFILTERED: the old SUCCEEDED-only include made an
+          // appointment whose only payment was PENDING look payment-free, and
+          // the delete guard below then cascade-destroyed the Payment row.
+          // Nothing is deleted any more; SUCCEEDED payments refund post-tx,
+          // PENDING ones settle via the capture-after-terminal webhook path.
           payment: {
-            where: { paymentStatus: "SUCCEEDED" },
             select: {
               id: true,
               amount: true,
               currency: true,
               paymentIntent: true,
               paymentGateway: true,
+              paymentStatus: true,
             },
           },
         },
@@ -192,11 +208,15 @@ export async function freezeAppointments(
   // Track subscription IDs affected by cancellation for scheduling period extension
   const affectedSubscriptionIds = new Set<string>();
 
-  // Collect payment data to refund AFTER the transaction commits.
-  // Payments linked to appointments that have SUCCEEDED payments are kept alive
-  // (appointment not deleted) so refund records can reference them.
+  // Collect payment ids to refund AFTER the transactions commit — refunds do
+  // gateway I/O, which never belongs inside a transaction. Only SUCCEEDED
+  // payments refund; refundBookingPayment routes every rail (gateway, org_*,
+  // free_) and clamps to the refundable balance (#1162).
   type PendingRefundPayment = AffectedSlot["appointment"]["payment"][number];
   const pendingRefunds: PendingRefundPayment[] = [];
+  // Trials tombstone through their own domain helper post-tx (#1074 rule).
+  const trialAppointmentsToTombstone: string[] = [];
+  let skippedAlreadyTerminal = 0;
 
   // Collect notification payloads to send AFTER the transaction commits.
   // External API calls (Novu) cannot be rolled back, so they must run
@@ -204,31 +224,40 @@ export async function freezeAppointments(
   // that were later rolled back.
   const pendingNotifications: NotificationPayload[] = [];
 
-  // Wrap all DB writes in a single transaction for atomicity.
-  // If any appointment cancel fails mid-loop, all prior cancellations
-  // in this batch are rolled back — preventing partial freeze state.
-  await prisma.$transaction(
-    async (tx) => {
-      for (const appointmentId of Object.keys(slotsByAppointment)) {
+  // #1162 — one SHORT transaction per appointment instead of one 60-second
+  // giant: every write below is CAS-guarded and re-runnable, so a partial
+  // freeze is safe (re-invoking continues where it stopped) and no single
+  // slow appointment can blow a shared transaction budget.
+  for (const appointmentId of Object.keys(slotsByAppointment)) {
+    await prisma.$transaction(async (tx) => {
         const slots = slotsByAppointment[appointmentId];
         const appointment = slots[0].appointment;
         const earliestSlot = slots.reduce((a: AffectedSlot, b: AffectedSlot) =>
           a.startsAt < b.startsAt ? a : b,
         );
 
-        // Cancel consultation if applicable
+        // Cancel consultation if applicable — CAS-guarded (#1162): a
+        // COMPLETED or already-CANCELLED booking must not resurrect.
         if (appointment.consultation) {
           const consultation = appointment.consultation;
-          await tx.consultation.update({
-            where: { id: consultation.id },
-            data: {
-              status: "CANCELLED",
-              cancellationReason: "TECHNICAL_ISSUE",
-              cancellationNotes:
-                "Cancelled due to scheduled platform maintenance",
-              cancelledAt: new Date(),
-            },
-          });
+          try {
+            await transitionConsultationRequest(tx, {
+              where: { id: consultation.id },
+              to: "CANCELLED",
+              data: {
+                cancellationReason: "TECHNICAL_ISSUE",
+                cancellationNotes:
+                  "Cancelled due to scheduled platform maintenance",
+                cancelledAt: new Date(),
+              },
+            });
+          } catch (err) {
+            if (err instanceof IllegalTransitionError) {
+              skippedAlreadyTerminal++;
+              return;
+            }
+            throw err;
+          }
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
@@ -246,19 +275,27 @@ export async function freezeAppointments(
           if (notif) pendingNotifications.push(notif);
         }
 
-        // Cancel subscription appointment if applicable
+        // Cancel subscription appointment if applicable — CAS-guarded.
         if (appointment.subscription) {
           const subscription = appointment.subscription;
-          await tx.subscription.update({
-            where: { id: subscription.id },
-            data: {
-              status: "CANCELLED",
-              cancellationReason: "TECHNICAL_ISSUE",
-              cancellationNotes:
-                "Cancelled due to scheduled platform maintenance",
-              cancelledAt: new Date(),
-            },
-          });
+          try {
+            await transitionSubscriptionRequest(tx, {
+              where: { id: subscription.id },
+              to: "CANCELLED",
+              data: {
+                cancellationReason: "TECHNICAL_ISSUE",
+                cancellationNotes:
+                  "Cancelled due to scheduled platform maintenance",
+                cancelledAt: new Date(),
+              },
+            });
+          } catch (err) {
+            if (err instanceof IllegalTransitionError) {
+              skippedAlreadyTerminal++;
+              return;
+            }
+            throw err;
+          }
 
           affectedSubscriptionIds.add(subscription.id);
 
@@ -281,10 +318,18 @@ export async function freezeAppointments(
         // Cancel webinar if applicable
         if (appointment.webinar) {
           const webinar = appointment.webinar;
-          await tx.webinar.update({
-            where: { id: webinar.id },
-            data: { status: "CANCELLED" },
-          });
+          try {
+            await transitionWebinarEvent(tx, {
+              where: { id: webinar.id },
+              to: "CANCELLED",
+            });
+          } catch (err) {
+            if (err instanceof IllegalTransitionError) {
+              skippedAlreadyTerminal++;
+              return;
+            }
+            throw err;
+          }
 
           const webinarParticipantIds = Array.from(
             new Set(
@@ -306,10 +351,18 @@ export async function freezeAppointments(
         // Cancel class if applicable
         if (appointment.class) {
           const classEvent = appointment.class;
-          await tx.class.update({
-            where: { id: classEvent.id },
-            data: { status: "CANCELLED" },
-          });
+          try {
+            await transitionClassEvent(tx, {
+              where: { id: classEvent.id },
+              to: "CANCELLED",
+            });
+          } catch (err) {
+            if (err instanceof IllegalTransitionError) {
+              skippedAlreadyTerminal++;
+              return;
+            }
+            throw err;
+          }
 
           const classParticipantIds = Array.from(
             new Set(
@@ -331,10 +384,22 @@ export async function freezeAppointments(
         // Cancel trial session if applicable
         if (appointment.trialSession) {
           const trial = appointment.trialSession;
-          await tx.trialSession.update({
-            where: { id: trial.id },
-            data: { status: "CANCELLED" },
+          // Status-guarded (the trial state table is local to the trials
+          // route); zero rows means already terminal — skip, never resurrect.
+          const moved = await tx.trialSession.updateMany({
+            where: {
+              id: trial.id,
+              status: { in: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"] },
+            },
+            data: { status: "CANCELLED", pendingPaymentUrl: null },
           });
+          if (moved.count === 0) {
+            skippedAlreadyTerminal++;
+            return;
+          }
+          // #1074 — tombstone via the trials-domain helper AFTER the tx; it
+          // owns the appointment/slot shape for trials.
+          trialAppointmentsToTombstone.push(appointment.id);
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
@@ -351,32 +416,44 @@ export async function freezeAppointments(
           if (notif) pendingNotifications.push(notif);
         }
 
-        // Collect SUCCEEDED payments for refund processing after the transaction.
-        // We must gather these before slot/appointment deletion so the data is available.
+        // Collect SUCCEEDED payments for refund processing after the tx.
         for (const payment of appointment.payment) {
-          pendingRefunds.push(payment);
+          if (payment.paymentStatus === "SUCCEEDED") {
+            pendingRefunds.push(payment);
+          }
         }
 
-        // Batch delete all affected slots for this appointment
-        await tx.slotOfAppointment.deleteMany({
-          where: { id: { in: slots.map((s: AffectedSlot) => s.id) } },
-        });
-
-        // Delete appointment if no other slots remain AND no payments need refunding.
-        // Appointments with payments are kept alive so refund records can reference
-        // the Payment FK — cascade deletion would otherwise orphan the refund.
-        const remainingSlots = await tx.slotOfAppointment.count({
-          where: { appointmentId: appointment.id },
-        });
-        if (remainingSlots === 0 && appointment.payment.length === 0) {
-          await tx.appointment.delete({ where: { id: appointment.id } });
+        // #1162 — "Nothing is deleted" (docs/booking/08). Slots soft-cancel
+        // exactly like the interactive cancel route; trials are tombstoned by
+        // their own helper post-tx instead.
+        if (!appointment.trialSession) {
+          await tx.slotOfAppointment.updateMany({
+            where: {
+              id: { in: slots.map((s: AffectedSlot) => s.id) },
+              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+            },
+            data: { completionStatus: "CANCELLED" },
+          });
         }
+
+        // Close any live reschedule proposal — leaving one open reserves
+        // openForAppointmentId forever and lets the expiry cron act on a
+        // cancelled booking (mirrors cancel/route.ts).
+        await tx.rescheduleRequest.updateMany({
+          where: {
+            appointmentId: appointment.id,
+            status: { in: RESCHEDULE_OPEN_STATUSES },
+          },
+          data: {
+            status: "DECLINED",
+            openForAppointmentId: null,
+            resolvedAt: new Date(),
+          },
+        });
 
         cancelled++;
-      }
-    },
-    { maxWait: 30000, timeout: 60000 },
-  );
+    });
+  }
 
   // Issue refunds AFTER the transaction commits.
   // The Payment records still exist (appointments with payments were not deleted).
@@ -385,29 +462,35 @@ export async function freezeAppointments(
   // gateway refund by amount + time window) or marks the row FAILED after
   // 24h and notifies the payer (#779) — it does NOT re-initiate the gateway
   // call, so a throw here means no money moved until an operator retries.
+  // #1074 — trials tombstone through their domain helper (never deleted).
+  for (const trialAppointmentId of trialAppointmentsToTombstone) {
+    try {
+      await softCancelTrialAppointment(trialAppointmentId);
+    } catch (err) {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
+    }
+  }
+
   for (const payment of pendingRefunds) {
     try {
-      const result = await createRefund({
-        paymentIntentId: payment.paymentIntent,
-        amount: payment.amount,
+      // #1162 — the front door: refundable-balance clamp, org_*/free_ rails,
+      // and its own PENDING reservation for the reconcile cron on gateway
+      // failure. The old raw createRefund refunded payment.amount GROSS
+      // (over-refunding partially-refunded payments) and threw
+      // UNKNOWN_GATEWAY on every org-funded booking.
+      await refundBookingPayment({
+        paymentId: payment.id,
         reason: "Scheduled platform maintenance",
-      });
-      await prisma.refund.create({
-        data: {
-          amountPaise: payment.amount,
-          currency: payment.currency,
-          reason: "Scheduled platform maintenance",
-          status: result.status,
-          refundId: result.refundId,
-          paymentGateway: payment.paymentGateway,
-          paymentId: payment.id,
-          ...(result.metadata
-            ? { metadata: result.metadata as Record<string, string> }
-            : {}),
-        },
       });
       refundsIssued++;
     } catch (err) {
+      if (
+        err instanceof RefundValidationError &&
+        err.code === "ALREADY_FULLY_REFUNDED"
+      ) {
+        // Re-run over an already-settled payment — the clamp held.
+        continue;
+      }
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
       console.error(
         JSON.stringify({
@@ -417,31 +500,10 @@ export async function freezeAppointments(
           timestamp: new Date().toISOString(),
         }),
       );
-      // Create a PENDING placeholder so the reconcile-pending-refunds cron can retry
-      try {
-        await prisma.refund.create({
-          data: {
-            amountPaise: payment.amount,
-            currency: payment.currency,
-            reason: "Scheduled platform maintenance",
-            status: "PENDING",
-            refundId: `pending_${crypto.randomUUID()}`,
-            paymentGateway: payment.paymentGateway,
-            paymentId: payment.id,
-            metadata: { error: String(err) },
-          },
-        });
-      } catch (dbErr) {
-        Sentry.captureException(dbErr instanceof Error ? dbErr : new Error(String(dbErr)), { tags: { subsystem: "maintenance" }, level: "fatal" });
-        console.error(
-          JSON.stringify({
-            event: "maintenance_refund_record_failed",
-            paymentId: payment.id,
-            error: dbErr instanceof Error ? dbErr.message : String(dbErr),
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      }
+      // No manual placeholder here any more: refundBookingPayment's gateway
+      // rail reserves its own PENDING row before the gateway call, so a
+      // second one would double-reserve the refundable balance. The
+      // reconcile-pending-refunds cron owns recovery from that reservation.
       refundErrors++;
     }
   }
@@ -506,6 +568,7 @@ export async function freezeAppointments(
     JSON.stringify({
       event: "maintenance_appointments_frozen",
       cancelled,
+      skippedAlreadyTerminal,
       notified,
       refundsIssued,
       refundErrors,
@@ -518,6 +581,7 @@ export async function freezeAppointments(
 
   return {
     cancelled,
+    skippedAlreadyTerminal,
     notified,
     refundsIssued,
     refundErrors,

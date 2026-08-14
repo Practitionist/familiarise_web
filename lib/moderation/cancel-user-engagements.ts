@@ -400,7 +400,9 @@ async function cancelExclusiveEngagement(
 
   for (const appt of engagement.appointments) {
     const paid = appt.payment.find(
-      (p) => p.paymentStatus === "SUCCEEDED" && p.amount > 0,
+      // #1161 — free_ (credit-funded) payments are refundable now: their
+      // "refund" is the credit restoration the front door performs.
+      (p) => p.paymentStatus === "SUCCEEDED",
     );
     if (paid) {
       await issueFullRefund(paid.id, ctx.initiatedByUserId, ctx.summary);

@@ -374,6 +374,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // debiting us twice. Unique per reservation, so two legitimate partial
       // refunds of the same amount still each get their own.
       idempotencyKey: reserved.id,
+      // #676 B1 — the same id rides the gateway notes, so the refund WEBHOOK
+      // (and the reconcile sweep) can bind a gateway refund back to its
+      // PENDING reservation exactly, instead of amount+time-window guessing.
+      metadata: { reservationId: reserved.id },
     });
   } catch (err) {
     reportSentryError(err, {
