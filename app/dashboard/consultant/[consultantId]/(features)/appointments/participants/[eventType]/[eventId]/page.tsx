@@ -162,10 +162,19 @@ export default function EventParticipantsPage() {
         { tags: { subsystem: "client" } },
       );
       console.error("Error removing participant:", err);
+      // A lost response is not proof of a lost write: the DELETE may have
+      // disconnected the attendee AND issued their refund before the
+      // connection dropped. "Nothing was changed and no refund was issued" was
+      // the one claim this handler cannot support, and a retry cannot recover
+      // the original refund result either — it would answer `removed: false`.
+      // Refresh the roster instead, and say only what is actually known.
+      queryClient.invalidateQueries({
+        queryKey: ["event-participants", eventType, eventId],
+      });
       toast({
-        title: "Could not remove participant",
+        title: "Could not confirm the removal",
         description:
-          "Nothing was changed and no refund was issued. Check your connection and try again.",
+          "We couldn't confirm whether they were removed or refunded. The roster has been refreshed — try again if they're still listed.",
         variant: "destructive",
         action: (
           <ToastAction

@@ -70,6 +70,14 @@ interface RazorpayCheckoutProps {
   userEmail?: string;
   userPhone?: string;
   description?: string;
+  /**
+   * Ran on the click, before anything is charged; returning false aborts.
+   *
+   * A page gating a finite resource — event seats — can only re-check it here.
+   * `disabled` reflects the last render, and a webinar can fill while the tab
+   * sits open, so without this the buyer pays into a rejection.
+   */
+  onBeforeCheckout?: () => Promise<boolean>;
 }
 
 export default function RazorpayCheckout({
@@ -81,6 +89,7 @@ export default function RazorpayCheckout({
   userEmail,
   userPhone,
   description,
+  onBeforeCheckout,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -90,6 +99,8 @@ export default function RazorpayCheckout({
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
 
   const handleCheckout = async () => {
+    // Before the spinner, so an abort leaves the button exactly as it was.
+    if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
     // While the gateway sheet is up it owns the button; only its own exits
     // (dismiss, failure, verified success) may re-enable it.

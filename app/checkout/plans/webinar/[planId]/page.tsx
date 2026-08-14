@@ -361,6 +361,66 @@ export default function WebinarCheckoutPage({
     ],
   );
 
+  /**
+   * Re-check the seat count against the click, not the last render.
+   *
+   * The gate above lives inside `handleCheckout`, whose only production caller
+   * is the development mock-pay button — the real Razorpay and Stripe controls
+   * take `checkoutData` and open the gateway themselves. So the soft gate was
+   * inert exactly where money moves: a webinar that filled while this tab sat
+   * open still let the buyer pay into a rejection.
+   *
+   * `no-store` because the plan endpoint is cached `s-maxage=60`, and a
+   * minute-old seat count is the thing being corrected. Refreshing `planData`
+   * also re-derives `isSoldOut`, so both gateway buttons disable behind this.
+   *
+   * A failed check does NOT block the sale: the allocation lock on the server
+   * is the authority, and refusing a paying customer because a display query
+   * timed out trades a real sale for a race we do not own.
+   */
+  const revalidateSeatsBeforePayment = useCallback(async () => {
+    if (!validatedSearchParams?.eventId) return true;
+    try {
+      const response = await fetch(
+        `/api/plans/webinars/${resolvedParams.planId}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return true;
+      const fresh: PlanResponse = await response.json();
+      const freshWebinar = fresh.data?.webinars?.find(
+        (w) => w.id === validatedSearchParams.eventId,
+      );
+      if (!fresh.data || !freshWebinar) return true;
+
+      setPlanData(fresh);
+
+      if (
+        getWebinarCapacity({
+          webinar: freshWebinar,
+          plan: { maxParticipants: fresh.data.maxParticipants },
+          excludeUserIds: fresh.data.consultantProfile?.user?.id
+            ? [fresh.data.consultantProfile.user.id]
+            : [],
+        }).isFull
+      ) {
+        toast({
+          title: "This webinar is now full",
+          description:
+            "The last seat went while this page was open, so we stopped the payment before you were charged.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }, [
+    resolvedParams.planId,
+    validatedSearchParams?.eventId,
+    toast,
+  ]);
+
   useEffect(() => {
     async function fetchPlanData() {
       setIsLoading(true);
@@ -883,6 +943,7 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
+                          onBeforeCheckout={revalidateSeatsBeforePayment}
                           disabled={isMaintenanceBlocked || isSoldOut}
                         />
                       ) : validatedSearchParams &&
@@ -902,6 +963,7 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
+                          onBeforeCheckout={revalidateSeatsBeforePayment}
                           disabled={isMaintenanceBlocked || isSoldOut}
                         />
                       ) : null}

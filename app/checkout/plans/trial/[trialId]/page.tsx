@@ -73,6 +73,18 @@ export default async function TrialCheckoutPage({
             orderBy: { startsAt: "asc" },
             take: 1,
           },
+          // The amount the gateway will actually take. `createApprovalPaymentIntent`
+          // froze it onto this row when the consultant accepted, and minted the
+          // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
+          // stays editable underneath. Quoting the plan meant a consultant who
+          // repriced after accepting turned this page into a number the charge
+          // would not honour.
+          payment: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: "asc" },
+            take: 1,
+            select: { amount: true, currency: true },
+          },
         },
       },
     },
@@ -83,6 +95,14 @@ export default async function TrialCheckoutPage({
   if (!trial || trial.consulteeProfile.userId !== session.user.id) notFound();
 
   const startsAt = trial.appointment?.slotsOfAppointment[0]?.startsAt ?? null;
+  // Prefer the frozen charge; fall back to the plan only before a payment
+  // exists, where the plan price genuinely IS the quote.
+  const chargedPayment = trial.appointment?.payment[0] ?? null;
+  const amountPaise = Number(
+    chargedPayment?.amount ?? trial.subscriptionPlan.trialPriceInPaise,
+  );
+  const amountCurrency =
+    chargedPayment?.currency ?? trial.subscriptionPlan.priceCurrency;
   const isPayable =
     trial.status === "AWAITING_PAYMENT" &&
     Boolean(trial.pendingPaymentUrl) &&
@@ -112,10 +132,7 @@ export default async function TrialCheckoutPage({
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Amount</span>
               <span className="font-semibold text-foreground">
-                {formatCurrencyAmount(
-                  Number(trial.subscriptionPlan.trialPriceInPaise),
-                  trial.subscriptionPlan.priceCurrency,
-                )}
+                {formatCurrencyAmount(amountPaise, amountCurrency)}
               </span>
             </div>
             <div className="flex items-center justify-between">

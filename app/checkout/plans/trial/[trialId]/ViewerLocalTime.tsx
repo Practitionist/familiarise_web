@@ -13,7 +13,13 @@ import { useEffect, useState } from "react";
  *
  * Rendered after mount rather than during SSR: the zone is only knowable in the
  * browser, and formatting on the server would just reintroduce the bug as a
- * hydration mismatch. The ISO string is the honest placeholder in between.
+ * hydration mismatch.
+ *
+ * The placeholder in between keeps its `UTC` marker. Trimming the ISO string to
+ * a bare `2026-08-20 14:30` dropped the one character that said which zone it
+ * was in, so the pre-hydration frame read as a local wall-clock time and was
+ * wrong by the viewer's offset — on a payment deadline, in the direction that
+ * costs them the slot.
  */
 export function ViewerLocalTime({
   value,
@@ -35,7 +41,7 @@ export function ViewerLocalTime({
 
   return (
     <span className={className} suppressHydrationWarning>
-      {formatted ?? value.slice(0, 16).replace("T", " ")}
+      {formatted ?? `${value.slice(0, 16).replace("T", " ")} UTC`}
     </span>
   );
 }
