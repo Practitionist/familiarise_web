@@ -22,6 +22,9 @@ import {
 import {
   lockSlotBooking,
   unlockSlotBooking,
+  lockConsulteeBooking,
+  unlockConsulteeBooking,
+  BookingLockUnavailableError,
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -364,17 +367,36 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
         }
 
-        // 1. Acquire the shared slot-interval lock (#1169 PR 1 — same
-        // `slot-booking:` atom keys checkout and request-for-approval take,
-        // so a trial finally contends with every other writer for the minute)
+        // 1. Acquire the shared locks in checkout's global order, consultee →
+        // slot (#898). The GiST net and the slot atoms are both consultant-
+        // keyed, so without the consultee lock two trials for the SAME
+        // consultee with DIFFERENT consultants pass validation concurrently.
+        // The slot lock itself is #1169 PR 1 — the same `slot-booking:` atom
+        // keys checkout and request-for-approval take, so a trial finally
+        // contends with every other writer for the minute.
+        let consulteeLock: ApprovalLock | null = null;
         let lock: ApprovalLock[] | null = null;
         try {
+          consulteeLock = await lockConsulteeBooking(
+            existingTrial.consulteeProfile.user.id,
+          );
           lock = await lockSlotBooking(
             existingTrial.consultantProfileId,
             startTime.toISOString(),
             endTime.toISOString(),
           );
-        } catch {
+        } catch (error) {
+          if (consulteeLock) {
+            await unlockConsulteeBooking(consulteeLock);
+          }
+          // #1169 PR 1 — Redis-down is a fail-closed 503 outage, not the
+          // retryable 423 contention below.
+          if (error instanceof BookingLockUnavailableError) {
+            return NextResponse.json(
+              { error: error.message },
+              { status: error.httpStatus },
+            );
+          }
           return NextResponse.json(
             {
               error:
@@ -571,9 +593,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           }
           throw error;
         } finally {
-          // 5. Always release lock
+          // 5. Always release locks, reverse of acquisition order
           if (lock) {
             await unlockSlotBooking(lock);
+          }
+          if (consulteeLock) {
+            await unlockConsulteeBooking(consulteeLock);
           }
         }
       }

@@ -26,15 +26,12 @@ import {
   generateMarkdownReport,
   resetBookingRegistry,
 } from "../../utilities/test-helpers.js";
+import { thirtyAfter } from "../../utilities/test-helpers.js";
 import {
   lockSlotBooking,
   unlockSlotBooking,
   type ApprovalLock,
 } from "../../../../../utils/appointmentlock.js";
-// #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
-// single 30-minute atom, so the interval is [start, start+30m).
-const thirtyAfter = (iso: string): string =>
-  new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
 
 import {
   generateTestSlot,

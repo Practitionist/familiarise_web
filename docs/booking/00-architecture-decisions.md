@@ -20,6 +20,7 @@ The following table is the index. Read it top-to-bottom for a quick orientation,
 | B8  | Background jobs run on GitHub Actions cron                            | Live   | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
 | B9  | All daily and weekly limit bucketing uses the event's scheduling timezone (default Asia/Kolkata) via `SlotCalculationService`; display stays viewer-local | Live   | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)       |
 | B10 | A dialog-initiated fresh allocation sends `initialAllocation` and is rejected with 409 if confirmed slots already exist | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
+| B11 | Direct slot writers share one `slot-booking:` namespace keyed by 30-minute interval atoms, and booking locks fail closed when Redis is unreachable | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
 
 ## ADR B1 — Thirty-minute atomic slots
 

@@ -56,7 +56,7 @@ sequenceDiagram
 
 ## Distributed Locking
 
-Six lock functions cover all booking-related operations. Each wraps the core `acquireLockWithRetry()` function with a domain-specific key pattern and error message.
+Seven lock functions cover all booking-related operations. Each wraps the core `acquireLockWithRetry()` function with a domain-specific key pattern and error message.
 
 | Function                   | Key Pattern                                                     | Default TTL  | Purpose                                                               |
 | -------------------------- | --------------------------------------------------------------- | ------------ | --------------------------------------------------------------------- |
@@ -64,9 +64,11 @@ Six lock functions cover all booking-related operations. Each wraps the core `ac
 | `lockSubscriptionApproval` | `subscription-approval:{subscriptionId}`                        | 60s          | Prevents concurrent approval of the same subscription                 |
 | `lockSlotBooking` / `lockSlotInterval` | `slot-booking:{consultantProfileId}:{atomStartISO}` — one key per 30-minute atom of the interval | 60s          | Prevents double-booking any part of a consultant interval; shared by checkout, request-for-approval, AND trial scheduling (#1169 PR 1) |
 | `lockEventCheckout`        | `event-checkout:{appointmentType}:{eventOrPlanId}`              | 60s          | Serializes checkout for a specific event (webinar/class/subscription) |
+| `lockAutoAllocate`         | `auto-allocate:{consultantProfileId}` (plus `:{scope}` when the target day is known) | 150s         | Serializes slot allocation for one consultant, whose slots are discovered dynamically under the lock |
+| `lockConsulteeBooking`     | `consultee-booking:{consulteeUserId}`                           | 150s         | Serializes booking activity for one consultee across consultants, closing the cross-consultant double-book the consultant-keyed GiST net cannot see |
 | `lockAppointment`          | `appointment-lock:{appointmentId}`                              | 300s (5 min) | Legacy lock for appointment-level operations (cancel, reschedule)     |
 
-Every booking-path acquisition now goes through a guarded front door (`acquireGuarded`): a Redis health probe plus the shared circuit breaker, failing CLOSED with a typed `BookingLockUnavailableError` (503) when Redis is unreachable, while genuine contention still fails OPEN with a retryable message. Interval locks retry less per key (5 attempts instead of 10) because a held atom almost always means a real concurrent booking, and the correct outcome is a fast 409 rather than a minute of backoff.
+Every booking-path acquisition now goes through a guarded front door (`acquireGuarded`): a Redis health probe plus the shared circuit breaker, failing CLOSED with a typed `BookingLockUnavailableError` (503) when Redis is unreachable, while genuine contention still fails OPEN with a retryable message. Interval locks retry less per key (5 attempts instead of 10) because a held atom almost always means a real concurrent booking, and the correct outcome is a fast 409 rather than a minute of backoff. Because the atoms are acquired sequentially, the backoff spent on later atoms would otherwise erode the earlier atoms' TTLs, so once the final atom is held every atom is re-armed to a fresh shared deadline; if any re-arm fails, ownership was already lost and the whole acquisition rolls back instead of proceeding.
 
 All locks use Redis `SET key value NX PX ttl`:
 
@@ -75,7 +77,7 @@ All locks use Redis `SET key value NX PX ttl`:
 
 The lock value is a `crypto.randomUUID()`, used for safe release verification (see [Safe Release](#safe-release)).
 
-`lockSlotBooking` and `lockTrialSlot` throw `SlotLockError` (see `utils/errors/SlotLockError.ts`) with structured fields (`consultantId`, `slotTime`, `retryAfterSeconds`) for type-safe error handling via `instanceof`.
+`lockSlotBooking` throws `SlotLockError` (see `utils/errors/SlotLockError.ts`) with structured fields (`consultantId`, `slotTime`, `retryAfterSeconds`) for type-safe error handling via `instanceof`. The retired `lockTrialSlot` no longer exists; trials take `lockSlotBooking` like every other direct writer.
 
 > Cross-reference: `docs/upstash/redis/locking/` for Redis infrastructure and migration details.
 

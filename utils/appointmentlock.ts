@@ -516,10 +516,25 @@ export async function lockSlotInterval(
         await acquireGuarded(key, ttl, "slot-interval", INTERVAL_RETRY_CONFIG),
       );
     }
+    // #1170 review — sequential acquisition erodes the earliest atoms' TTLs
+    // (worst case ~57.6s of backoff across 8 atoms vs a 59.4s effective TTL),
+    // so atom 1 could expire before the caller's critical section even starts.
+    // Re-arm every atom to a fresh shared deadline once the last one is held;
+    // a failed re-arm means ownership was already lost — abort, never proceed.
+    if (acquired.length > 1) {
+      const effectiveTTL = Math.floor(
+        ttl * (1 - INTERVAL_RETRY_CONFIG.driftFactor),
+      );
+      for (const lock of acquired) {
+        if (!(await extendLock(lock, effectiveTTL))) {
+          throw new LockContentionError(lock.key, 1);
+        }
+      }
+    }
     return acquired;
   } catch (error) {
     // Roll back partial acquisition in reverse before surfacing the failure.
-    for (const lock of acquired.reverse()) {
+    for (const lock of [...acquired].reverse()) {
       await releaseLock(lock);
     }
     if (error instanceof LockContentionError) {

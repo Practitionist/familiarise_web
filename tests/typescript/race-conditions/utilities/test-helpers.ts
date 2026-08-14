@@ -9,8 +9,9 @@ import {
   type ApprovalLock,
 } from "../../../../utils/appointmentlock.js";
 // #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
-// single 30-minute atom, so the interval is [start, start+30m).
-const thirtyAfter = (iso: string): string =>
+// single 30-minute atom, so the interval is [start, start+30m). Exported so
+// every race script shares one copy (#1170 review).
+export const thirtyAfter = (iso: string): string =>
   new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
 
 import type {

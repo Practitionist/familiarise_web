@@ -18,10 +18,7 @@ import {
   lockSlotBooking,
   unlockSlotBooking,
 } from "@/utils/appointmentlock";
-// #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
-// single 30-minute atom, so the interval is [start, start+30m).
-const thirtyAfter = (iso: string): string =>
-  new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
+import { thirtyAfter } from "./race-conditions/utilities/test-helpers.js";
 
 
 async function testConcurrentLockAcquisition() {

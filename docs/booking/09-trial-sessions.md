@@ -192,19 +192,21 @@ sequenceDiagram
 
 Trial scheduling takes the SAME lock as every other direct slot writer: `lockSlotBooking()` in `utils/appointmentlock.ts`, which acquires one key per 30-minute atom of the requested interval. Until #1169 PR 1 trials locked a private `trial-slot-booking:` namespace that no other path read, so a trial and a consultation checkout for the same consultant-minute never contended — and because the trial slot also carried no `consultantProfileId`, it fell outside the `slot_no_confirmed_overlap` exclusion constraint too (#1093 §1). Both halves are fixed: the slot is stamped with `consultantProfileId` at creation, and the availability check now runs inside the scheduling transaction and covers the consultee's calendar as well as the consultant's.
 
+Because the consultee-calendar check is only a read, the route also takes `lockConsulteeBooking(consulteeUserId)` before the slot lock, following the same consultant → consultee → slot lock order that checkout uses. Without it, two trials for the same consultee with two different consultants would hold disjoint consultant-keyed atoms, pass the consultee check concurrently, and both commit — the exact cross-consultant double-book the consultant-keyed exclusion constraint cannot see.
+
 **Redis key pattern:** `slot-booking:{consultantProfileId}:{atomStartISO}` (one key per 30-minute atom)
 
 | Parameter           | Value                                    |
 | ------------------- | ---------------------------------------- |
 | Default TTL         | 60,000 ms (60 seconds)                   |
-| Retry count         | 10                                       |
+| Retry count         | 5 per atom (interval config)             |
 | Base retry delay    | 200 ms                                   |
 | Retry jitter        | 200 ms (random)                          |
 | Exponential backoff | Yes                                      |
 | Drift factor        | 0.01                                     |
 | Release mechanism   | Atomic Lua script (check value then DEL) |
 
-The lock is acquired before slot validation and released in a `finally` block regardless of success or failure. On lock contention, the API returns HTTP 423 (Locked).
+The locks are acquired before slot validation and released in a `finally` block regardless of success or failure. On lock contention, the API returns HTTP 423 (Locked); when Redis is unreachable, acquisition fails closed with HTTP 503 (`BookingLockUnavailableError`) instead of reading as contention.
 
 Slot validation inside the lock checks for overlaps across all appointment types (consultations, subscriptions, webinars, classes, and other trials).
 

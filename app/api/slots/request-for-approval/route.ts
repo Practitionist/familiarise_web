@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
-import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+  BookingLockUnavailableError,
+} from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import {
@@ -280,6 +284,15 @@ export async function POST(req: NextRequest) {
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // #1169 PR 1 — Redis-down fails closed with a structured 503; without
+      // this branch the outage fell through to the generic 500 below.
+      if (lockError instanceof BookingLockUnavailableError) {
+        return NextResponse.json(
+          { error: lockError.message },
+          { status: lockError.httpStatus },
+        );
+      }
 
       // Check if error is lock acquisition failure (type-safe)
       if (lockError instanceof SlotLockError) {
