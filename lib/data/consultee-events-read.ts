@@ -46,7 +46,8 @@ const liveProposalInclude = {
     initiatedById: true,
     proposedSlots: {
       orderBy: { startsAt: "asc" },
-      select: { startsAt: true, endsAt: true },
+      // #1163 — the consultee card filters these to the current round.
+      select: { startsAt: true, endsAt: true, round: true },
     },
   },
 } satisfies Prisma.Appointment$rescheduleRequestsArgs;

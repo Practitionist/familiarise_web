@@ -23,6 +23,8 @@ import {
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
+  openProposalTarget,
+  type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import {
   isApprovedStatus,
@@ -87,6 +89,27 @@ function sourceId(vm: AppointmentVM): string | null {
   }
 }
 
+/**
+ * The open reschedule proposal on this row, and which appointment carries it.
+ *
+ * Scans the anchor AND the group children: a subscription row anchors on its
+ * next actionable child while the proposal may sit on another. The cast is the
+ * `sourceId` idiom — `TAppointment` predates the `rescheduleRequests` include
+ * the consultee reads now carry. #1163
+ */
+function rowProposalTarget(
+  vm: AppointmentVM,
+): { appointmentId: string; proposal: OpenRescheduleProposal } | null {
+  type WithProposals = {
+    id: string;
+    rescheduleRequests?: OpenRescheduleProposal[];
+  };
+  return openProposalTarget([
+    vm.raw.appointment as WithProposals | undefined,
+    ...((vm.raw.groupAppointments ?? []) as WithProposals[]),
+  ]);
+}
+
 const KIND_TO_TYPE: Record<
   AppointmentVM["kind"],
   "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial"
@@ -147,6 +170,9 @@ export function useConsulteeAppointmentsAdapter(options?: {
     title: activeVm?.title ?? "",
     consultant: activeVm?.counterpart.name ?? "",
     type: typeLabel,
+    // The hook falls back to useParams, which the org detail route lacks —
+    // thread the id this adapter already resolved. #1163
+    consulteeId,
   });
 
   const closeDialog = () => setDialog(null);
@@ -241,6 +267,20 @@ export function useConsulteeAppointmentsAdapter(options?: {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
     const slots = vm.raw.rawSlots ?? [];
+    // #1163 — a live proposal outranks every other action: until it is
+    // answered the row just says "awaiting confirmation". Navigation, not a
+    // dialog — the detail page hosts the card with accept/decline/withdraw.
+    const proposalTarget = rowProposalTarget(vm);
+    if (proposalTarget && consulteeId && !inactive) {
+      items.push({
+        key: "reschedule-proposal",
+        label: "Review reschedule request",
+        onClick: () =>
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments/${proposalTarget.appointmentId}`,
+          ),
+      });
+    }
     // #1005 — kind-gate: only offer actions the server will honour.
     if (
       consulteeMayReschedule(vm.kind) &&
@@ -330,6 +370,13 @@ export function useConsulteeAppointmentsAdapter(options?: {
   };
 
   const invalidateBookings = () => {
+    // The detail hub renders the trial/event just acted on — refresh it even
+    // when no consulteeId resolved (org mounts). #1163
+    if (activeVm?.appointmentId) {
+      void queryClient.invalidateQueries({
+        queryKey: ["appointment-detail", activeVm.appointmentId],
+      });
+    }
     if (!consulteeId) return;
     void queryClient.invalidateQueries({
       queryKey: ["consultee-events", consulteeId],

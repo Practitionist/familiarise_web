@@ -1,7 +1,10 @@
 import { cache } from "react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CalendarX } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
@@ -105,6 +108,33 @@ export default async function RescheduleAppointmentPage({
   // the SESSION is the guard above.
   if (!consulteeOwns(detail.appointment, consulteeId, profile.userId)) {
     notFound();
+  }
+
+  // #1163 — trials have no reschedule path (the API rejects them at submit),
+  // so refuse before drawing a picker whose submit can only fail.
+  if (detail.appointment.appointmentType === "TRIAL") {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+            <CalendarX className="h-7 w-7 text-muted-foreground/70" />
+          </div>
+          <h1 className="text-base font-medium text-foreground">
+            Trial sessions can&apos;t be rescheduled
+          </h1>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            A trial is a one-off taster at the time your consultant offered.
+            If it no longer works, cancel it and request a new one, or message
+            your consultant.
+          </p>
+          <Button variant="outline" size="sm" className="mt-4" asChild>
+            <Link href={`/dashboard/consultee/${consulteeId}/appointments`}>
+              Back to appointments
+            </Link>
+          </Button>
+        </div>
+      </DashboardViewportFill>
+    );
   }
 
   // The picker draws the CONSULTANT's availability, and this route's params
