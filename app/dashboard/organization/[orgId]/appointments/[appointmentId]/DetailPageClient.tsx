@@ -28,7 +28,9 @@ const DOCUMENT_KINDS = new Set(["CONSULTATION", "TRIAL", "SUBSCRIPTION"]);
  * org context instead of bouncing them to `/dashboard/consultee/...`.
  *
  * Reschedule still deep-links to the personal consultee reschedule heatmap
- * (no org-native picker yet). `consulteeId` is passed from the SSR page
+ * (no org-native picker yet), but carries a `returnTo` back to THIS page so
+ * finishing or abandoning the flow no longer ejects the member into the
+ * personal dashboard (#1166). `consulteeId` is passed from the SSR page
  * (already loaded for the participation check) because this URL has `orgId`,
  * not `consulteeId`.
  *
@@ -46,7 +48,10 @@ export default function DetailPageClient({
   appointmentId: string;
   consulteeId: string;
 }>) {
-  const base = useConsulteeAppointmentsAdapter({ consulteeId });
+  const base = useConsulteeAppointmentsAdapter({
+    consulteeId,
+    rescheduleReturnTo: `/dashboard/organization/${orgId}/appointments/${appointmentId}`,
+  });
 
   const adapter = useMemo(
     () => ({

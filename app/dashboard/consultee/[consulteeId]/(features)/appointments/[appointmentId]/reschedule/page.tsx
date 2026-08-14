@@ -21,6 +21,7 @@ import { RescheduleClient } from "./RescheduleClient";
  */
 type PageProps = {
   params: Promise<{ consulteeId: string; appointmentId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 };
 
 // React.cache so generateMetadata() and the page body share one query per request.
@@ -84,8 +85,10 @@ export async function generateMetadata({
 
 export default async function RescheduleAppointmentPage({
   params,
+  searchParams,
 }: Readonly<PageProps>) {
   const { consulteeId, appointmentId } = await params;
+  const { returnTo } = await searchParams;
   // Enforced here rather than in the layout: the layout is a client component,
   // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultee", consulteeId);
@@ -108,7 +111,14 @@ export default async function RescheduleAppointmentPage({
   const resolved = buildRescheduleSubject(detail);
   if (!resolved) notFound();
 
-  const backHref = `/dashboard/consultee/${consulteeId}/appointments`;
+  // #1166 — org detail pages send ?returnTo= so finishing (or backing out of)
+  // a reschedule lands back in the org context instead of this personal list.
+  // Relative-only: must start with "/" and not "//" or "/\" (protocol-
+  // relative escapes), so the param can never leave the site.
+  const backHref =
+    returnTo && /^\/(?![/\\])/.test(returnTo)
+      ? returnTo
+      : `/dashboard/consultee/${consulteeId}/appointments`;
 
   return (
     <DashboardViewportFill className="gap-4">
