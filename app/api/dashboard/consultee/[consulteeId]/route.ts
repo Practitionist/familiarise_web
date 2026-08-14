@@ -227,11 +227,18 @@ export async function GET(
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
     // This eliminates network overhead and reduces response time significantly
+    //
+    // #1166 ORG-4 — personal surface, so every query pins the appointment to
+    // organizationId: null (ADR 19); mirrors lib/data/consultee-events-read.ts.
+    // Org-funded sessions live on the org dashboard.
     const [consultations, subscriptions, webinars, classes] = await Promise.all(
       [
         // Fetch consultations for this consultee
         prisma.consultation.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            appointment: { is: { organizationId: null } },
+          },
           include: consultationInclude,
           orderBy: {
             requestedAt: "desc",
@@ -239,7 +246,10 @@ export async function GET(
         }),
         // Fetch subscriptions for this consultee
         prisma.subscription.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            appointments: { some: { organizationId: null } },
+          },
           include: subscriptionInclude,
           orderBy: {
             requestedAt: "desc",
@@ -252,6 +262,7 @@ export async function GET(
               // Get webinars where consultee is registered through appointments
               {
                 appointment: {
+                  organizationId: null,
                   slotsOfAppointment: {
                     some: {
                       user: {
@@ -279,6 +290,7 @@ export async function GET(
               {
                 appointments: {
                   some: {
+                    organizationId: null,
                     slotsOfAppointment: {
                       some: {
                         user: {

@@ -212,16 +212,28 @@ export async function GET(
       classPlanIds: paidClassPlanIds,
     } = await RecordingService.getPaidPlanIds(userId);
 
+    // #1166 ORG-4 — personal surface: participation arms pin the appointment
+    // to organizationId: null (ADR 19; mirrors the events read). The
+    // paid-plan arms below stay unpinned — they are payment-derived CONTENT
+    // entitlement, not booking scope, and pinning them would revoke
+    // recordings the user paid for. Trials stay unpinned (attribution-only
+    // org tag, always B2C).
     const [consultations, subscriptions, webinars, classes, trials] =
       await Promise.all([
         prisma.consultation.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            appointment: { is: { organizationId: null } },
+          },
           include: consultationInclude,
           orderBy: { requestedAt: "desc" },
         }),
 
         prisma.subscription.findMany({
-          where: { requestedById: consulteeId },
+          where: {
+            requestedById: consulteeId,
+            appointments: { some: { organizationId: null } },
+          },
           include: subscriptionInclude,
           orderBy: { requestedAt: "desc" },
         }),
@@ -232,6 +244,7 @@ export async function GET(
               // Instances the user directly attended
               {
                 appointment: {
+                  organizationId: null,
                   slotsOfAppointment: {
                     some: { user: { some: { id: userId } } },
                   },
@@ -276,6 +289,7 @@ export async function GET(
               {
                 appointments: {
                   some: {
+                    organizationId: null,
                     slotsOfAppointment: {
                       some: { user: { some: { id: userId } } },
                     },
