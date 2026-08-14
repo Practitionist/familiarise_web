@@ -37,7 +37,7 @@ import {
 const LIVE_SLOT_STATUSES = ["SCHEDULED", "RESCHEDULED"] as const;
 
 export type BookingRefundContext = {
-  /** The single SUCCEEDED, non-zero payment funding this booking, if any. */
+  /** The single SUCCEEDED payment funding this booking (zero-amount credit-funded included), if any. */
   paidPayment: {
     id: string;
     /** Gross captured — the base the policy percentage applies to. */
@@ -116,7 +116,10 @@ export async function resolveBookingRefundContext(
       payment: {
         where: {
           paymentStatus: "SUCCEEDED",
-          amount: { gt: 0 },
+          // #1161 — no amount floor: a fully-credit-funded payment (amount 0,
+          // free_ intent) must surface here or the cancel route's credit-
+          // restoration branch can never fire (it was dead code behind this
+          // filter — caught by the #1180 preview work).
           deletedAt: null,
           ...(payerUserId ? { userId: payerUserId } : {}),
         },
