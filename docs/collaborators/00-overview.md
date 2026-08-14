@@ -27,7 +27,7 @@ The following table records the load-bearing choices and why each was made.
 | --- | --- | --- |
 | Scope | Webinars + Classes only | Consultations and subscriptions are inherently 1:1 |
 | Data model | One merged `Collaborator` model with a `collaboratorType` discriminator (#784) | Two parallel tables duplicated every query and migration |
-| Scheduling | Host-only, with co-host availability enforced (#784 AE-2) | Only the owner creates events, but a co-host can no longer be silently double-booked |
+| Scheduling | Host-only; co-host availability enforced on webinars only (#784 AE-2) | Only the owner creates events; a webinar co-host can no longer be silently double-booked, but a class co-instructor still can |
 | Revenue split | Host sets it, collaborator accepts or declines | The owner controls the deal |
 | Share storage | Integer basis points (`revenueShareBps`, #772 B5) | Integer money math; the API surface stays in percent |
 | Minimum host share | 10% (collaborator total capped at 90%, enforced in a Serializable transaction) | Prevents giving away the entire revenue, race-safely |
@@ -123,7 +123,7 @@ The table below maps each concern to its source file.
 | File | Purpose |
 | --- | --- |
 | `lib/collaborators/service.ts` | Core business logic: invite, respond, update, remove, visibility scoping, revenue split |
-| `lib/collaborators/availability.ts` | `assertCollaboratorsAvailable` — the AE-2 co-host double-booking guard |
+| `lib/collaborators/availability.ts` | `assertCollaboratorsAvailable` — the AE-2 co-host double-booking guard, called from the webinar plan route only |
 | `lib/payments/payouts/earnings-service.ts` | `createEarningsFromPayment` — applies the split at settlement and posts the booking journal |
 | `app/api/collaborations/webinar/[planId]/route.ts` | GET/POST webinar collaborators |
 | `app/api/collaborations/webinar/[planId]/[id]/route.ts` | PATCH/DELETE a specific webinar collaborator |

@@ -91,11 +91,13 @@ Docs-only pass shipped as the final PR of the #1169 booking + maintenance produc
 
 | Change | Area | Description |
 | --- | --- | --- |
-| Collaborators de-drift | `docs/collaborators/` | All seven files rewritten against the merged `Collaborator` model (#784): typed permission booleans replacing the JSON override (#768), basis-point shares (#772 B5), pool-based split with floors (#778 §C-2), and the enforced co-host availability guard (AE-2). |
+| Collaborators de-drift | `docs/collaborators/` | All seven files rewritten against the merged `Collaborator` model (#784): typed permission booleans replacing the JSON override (#768), basis-point shares (#772 B5), pool-based split with floors (#778 §C-2), and the co-host availability guard (AE-2), which is enforced on webinar plans only. |
 | Org-funded checkout documented | `docs/booking/17-org-funded-checkout.md` | New page covering the sponsored rail end to end — resolution chain, gateway skip, wallet/engagement debits, inline settlement, internal refunds — previously documented nowhere in this folder. |
 | Funding-seam citations | `docs/payments/05-b2c-b2b-funding-seam.md` | Stale file:line references re-verified and corrected. |
 | Prompts corpus | `prompts/` | New index README; enterprise shared-setup corrected (deleted three-ledger models replaced by the double-entry journal, seed cohort reconciled with the verification guide); two new booking case files (007 reschedule-response loop for #1162, 008 maintenance-freeze correctness for #1163). |
 | Booking doctrine skill | `.claude/skills/booking-doctrine/` | The subsystem's invariants (CAS transitions, nothing-is-deleted, refund front doors, lock namespaces, sidecars, org scoping, testing recipes) captured for future agents. |
+| Cancellation flow rewritten | `docs/booking/08-cancellation-flow.md` | The chapter still taught delete-on-cancel, no authentication and no refunds — the three claims #1013 was raised against. Walkthrough, diagrams, record tables and error contract now match the route: soft-cancel under a CAS guard, participant/privileged/org-admin authorization (#1166), and the automatic policy refund. The #1006 manual-review escalation for partly-consumed subscriptions is gone, replaced by the linear per-session proration that closed it; the only surviving `MANUAL_REVIEW` path is the credit-funded partial-window case (#1161). |
+| Lock namespaces corrected | `.claude/skills/booking-doctrine/SKILL.md` | Rule 4 still listed `trial-slot-booking:` as a live namespace. #1170 retired it: trials take the shared `slot-booking:` atom keys, one key per 30-minute atom of the booked interval. |
 
 ---
 

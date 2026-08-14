@@ -58,15 +58,31 @@ because there are three rails and only they split them correctly:
 ## 4. One lock namespace per atom
 
 Distributed lock keys are minted in ONE place — `utils/appointmentlock.ts` —
-and a given atom has exactly one key shape. Slot atoms lock under
-`slot-booking:<consultantProfileId>:<startsAt>`; the consultee side is
-`consultee-booking:<userId>`; events are
-`event-checkout:<type>:<eventId>`; trials `trial-slot-booking:…`; allocation
-`auto-allocate:<consultantProfileId>[:scope]`. Never mint a new key shape for
-an atom that already has one — two names for one atom is no lock at all.
-Global lock order (a total order ⇒ deadlock-free): **event/consultant →
-consultee → slot**. The consolidation of the remaining slot-atom callers onto
-these namespaces lands with train PR 1 of #1169.
+and a given atom has exactly one key shape. A slot atom is thirty minutes of
+one consultant's calendar, and it locks under
+`slot-booking:<consultantProfileId>:<atomStartISO>`; `lockSlotInterval` takes
+one such key per atom that `[startsAt, endsAt)` covers, with starts floored to
+the half-hour grid so an unaligned booking still collides with the aligned ones
+it overlaps. Keying on the raw `startsAt` instant instead would let a
+10:00–12:00 booking and an 11:00–12:00 booking hold different keys and both
+proceed to payment. The consultee side is `consultee-booking:<userId>`; events
+are `event-checkout:<type>:<eventOrPlanId>`; allocation is
+`auto-allocate:<consultantProfileId>[:scope]`.
+
+**Trials hold no namespace of their own.** They used to lock under
+`trial-slot-booking:`, which nothing else read, so a trial and a checkout for
+the same consultant-minute never contended (#1093 §1). #1170 retired that
+namespace entirely and pointed the trial route at `lockSlotBooking` — the same
+shared `slot-booking:` atom keys every other direct slot writer takes. Do not
+reintroduce it: `__tests__/booking-algorithm/trial-slot-integrity.test.ts`
+asserts the string is gone from both the route and the lock module.
+
+Never mint a new key shape for an atom that already has one — two names for one
+atom is no lock at all. The one deliberate exception is `SlotAllocationService`,
+which keeps its coarser consultant-wide `auto-allocate:` lock because it
+discovers slots dynamically under that lock; its write transaction re-validates
+conflicts and absorbs the #440 exclusion constraint. Global lock order (a total
+order ⇒ deadlock-free): **event/consultant → consultee → slot**.
 
 ## 5. Constraints Prisma can't express live in sidecars
 

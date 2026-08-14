@@ -75,7 +75,7 @@ Some capabilities attach to the `ACCEPTED` status itself rather than to any perm
 - View the plan's revenue-split preview (`GET .../revenue-split`).
 - Receive their earnings share at settlement.
 
-Scheduling is deliberately **not** a permission: no flag grants it, and only the plan owner can create events and set times. The owner's scheduling is itself constrained by the co-host availability guard (#784 AE-2 — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
+Scheduling is deliberately **not** a permission: no flag grants it, and only the plan owner can create events and set times. When the owner schedules a webinar, that scheduling is itself constrained by the co-host availability guard; class scheduling is not, because no class route calls it (#784 AE-2 — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
 
 ---
 
