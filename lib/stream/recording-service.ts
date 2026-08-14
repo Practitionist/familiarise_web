@@ -38,6 +38,23 @@ export interface StreamRecording {
 }
 
 /**
+ * The slice of a MeetingSession the recording sync actually reads. Structural
+ * rather than a Prisma payload type: the consultant and consultee paths reach
+ * this point through different `include` shapes.
+ */
+type SyncableSession = {
+  id: string;
+  streamCallId: string | null;
+  slotOfAppointment: {
+    appointment:
+      | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
+          organizationId: string | null;
+        })
+      | null;
+  };
+};
+
+/**
  * Recording Service class for managing video call recordings
  */
 export class RecordingService {
@@ -703,6 +720,96 @@ export class RecordingService {
   }
 
   /**
+   * Mirrors one session's Stream recordings into the database.
+   *
+   * The consultant and consultee sync paths held byte-identical copies of this
+   * loop, so the #1166 ORG-6 org-tag fix had to be made twice — and the gap it
+   * closed existed twice for the same reason. One writer now.
+   *
+   * Failures are swallowed per session, deliberately: one unreachable call must
+   * not abandon the rest of the sync.
+   */
+  private static async syncSessionRecordings(
+    session: SyncableSession,
+    syncedRecordings: RecordingRow[],
+  ): Promise<void> {
+    if (!session.streamCallId) return;
+
+    try {
+      const streamRecordings = await this.getCallRecordingsFromStream(
+        session.streamCallId,
+      );
+
+      for (const streamRec of streamRecordings) {
+        // Check if recording already exists (by filename/streamRecordingId)
+        const existingRecording = await prisma.recording.findFirst({
+          where: {
+            meetingSessionId: session.id,
+            streamRecordingId: streamRec.filename,
+          },
+        });
+
+        if (existingRecording) {
+          streamLogger.info("Recording already exists, skipping", {
+            recordingId: existingRecording.id,
+            filename: streamRec.filename,
+          });
+          continue;
+        }
+
+        // Calculate duration in minutes
+        const startDate = new Date(streamRec.start_time);
+        const endDate = new Date(streamRec.end_time);
+        const durationInMinutes = Math.round(
+          (endDate.getTime() - startDate.getTime()) / (1000 * 60),
+        );
+
+        // Generate title from appointment info (same logic as handleRecordingReady)
+        const appointment = session.slotOfAppointment.appointment;
+        const title = generateRecordingTitle(appointment, startDate);
+
+        // Calculate Stream URL expiration (2 weeks from now)
+        const streamUrlExpiresAt = new Date();
+        streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
+
+        // #1166 ORG-6 — mirror the parent appointment's org tag, as the webhook
+        // writer does: the personal recordings read now filters on this column,
+        // so a sync that left it null would surface an org session as personal.
+        const recording = await prisma.recording.create({
+          data: {
+            title,
+            recordingUrl: streamRec.url,
+            durationInMinutes,
+            recordedAt: startDate,
+            streamRecordingId: streamRec.filename,
+            streamCallId: session.streamCallId,
+            storageType: "STREAM_S3",
+            status: "READY",
+            streamUrlExpiresAt,
+            meetingSessionId: session.id,
+            organizationId: appointment?.organizationId ?? null,
+          },
+        });
+
+        syncedRecordings.push(recording);
+
+        streamLogger.info("Recording synced successfully", {
+          recordingId: recording.id,
+          sessionId: session.id,
+          title,
+          durationInMinutes,
+        });
+      }
+    } catch (sessionError) {
+      streamLogger.error("Failed to sync recordings for session", sessionError, {
+        sessionId: session.id,
+        streamCallId: session.streamCallId,
+      });
+      // Continue with next session even if one fails
+    }
+  }
+
+  /**
    * Sync recordings from Stream API for a consultant's sessions
    * Creates Recording records for any recordings not already in DB
    * @param consultantProfileId The consultant profile ID
@@ -798,85 +905,7 @@ export class RecordingService {
 
       // For each session, fetch recordings from Stream and sync
       for (const session of meetingSessions) {
-        if (!session.streamCallId) continue;
-
-        try {
-          const streamRecordings = await this.getCallRecordingsFromStream(
-            session.streamCallId,
-          );
-
-          for (const streamRec of streamRecordings) {
-            // Check if recording already exists (by filename/streamRecordingId)
-            const existingRecording = await prisma.recording.findFirst({
-              where: {
-                meetingSessionId: session.id,
-                streamRecordingId: streamRec.filename,
-              },
-            });
-
-            if (existingRecording) {
-              streamLogger.info("Recording already exists, skipping", {
-                recordingId: existingRecording.id,
-                filename: streamRec.filename,
-              });
-              continue;
-            }
-
-            // Calculate duration in minutes
-            const startDate = new Date(streamRec.start_time);
-            const endDate = new Date(streamRec.end_time);
-            const durationInMinutes = Math.round(
-              (endDate.getTime() - startDate.getTime()) / (1000 * 60),
-            );
-
-            // Generate title from appointment info (same logic as handleRecordingReady)
-            const appointment = session.slotOfAppointment.appointment;
-            const title = generateRecordingTitle(appointment, startDate);
-
-            // Calculate Stream URL expiration (2 weeks from now)
-            const streamUrlExpiresAt = new Date();
-            streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
-
-            // Create recording record. #1166 ORG-6 — mirror the parent
-            // appointment's org tag, as the webhook writer does: the personal
-            // recordings read now filters on this column, so a sync that left
-            // it null would surface an org session under "personal".
-            const recording = await prisma.recording.create({
-              data: {
-                title,
-                recordingUrl: streamRec.url,
-                durationInMinutes,
-                recordedAt: startDate,
-                streamRecordingId: streamRec.filename,
-                streamCallId: session.streamCallId,
-                storageType: "STREAM_S3",
-                status: "READY",
-                streamUrlExpiresAt,
-                meetingSessionId: session.id,
-                organizationId: appointment?.organizationId ?? null,
-              },
-            });
-
-            syncedRecordings.push(recording);
-
-            streamLogger.info("Recording synced successfully", {
-              recordingId: recording.id,
-              sessionId: session.id,
-              title,
-              durationInMinutes,
-            });
-          }
-        } catch (sessionError) {
-          streamLogger.error(
-            "Failed to sync recordings for session",
-            sessionError,
-            {
-              sessionId: session.id,
-              streamCallId: session.streamCallId,
-            },
-          );
-          // Continue with next session even if one fails
-        }
+        await this.syncSessionRecordings(session, syncedRecordings);
       }
 
       streamLogger.info("Recording sync completed", {
@@ -1009,85 +1038,7 @@ export class RecordingService {
 
       // For each session, fetch recordings from Stream and sync
       for (const session of uniqueSessions) {
-        if (!session.streamCallId) continue;
-
-        try {
-          const streamRecordings = await this.getCallRecordingsFromStream(
-            session.streamCallId,
-          );
-
-          for (const streamRec of streamRecordings) {
-            // Check if recording already exists (by filename/streamRecordingId)
-            const existingRecording = await prisma.recording.findFirst({
-              where: {
-                meetingSessionId: session.id,
-                streamRecordingId: streamRec.filename,
-              },
-            });
-
-            if (existingRecording) {
-              streamLogger.info("Recording already exists, skipping", {
-                recordingId: existingRecording.id,
-                filename: streamRec.filename,
-              });
-              continue;
-            }
-
-            // Calculate duration in minutes
-            const startDate = new Date(streamRec.start_time);
-            const endDate = new Date(streamRec.end_time);
-            const durationInMinutes = Math.round(
-              (endDate.getTime() - startDate.getTime()) / (1000 * 60),
-            );
-
-            // Generate title from appointment info (same logic as handleRecordingReady)
-            const appointment = session.slotOfAppointment.appointment;
-            const title = generateRecordingTitle(appointment, startDate);
-
-            // Calculate Stream URL expiration (2 weeks from now)
-            const streamUrlExpiresAt = new Date();
-            streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
-
-            // Create recording record. #1166 ORG-6 — mirror the parent
-            // appointment's org tag, as the webhook writer does: the personal
-            // recordings read now filters on this column, so a sync that left
-            // it null would surface an org session under "personal".
-            const recording = await prisma.recording.create({
-              data: {
-                title,
-                recordingUrl: streamRec.url,
-                durationInMinutes,
-                recordedAt: startDate,
-                streamRecordingId: streamRec.filename,
-                streamCallId: session.streamCallId,
-                storageType: "STREAM_S3",
-                status: "READY",
-                streamUrlExpiresAt,
-                meetingSessionId: session.id,
-                organizationId: appointment?.organizationId ?? null,
-              },
-            });
-
-            syncedRecordings.push(recording);
-
-            streamLogger.info("Recording synced successfully", {
-              recordingId: recording.id,
-              sessionId: session.id,
-              title,
-              durationInMinutes,
-            });
-          }
-        } catch (sessionError) {
-          streamLogger.error(
-            "Failed to sync recordings for session",
-            sessionError,
-            {
-              sessionId: session.id,
-              streamCallId: session.streamCallId,
-            },
-          );
-          // Continue with next session even if one fails
-        }
+        await this.syncSessionRecordings(session, syncedRecordings);
       }
 
       streamLogger.info("Recording sync completed for consultee", {
