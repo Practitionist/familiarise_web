@@ -267,7 +267,8 @@ export async function createOrgPayoutBatch(
             platformFeePaise: 0,
             refundsPaise: 0,
             netPayoutPaise: 0,
-            idempotencyKey: opts.idempotencyKey ?? null,
+            // #1093 §3 — never null: a keyless manual payout had no replay guard.
+            idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
             // mustPayByDate, tdsSectionApplied, tdsAmountPaise,
             // dtaaRateApplied are derived after we resolve the org's
             // MSME + PAN fields below and persisted via the second
@@ -444,7 +445,8 @@ export async function createOrgPayoutBatch(
               tdsAmountPaise: tds.tdsAmountPaise,
               tdsFallback: tds.fallbackApplied,
               tdsReason: tds.reason,
-              idempotencyKey: opts.idempotencyKey ?? null,
+              // #1093 §3 — never null: a keyless manual payout had no replay guard.
+            idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
             },
           },
         });

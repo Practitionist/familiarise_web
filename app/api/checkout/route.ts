@@ -46,6 +46,12 @@ export async function POST(req: NextRequest) {
     // #828 — fast-path replay: a double-click / network retry / second tab
     // with the same key gets the original attempt's response, never a second
     // Payment + tentative slots + gateway order.
+    // #1093 §3 — a nullable unique deduplicates nothing: every keyless
+    // checkout previously had NO double-charge protection while the code read
+    // as though the index covered it. Mint server-side when absent so the
+    // column is never null in practice; the NOT NULL flip is staged for the
+    // pre-MVP reset.
+    validatedData.clientIdempotencyKey ??= globalThis.crypto.randomUUID();
     replayKey = validatedData.clientIdempotencyKey;
     if (replayKey) {
       const replay = await replayByIdempotencyKey(session.user.id, replayKey);

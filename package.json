@@ -11,6 +11,7 @@
     "db:push": "npm run db:push:schema && npm run db:sidecars",
     "db:push:schema": "prisma db push",
     "db:sidecars": "npm run db:triggers && npm run db:constraints",
+    "db:assert-sidecars": "npx tsx -r dotenv/config scripts/db/assert-sidecar-applied.ts",
     "db:triggers": "npx tsx -r dotenv/config scripts/db/apply-ledger-triggers.ts",
     "db:constraints": "npx tsx -r dotenv/config scripts/db/apply-check-constraints.ts",
     "ledger:baseline": "npx tsx -r dotenv/config scripts/db/generate-ledger-baseline.ts",
