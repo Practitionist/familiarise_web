@@ -399,13 +399,13 @@ async function cancelExclusiveEngagement(
   ctx.summary.engagementsCancelled += 1;
 
   for (const appt of engagement.appointments) {
-    const paid = appt.payment.find(
-      // #1161 — free_ (credit-funded) payments are refundable now: their
-      // "refund" is the credit restoration the front door performs.
-      (p) => p.paymentStatus === "SUCCEEDED",
-    );
-    if (paid) {
-      await issueFullRefund(paid.id, ctx.initiatedByUserId, ctx.summary);
+    // #1161 — free_ (credit-funded) payments are refundable now: their
+    // "refund" is the credit restoration the front door performs. Every
+    // SUCCEEDED payment goes through, so a zero-amount row can't shadow a
+    // refundable gateway payment.
+    for (const p of appt.payment) {
+      if (p.paymentStatus !== "SUCCEEDED") continue;
+      await issueFullRefund(p.id, ctx.initiatedByUserId, ctx.summary);
     }
   }
 

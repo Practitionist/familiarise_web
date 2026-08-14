@@ -61,8 +61,9 @@ export async function refundBookingPayment(input: {
   reason: string;
   initiatedByUserId?: string | null;
 }): Promise<BookingRefundResult> {
+  // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
-    where: { id: input.paymentId },
+    where: { id: input.paymentId, deletedAt: null },
     select: { paymentIntent: true },
   });
   if (!payment) {
@@ -73,6 +74,15 @@ export async function refundBookingPayment(input: {
   }
 
   if (isFreeCreditIntent(payment.paymentIntent)) {
+    // The credits rail restores in full or not at all — honouring a partial
+    // amount would silently over-restore, then block the remainder forever
+    // behind its own ALREADY_FULLY_REFUNDED claim (#1161).
+    if (input.amountPaise !== undefined) {
+      throw new RefundValidationError(
+        `Payment ${input.paymentId} is credit-funded; the credits rail accepts no amount`,
+        "INVALID_AMOUNT",
+      );
+    }
     return refundFreeCreditPayment(input);
   }
 
@@ -103,7 +113,7 @@ async function refundFreeCreditPayment(input: {
   initiatedByUserId?: string | null;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
-    where: { id: input.paymentId },
+    where: { id: input.paymentId, deletedAt: null },
     select: {
       id: true,
       currency: true,
@@ -187,7 +197,7 @@ async function refundInternalFundedPayment(input: {
   initiatedByUserId?: string | null;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
-    where: { id: input.paymentId },
+    where: { id: input.paymentId, deletedAt: null },
     select: {
       id: true,
       amount: true,

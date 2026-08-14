@@ -180,8 +180,11 @@ export async function freezeAppointments(
   if (affectedSlots.length === 0) {
     return {
       cancelled: 0,
+      skippedAlreadyTerminal: 0,
+      freezeErrors: 0,
       notified: 0,
       refundsIssued: 0,
+      refundsSkippedAlreadyRefunded: 0,
       refundErrors: 0,
       subscriptionsExtended: 0,
     };
@@ -202,8 +205,12 @@ export async function freezeAppointments(
   let cancelled = 0;
   let notified = 0;
   let refundsIssued = 0;
+  let refundsSkippedAlreadyRefunded = 0;
   let refundErrors = 0;
   let subscriptionsExtended = 0;
+  // Appointments whose transaction failed outright (not a terminal skip) —
+  // the loop continues so one bad appointment can't abort the freeze.
+  let freezeErrors = 0;
 
   // Track subscription IDs affected by cancellation for scheduling period extension
   const affectedSubscriptionIds = new Set<string>();
@@ -227,9 +234,18 @@ export async function freezeAppointments(
   // #1162 — one SHORT transaction per appointment instead of one 60-second
   // giant: every write below is CAS-guarded and re-runnable, so a partial
   // freeze is safe (re-invoking continues where it stopped) and no single
-  // slow appointment can blow a shared transaction budget.
+  // slow appointment can blow a shared transaction budget. Post-commit
+  // effects (refunds, notifications, tombstones) accumulate LOCALLY inside
+  // the callback and merge only after the commit — a rollback after a push
+  // must not leave a refund queued for a booking that is still active.
   for (const appointmentId of Object.keys(slotsByAppointment)) {
-    await prisma.$transaction(async (tx) => {
+    try {
+      const outcome = await prisma.$transaction(async (tx) => {
+        const notifications: NotificationPayload[] = [];
+        const refunds: PendingRefundPayment[] = [];
+        const trialsToTombstone: string[] = [];
+        const subscriptionIds: string[] = [];
+
         const slots = slotsByAppointment[appointmentId];
         const appointment = slots[0].appointment;
         const earliestSlot = slots.reduce((a: AffectedSlot, b: AffectedSlot) =>
@@ -253,8 +269,7 @@ export async function freezeAppointments(
             });
           } catch (err) {
             if (err instanceof IllegalTransitionError) {
-              skippedAlreadyTerminal++;
-              return;
+              return { skipped: true } as const;
             }
             throw err;
           }
@@ -272,7 +287,7 @@ export async function freezeAppointments(
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: consultation.requestedBy?.user?.name || "User",
           });
-          if (notif) pendingNotifications.push(notif);
+          if (notif) notifications.push(notif);
         }
 
         // Cancel subscription appointment if applicable — CAS-guarded.
@@ -291,13 +306,12 @@ export async function freezeAppointments(
             });
           } catch (err) {
             if (err instanceof IllegalTransitionError) {
-              skippedAlreadyTerminal++;
-              return;
+              return { skipped: true } as const;
             }
             throw err;
           }
 
-          affectedSubscriptionIds.add(subscription.id);
+          subscriptionIds.push(subscription.id);
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
@@ -312,7 +326,7 @@ export async function freezeAppointments(
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: subscription.requestedBy?.user?.name || "User",
           });
-          if (notif) pendingNotifications.push(notif);
+          if (notif) notifications.push(notif);
         }
 
         // Cancel webinar if applicable
@@ -325,8 +339,7 @@ export async function freezeAppointments(
             });
           } catch (err) {
             if (err instanceof IllegalTransitionError) {
-              skippedAlreadyTerminal++;
-              return;
+              return { skipped: true } as const;
             }
             throw err;
           }
@@ -345,7 +358,7 @@ export async function freezeAppointments(
             planTitle: webinar.webinarPlan?.title || "Webinar",
             dateTime: earliestSlot.startsAt.toISOString(),
           });
-          if (notif) pendingNotifications.push(notif);
+          if (notif) notifications.push(notif);
         }
 
         // Cancel class if applicable
@@ -358,8 +371,7 @@ export async function freezeAppointments(
             });
           } catch (err) {
             if (err instanceof IllegalTransitionError) {
-              skippedAlreadyTerminal++;
-              return;
+              return { skipped: true } as const;
             }
             throw err;
           }
@@ -378,7 +390,7 @@ export async function freezeAppointments(
             planTitle: classEvent.classPlan?.title || "Class",
             dateTime: earliestSlot.startsAt.toISOString(),
           });
-          if (notif) pendingNotifications.push(notif);
+          if (notif) notifications.push(notif);
         }
 
         // Cancel trial session if applicable
@@ -394,12 +406,11 @@ export async function freezeAppointments(
             data: { status: "CANCELLED", pendingPaymentUrl: null },
           });
           if (moved.count === 0) {
-            skippedAlreadyTerminal++;
-            return;
+            return { skipped: true } as const;
           }
           // #1074 — tombstone via the trials-domain helper AFTER the tx; it
           // owns the appointment/slot shape for trials.
-          trialAppointmentsToTombstone.push(appointment.id);
+          trialsToTombstone.push(appointment.id);
 
           const notif = buildCancellationNotification({
             appointmentId: appointment.id,
@@ -413,13 +424,13 @@ export async function freezeAppointments(
             dateTime: earliestSlot.startsAt.toISOString(),
             consulteeName: trial.consulteeProfile?.user?.name || "User",
           });
-          if (notif) pendingNotifications.push(notif);
+          if (notif) notifications.push(notif);
         }
 
         // Collect SUCCEEDED payments for refund processing after the tx.
         for (const payment of appointment.payment) {
           if (payment.paymentStatus === "SUCCEEDED") {
-            pendingRefunds.push(payment);
+            refunds.push(payment);
           }
         }
 
@@ -451,8 +462,39 @@ export async function freezeAppointments(
           },
         });
 
-        cancelled++;
-    });
+        return {
+          skipped: false,
+          notifications,
+          refunds,
+          trialsToTombstone,
+          subscriptionIds,
+        } as const;
+      });
+
+      if (outcome.skipped) {
+        skippedAlreadyTerminal++;
+        continue;
+      }
+      pendingNotifications.push(...outcome.notifications);
+      pendingRefunds.push(...outcome.refunds);
+      trialAppointmentsToTombstone.push(...outcome.trialsToTombstone);
+      for (const id of outcome.subscriptionIds) affectedSubscriptionIds.add(id);
+      cancelled++;
+    } catch (err) {
+      freezeErrors++;
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "maintenance" } },
+      );
+      console.error(
+        JSON.stringify({
+          event: "maintenance_freeze_appointment_failed",
+          appointmentId,
+          error: err instanceof Error ? err.message : String(err),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
   }
 
   // Issue refunds AFTER the transaction commits.
@@ -489,6 +531,7 @@ export async function freezeAppointments(
         err.code === "ALREADY_FULLY_REFUNDED"
       ) {
         // Re-run over an already-settled payment — the clamp held.
+        refundsSkippedAlreadyRefunded++;
         continue;
       }
       Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "maintenance" } });
@@ -569,8 +612,10 @@ export async function freezeAppointments(
       event: "maintenance_appointments_frozen",
       cancelled,
       skippedAlreadyTerminal,
+      freezeErrors,
       notified,
       refundsIssued,
+      refundsSkippedAlreadyRefunded,
       refundErrors,
       subscriptionsExtended,
       windowStart: maintenanceStart.toISOString(),
@@ -582,8 +627,10 @@ export async function freezeAppointments(
   return {
     cancelled,
     skippedAlreadyTerminal,
+    freezeErrors,
     notified,
     refundsIssued,
+    refundsSkippedAlreadyRefunded,
     refundErrors,
     subscriptionsExtended,
   };

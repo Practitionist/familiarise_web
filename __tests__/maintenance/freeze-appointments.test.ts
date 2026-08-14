@@ -96,10 +96,17 @@ describe("booking-refund front door (#1161)", () => {
     // The WHOLE-EVENT query must not filter by amount (free_ seats refund
     // as credit restoration); the per-seat tiered path keeps its filter, a
     // recorded #1161 residual.
-    const wholeEventQuery = eventSource.slice(
-      eventSource.indexOf("export async function refundWholeEventPayments"),
-      eventSource.indexOf("export async function refundRemovedAttendeeSeat"),
+    const start = eventSource.indexOf(
+      "export async function refundWholeEventPayments",
     );
+    const end = eventSource.indexOf(
+      "export async function refundRemovedAttendeeSeat",
+    );
+    // A missing anchor would make slice() measure from the end of the file
+    // and pass over the wrong range — fail loudly instead.
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const wholeEventQuery = eventSource.slice(start, end);
     expect(wholeEventQuery).not.toContain("amount: { gt: 0 }");
   });
 });
