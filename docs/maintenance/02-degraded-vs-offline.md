@@ -190,3 +190,10 @@
 - `GET /api/participants/subscriptions/[id]` -- Subscription participants
 - `GET /api/participants/webinar/[id]` -- Webinar participants
 - `GET /api/participants/class/[id]` -- Class participants
+
+## The appointment freeze follows the cancellation doctrine (2026-08-14, #1162 / #1169 PR 3)
+
+Entering OFFLINE cancels every appointment overlapping the window through the same machinery as an interactive cancellation, because the old implementation predated that machinery and violated it three ways: it hard-deleted appointments whose only payment was PENDING (cascade-destroying the Payment row the capture webhook then needed), refunded gross amounts through a raw gateway call that could not route org-funded or credit-funded intents, and wrote statuses with no compare-and-swap guard, which could resurrect a COMPLETED booking. The rewrite deletes nothing: event statuses move through the `lib/booking/transitions.ts` CAS helpers (an already-terminal booking is skipped and counted, never resurrected), slots soft-cancel to `completionStatus: CANCELLED` exactly like the cancel route, trials tombstone through `softCancelTrialAppointment`, and open reschedule proposals are closed so `openForAppointmentId` frees. Refunds run after the transactions through `refundBookingPayment`, which clamps to the refundable balance and routes every rail — gateway, org-funded, and referral-credit — and a re-run of the freeze is safe end to end: the CAS guards skip what is already cancelled and the balance clamp turns a second refund attempt into a recorded skip.
+
+Separately, the maintenance-mode Redis keys now carry a 24-hour TTL (#697 INF-1). Every `setMaintenanceState` call refreshes the clock, so a tended window persists, while an OFFLINE flag whose owner disappeared expires back to OFF instead of keeping the platform down indefinitely. Maintenance windows planned to exceed a day must re-assert their phase at least daily; the pre-maintenance checklist carries that rule.
+
