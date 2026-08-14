@@ -215,11 +215,14 @@ export async function GET(
         );
 
     const grossPaise = ctx.paidPayment?.amountPaise ?? 0;
-    const totalSessions = ctx.sessionsCompleted + ctx.sessionsRemaining;
     // #1006 — the refundable base is the undelivered share of the plan price.
-    const isProratable = !!appointment.subscriptionId && totalSessions > 0;
+    // The denominator is `slotsTotal`, every session the plan ever held time
+    // for, because that is what the POST route divides by (#1174). Summing
+    // completed + live instead drops every terminal-but-not-completed session
+    // out of the plan, and the quote then promises more than the cancel pays.
+    const isProratable = !!appointment.subscriptionId && ctx.slotsTotal > 0;
     const proratedBasePaise = isProratable
-      ? Math.floor((grossPaise * ctx.sessionsRemaining) / totalSessions)
+      ? Math.floor((grossPaise * ctx.sessionsRemaining) / ctx.slotsTotal)
       : grossPaise;
     const estimatedRefundPaise = ctx.paidPayment
       ? Math.min(
@@ -235,7 +238,9 @@ export async function GET(
       hoursUntilNextSession: ctx.hoursUntilNextSession,
       // Only true when proration actually moves the number — an untouched
       // subscription refunds off the whole price, like every other booking.
-      prorated: isProratable && ctx.sessionsCompleted > 0,
+      // Keyed on the same two numbers the base is: any session that is no
+      // longer live has already shrunk the quote, whether or not it COMPLETED.
+      prorated: isProratable && ctx.sessionsRemaining < ctx.slotsTotal,
       creditFunded: bookingPayment?.paymentIntent.startsWith("free_") ?? false,
     });
   } catch (error) {
