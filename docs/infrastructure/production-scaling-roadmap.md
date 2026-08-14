@@ -493,11 +493,11 @@ At 10,000 concurrent users:
 
 ### The Problem
 
-Our 28+ cron jobs run via GitHub Actions scheduled workflows. Known issues:
+Our 61 cron jobs run via GitHub Actions scheduled workflows. Known issues:
 
 1. **Scheduling delays**: 15-60 minutes common during peak GitHub load
 2. **Silent disabling**: Repositories with no activity for 60 days have scheduled workflows **automatically disabled** without notification
-3. **Connection storms**: 28 cron jobs potentially hitting the database simultaneously. If 5 cron jobs fire within a 1-minute window, each opening 5 connections = 25 connections consumed just by cron
+3. **Connection storms**: 61 cron jobs potentially hitting the database simultaneously. If 5 cron jobs fire within a 1-minute window, each opening 5 connections = 25 connections consumed just by cron
 
 ### Approaches
 

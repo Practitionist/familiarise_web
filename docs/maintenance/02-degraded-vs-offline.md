@@ -92,7 +92,7 @@
 
 **Residual concern**: A job that is already mid-run when OFFLINE mode is activated will finish its current work. The guard is entry-time only — there is no checkpoint inside long jobs. For short jobs (typical <5s) this is harmless; for longer jobs (`sync-payment-earnings`, `reconcile-ledgers`) keep the 2-minute settling window in the pre-maintenance checklist.
 
-**Affected jobs**: All 27 -- see [Cron Jobs Reference](./04-cron-jobs-reference.md)
+**Affected jobs**: 49 of the 61 scheduled jobs. The other 12 never call the guard and run straight through OFFLINE -- see [Cron Jobs Reference](./04-cron-jobs-reference.md)
 
 ### Gap 3: Active Video Calls Not Terminated
 
