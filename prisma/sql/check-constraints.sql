@@ -295,3 +295,50 @@ ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
     "currentUses" >= 0
     AND ("maxUses" IS NULL OR "currentUses" <= "maxUses")
   );
+
+-- SPLIT
+-- #1093 §4 — two partial uniques the schema doc-comments always claimed.
+-- Verified duplicate-free on the live database before adding (2026-08-13), so
+-- these apply cleanly outside a reset. Two orgs may map the same IdP user;
+-- one org must not map them twice — without this, deprovisionScimUser's
+-- findFirst picks arbitrarily and an IdP DELETE can leave a twin ACTIVE.
+DROP INDEX IF EXISTS "membership_org_scim_key";
+-- SPLIT
+CREATE UNIQUE INDEX "membership_org_scim_key"
+  ON "Membership" ("organizationId", "externalScimId")
+  WHERE "externalScimId" IS NOT NULL;
+-- SPLIT
+DROP INDEX IF EXISTS "erasure_request_active_user_key";
+-- SPLIT
+CREATE UNIQUE INDEX "erasure_request_active_user_key"
+  ON "ErasureRequest" ("userId")
+  WHERE "status" IN ('PENDING', 'IN_PROGRESS');
+
+-- ============================================================================
+-- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
+-- Each of these can fail against pre-reset data (existing nulls, historical
+-- overlaps, drifted denormalizations). They ship here commented so review and
+-- the reset runbook see them; uncomment at the reset.
+--
+-- 1. #1093 §3 — make the idempotency guarantees structural once no nulls exist
+--    (writers mint since #1169 PR 9, so no new nulls are created):
+--    ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
+--    ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
+--
+-- 2. #1093 §5 — overlapping ACTIVE program assignments double-bill a seat; the
+--    (programId, membershipId, periodStart) unique cannot see different starts:
+--    ALTER TABLE "ProgramAssignment" ADD CONSTRAINT "program_assignment_no_active_overlap"
+--      EXCLUDE USING gist (
+--        "programId" WITH =,
+--        "membershipId" WITH =,
+--        tstzrange("periodStart", "periodEnd") WITH &&
+--      ) WHERE ("status" = 'ACTIVE');
+--
+-- 3. #1169 PR 1 residue — the denormalized session totals feed
+--    calculateRequiredSlots as authoritative; incoherent values make plans
+--    impossible to allocate ("Could only find N of M"):
+--    ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
+--      CHECK ("totalSessions" >= 1);
+--    ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
+--      CHECK ("totalSessions" >= 1);
+-- ============================================================================
