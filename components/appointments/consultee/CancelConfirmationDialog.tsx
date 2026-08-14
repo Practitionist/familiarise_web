@@ -19,9 +19,20 @@ interface CancelRefundPreview {
   refundPct: number;
   estimatedRefundPaise: number;
   currency: string;
+  /**
+   * Null when the booking has no live session at all, and on the whole-event
+   * rail, which never consults the clock.
+   */
   hoursUntilNextSession: number | null;
   prorated: boolean;
   creditFunded: boolean;
+  /**
+   * Cancelling a class or webinar refunds the entire roster in full, not the
+   * viewer's own seat — `estimatedRefundPaise` is then the sum across
+   * `attendeeCount` paid attendees.
+   */
+  wholeEvent?: boolean;
+  attendeeCount?: number | null;
 }
 
 interface CancelConfirmationDialogProps {
@@ -119,19 +130,66 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
-    if (preview.creditFunded) {
+    // Cancelling a class or webinar is not a quote about the viewer's own seat.
+    // The POST route hands the whole event to `refundWholeEventPayments`, which
+    // refunds every attendee in full — so an organiser, who owns no seat, was
+    // being told "no refund at this notice" about a click that returns the
+    // entire roster's money.
+    if (preview.wholeEvent) {
+      const attendees = preview.attendeeCount ?? 0;
+      if (attendees === 0) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            Nobody has paid for a seat yet, so cancelling refunds nothing.
+          </p>
+        );
+      }
       return (
         <p className="text-muted-foreground text-sm">
-          You paid with referral credits — they&apos;ll be restored to your
-          balance.
+          Cancelling this event refunds all{" "}
+          <strong className="text-foreground">
+            {attendees} {attendees === 1 ? "attendee" : "attendees"}
+          </strong>{" "}
+          in full —{" "}
+          <strong className="text-foreground">
+            ~
+            {formatCurrencyAmount(
+              preview.estimatedRefundPaise,
+              preview.currency,
+            )}
+          </strong>{" "}
+          in total.
+        </p>
+      );
+    }
+    if (preview.creditFunded) {
+      // #1161 — credit restoration is all-or-nothing. Only a full-refund window
+      // restores automatically; inside a partial window the cancellation still
+      // stands but the credits are escalated for a human, not returned. The
+      // dialog said "they'll be restored" for both, which was a promise the
+      // money path does not keep.
+      if (preview.refundPct === 100) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            You paid with referral credits — they&apos;ll be restored to your
+            balance.
+          </p>
+        );
+      }
+      return (
+        <p className="text-muted-foreground text-sm">
+          You paid with referral credits, and this cancellation falls in a
+          partial-refund window — restoration is reviewed manually rather than
+          returned automatically.
         </p>
       );
     }
     if (preview.estimatedRefundPaise > 0) {
       return (
         <p className="text-muted-foreground text-sm">
-          You&apos;ll be refunded ~
+          You&apos;ll be refunded{" "}
           <strong className="text-foreground">
+            ~
             {formatCurrencyAmount(
               preview.estimatedRefundPaise,
               preview.currency,

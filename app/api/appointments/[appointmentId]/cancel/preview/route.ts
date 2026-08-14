@@ -12,7 +12,281 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import prisma from "@/lib/prisma";
+
+/** Every Appointment field the quote reads. */
+async function loadPreviewAppointment(appointmentId: string) {
+  return prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      id: true,
+      organizationId: true,
+      consultationId: true,
+      subscriptionId: true,
+      webinarId: true,
+      classId: true,
+      consultation: {
+        select: {
+          requestedById: true,
+          requestedBy: { select: { userId: true } },
+          consultationPlan: {
+            select: {
+              consultantProfileId: true,
+              consultantProfile: { select: { userId: true } },
+            },
+          },
+        },
+      },
+      subscription: {
+        select: {
+          requestedById: true,
+          requestedBy: { select: { userId: true } },
+          subscriptionPlan: {
+            select: {
+              consultantProfileId: true,
+              consultantProfile: { select: { userId: true } },
+            },
+          },
+        },
+      },
+      webinar: {
+        select: {
+          webinarPlan: {
+            select: {
+              consultantProfileId: true,
+              consultantProfile: { select: { userId: true } },
+            },
+          },
+        },
+      },
+      class: {
+        select: {
+          classPlan: {
+            select: {
+              consultantProfileId: true,
+              consultantProfile: { select: { userId: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+type PreviewAppointment = NonNullable<
+  Awaited<ReturnType<typeof loadPreviewAppointment>>
+>;
+
+type ActorRoles = {
+  isParticipant: boolean;
+  consultantUserId: string | null;
+  consulteeUserId: string | null;
+};
+
+/**
+ * Who the viewer is on this booking, mirroring the POST route's derivation
+ * branch for branch. Note what the group-event branches do NOT say: an attendee
+ * is not a participant of a class or webinar here, because the POST route does
+ * not treat them as one either. Attendees leave through the roster route, which
+ * refunds one seat under the notice tiers; this route quotes the organiser's
+ * act, which cancels the whole event.
+ */
+function deriveActorRoles(
+  appointment: PreviewAppointment,
+  actor: {
+    consultantProfileId?: string | null;
+    consulteeProfileId?: string | null;
+  },
+): ActorRoles {
+  const actorConsultantProfileId = actor.consultantProfileId;
+  const actorConsulteeProfileId = actor.consulteeProfileId;
+
+  if (appointment.consultation) {
+    const plan = appointment.consultation.consultationPlan;
+    return {
+      consultantUserId: plan?.consultantProfile?.userId ?? null,
+      consulteeUserId: appointment.consultation.requestedBy?.userId ?? null,
+      isParticipant:
+        (!!actorConsultantProfileId &&
+          actorConsultantProfileId === plan?.consultantProfileId) ||
+        (!!actorConsulteeProfileId &&
+          actorConsulteeProfileId === appointment.consultation.requestedById),
+    };
+  }
+  if (appointment.subscription) {
+    const plan = appointment.subscription.subscriptionPlan;
+    return {
+      consultantUserId: plan?.consultantProfile?.userId ?? null,
+      consulteeUserId: appointment.subscription.requestedBy?.userId ?? null,
+      isParticipant:
+        (!!actorConsultantProfileId &&
+          actorConsultantProfileId === plan?.consultantProfileId) ||
+        (!!actorConsulteeProfileId &&
+          actorConsulteeProfileId === appointment.subscription.requestedById),
+    };
+  }
+  if (appointment.webinar) {
+    const plan = appointment.webinar.webinarPlan;
+    return {
+      consultantUserId: plan?.consultantProfile?.userId ?? null,
+      consulteeUserId: null,
+      isParticipant:
+        !!actorConsultantProfileId &&
+        actorConsultantProfileId === plan?.consultantProfileId,
+    };
+  }
+  if (appointment.class) {
+    const plan = appointment.class.classPlan;
+    return {
+      consultantUserId: plan?.consultantProfile?.userId ?? null,
+      consulteeUserId: null,
+      isParticipant:
+        !!actorConsultantProfileId &&
+        actorConsultantProfileId === plan?.consultantProfileId,
+    };
+  }
+  return {
+    isParticipant: false,
+    consultantUserId: null,
+    consulteeUserId: null,
+  };
+}
+
+/**
+ * What cancelling a class or webinar actually pays back.
+ *
+ * The POST route does not tier a group event at all: it hands the whole event
+ * to `refundWholeEventPayments`, which refunds EVERY attendee's seat in full,
+ * whoever pressed cancel. Quoting that act against the viewer's own payment was
+ * the defect — an organiser owns no seat, so the preview found no payment and
+ * told them "no refund at this notice" while the click was about to return
+ * every attendee's money.
+ *
+ * The payment set is `refundWholeEventPayments`' own, filter for filter,
+ * including its absence of a `deletedAt` clause: a quote that reads a different
+ * set than the charge is just a second opinion. Each seat is worth its
+ * refundable balance rather than its gross, because that is what a full refund
+ * of an already partly-refunded seat returns.
+ */
+async function quoteWholeEventRefund(
+  kind: "class" | "webinar",
+  eventId: string,
+) {
+  const seats = await prisma.payment.findMany({
+    where: {
+      appointment:
+        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+      paymentStatus: "SUCCEEDED",
+      amount: { gt: 0 },
+    },
+    select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+
+  return {
+    estimatedRefundPaise: seats.reduce(
+      (total, seat) =>
+        total + refundableBalancePaise(Number(seat.amount), seat),
+      0,
+    ),
+    /** Paid seats — the attendees who are owed something, not the roster. */
+    attendeeCount: seats.length,
+    // Settlement is INR-only by design, so the seats of one event share a
+    // currency and the sum above is denominated in it.
+    currency: seats[0]?.currency ?? "INR",
+  };
+}
+
+/**
+ * What cancelling a 1:1 booking pays back: a tiered share of the one payment
+ * that funds it.
+ *
+ * Every input is the POST route's own — the same context builder, the same tier
+ * function, the same linear proration and the same clamp to the refundable
+ * balance — because a quote that restates the rule is a rule that can drift
+ * from the charge.
+ */
+async function quoteIndividualBooking(
+  appointment: PreviewAppointment,
+  actor: {
+    id: string;
+    consultantProfileId?: string | null;
+  },
+  roles: ActorRoles,
+  isPrivilegedUser: boolean,
+) {
+  const bookingRef = {
+    appointmentId: appointment.id,
+    consultationId: appointment.consultationId,
+    subscriptionId: appointment.subscriptionId,
+    classId: appointment.classId,
+    webinarId: appointment.webinarId,
+  };
+  const ctx = await resolveBookingRefundContext(bookingRef);
+
+  // The context deliberately ignores zero-amount payments, so a booking paid
+  // entirely in referral credits reads as unpaid there. Its `free_` intent is
+  // the only signal that value was exchanged at all (#1161).
+  const bookingPayment = await prisma.payment.findFirst({
+    where: {
+      appointment: bookingAppointmentFilter(bookingRef),
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "asc" },
+    select: { currency: true, paymentIntent: true },
+  });
+
+  const isConsultantInitiated =
+    (!!actor.consultantProfileId && roles.consultantUserId === actor.id) ||
+    (isPrivilegedUser && actor.id !== roles.consulteeUserId);
+
+  // A booking that was never scheduled has no session to give notice on, so it
+  // sits in the top tier rather than the "already started" floor.
+  const nextSessionHours = ctx.hoursUntilNextSession ?? -1;
+  const noticeHours =
+    ctx.slotsTotal === 0 ? Number.POSITIVE_INFINITY : nextSessionHours;
+  const refundPct = computeRefundPct(
+    parsePolicySnapshot(ctx.policySnapshot),
+    noticeHours,
+    isConsultantInitiated,
+  );
+
+  const grossPaise = ctx.paidPayment?.amountPaise ?? 0;
+  // #1006 — the refundable base is the undelivered share of the plan price.
+  // The denominator is `slotsTotal`, every session the plan ever held time
+  // for, because that is what the POST route divides by (#1174). Summing
+  // completed + live instead drops every terminal-but-not-completed session
+  // out of the plan, and the quote then promises more than the cancel pays.
+  const isProratable = !!appointment.subscriptionId && ctx.slotsTotal > 0;
+  const proratedBasePaise = isProratable
+    ? Math.floor((grossPaise * ctx.sessionsRemaining) / ctx.slotsTotal)
+    : grossPaise;
+  const estimatedRefundPaise = ctx.paidPayment
+    ? Math.min(
+        Math.floor((proratedBasePaise * refundPct) / 100),
+        ctx.paidPayment.refundablePaise,
+      )
+    : 0;
+
+  return {
+    refundPct,
+    estimatedRefundPaise,
+    currency: bookingPayment?.currency ?? "INR",
+    hoursUntilNextSession: ctx.hoursUntilNextSession,
+    // Only true when proration actually moves the number — an untouched
+    // subscription refunds off the whole price, like every other booking.
+    // Keyed on the same two numbers the base is: any session that is no
+    // longer live has already shrunk the quote, whether or not it COMPLETED.
+    prorated: isProratable && ctx.sessionsRemaining < ctx.slotsTotal,
+    creditFunded: bookingPayment?.paymentIntent.startsWith("free_") ?? false,
+    wholeEvent: false,
+    attendeeCount: null,
+  };
+}
 
 /**
  * What cancelling this booking right now would pay back — computed, never
@@ -43,61 +317,7 @@ export async function GET(
 
     const { appointmentId } = await params;
 
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
-      select: {
-        id: true,
-        organizationId: true,
-        consultationId: true,
-        subscriptionId: true,
-        webinarId: true,
-        classId: true,
-        consultation: {
-          select: {
-            requestedById: true,
-            requestedBy: { select: { userId: true } },
-            consultationPlan: {
-              select: {
-                consultantProfileId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            requestedById: true,
-            requestedBy: { select: { userId: true } },
-            subscriptionPlan: {
-              select: {
-                consultantProfileId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        webinar: {
-          select: {
-            webinarPlan: {
-              select: {
-                consultantProfileId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        class: {
-          select: {
-            classPlan: {
-              select: {
-                consultantProfileId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-      },
-    });
+    const appointment = await loadPreviewAppointment(appointmentId);
 
     if (!appointment) {
       return NextResponse.json(
@@ -111,138 +331,63 @@ export async function GET(
     // take — worse than no quote. Trials are absent from both for the same
     // reason: the POST route has no trial branch, so they fall through to the
     // privileged/org-admin checks here too.
-    const actorConsultantProfileId = session.user.consultantProfileId;
-    const actorConsulteeProfileId = session.user.consulteeProfileId;
-
-    let isParticipant = false;
-    let consultantUserId: string | null = null;
-    let consulteeUserId: string | null = null;
-
-    if (appointment.consultation) {
-      const plan = appointment.consultation.consultationPlan;
-      consultantUserId = plan?.consultantProfile?.userId ?? null;
-      consulteeUserId = appointment.consultation.requestedBy?.userId ?? null;
-      isParticipant =
-        (!!actorConsultantProfileId &&
-          actorConsultantProfileId === plan?.consultantProfileId) ||
-        (!!actorConsulteeProfileId &&
-          actorConsulteeProfileId === appointment.consultation.requestedById);
-    } else if (appointment.subscription) {
-      const plan = appointment.subscription.subscriptionPlan;
-      consultantUserId = plan?.consultantProfile?.userId ?? null;
-      consulteeUserId = appointment.subscription.requestedBy?.userId ?? null;
-      isParticipant =
-        (!!actorConsultantProfileId &&
-          actorConsultantProfileId === plan?.consultantProfileId) ||
-        (!!actorConsulteeProfileId &&
-          actorConsulteeProfileId === appointment.subscription.requestedById);
-    } else if (appointment.webinar) {
-      const plan = appointment.webinar.webinarPlan;
-      consultantUserId = plan?.consultantProfile?.userId ?? null;
-      isParticipant =
-        !!actorConsultantProfileId &&
-        actorConsultantProfileId === plan?.consultantProfileId;
-    } else if (appointment.class) {
-      const plan = appointment.class.classPlan;
-      consultantUserId = plan?.consultantProfile?.userId ?? null;
-      isParticipant =
-        !!actorConsultantProfileId &&
-        actorConsultantProfileId === plan?.consultantProfileId;
-    }
+    const roles = deriveActorRoles(appointment, session.user);
 
     const isPrivilegedUser = isPrivileged(session.user.role);
     const isOrgAdminActor =
-      !isParticipant &&
+      !roles.isParticipant &&
       !isPrivilegedUser &&
       (await isOrgAdminOfAppointment(
         session.user.id,
         appointment.organizationId,
       ));
 
-    if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
+    if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
       );
     }
 
-    const bookingRef = {
-      appointmentId: appointment.id,
-      consultationId: appointment.consultationId,
-      subscriptionId: appointment.subscriptionId,
-      classId: appointment.classId,
-      webinarId: appointment.webinarId,
-    };
-    // On a group event every attendee's payment and seat hang off the same
-    // appointment, so the estimate has to be scoped to the viewer's own.
-    const isGroupEvent = !!appointment.webinarId || !!appointment.classId;
-    const ctx = await resolveBookingRefundContext(
-      bookingRef,
-      isGroupEvent ? session.user.id : undefined,
+    // Group events never reach the notice tiers or the viewer's own payment:
+    // the POST route refunds the entire roster in full. Quote that instead.
+    let eventKind: "class" | "webinar" | null = null;
+    let eventId: string | null = null;
+    if (appointment.webinarId) {
+      eventKind = "webinar";
+      eventId = appointment.webinarId;
+    } else if (appointment.classId) {
+      eventKind = "class";
+      eventId = appointment.classId;
+    }
+
+    if (eventKind && eventId) {
+      const quote = await quoteWholeEventRefund(eventKind, eventId);
+      return NextResponse.json({
+        refundPct: 100,
+        estimatedRefundPaise: quote.estimatedRefundPaise,
+        currency: quote.currency,
+        // The whole-event rail never consults the clock, so no notice window is
+        // computed for it.
+        hoursUntilNextSession: null,
+        prorated: false,
+        // Seats fund through several rails at once (card, org wallet, credits),
+        // so no single funding sentence is true of the aggregate. The
+        // whole-event copy stands on its own.
+        creditFunded: false,
+        wholeEvent: true,
+        attendeeCount: quote.attendeeCount,
+      });
+    }
+
+    return NextResponse.json(
+      await quoteIndividualBooking(
+        appointment,
+        session.user,
+        roles,
+        isPrivilegedUser,
+      ),
     );
-
-    // The context deliberately ignores zero-amount payments, so a booking paid
-    // entirely in referral credits reads as unpaid there. Its `free_` intent is
-    // the only signal that value was exchanged at all (#1161).
-    const bookingPayment = await prisma.payment.findFirst({
-      where: {
-        appointment: bookingAppointmentFilter(bookingRef),
-        paymentStatus: "SUCCEEDED",
-        deletedAt: null,
-        ...(isGroupEvent ? { userId: session.user.id } : {}),
-      },
-      orderBy: { createdAt: "asc" },
-      select: { currency: true, paymentIntent: true },
-    });
-
-    const isConsultantInitiated =
-      (!!actorConsultantProfileId && consultantUserId === session.user.id) ||
-      (isPrivilegedUser && session.user.id !== consulteeUserId);
-
-    // A booking that was never scheduled has no session to give notice on, so
-    // it sits in the top tier rather than the "already started" floor.
-    const neverScheduled = ctx.slotsTotal === 0;
-    // Cancelling a group event refunds every seat in full
-    // (`refundWholeEventPayments`) — the notice tiers never run there.
-    const refundPct = isGroupEvent
-      ? 100
-      : computeRefundPct(
-          parsePolicySnapshot(ctx.policySnapshot),
-          neverScheduled
-            ? Number.POSITIVE_INFINITY
-            : (ctx.hoursUntilNextSession ?? -1),
-          isConsultantInitiated,
-        );
-
-    const grossPaise = ctx.paidPayment?.amountPaise ?? 0;
-    // #1006 — the refundable base is the undelivered share of the plan price.
-    // The denominator is `slotsTotal`, every session the plan ever held time
-    // for, because that is what the POST route divides by (#1174). Summing
-    // completed + live instead drops every terminal-but-not-completed session
-    // out of the plan, and the quote then promises more than the cancel pays.
-    const isProratable = !!appointment.subscriptionId && ctx.slotsTotal > 0;
-    const proratedBasePaise = isProratable
-      ? Math.floor((grossPaise * ctx.sessionsRemaining) / ctx.slotsTotal)
-      : grossPaise;
-    const estimatedRefundPaise = ctx.paidPayment
-      ? Math.min(
-          Math.floor((proratedBasePaise * refundPct) / 100),
-          ctx.paidPayment.refundablePaise,
-        )
-      : 0;
-
-    return NextResponse.json({
-      refundPct,
-      estimatedRefundPaise,
-      currency: bookingPayment?.currency ?? "INR",
-      hoursUntilNextSession: ctx.hoursUntilNextSession,
-      // Only true when proration actually moves the number — an untouched
-      // subscription refunds off the whole price, like every other booking.
-      // Keyed on the same two numbers the base is: any session that is no
-      // longer live has already shrunk the quote, whether or not it COMPLETED.
-      prorated: isProratable && ctx.sessionsRemaining < ctx.slotsTotal,
-      creditFunded: bookingPayment?.paymentIntent.startsWith("free_") ?? false,
-    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
