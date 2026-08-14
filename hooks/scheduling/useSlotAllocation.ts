@@ -40,6 +40,9 @@ import {
   autoScheduled,
   allocationFailed,
   allocatedElsewhere,
+  isPreservedAllocationMessage,
+  schedulingDayBucket,
+  schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
 
 /**
@@ -502,12 +505,18 @@ export function useEventSlotAllocation(
   // ALLOCATION FAILURE HANDLING
   // ==========================================
 
-  /** Common failure path: 409 means another tab/session already allocated. */
+  /** Common failure path: 409 means another tab/session already allocated —
+   * UNLESS the message says a SLOT was taken (#1132): that request is still
+   * allocatable with different times, so the server's own message renders
+   * as itself and the dialog stays open (no onConflict tear-down). */
   const handleAllocationFailure = useCallback(
     (result: AllocationResult, fallback: string) => {
       const errorMessage = result.error || fallback;
       setAllocationError(errorMessage);
-      if (result.httpStatus === 409) {
+      if (
+        result.httpStatus === 409 &&
+        !isPreservedAllocationMessage(errorMessage)
+      ) {
         toast(allocatedElsewhere());
         onConflict?.();
       } else {
@@ -597,7 +606,12 @@ export function useEventSlotAllocation(
               preDaySlots.length === 0 &&
               completeCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(sessionsPerWeek));
+              queueToast(
+                weeklyLimitReached(
+                  sessionsPerWeek,
+                  schedulingWeekBucket(slot.startTime, options.schedulingTimezone),
+                ),
+              );
               return currentSlots;
             }
 
@@ -607,7 +621,12 @@ export function useEventSlotAllocation(
               isCompleteCall([...preDaySlots, slot], slotsPerCall) &&
               completeCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(sessionsPerWeek));
+              queueToast(
+                weeklyLimitReached(
+                  sessionsPerWeek,
+                  schedulingWeekBucket(slot.startTime, options.schedulingTimezone),
+                ),
+              );
               return currentSlots;
             }
 
@@ -687,7 +706,12 @@ export function useEventSlotAllocation(
             const isStartingNewSessionOnDay =
               daySlots.length % slotsPerSession === 0;
             if (isStartingNewSessionOnDay && sessions >= maxSessionsPerDay) {
-              queueToast(dailyLimitReached(maxSessionsPerDay));
+              queueToast(
+                dailyLimitReached(
+                  maxSessionsPerDay,
+                  schedulingDayBucket(slot.startTime, options.schedulingTimezone),
+                ),
+              );
               return currentSlots;
             }
           } else if (
@@ -773,7 +797,12 @@ export function useEventSlotAllocation(
               isCompleteCall(dayWithNewSlot, slotsPerCall) &&
               existingCallsThisWeek >= sessionsPerWeek
             ) {
-              queueToast(weeklyLimitReached(sessionsPerWeek));
+              queueToast(
+                weeklyLimitReached(
+                  sessionsPerWeek,
+                  schedulingWeekBucket(slot.startTime, options.schedulingTimezone),
+                ),
+              );
               return currentSlots;
             }
 
@@ -786,7 +815,11 @@ export function useEventSlotAllocation(
 
             // Check if adding this slot would exceed the per-call limit
             if (currentDaySlots.length >= slotsPerCall) {
-              queueToast(oneSessionPerDay());
+              queueToast(
+                oneSessionPerDay(
+                  schedulingDayBucket(slot.startTime, options.schedulingTimezone),
+                ),
+              );
               return currentSlots;
             }
 
