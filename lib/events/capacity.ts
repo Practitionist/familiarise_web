@@ -82,6 +82,10 @@ export function getWebinarCapacity(params: {
   excludeUserIds?: string[];
 }): EventCapacity {
   const { webinar, plan, excludeUserIds = [] } = params;
+  assertParticipantsIncluded(
+    webinar.appointment?.slotsOfAppointment,
+    "getWebinarCapacity",
+  );
   return toCapacity(
     effectiveMaxParticipants(webinar, plan),
     countWebinarParticipants(webinar.appointment ?? null, excludeUserIds),
@@ -102,10 +106,32 @@ export function getClassCapacity(params: {
   excludeUserIds?: string[];
 }): EventCapacity {
   const { classInstance, plan, excludeUserIds = [] } = params;
+  for (const appointment of classInstance.appointments ?? []) {
+    assertParticipantsIncluded(appointment.slotsOfAppointment, "getClassCapacity");
+  }
   return toCapacity(
     effectiveMaxParticipants(classInstance, plan),
     countUniqueParticipants(classInstance.appointments ?? [], excludeUserIds),
   );
+}
+
+/**
+ * A capacity call whose slots were loaded WITHOUT the `user` relation counts
+ * zero registrants and reports a sold-out event as open — the exact way the
+ * old in-lock recheck died. Loud failure beats a silently-wrong count on a
+ * money gate, so this throws instead of returning 0 (#676 CN-4, #1169 PR 1).
+ */
+function assertParticipantsIncluded(
+  slots: Array<Record<string, unknown>> | undefined | null,
+  caller: string,
+): void {
+  for (const slot of slots ?? []) {
+    if (!("user" in slot)) {
+      throw new Error(
+        `${caller}: slotsOfAppointment.user was not included in the query — the participant count would silently read 0. Include { slotsOfAppointment: { include: { user: true } } }.`,
+      );
+    }
+  }
 }
 
 /**

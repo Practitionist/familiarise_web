@@ -25,6 +25,7 @@ import {
   lockConsulteeBooking,
   unlockConsulteeBooking,
   extendLock,
+  extendSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
 } from "@/utils/appointmentlock";
@@ -885,7 +886,7 @@ async function getPlanDataForLock(
 async function acquireCheckoutLock(
   data: CheckoutInput,
   planData: { consultantProfile?: { id: string } },
-): Promise<ApprovalLock | null> {
+): Promise<ApprovalLock | ApprovalLock[] | null> {
   const appointmentType = data.appointmentType;
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
@@ -916,9 +917,13 @@ async function acquireCheckoutLock(
       }),
     );
 
+    // #1169 PR 1 — interval-granular: every 30-min atom of [startsAt, endsAt)
+    // is locked, so an overlapping booking with a DIFFERENT start collides
+    // instead of sailing past on a different instant key.
     return await lockSlotBooking(
       consultantProfileId,
       data.startsAt,
+      data.endsAt!,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
     );
   }
@@ -982,12 +987,12 @@ async function acquireCheckoutLock(
  * Release checkout lock safely (for finally blocks)
  */
 async function releaseCheckoutLock(
-  lock: ApprovalLock | null,
+  lock: ApprovalLock | ApprovalLock[] | null,
   lockType: string,
 ): Promise<void> {
   if (!lock) return;
 
-  if (lockType === "slot-based") {
+  if (Array.isArray(lock)) {
     await unlockSlotBooking(lock);
   } else {
     await unlockEventCheckout(lock);
@@ -1852,7 +1857,7 @@ export async function handleCheckout(
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
 ) {
-  let lock: ApprovalLock | null = null;
+  let lock: ApprovalLock | ApprovalLock[] | null = null;
   let lockType = "";
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
   // below; see the ordering note at STEP 2).
@@ -2194,10 +2199,11 @@ export async function handleCheckout(
     // unreliable, and the message must contain "already in progress" so
     // classifyError maps it to LOCK_CONTENTION → 409.
     if (lock) {
-      const renewed = await extendLock(
-        lock,
-        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
-      );
+      const renewalTtl =
+        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000;
+      const renewed = Array.isArray(lock)
+        ? await extendSlotInterval(lock, renewalTtl)
+        : await extendLock(lock, renewalTtl);
       if (!renewed) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",

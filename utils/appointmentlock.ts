@@ -37,6 +37,22 @@ export class EventCheckoutLockUnavailableError extends Error {
   }
 }
 
+// #1169 PR 1 — same fail-closed doctrine as EventCheckoutLockUnavailableError,
+// for every other booking-path lock (slot intervals, auto-allocate, consultee,
+// approvals). Previously these acquired raw and rethrew ANY failure as a
+// benign "contention" message, so a Redis outage read as "try again" while the
+// caller proceeded to burn 10 backoff attempts per request.
+export class BookingLockUnavailableError extends Error {
+  readonly httpStatus = 503 as const;
+  readonly code = "BOOKING_LOCK_UNAVAILABLE" as const;
+  constructor(readonly context: string) {
+    super(
+      `Cannot secure a booking lock (${context}) right now (locking service unavailable). Please try again shortly.`,
+    );
+    this.name = "BookingLockUnavailableError";
+  }
+}
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -200,6 +216,51 @@ async function acquireLockWithRetry(
   throw new LockContentionError(key, config.retryCount + 1);
 }
 
+// #1169 PR 1 — one guarded front door for every booking lock: health-probe
+// fail-closed, breaker-wrapped acquisition, and contention kept OUT of the
+// breaker's failure count (a held lock is not a Redis fault). Mirrors the
+// lockEventCheckout pattern so the whole module fails the same way.
+async function acquireGuarded(
+  key: string,
+  ttl: number,
+  context: string,
+  config: LockRetryConfig = DEFAULT_RETRY_CONFIG,
+): Promise<ApprovalLock> {
+  if (!(await checkRedisHealth())) {
+    throw new BookingLockUnavailableError(context);
+  }
+
+  let lock: ApprovalLock | LockContentionError;
+  try {
+    lock = await withCircuitBreaker<ApprovalLock | LockContentionError>(
+      async () => {
+        try {
+          return await acquireLockWithRetry(key, ttl, config);
+        } catch (error) {
+          if (error instanceof LockContentionError) return error;
+          throw error; // Redis I/O error → propagate to the breaker
+        }
+      },
+    );
+  } catch (error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: "booking_lock_unavailable",
+        key,
+        context,
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    throw new BookingLockUnavailableError(context);
+  }
+
+  if (lock instanceof LockContentionError) {
+    throw lock;
+  }
+  return lock;
+}
+
 /**
  * Release a distributed lock safely using atomic Lua script
  * Never throws - safe for finally blocks
@@ -336,8 +397,9 @@ export async function lockConsultationApproval(
 ): Promise<ApprovalLock> {
   const key = `consultation-approval:${consultationId}`;
   try {
-    return await acquireLockWithRetry(key, ttl);
+    return await acquireGuarded(key, ttl, "consultation-approval");
   } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
       "Lock contention: Another approval is in progress for this consultation. Please try again.",
     );
@@ -356,8 +418,9 @@ export async function lockSubscriptionApproval(
 ): Promise<ApprovalLock> {
   const key = `subscription-approval:${subscriptionId}`;
   try {
-    return await acquireLockWithRetry(key, ttl);
+    return await acquireGuarded(key, ttl, "subscription-approval");
   } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
       "Lock contention: Another approval is in progress for this subscription. Please try again.",
     );
@@ -373,35 +436,157 @@ export async function unlockApproval(lock: ApprovalLock): Promise<void> {
 }
 
 // ============================================================================
-// Public API - Slot Booking Locks
+// Public API - Slot Booking Locks (interval-granular, one namespace)
+//
+// #1169 PR 1 — two structural fixes in one design:
+//
+// 1. ONE NAMESPACE PER PHYSICAL RESOURCE. Consultation checkout, the
+//    request-for-approval path, and trial scheduling previously locked under
+//    THREE different key families (`slot-booking:`, per-instant, and
+//    `trial-slot-booking:`), so a trial and a checkout for the same
+//    consultant-minute never contended (#1093 §1). Every direct slot writer
+//    now locks the same `slot-booking:` atom keys.
+//
+// 2. INTERVAL KEYS, NOT INSTANT KEYS. A key on the raw `startsAt` instant
+//    means a 10:00–12:00 booking and an 11:00–12:00 booking hold DIFFERENT
+//    keys and both proceed to payment. Locking one key per 30-minute atom the
+//    interval covers makes any overlap collide on its shared atoms.
+//
+// The allocator (SlotAllocationService) intentionally keeps its coarser
+// consultant-wide lock: it discovers slots dynamically under that lock, and
+// its write transaction re-validates conflicts and absorbs the #440 exclusion
+// constraint (23P01 → 409). The atom keys serialize the DIRECT writers, which
+// are the paths that race each other between availability-check and write.
 // ============================================================================
 
+const SLOT_ATOM_MS = 30 * 60 * 1000;
+
+// Interval acquisition retries less than a single-key lock: N keys × 10
+// exponential retries could pin a request for minutes, and a held atom almost
+// always means a genuine concurrent booking on that time — fail toward 409.
+const INTERVAL_RETRY_CONFIG: LockRetryConfig = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 5,
+};
+
 /**
- * Lock a specific time slot to prevent double-booking during consultation creation
- * @param consultantProfileId - The consultant's profile ID
- * @param startsAt - The slot start time in ISO format
- * @param ttl - Time to live in milliseconds (default 60 seconds)
- * @returns Lock instance (must be released with unlockSlotBooking)
+ * The 30-minute atom starts covering [startsAt, endsAt). Starts are floored to
+ * the half-hour grid so an unaligned interval still collides with the aligned
+ * bookings it overlaps.
  */
-export async function lockSlotBooking(
+export function slotAtomStarts(startsAt: Date, endsAt: Date): Date[] {
+  const floored = Math.floor(startsAt.getTime() / SLOT_ATOM_MS) * SLOT_ATOM_MS;
+  const atoms: Date[] = [];
+  for (let t = floored; t < endsAt.getTime(); t += SLOT_ATOM_MS) {
+    atoms.push(new Date(t));
+  }
+  return atoms;
+}
+
+/**
+ * Lock every 30-minute atom of [startsAt, endsAt) for one consultant, in
+ * ascending order (total order → no deadlock against another interval).
+ * All-or-nothing: on a held atom or a Redis fault, every atom already taken is
+ * released before throwing.
+ *
+ * Throws SlotLockError on genuine contention (fail open — the caller returns
+ * a retryable 409/423) and BookingLockUnavailableError when Redis is
+ * unreachable (fail closed — no unlocked booking may proceed).
+ */
+export async function lockSlotInterval(
   consultantProfileId: string,
-  startsAt: string,
+  startsAt: Date | string,
+  endsAt: Date | string,
   ttl: number = DEFAULT_LOCK_TTL,
-): Promise<ApprovalLock> {
-  const key = `slot-booking:${consultantProfileId}:${startsAt}`;
+): Promise<ApprovalLock[]> {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  const atoms = slotAtomStarts(start, end);
+  if (atoms.length === 0) {
+    throw new Error(
+      `lockSlotInterval: empty interval ${start.toISOString()} → ${end.toISOString()}`,
+    );
+  }
+
+  const acquired: ApprovalLock[] = [];
   try {
-    return await acquireLockWithRetry(key, ttl);
+    for (const atom of atoms) {
+      const key = `slot-booking:${consultantProfileId}:${atom.toISOString()}`;
+      acquired.push(
+        await acquireGuarded(key, ttl, "slot-interval", INTERVAL_RETRY_CONFIG),
+      );
+    }
+    // #1170 review — sequential acquisition erodes the earliest atoms' TTLs
+    // (worst case ~57.6s of backoff across 8 atoms vs a 59.4s effective TTL),
+    // so atom 1 could expire before the caller's critical section even starts.
+    // Re-arm every atom to a fresh shared deadline once the last one is held;
+    // a failed re-arm means ownership was already lost — abort, never proceed.
+    if (acquired.length > 1) {
+      const effectiveTTL = Math.floor(
+        ttl * (1 - INTERVAL_RETRY_CONFIG.driftFactor),
+      );
+      for (const lock of acquired) {
+        if (!(await extendLock(lock, effectiveTTL))) {
+          throw new LockContentionError(lock.key, 1);
+        }
+      }
+    }
+    return acquired;
   } catch (error) {
-    throw new SlotLockError(consultantProfileId, startsAt, 60);
+    // Roll back partial acquisition in reverse before surfacing the failure.
+    for (const lock of [...acquired].reverse()) {
+      await releaseLock(lock);
+    }
+    if (error instanceof LockContentionError) {
+      const conflictingAtom = atoms[acquired.length]?.toISOString() ?? String(startsAt);
+      throw new SlotLockError(consultantProfileId, conflictingAtom, 60);
+    }
+    throw error;
   }
 }
 
 /**
- * Release a slot booking lock
- * @param lock - The lock instance to release
+ * Release an interval lock. Reverse order, never throws — safe for finally.
  */
-export async function unlockSlotBooking(lock: ApprovalLock): Promise<void> {
-  await releaseLock(lock);
+export async function unlockSlotInterval(locks: ApprovalLock[]): Promise<void> {
+  for (const lock of [...locks].reverse()) {
+    await releaseLock(lock);
+  }
+}
+
+/**
+ * Extend every atom of an interval lock (#832 checked-renewal pattern).
+ * Returns false if ANY atom's ownership was lost — the caller must abort.
+ */
+export async function extendSlotInterval(
+  locks: ApprovalLock[],
+  additionalTtl: number,
+): Promise<boolean> {
+  for (const lock of locks) {
+    if (!(await extendLock(lock, additionalTtl))) return false;
+  }
+  return true;
+}
+
+/**
+ * Lock the slot interval for one direct booking write. Named for its history —
+ * this is the same lock checkout and request-for-approval always took, now
+ * interval-granular and shared with trials.
+ */
+export async function lockSlotBooking(
+  consultantProfileId: string,
+  startsAt: string,
+  endsAt: string,
+  ttl: number = DEFAULT_LOCK_TTL,
+): Promise<ApprovalLock[]> {
+  return lockSlotInterval(consultantProfileId, startsAt, endsAt, ttl);
+}
+
+/**
+ * Release a slot booking (interval) lock
+ */
+export async function unlockSlotBooking(locks: ApprovalLock[]): Promise<void> {
+  await unlockSlotInterval(locks);
 }
 
 // ============================================================================
@@ -522,36 +707,11 @@ export async function isAppointmentLocked(
 }
 
 // ============================================================================
-// Public API - Trial Slot Booking Locks
+// (Removed) Trial Slot Booking Locks — #1169 PR 1
+// Trials previously locked under `trial-slot-booking:`, a namespace nothing
+// else read, so a trial never contended with a checkout for the same minute.
+// The trial route now takes lockSlotBooking (the shared atom keys) instead.
 // ============================================================================
-
-/**
- * Lock a specific time slot to prevent double-booking during trial scheduling
- * @param consultantProfileId - The consultant's profile ID
- * @param startsAt - The slot start time in ISO format
- * @param ttl - Time to live in milliseconds (default 60 seconds)
- * @returns Lock instance (must be released with unlockTrialSlot)
- */
-export async function lockTrialSlot(
-  consultantProfileId: string,
-  startsAt: string,
-  ttl: number = DEFAULT_LOCK_TTL,
-): Promise<ApprovalLock> {
-  const key = `trial-slot-booking:${consultantProfileId}:${startsAt}`;
-  try {
-    return await acquireLockWithRetry(key, ttl);
-  } catch (error) {
-    throw new SlotLockError(consultantProfileId, startsAt, 60);
-  }
-}
-
-/**
- * Release a trial slot booking lock
- * @param lock - The lock instance to release
- */
-export async function unlockTrialSlot(lock: ApprovalLock): Promise<void> {
-  await releaseLock(lock);
-}
 
 // ============================================================================
 // Public API - Auto-Allocation Locks
@@ -588,8 +748,9 @@ export async function lockAutoAllocate(
     ? `auto-allocate:${consultantProfileId}:${scope}`
     : `auto-allocate:${consultantProfileId}`;
   try {
-    return await acquireLockWithRetry(key, ttl);
+    return await acquireGuarded(key, ttl, "auto-allocate");
   } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
       "Lock contention: Another auto-allocation is in progress for this consultant. Please try again.",
     );
@@ -638,8 +799,9 @@ export async function lockConsulteeBooking(
 ): Promise<ApprovalLock> {
   const key = `consultee-booking:${consulteeUserId}`;
   try {
-    return await acquireLockWithRetry(key, ttl);
+    return await acquireGuarded(key, ttl, "consultee-booking");
   } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
       "Lock contention: Another booking is in progress for this account. Please try again.",
     );
