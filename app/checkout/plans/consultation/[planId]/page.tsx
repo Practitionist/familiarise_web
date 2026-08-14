@@ -494,6 +494,12 @@ export default function ConsultationCheckoutPage({
   useEffect(() => {
     if (!validatedSearchParams) return;
 
+    // Once per crossing, not once per minute. The interval re-fired the same
+    // destructive toast every 60s for as long as the tab stayed open, which
+    // buried the payment form under a stack of red banners at exactly the
+    // moment the buyer was being told to hurry.
+    let warned = false;
+
     const checkStaleness = () => {
       const slotStart = new Date(validatedSearchParams.startsAt);
       const now = new Date();
@@ -504,7 +510,11 @@ export default function ConsultationCheckoutPage({
         setError(
           "This time slot has passed. Please go back and select a new available slot.",
         );
-      } else if (minutesUntilSlot <= MINIMUM_BOOKING_LEAD_TIME_MINUTES) {
+      } else if (
+        minutesUntilSlot <= MINIMUM_BOOKING_LEAD_TIME_MINUTES &&
+        !warned
+      ) {
+        warned = true;
         toast({
           title: "Slot starting soon",
           description: `Your selected slot starts in ${Math.ceil(minutesUntilSlot)} minute${Math.ceil(minutesUntilSlot) === 1 ? "" : "s"}. Please complete checkout quickly or select a later slot.`,

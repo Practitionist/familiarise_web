@@ -82,6 +82,13 @@ export function buildRescheduleSubject(
      * "Being moved" paint. Absent for Trial (no event-slots fetch). */
     eventType?: SlotPickerSubject["eventType"];
     eventId?: string;
+    /** Recurring bookings only — the grid clamps selection to this window and
+     *  buckets its per-day/week caps in this zone. */
+    allowedStart?: Date;
+    allowedEnd?: Date;
+    schedulingTimezone?: string;
+    sessionsPerWeek?: number;
+    totalSessions?: number;
   } | null => {
     switch (appointment.appointmentType) {
       case "CONSULTATION": {
@@ -101,17 +108,31 @@ export function buildRescheduleSubject(
       }
       case "SUBSCRIPTION": {
         const plan = appointment.subscription?.subscriptionPlan;
+        const subscription = appointment.subscription;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
-          consulteeProfileId: appointment.subscription?.requestedBy?.id,
-          consulteeUserId: appointment.subscription?.requestedBy?.userId,
+          consulteeProfileId: subscription?.requestedBy?.id,
+          consulteeUserId: subscription?.requestedBy?.userId,
           consultantName: plan?.consultantProfile?.user?.name,
-          consulteeName: appointment.subscription?.requestedBy?.user?.name,
+          consulteeName: subscription?.requestedBy?.user?.name,
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
           sessionDurationInHours: plan?.sessionDurationInHours,
           eventType: "subscription",
-          eventId: appointment.subscription?.id ?? undefined,
+          eventId: subscription?.id ?? undefined,
+          // The plan's scheduling period and cadence. Omitting these drew an
+          // unclamped grid: the consultee could pick a time outside the
+          // period they bought, and only found out at submit, where the API
+          // rejects it. The allocate subject has always passed them.
+          allowedStart: subscription?.schedulingPeriodStartsAt
+            ? new Date(subscription.schedulingPeriodStartsAt)
+            : undefined,
+          allowedEnd: subscription?.schedulingPeriodEndsAt
+            ? new Date(subscription.schedulingPeriodEndsAt)
+            : undefined,
+          schedulingTimezone: subscription?.schedulingTimezone,
+          sessionsPerWeek: plan?.sessionsPerWeek,
+          totalSessions: plan?.totalSessions,
         };
       }
       case "WEBINAR": {
@@ -128,6 +149,7 @@ export function buildRescheduleSubject(
       }
       case "CLASS": {
         const plan = appointment.class?.classPlan;
+        const classEvent = appointment.class;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
           consultantName: plan?.consultantProfile?.user?.name,
@@ -135,7 +157,17 @@ export function buildRescheduleSubject(
           typeLabel: "Class",
           sessionDurationInHours: plan?.sessionDurationInHours ?? undefined,
           eventType: "class",
-          eventId: appointment.class?.id ?? undefined,
+          eventId: classEvent?.id ?? undefined,
+          // Same clamp as SUBSCRIPTION; a class is the other recurring shape.
+          allowedStart: classEvent?.schedulingPeriodStartsAt
+            ? new Date(classEvent.schedulingPeriodStartsAt)
+            : undefined,
+          allowedEnd: classEvent?.schedulingPeriodEndsAt
+            ? new Date(classEvent.schedulingPeriodEndsAt)
+            : undefined,
+          schedulingTimezone: classEvent?.schedulingTimezone,
+          sessionsPerWeek: plan?.sessionsPerWeek,
+          totalSessions: plan?.totalSessions,
         };
       }
       case "TRIAL": {
@@ -185,6 +217,13 @@ export function buildRescheduleSubject(
       // configured" and fall back to an hour.
       durationInHours: resolved.sessionDurationInHours,
       sessionDurationInHours: resolved.sessionDurationInHours,
+      // Recurring bookings only; undefined on the one-off types leaves the
+      // grid unclamped, which is correct there.
+      allowedStart: resolved.allowedStart,
+      allowedEnd: resolved.allowedEnd,
+      schedulingTimezone: resolved.schedulingTimezone,
+      sessionsPerWeek: resolved.sessionsPerWeek,
+      totalSessions: resolved.totalSessions,
       slots,
       // Tentative sessions mean a move is already in flight — pin the count
       // for allocate-path stale-tab guards if this subject is reused there.
