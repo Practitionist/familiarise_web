@@ -832,9 +832,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       notifUserIds.push(consultantUserId);
     }
 
+    // #1085 — the template renders a session time; omitting it left an empty
+    // placeholder in the user's very first booking notification.
+    const firstSlot = await prisma.slotOfAppointment.findFirst({
+      where: { appointmentId },
+      orderBy: { startsAt: "asc" },
+      select: { startsAt: true },
+    });
     void notifyAppointmentBooked(notifUserIds, {
       ...scope,
       appointmentId,
+      dateTime: firstSlot?.startsAt.toISOString(),
       appointmentType: metadata.appointmentType,
       consultantName: consultantNameForNotif,
       consulteeName: userName || "User",
