@@ -24,11 +24,14 @@ describe("org appointment detail Reschedule affordance", () => {
       ),
       "utf8",
     );
-    expect(client).toContain("useConsulteeAppointmentsAdapter({ consulteeId })");
+    expect(client).toContain("useConsulteeAppointmentsAdapter({");
+    expect(client).toContain("consulteeId,");
     expect(page).toContain("consulteeId={profile.id}");
-    // Stay under org for detail navigation; reschedule still deep-links out.
+    // Stay under org for detail navigation; reschedule still deep-links out,
+    // but carries a returnTo back to this page (#1166).
     expect(client).toContain("detailHref");
     expect(client).toContain("/dashboard/organization/${orgId}/appointments/");
+    expect(client).toContain("rescheduleReturnTo:");
   });
 
   it("adapter accepts an optional consulteeId and falls back to params/session", () => {
@@ -41,9 +44,13 @@ describe("org appointment detail Reschedule affordance", () => {
     );
     expect(src).toContain("options?.consulteeId");
     expect(src).toContain("session?.user?.consulteeProfileId");
+    // #1166 — the reschedule URL gained an optional returnTo, so the template
+    // no longer ends at /reschedule; pin the path and the threading instead.
     expect(src).toContain(
-      "`/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule`",
+      "/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule",
     );
+    expect(src).toContain("options?.rescheduleReturnTo");
+    expect(src).toContain("encodeURIComponent(options.rescheduleReturnTo)");
   });
 });
 
