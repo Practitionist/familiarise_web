@@ -9,17 +9,16 @@
  * which organization the event belongs to. Per-registrant funding lives on
  * `Payment.organizationId` instead.
  *
- * The consequence nobody had traced: the org appointments view filtered on
- * `Appointment.organizationId` alone, so a sponsor that paid to put five
- * employees into someone else's public webinar saw NOTHING. The money appeared
- * on its invoice and the seats came off its program, but the session itself was
- * invisible. 1:1 kinds were never affected — there the appointment's org is
- * already the funding org.
+ * An earlier revision widened the org list to hosted-OR-funded so a sponsor
+ * could see events it paid into. #1166 ORG-8 reversed that: the detail page
+ * behind each row 404s anything the org does not OWN, so funded-elsewhere
+ * rows were links to a 404, and cross-org funding visibility moved to the
+ * money views (which already carry those payments).
  *
- * Widening that view to hosted-OR-funded is only safe if it stays narrow in the
- * other direction. A shared appointment may carry registrants from several
- * sponsors and the public, so a sponsor must see the seats it paid for and not
- * the ones it did not. That is the boundary this file pins.
+ * What this file still pins is the boundary that outlived the reversal: on
+ * the rows the list DOES return, a shared appointment may carry registrants
+ * from several sponsors and the public, and a sponsor must see the seats it
+ * paid for and not the ones it did not.
  */
 
 import { readFileSync } from "fs";
@@ -32,26 +31,24 @@ const SRC = readFileSync(
   "utf8",
 );
 
-describe("a sponsor sees events it funded, not only ones it hosts", () => {
-  it("matches on host org OR funding payment", () => {
+describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
+  it("pins organizationId at the top level", () => {
+    // List/detail parity: the detail page admits only rows whose
+    // organizationId is this org, so the list must not offer more.
     const w = buildWhere({
       scope: { kind: "org", orgId: "acme" },
       userId: "irrelevant",
     }) as Record<string, unknown>;
-
-    const or = w.OR as Record<string, unknown>[];
-    expect(or).toContainEqual({ organizationId: "acme" });
-    expect(or).toContainEqual({ payment: { some: { organizationId: "acme" } } });
+    expect(w.organizationId).toBe("acme");
+    expect(w.OR).toBeUndefined();
   });
 
-  it("does not pin organizationId at the top level any more", () => {
-    // A top-level `organizationId` would AND with the OR and re-exclude every
-    // funded-but-not-hosted event — silently restoring the bug.
+  it("no longer matches funded-elsewhere rows through Payment", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "acme" },
       userId: "irrelevant",
-    }) as Record<string, unknown>;
-    expect(w.organizationId).toBeUndefined();
+    });
+    expect(JSON.stringify(w)).not.toContain("payment");
   });
 });
 

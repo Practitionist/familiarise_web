@@ -7,6 +7,7 @@ import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { safeReturnTo } from "@/lib/navigation/safe-return-to";
 import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
@@ -21,6 +22,8 @@ import { RescheduleClient } from "./RescheduleClient";
  */
 type PageProps = {
   params: Promise<{ consulteeId: string; appointmentId: string }>;
+  // `string[]` is not hypothetical: a repeated ?returnTo= arrives as an array.
+  searchParams: Promise<{ returnTo?: string | string[] }>;
 };
 
 // React.cache so generateMetadata() and the page body share one query per request.
@@ -84,8 +87,10 @@ export async function generateMetadata({
 
 export default async function RescheduleAppointmentPage({
   params,
+  searchParams,
 }: Readonly<PageProps>) {
   const { consulteeId, appointmentId } = await params;
+  const { returnTo } = await searchParams;
   // Enforced here rather than in the layout: the layout is a client component,
   // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultee", consulteeId);
@@ -108,7 +113,14 @@ export default async function RescheduleAppointmentPage({
   const resolved = buildRescheduleSubject(detail);
   if (!resolved) notFound();
 
-  const backHref = `/dashboard/consultee/${consulteeId}/appointments`;
+  // #1166 — org detail pages send ?returnTo= so finishing (or backing out of)
+  // a reschedule lands back in the org context instead of this personal list.
+  // RescheduleClient router.push()es this, so an off-site value would be an
+  // open redirect; safeReturnTo() decides it by parsing, not by prefix.
+  const backHref = safeReturnTo(
+    returnTo,
+    `/dashboard/consultee/${consulteeId}/appointments`,
+  );
 
   return (
     <DashboardViewportFill className="gap-4">

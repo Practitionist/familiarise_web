@@ -113,9 +113,14 @@ const KIND_TO_REPORT_TYPE: Record<
 /**
  * @param options.consulteeId — Override when the URL has no `[consulteeId]`
  *   (org appointment detail). Falls back to the route param, then the session.
+ * @param options.rescheduleReturnTo — RELATIVE href the reschedule page
+ *   returns to instead of the personal appointments list. #1166 — the org
+ *   detail page passes itself so reschedule doesn't eject the member into
+ *   the personal dashboard. Validated server-side by the reschedule page.
  */
 export function useConsulteeAppointmentsAdapter(options?: {
   consulteeId?: string;
+  rescheduleReturnTo?: string;
 }): AppointmentActionAdapter {
   const router = useRouter();
   const { toast } = useToast();
@@ -254,7 +259,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
         // URL means a half-finished choice survives a refresh.
         onClick: () =>
           router.push(
-            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule`,
+            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule${
+              options?.rescheduleReturnTo
+                ? `?returnTo=${encodeURIComponent(options.rescheduleReturnTo)}`
+                : ""
+            }`,
           ),
       });
     }

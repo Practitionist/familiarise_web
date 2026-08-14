@@ -90,13 +90,15 @@ export function buildWhere(
 
   if (params.scope.kind === "orgMember") {
     // #org-appts — ONE member's own appointments WITHIN this org: sessions they
-    // booked (as a learner) OR deliver (as an expert). Hoists `organizationId:
-    // orgId` so it is strictly this org's activity. Distinct from `org`
-    // (all-org, MANAGER+).
+    // booked (as a learner), hold a seat in (webinar/class attendee), OR
+    // deliver (as an expert). Hoists `organizationId: orgId` so it is strictly
+    // this org's activity. Distinct from `org` (all-org, MANAGER+).
     //
     // Trials are intentionally EXCLUDED: a trial is a B2C acquisition session
     // (org-tagged only for conversion analytics, never org-sponsored), so it
-    // belongs in the member's PERSONAL appointments, not the org view.
+    // belongs in the member's PERSONAL appointments, not the org view. The
+    // attendee arm can't smuggle one in — trial checkout never stamps
+    // Appointment.organizationId, so trials fail the org pin above.
     const uid = params.scope.userId;
     return {
       ...base,
@@ -105,6 +107,12 @@ export function buildWhere(
         // Consumed as a learner (org-sponsored bookings).
         { consultation: { requestedBy: { userId: uid } } },
         { subscription: { requestedBy: { userId: uid } } },
+        // #1166 ORG-5 — attended via a held seat. Group events share ONE
+        // Appointment and registrants never appear in requestedBy, so without
+        // this arm an org-sponsored webinar/class attendee's session was
+        // invisible on BOTH dashboards (personal excludes org rows by design).
+        // Mirrors lib/data/consultee-events-read.ts slot membership.
+        { slotsOfAppointment: { some: { user: { some: { id: uid } } } } },
         // Delivered as an expert (owns the plan).
         { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
@@ -115,31 +123,15 @@ export function buildWhere(
   }
 
   if (params.scope.kind === "org") {
-    // Hosted OR funded, because those are two different columns answering two
-    // different questions.
-    //
-    // For a webinar or class every registrant shares ONE Appointment, and
-    // checkout deliberately tags it with the HOST's org (`plan.organizationId`)
-    // rather than the first registrant's — otherwise whoever booked first would
-    // decide which org the event belonged to. Per-registrant funding lives on
-    // `Payment.organizationId` instead.
-    //
-    // Filtering on `organizationId` alone therefore showed an org only the
-    // events it HOSTS. A sponsor that paid to put five employees into someone
-    // else's public webinar saw nothing: the money appeared on its invoice and
-    // the seats came off its program, but the session itself was invisible.
-    // 1:1 kinds were never affected — there the appointment's org already IS
-    // the funding org.
-    //
-    // No new exposure: the select carries no attendee list, and `getMember`
-    // renders "—" for group events. A sponsor sees that the session exists, on
-    // what plan, when — not who else was in the room. ADR 20 holds.
+    // #1166 ORG-8 — org-OWNED rows only. The funded-elsewhere OR arm
+    // (`payment.some.organizationId`) is gone: the detail page 404s any row
+    // whose `organizationId` isn't this org, so the list was offering rows the
+    // click could not open. Cross-org funding visibility (seats this org paid
+    // for in another org's event) is the money views' responsibility now, not
+    // this list's — the invoice/payments surfaces already carry those rows.
     return {
       ...base,
-      OR: [
-        { organizationId: params.scope.orgId },
-        { payment: { some: { organizationId: params.scope.orgId } } },
-      ],
+      organizationId: params.scope.orgId,
     };
   }
 

@@ -7,7 +7,6 @@ import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
-import { useOrgScope } from "@/hooks/useOrgScope";
 import HomeTab from "./HomeTab";
 import { useUser } from "../../UserContext";
 
@@ -16,23 +15,12 @@ export default function HomePageClient({
 }: Readonly<{ consulteeId: string }>) {
   const { userDetails } = useUser();
 
-  // Default to "All activity" so an org learner sees both personal AND
-  // org-funded upcoming sessions on their landing page. Without this the
-  // events fetcher defaulted to ?orgScope=personal and silently hid every
-  // org-funded session on Home (visible only after navigating to
-  // Appointments and toggling the filter). The /api/dashboard/consultee/
-  // <id>/events route is self-scoped (consulteeProfileId match), so
-  // `?orgScope=all` is safe — see lib/api/scope/parse.ts allowAllForOwner.
-  const { scope } = useOrgScope({ defaultForOrgMember: "all" });
-  const orgScopeParam =
-    scope.kind === "personal"
-      ? "personal"
-      : scope.kind === "all"
-        ? "all"
-        : scope.orgId;
-
+  // Personal pin, matching the sibling Appointments page (ADR 19). The old
+  // defaultForOrgMember: "all" here papered over the missing attendee arm in
+  // the orgMember scope (#1166 ORG-5); org-funded sessions now live on the
+  // org dashboard, which can actually show them.
   const eventsQuery = {
-    ...createConsulteeQueries(consulteeId, orgScopeParam).events,
+    ...createConsulteeQueries(consulteeId).events,
     // Keep SSR-dehydrated events warm long enough to avoid an immediate
     // refetch waterfall on first paint (aligned with dashboard staleTimes).
     staleTime: 60_000,
