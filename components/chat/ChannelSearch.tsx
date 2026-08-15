@@ -20,15 +20,21 @@ const EVENT_TYPE_CONFIG = {
   },
 } as const;
 
-// Grouped consultant result for conversations (consultations + subscriptions)
-type GroupedConsultant = {
-  consultantName: string;
-  consultantImage?: string;
+/**
+ * One row per conversation: a consultation and a subscription with the same
+ * person collapse into a single entry, because they are a single channel.
+ * A pair has one DM thread per funding context (#1134 P0-7), so the badges
+ * "Consultation & Subscription" describe two reasons to be in one thread, not
+ * two threads.
+ */
+type GroupedConversation = {
+  counterpartyName: string;
+  counterpartyImage?: string;
+  counterpartyUserId?: string;
+  organizationId?: string | null;
   hasConsultation: boolean;
   hasSubscription: boolean;
-  // Use the first available channel for navigation
   channelId: string;
-  channelType: "consultation" | "subscription";
 };
 
 export const ChannelSearch = () => {
@@ -43,31 +49,37 @@ export const ChannelSearch = () => {
     [],
   );
 
-  // Group consultations/subscriptions by consultant, keep events separate
-  const { groupedConsultants, events } = useMemo(() => {
-    const consultantMap = new Map<string, GroupedConsultant>();
+  // Group 1:1 rows by CHANNEL, keep events separate.
+  //
+  // Keyed on `channelId`, not on the display name. Grouping by name merged two
+  // different people who happen to share one — and, more often here, split a
+  // single conversation in two whenever the name resolved differently between
+  // rows. The channel id is the identity of a conversation; the name is a label
+  // on it.
+  const { groupedConversations, events } = useMemo(() => {
+    const byChannel = new Map<string, GroupedConversation>();
     const eventResults: AppointmentSearchResult[] = [];
 
     // Defensive check in case searchResults is undefined
     if (!searchResults || !Array.isArray(searchResults)) {
-      return { groupedConsultants: [], events: [] };
+      return { groupedConversations: [], events: [] };
     }
 
     for (const result of searchResults) {
       if (result.type === "consultation" || result.type === "subscription") {
-        // Group by consultant name
-        const existing = consultantMap.get(result.consultantName);
+        const existing = byChannel.get(result.channelId);
         if (existing) {
           if (result.type === "consultation") existing.hasConsultation = true;
           if (result.type === "subscription") existing.hasSubscription = true;
         } else {
-          consultantMap.set(result.consultantName, {
-            consultantName: result.consultantName,
-            consultantImage: result.consultantImage,
+          byChannel.set(result.channelId, {
+            counterpartyName: result.counterpartyName,
+            counterpartyImage: result.counterpartyImage,
+            counterpartyUserId: result.counterpartyUserId,
+            organizationId: result.organizationId,
             hasConsultation: result.type === "consultation",
             hasSubscription: result.type === "subscription",
             channelId: result.channelId,
-            channelType: result.type,
           });
         }
       } else {
@@ -77,7 +89,7 @@ export const ChannelSearch = () => {
     }
 
     return {
-      groupedConsultants: Array.from(consultantMap.values()),
+      groupedConversations: Array.from(byChannel.values()),
       events: eventResults,
     };
   }, [searchResults]);
@@ -128,13 +140,52 @@ export const ChannelSearch = () => {
     handleSearch();
   };
 
-  // Handle click on grouped consultant (for conversations)
-  const handleConsultantClick = async (consultant: GroupedConsultant) => {
+  /**
+   * Ask the SERVER for the channel, then watch what it hands back.
+   *
+   * The previous implementation called `client.channel(type, id).watch()` on an
+   * id this component had received from search. `watch()` posts to Stream's
+   * channel *query* endpoint, which is the same endpoint `create()` posts to —
+   * so when the id did not exist yet, watching it CREATED it, with this user as
+   * `created_by` and with no members at all. The result was a channel titled
+   * with its own raw id, reporting "No members", that accepted a message and
+   * then disappeared on refresh (the sidebar lists `members: { $in: [me] }`).
+   *
+   * So the client no longer names a channel. It names a person or an event, and
+   * `/api/stream/channels/open` re-derives the id, checks the booking link, and
+   * creates the channel with both members if it is genuinely missing. By the
+   * time `watch()` runs here, the channel is known to exist.
+   */
+  const openResolvedChannel = async (
+    body: Record<string, unknown>,
+  ): Promise<void> => {
     if (!client) return;
 
     try {
-      // Conversations use messaging channel type
-      const channel = client.channel("messaging", consultant.channelId);
+      const response = await fetch("/api/stream/channels/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        // 403 is the eligibility gate refusing, which is a legitimate answer,
+        // not a fault. Surfacing it as an error toast would be wrong; the row
+        // should not have been offered in the first place.
+        console.error(
+          "Could not open conversation:",
+          detail?.error ?? response.status,
+        );
+        return;
+      }
+
+      const { channelType, channelId } = (await response.json()) as {
+        channelType: "messaging" | "team";
+        channelId: string;
+      };
+
+      const channel = client.channel(channelType, channelId);
       await channel.watch();
       setActiveChannel(channel);
       openConversation();
@@ -147,26 +198,21 @@ export const ChannelSearch = () => {
     setSearchResults([]);
   };
 
-  // Handle click on event (webinar/class)
-  const handleEventClick = async (result: AppointmentSearchResult) => {
-    if (!client) return;
+  const handleConversationClick = (conversation: GroupedConversation) =>
+    openResolvedChannel({
+      kind: "dm",
+      counterpartyUserId: conversation.counterpartyUserId,
+      organizationId: conversation.organizationId ?? null,
+    });
 
-    try {
-      // Events use team channel type
-      const channel = client.channel("team", result.channelId);
-      await channel.watch();
-      setActiveChannel(channel);
-      openConversation();
-    } catch (error) {
-      console.error("Error opening channel:", error);
-    }
+  const handleEventClick = (result: AppointmentSearchResult) =>
+    openResolvedChannel({
+      kind: "event",
+      eventType: result.type,
+      eventId: result.id,
+    });
 
-    // Clear search
-    setQuery("");
-    setSearchResults([]);
-  };
-
-  const hasResults = groupedConsultants.length > 0 || events.length > 0;
+  const hasResults = groupedConversations.length > 0 || events.length > 0;
 
   return (
     <div className="channel-search relative">
@@ -184,25 +230,25 @@ export const ChannelSearch = () => {
       {hasResults && (
         <div className="absolute z-50 mt-1 w-full bg-popover text-popover-foreground rounded-md shadow-xl border border-border max-h-72 overflow-auto">
           {/* Conversations Section (Consultants with consultations/subscriptions) */}
-          {groupedConsultants.length > 0 && (
+          {groupedConversations.length > 0 && (
             <>
               <div className="px-3 py-2 bg-muted border-b border-border">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Conversations
                 </span>
               </div>
-              {groupedConsultants.map((consultant) => (
+              {groupedConversations.map((conversation) => (
                 <button
-                  key={consultant.consultantName}
+                  key={conversation.channelId}
                   className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
-                  onClick={() => handleConsultantClick(consultant)}
+                  onClick={() => handleConversationClick(conversation)}
                 >
                   <div className="flex items-center gap-3">
                     {/* Consultant Image */}
-                    {consultant.consultantImage ? (
+                    {conversation.counterpartyImage ? (
                       <Image
-                        src={consultant.consultantImage}
-                        alt={consultant.consultantName}
+                        src={conversation.counterpartyImage}
+                        alt={conversation.counterpartyName}
                         width={40}
                         height={40}
                         className="w-10 h-10 rounded-full flex-shrink-0"
@@ -210,7 +256,7 @@ export const ChannelSearch = () => {
                     ) : (
                       <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                         <span className="text-muted-foreground font-medium">
-                          {consultant.consultantName.charAt(0)}
+                          {conversation.counterpartyName.charAt(0)}
                         </span>
                       </div>
                     )}
@@ -218,17 +264,17 @@ export const ChannelSearch = () => {
                     <div className="flex-1 min-w-0">
                       {/* Consultant Name */}
                       <div className="font-semibold text-foreground truncate">
-                        {consultant.consultantName}
+                        {conversation.counterpartyName}
                       </div>
 
                       {/* Type indicators */}
                       <div className="flex items-center gap-1 mt-1">
                         <UserIcon className="w-3 h-3 text-muted-foreground" />
                         <span className="text-xs text-muted-foreground">
-                          {consultant.hasConsultation &&
-                          consultant.hasSubscription
+                          {conversation.hasConsultation &&
+                          conversation.hasSubscription
                             ? "Consultation & Subscription"
-                            : consultant.hasConsultation
+                            : conversation.hasConsultation
                               ? "Consultation"
                               : "Subscription"}
                         </span>
@@ -261,10 +307,10 @@ export const ChannelSearch = () => {
                   >
                     <div className="flex items-start gap-3">
                       {/* Consultant Image */}
-                      {event.consultantImage ? (
+                      {event.counterpartyImage ? (
                         <Image
-                          src={event.consultantImage}
-                          alt={event.consultantName}
+                          src={event.counterpartyImage}
+                          alt={event.counterpartyName}
                           width={40}
                           height={40}
                           className="w-10 h-10 rounded-full flex-shrink-0"
@@ -272,7 +318,7 @@ export const ChannelSearch = () => {
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                           <span className="text-muted-foreground font-medium">
-                            {event.consultantName.charAt(0)}
+                            {event.counterpartyName.charAt(0)}
                           </span>
                         </div>
                       )}
@@ -290,7 +336,7 @@ export const ChannelSearch = () => {
                             {config.label}
                           </span>
                           <span className="text-sm text-muted-foreground truncate">
-                            {event.consultantName}
+                            {event.counterpartyName}
                           </span>
                         </div>
                       </div>

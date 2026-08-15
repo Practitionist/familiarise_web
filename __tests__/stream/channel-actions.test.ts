@@ -52,9 +52,20 @@ jest.mock("../../lib/auth-helpers", () => ({
   isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
 }));
 
+// The DM eligibility gate is exercised against real query shapes in
+// __tests__/security/dm-eligibility.test.ts. Here it is stubbed so these tests
+// keep asserting what they are about — id derivation and Stream call shape —
+// rather than turning into relationship fixtures. Default: permitted.
+const mockAssertCanDirectMessage = jest.fn();
+jest.mock("../../lib/stream/dm-eligibility", () => ({
+  assertCanDirectMessage: (...args: unknown[]) =>
+    mockAssertCanDirectMessage(...args),
+}));
+
 describe("Channel Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAssertCanDirectMessage.mockResolvedValue(undefined);
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
     mockGetSession.mockResolvedValue({
@@ -291,6 +302,46 @@ describe("Channel Actions", () => {
 
       await expect(createDirectMessageChannel("", "user2")).rejects.toThrow();
       await expect(createDirectMessageChannel("user1", "")).rejects.toThrow();
+    });
+
+    it("consults the eligibility gate before creating anything", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockChannel.query.mockResolvedValue({ members: {} });
+      await createDirectMessageChannel("bob", "alice");
+
+      expect(mockAssertCanDirectMessage).toHaveBeenCalledWith("bob", "alice");
+    });
+
+    it("creates no channel when the pair has no booking link", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockAssertCanDirectMessage.mockRejectedValue(
+        new Error("Direct messages are only available between people who share a booking."),
+      );
+
+      await expect(
+        createDirectMessageChannel("stranger-a", "stranger-b"),
+      ).rejects.toThrow("share a booking");
+
+      // The gate has to run BEFORE the Stream call, not alongside it — a
+      // refusal that still creates the channel is not a refusal.
+      expect(mockStreamClient.channel).not.toHaveBeenCalled();
+    });
+
+    it("refuses a self-pair at id derivation", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      // The gate is stubbed permissive here, so this asserts the SECOND line of
+      // defence: getDmChannelId itself rejects `a === a` rather than producing
+      // `dm-a-a`, which createChannel would then de-duplicate into a
+      // one-member channel that renders as its own raw id.
+      await expect(
+        createDirectMessageChannel("same-user", "same-user"),
+      ).rejects.toThrow(/self-DM/i);
     });
   });
 

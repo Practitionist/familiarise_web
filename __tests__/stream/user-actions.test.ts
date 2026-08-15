@@ -411,20 +411,31 @@ describe("User Actions", () => {
       expect(hasRelationship).toBe(true);
     });
 
-    it("should return false on database error", async () => {
+    // Was "should return false on database error". It no longer does, and that
+    // is the point: swallowing the error into `false` reads as fail-closed and
+    // behaves as the opposite once this gates channel creation — a transient DB
+    // blip would deny a legitimate conversation, and on the reconcile path make
+    // a live channel look unexpected and sweepable. A gate that cannot evaluate
+    // must say so.
+    it("should propagate a database error rather than answering false", async () => {
       mockPrisma.user.findUnique.mockRejectedValue(new Error("DB error"));
 
       const { checkUserRelationship } =
         await import("../../actions/stream/chat/user.action");
 
-      const hasRelationship = await checkUserRelationship("user-1", "user-2");
+      await expect(
+        checkUserRelationship("user-1", "user-2"),
+      ).rejects.toThrow("DB error");
+    });
 
-      expect(hasRelationship).toBe(false);
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        "Relationship check failed",
-        expect.any(Error),
-        expect.objectContaining({ userId1: "user-1", userId2: "user-2" }),
+    it("refuses a self-pair without touching the database", async () => {
+      const { checkUserRelationship } =
+        await import("../../actions/stream/chat/user.action");
+
+      await expect(checkUserRelationship("same-user", "same-user")).resolves.toBe(
+        false,
       );
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
 
     it("should find reverse consultation relationship", async () => {
@@ -578,8 +589,11 @@ describe("User Actions", () => {
         "current-user",
       );
 
-      expect(results).toHaveLength(2);
-      expect(results[0]).toHaveProperty("hasRelationship");
+      // Filtered, not ranked. Both matches are unrelated to the caller, so
+      // neither is returned — previously both came back with
+      // `hasRelationship: false`, which made this endpoint a directory of the
+      // whole user base behind a two-character query.
+      expect(results).toHaveLength(0);
     });
 
     it("should exclude current user from results", async () => {
@@ -645,7 +659,9 @@ describe("User Actions", () => {
         "current-user",
       );
 
-      // Connected user (Adam with relationship) should come first
+      // Only the connected user survives the filter.
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe("user-with-rel");
       expect(results[0].hasRelationship).toBe(true);
     });
 

@@ -26,10 +26,21 @@ import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;
+  /**
+   * Whether the viewer may create a channel not bound to an event.
+   *
+   * `app/api/stream/channels/create/route.ts` restricts these to ADMIN/STAFF
+   * so an unprivileged caller cannot assemble an arbitrary member list. The
+   * option is hidden rather than left to fail, because a consultant selecting
+   * it previously succeeded — the dialog created the channel client-side and
+   * never consulted the route at all.
+   */
+  canCreateCustomChannel?: boolean;
 }
 
 export const CreateChannelDialog = ({
   onChannelCreated,
+  canCreateCustomChannel = false,
 }: CreateChannelDialogProps) => {
   const [open, setOpen] = useState(false);
   const [channelName, setChannelName] = useState("");
@@ -153,16 +164,37 @@ export const CreateChannelDialog = ({
             result.message || `Channel "${channelName}" created successfully`,
         });
       } else {
-        // Custom channel creation - use client-side creation (no predefined participants)
-        const channelId = crypto.randomUUID();
-
-        const channel = client.channel("team", channelId, {
-          name: channelName,
-          members: [currentUserId], // Only creator for custom channels
-          created_by_id: currentUserId,
+        // Custom channel creation — server-side, same as the event branch.
+        //
+        // This used to mint the channel straight from the browser with
+        // `client.channel("team", crypto.randomUUID(), …).create()`. That
+        // bypassed the admin/staff-only gate in
+        // `app/api/stream/channels/create/route.ts`, so anyone the sidebar
+        // considers able to create channels — every consultant — could create
+        // custom `team` channels that no server-side rule had approved. The
+        // route enforces the gate; the client asks it to.
+        const response = await fetch("/api/stream/channels/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            channelType: "team",
+            channelName,
+            createdById: currentUserId,
+          }),
         });
 
-        await channel.create();
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || "Failed to create channel");
+        }
+
+        // `createChannel` returns `{ channelId, members, channelData }` and the
+        // route wraps it in `data`.
+        const channel = client.channel("team", result.data.channelId);
+        await channel.watch();
 
         // Set the new channel as active
         setActiveChannel(channel);
@@ -238,7 +270,11 @@ export const CreateChannelDialog = ({
                 <SelectValue placeholder="Select a webinar or class" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="custom">Create a Custom Channel</SelectItem>
+                {canCreateCustomChannel && (
+                  <SelectItem value="custom">
+                    Create a Custom Channel
+                  </SelectItem>
+                )}
                 {events.length > 0 ? (
                   events.map((event) => (
                     <SelectItem key={event.id} value={event.id}>

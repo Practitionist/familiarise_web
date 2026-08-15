@@ -10,6 +10,7 @@ import {
   createMockLogger,
   createMockChannelCache,
 } from "./__mocks__/stream-mocks";
+import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 
 // Create mock instances
 const mockPrisma = createMockPrisma();
@@ -907,7 +908,14 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.consultation.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: ["APPROVED", "SCHEDULED"] },
+            // Asserted against the shared constant, not a literal. These two
+            // assertions are exactly what would have caught the divergence
+            // that caused the bug — the reconciler pinned to a narrower set
+            // than the search routes used — except that they pinned the
+            // narrow side, so widening search sailed past them. Referencing
+            // DM_ELIGIBLE_STATUSES means the two can no longer drift apart
+            // without this failing.
+            status: { in: [...DM_ELIGIBLE_STATUSES] },
           }),
         }),
       );
@@ -958,7 +966,14 @@ describe("Event Channel Actions", () => {
       expect(mockPrisma.subscription.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: ["APPROVED", "SCHEDULED"] },
+            // Asserted against the shared constant, not a literal. These two
+            // assertions are exactly what would have caught the divergence
+            // that caused the bug — the reconciler pinned to a narrower set
+            // than the search routes used — except that they pinned the
+            // narrow side, so widening search sailed past them. Referencing
+            // DM_ELIGIBLE_STATUSES means the two can no longer drift apart
+            // without this failing.
+            status: { in: [...DM_ELIGIBLE_STATUSES] },
           }),
         }),
       );

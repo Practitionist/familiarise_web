@@ -11,6 +11,8 @@ import {
 import { forEachChunk } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
+import { canDirectMessage } from "@/lib/stream/dm-eligibility";
+import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import * as Sentry from "@sentry/nextjs";
@@ -301,15 +303,13 @@ export const searchUsersWithRelationships = async (
       }),
     ]);
 
+    // No caller profile means no relationship is derivable, so nothing is
+    // returnable. This branch used to `return users.map(… hasRelationship:
+    // false)` — handing back the full unfiltered match set precisely when the
+    // relationship check could not run, which is the one case where it mattered
+    // most. Fail closed.
     if (!currentUser || users.length === 0) {
-      return users.map((u) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        image: u.image,
-        role: u.role,
-        hasRelationship: false,
-      }));
+      return [];
     }
 
     // Batch: find all related user IDs in a few queries instead of N+1
@@ -334,23 +334,24 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              status: { in: ["APPROVED", "SCHEDULED"] },
+              status: dmEligibleStatusFilter(),
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
           })
           .then((rows) => rows.forEach((r) => {
             if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
           })),
-        // Subscriptions are time-bounded (have a scheduling period), so we must
-        // filter by schedulingPeriodEndsAt to exclude expired ones. Consultations
-        // are per-event with no time window, so status alone is sufficient.
+        // No `schedulingPeriodEndsAt` bound: under the ever-transacted rule a
+        // lapsed subscription is still a relationship that happened, and the
+        // window used to make this disagree with the search routes about who
+        // counts as connected. Same set everywhere now — see
+        // lib/stream/dm-eligibility.ts.
         prisma.subscription
           .findMany({
             where: {
               subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
               requestedById: { in: resultConsulteeProfileIds },
-              status: { in: ["APPROVED", "SCHEDULED"] },
-              schedulingPeriodEndsAt: { gte: new Date() },
+              status: dmEligibleStatusFilter(),
             },
             select: { requestedBy: { select: { user: { select: { id: true } } } } },
           })
@@ -368,7 +369,7 @@ export const searchUsersWithRelationships = async (
             where: {
               consultationPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              status: { in: ["APPROVED", "SCHEDULED"] },
+              status: dmEligibleStatusFilter(),
             },
             select: {
               consultationPlan: {
@@ -385,8 +386,7 @@ export const searchUsersWithRelationships = async (
             where: {
               subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
               requestedById: currentUser.consulteeProfileId,
-              status: { in: ["APPROVED", "SCHEDULED"] },
-              schedulingPeriodEndsAt: { gte: new Date() },
+              status: dmEligibleStatusFilter(),
             },
             select: {
               subscriptionPlan: {
@@ -407,6 +407,8 @@ export const searchUsersWithRelationships = async (
         prisma.slotOfAppointment
           .findMany({
             where: {
+              deletedAt: null,
+              appointment: { deletedAt: null },
               user: { some: { id: validatedUserId } },
               AND: { user: { some: { id: { in: resultUserIds } } } },
             },
@@ -418,27 +420,42 @@ export const searchUsersWithRelationships = async (
 
     await Promise.all(relationshipQueries);
 
-    // Map results with batch-resolved relationship status
-    const usersWithRelationships = users.map((user) => ({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      image: user.image,
-      role: user.role,
-      hasRelationship: relatedUserIds.has(user.id),
-    }));
+    // Drop unrelated users rather than ranking them below related ones.
+    //
+    // `hasRelationship` was a SORT KEY, not a filter: a search for "char"
+    // returned every Charlotte on the platform — name, email, avatar and role —
+    // with the connected ones merely listed first. That is a directory of the
+    // entire user base behind a two-character query, and the field name made it
+    // read like a gate. Unrelated users are now not returned at all.
+    //
+    // `hasRelationship` stays on the payload, and is now always `true`. It is
+    // kept so existing consumers do not break on a missing key; new code should
+    // treat presence in this list as the answer.
+    const usersWithRelationships = users
+      .filter((user) => relatedUserIds.has(user.id))
+      .map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        role: user.role,
+        hasRelationship: true as const,
+      }));
 
-    // Sort by relationship status (connected users first), then by name
+    // Code-unit ordering, not localeCompare — same rule as the channel ids
+    // (#1134 P0-3). Nothing keys off this ordering, but the codebase has been
+    // bitten once by ICU-dependent sorts and a consistent habit is cheaper than
+    // remembering which sorts are load-bearing.
     usersWithRelationships.sort((a, b) => {
-      if (a.hasRelationship && !b.hasRelationship) return -1;
-      if (!a.hasRelationship && b.hasRelationship) return 1;
-      return (a.name || "").localeCompare(b.name || "");
+      const an = a.name || "";
+      const bn = b.name || "";
+      return an < bn ? -1 : an > bn ? 1 : 0;
     });
 
     streamLogger.debug("User search completed", {
       term: validatedTerm,
+      matchedCount: users.length,
       resultCount: usersWithRelationships.length,
-      relatedCount: relatedUserIds.size,
     });
 
     return usersWithRelationships;
@@ -452,7 +469,21 @@ export const searchUsersWithRelationships = async (
 };
 
 /**
- * Check if two users have any relationship through appointments
+ * Check if two users have any relationship through appointments.
+ *
+ * Thin re-export of `canDirectMessage` so the server-action surface keeps its
+ * name while the logic lives in `lib/stream/dm-eligibility.ts`. The three
+ * private helpers that used to live here (`checkConsultationRelationship`,
+ * `checkSubscriptionRelationship`, `checkSharedAppointments`) moved with it —
+ * they were the only implementation of the rule, and leaving a second copy
+ * behind is how the status sets diverged in the first place.
+ *
+ * Two behaviour changes came with the move, both deliberate:
+ *  - the status set widened to `DM_ELIGIBLE_STATUSES` (adds
+ *    APPROVED_PENDING_PAYMENT and COMPLETED) and the subscription
+ *    scheduling-window filter is gone, per the ever-transacted rule;
+ *  - it no longer swallows errors into `false`.
+ *
  * @param userId1 First user ID
  * @param userId2 Second user ID
  * @returns Boolean indicating if they have any relationship
@@ -460,177 +491,7 @@ export const searchUsersWithRelationships = async (
 export const checkUserRelationship = async (
   userId1: string,
   userId2: string,
-): Promise<boolean> => {
-  try {
-    // Get profile IDs for both users in parallel
-    const [user1, user2] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: userId1 },
-        select: { consultantProfileId: true, consulteeProfileId: true },
-      }),
-      prisma.user.findUnique({
-        where: { id: userId2 },
-        select: { consultantProfileId: true, consulteeProfileId: true },
-      }),
-    ]);
-
-    if (!user1 || !user2) return false;
-
-    // Check for relationships in parallel
-    const relationshipChecks = await Promise.all([
-      checkConsultationRelationship(user1, user2),
-      checkSubscriptionRelationship(user1, user2),
-      checkSharedAppointments(userId1, userId2),
-    ]);
-
-    return relationshipChecks.some(Boolean);
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
-    streamLogger.error("Relationship check failed", error, {
-      userId1,
-      userId2,
-    });
-    return false; // Default to no relationship on error
-  }
-};
-
-/**
- * Check consultation relationships between two users
- */
-async function checkConsultationRelationship(
-  user1: {
-    consultantProfileId: string | null;
-    consulteeProfileId: string | null;
-  },
-  user2: {
-    consultantProfileId: string | null;
-    consulteeProfileId: string | null;
-  },
-): Promise<boolean> {
-  if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
-  if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
-
-  const checks: Promise<boolean>[] = [];
-
-  // Check if user1 (consultant) has consultations with user2 (consultee)
-  if (user1.consultantProfileId && user2.consulteeProfileId) {
-    checks.push(
-      prisma.consultation
-        .findFirst({
-          where: {
-            consultationPlan: {
-              consultantProfileId: user1.consultantProfileId,
-            },
-            requestedById: user2.consulteeProfileId,
-            status: { in: ["APPROVED", "SCHEDULED"] },
-          },
-          select: { id: true },
-        })
-        .then((r) => !!r),
-    );
-  }
-
-  // Check reverse relationship
-  if (user2.consultantProfileId && user1.consulteeProfileId) {
-    checks.push(
-      prisma.consultation
-        .findFirst({
-          where: {
-            consultationPlan: {
-              consultantProfileId: user2.consultantProfileId,
-            },
-            requestedById: user1.consulteeProfileId,
-            status: { in: ["APPROVED", "SCHEDULED"] },
-          },
-          select: { id: true },
-        })
-        .then((r) => !!r),
-    );
-  }
-
-  if (checks.length === 0) return false;
-
-  const results = await Promise.all(checks);
-  return results.some(Boolean);
-}
-
-/**
- * Check subscription relationships between two users
- */
-async function checkSubscriptionRelationship(
-  user1: {
-    consultantProfileId: string | null;
-    consulteeProfileId: string | null;
-  },
-  user2: {
-    consultantProfileId: string | null;
-    consulteeProfileId: string | null;
-  },
-): Promise<boolean> {
-  if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
-  if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
-
-  const checks: Promise<boolean>[] = [];
-
-  if (user1.consultantProfileId && user2.consulteeProfileId) {
-    checks.push(
-      prisma.subscription
-        .findFirst({
-          where: {
-            subscriptionPlan: {
-              consultantProfileId: user1.consultantProfileId,
-            },
-            requestedById: user2.consulteeProfileId,
-            status: { in: ["APPROVED", "SCHEDULED"] },
-            schedulingPeriodEndsAt: { gte: new Date() },
-          },
-          select: { id: true },
-        })
-        .then((r) => !!r),
-    );
-  }
-
-  if (user2.consultantProfileId && user1.consulteeProfileId) {
-    checks.push(
-      prisma.subscription
-        .findFirst({
-          where: {
-            subscriptionPlan: {
-              consultantProfileId: user2.consultantProfileId,
-            },
-            requestedById: user1.consulteeProfileId,
-            status: { in: ["APPROVED", "SCHEDULED"] },
-            schedulingPeriodEndsAt: { gte: new Date() },
-          },
-          select: { id: true },
-        })
-        .then((r) => !!r),
-    );
-  }
-
-  if (checks.length === 0) return false;
-
-  const results = await Promise.all(checks);
-  return results.some(Boolean);
-}
-
-/**
- * Check if users share any appointments (webinars, classes)
- */
-async function checkSharedAppointments(
-  userId1: string,
-  userId2: string,
-): Promise<boolean> {
-  const sharedSlot = await prisma.slotOfAppointment.findFirst({
-    where: {
-      user: { some: { id: userId1 } },
-      AND: { user: { some: { id: userId2 } } },
-    },
-    select: { id: true },
-  });
-
-  return !!sharedSlot;
-}
+): Promise<boolean> => canDirectMessage(userId1, userId2);
 
 /**
  * @deprecated Use searchUsersWithRelationships instead — this performs a global

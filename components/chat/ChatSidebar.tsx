@@ -691,7 +691,15 @@ export const ChatSidebar = () => {
         <div className="px-4 py-2 flex justify-between items-center sticky top-0 bg-card z-10">
           <h2 className="font-semibold">Channels</h2>
           {canCreateChannels && (
-            <CreateChannelDialog onChannelCreated={handleChannelCreated} />
+            <CreateChannelDialog
+              onChannelCreated={handleChannelCreated}
+              // Custom (non-event) channels are admin/staff-only server-side.
+              // Without this the option renders for consultants and every
+              // submission 403s.
+              canCreateCustomChannel={
+                appRole === "ADMIN" || appRole === "STAFF"
+              }
+            />
           )}
         </div>
         {isLoading ? (

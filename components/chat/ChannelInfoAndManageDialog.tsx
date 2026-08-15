@@ -45,6 +45,7 @@ import { useChatContext } from "stream-chat-react";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
+import { addMemberToChannel } from "@/actions/stream/chat/channel.action";
 
 interface ChannelMember {
   id: string;
@@ -89,11 +90,22 @@ export const ChannelInfoAndManageDialog = ({
 
   const displayName = displayInfo.displayName;
 
-  // Check if current user is the event owner consultant
+  // Check if current user is the event owner consultant.
+  //
+  // The `client.user.role === "CONSULTANT"` conjunct that used to be here could
+  // never be true: `client.user.role` is the STREAM role, and `mapRoleToStream`
+  // collapses every non-staff account — consultants included — to `"user"`.
+  // So the whole predicate was constantly false and the host's remove-member
+  // control never rendered. ChatSidebar carries a comment warning about exactly
+  // this trap.
+  //
+  // Dropping the conjunct rather than swapping in the app role: for an event
+  // channel, `created_by_id` IS the host consultant (channel.action.ts sets it
+  // from the plan's consultantProfile), so the ownership test already implies
+  // the role. Adding a second source of truth would only create a way for the
+  // two to disagree.
   const isEventOwner =
-    isEvent &&
-    channel.data?.created_by_id === client?.userID &&
-    client?.user?.role === "CONSULTANT";
+    isEvent && channel.data?.created_by_id === client?.userID;
 
   // Get the other user's ID for 1-on-1 DMs (for block/report)
   const otherUserId =
@@ -141,8 +153,25 @@ export const ChannelInfoAndManageDialog = ({
     if (!channel.id) return;
 
     try {
-      // Add members to channel
-      await channel.addMembers(userIds);
+      // Through the server action, not `channel.addMembers()` directly.
+      //
+      // `addMemberToChannel` is the only server-side authorization on channel
+      // membership — session required, and only staff, admins, or the channel's
+      // creator may add anyone. It had zero callers: this component called
+      // Stream from the browser and the action sat unused, so the gate existed
+      // in the codebase without ever being in the path. Membership is what
+      // Stream's own permissions key off, which makes an unchecked add the
+      // widest hole in the chat surface.
+      for (const userId of userIds) {
+        await addMemberToChannel(
+          channel.id,
+          userId,
+          // `Channel["type"]` is a bare `string` in stream-chat; the action
+          // takes the narrowed union. Every channel this dialog can open is one
+          // of the two.
+          channel.type as "messaging" | "team",
+        );
+      }
       toast({
         title: "Success",
         description: `${userIds.length} member${userIds.length !== 1 ? "s" : ""} added successfully`,

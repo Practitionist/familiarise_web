@@ -119,11 +119,56 @@ try {
 
 Stream Chat uses a role-based permission system. The `mapRoleToStream` function maps application user roles to Stream Chat roles.
 
-**Location:** `/lib/user.ts` (lines 98-115)
+**Location:** `/lib/user.ts` — `mapRoleToStream`
 
 ### Least-Privilege Mapping (#899)
 
 The mapping now follows least privilege. Only platform staff and admins receive Stream's global `admin` role; every other user, consultants included, is mapped to the plain `user` role. Consultants no longer get a blanket administrative grant. Instead, channel creation happens server-side and each host is given a channel-scoped `channel_moderator` grant on their own host channels at creation time, rather than a global moderation grant that would also cover peer direct-message channels.
+
+Worth stating plainly how bad the previous version was, because the current
+mapping reads as unremarkable and it is not: **every branch of the old switch
+returned `admin`, including the `if (!role)` fallback.** Every account on the
+platform held Stream global admin. The docblock said so out loud — "using admin
+for consultants and consultees to ensure team channel access… can be refined
+later with custom roles."
+
+### Decision: keep `ADMIN`/`STAFF` → Stream `admin`
+
+**Status: accepted.** Reviewed again while adding the DM eligibility gate; kept
+as-is.
+
+What it costs is real and should be understood rather than forgotten: Stream's
+`admin` role bypasses channel permission checks, so a staff token can read any
+channel — including any private consultant↔consultee DM — from the browser.
+The blast radius of a stolen staff session is every conversation on the
+platform. It is a deliberate trade, not an oversight.
+
+Two alternatives were considered and rejected **for now**. Both remain open, and
+either would be a strict improvement if the operational cost is acceptable when
+someone next looks at this:
+
+1. **Map everyone to `user`; do moderation server-side.** Staff would hold no
+   special client-side role at all, and every moderation or support action would
+   go through the server clients in `lib/stream-client.ts`, which present the
+   API secret and bypass Stream's permission system anyway — so nothing is lost
+   operationally *unless* a support surface needs to read channels directly in
+   the browser. This is the least-privilege answer and removes the skeleton key
+   entirely. It is the option to take if a staff account is ever compromised, or
+   before the platform holds conversations it would be damaging to leak in bulk.
+   Migration cost: one `upsertUsers` sweep to re-stamp existing staff rows,
+   since the role is written at upsert time and the 5-minute sync cache means
+   stale rows linger until they next reconnect.
+2. **A Stream custom role granting `ReadChannel` and nothing else.** Staff could
+   observe without being able to write, delete, or reconfigure. More precise
+   than either of the above, and Stream allows up to 25 custom roles. Rejected
+   for now on maintenance grounds: it is a role defined outside this repo (via
+   the dashboard or an API call) that must be kept in step with the code, and we
+   have no deployment path for chat roles yet. `scripts/stream/ensure-chat-type-grants.ts`
+   is the obvious place to grow one.
+
+Note that option 1 does **not** conflict with the grants script: that script
+revokes `create-channel` from `user` and `guest`, which is orthogonal to whether
+staff hold `admin`.
 
 ### Current Implementation
 
@@ -314,14 +359,15 @@ The background sync job maintains synchronization between your Prisma database a
 
 ### Job Overview
 
-**Schedule:** Daily at 03:30 UTC (9:00 AM IST)
+**Schedule:** Daily at 03:40 UTC (9:10 AM IST)
 
 **Execution:** GitHub Actions workflow
 
 **Location:**
 
-- Job logic: `/jobs/stream-sync.ts`
-- Workflow: `/.github/workflows/stream_sync.yml`
+- Job logic: `/jobs/stream/stream-sync.ts` (implementation in
+  `/scripts/stream/stream-sync.ts`)
+- Workflow: `/.github/workflows/stream-sync.yml`
 
 **Purpose:**
 
@@ -460,25 +506,37 @@ The following users are NEVER deleted:
 **Hardcoded Exclusions:**
 
 ```typescript
-const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
+const EXCLUDED_USER_IDS = new Set(["system"]);
 ```
+
+Plus anything listed in the `STREAM_SYNC_EXCLUDED_USERS` environment variable.
+This document previously showed a personal account hardcoded alongside
+`"system"`; it is not in the code and must not be — an operator's own account
+being un-reapable is a footgun, and the env var is the supported way to add one
+temporarily.
 
 **Reason for Exclusions:**
 
 - System accounts are required for Stream functionality
 - Recording egress users handle video recording and storage
-- Hardcoded users are critical administrator or service accounts
 
 ### Deletion Strategy
 
-**Hard Delete:**
+**Soft delete.** This section used to document hard delete as the strategy and
+soft as the alternative. The code does the opposite:
 
 ```typescript
 {
-  user: "hard",      // Permanently delete user
-  messages: "hard"   // Delete all user messages
+  user: "soft",      // Recoverable for a 30-day grace period
+  messages: "soft"
 }
 ```
+
+There is no hard-delete follow-up job yet — the `TODO` in
+`scripts/stream/stream-sync.ts` is tracked as #535. That matters for the DPDP
+§12 erasure path, which scrubs the local `User` row and makes no Stream call at
+all: Stream-side removal happens only incidentally, when this reaper next
+notices the row is gone, and stops at soft.
 
 **Alternative Options:**
 

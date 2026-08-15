@@ -24,6 +24,7 @@ import {
   getDmChannelId,
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
+import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import {
   DEFAULT_RETENTION_DAYS,
@@ -785,7 +786,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           consultationPlan: { consultantProfileId: user.consultantProfileId },
-          status: { in: ["APPROVED", "SCHEDULED"] },
+          status: dmEligibleStatusFilter(),
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -800,7 +801,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           subscriptionPlan: { consultantProfileId: user.consultantProfileId },
-          status: { in: ["APPROVED", "SCHEDULED"] },
+          status: dmEligibleStatusFilter(),
         },
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
@@ -820,7 +821,12 @@ async function getDmPairsForUser(
     ]);
     for (const c of [...consultations, ...subscriptions]) {
       const consulteeUserId = c.requestedBy?.user?.id;
-      if (!consulteeUserId) continue;
+      // Skip, do not throw. `getDmChannelId` rejects a self-pair, and this loop
+      // runs un-isolated inside syncUserEventChannels — one dual-profile user
+      // who self-booked would otherwise abort the entire reconcile for
+      // themselves and leave every other channel unsynced. Checkout blocks
+      // self-booking, so this only fires on legacy or seeded rows.
+      if (!consulteeUserId || consulteeUserId === userId) continue;
       const organizationId = bookingOrgId(c);
       const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
       pairMap.set(channelId, {
@@ -836,7 +842,7 @@ async function getDmPairsForUser(
       prisma.consultation.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          status: { in: ["APPROVED", "SCHEDULED"] },
+          status: dmEligibleStatusFilter(),
         },
         include: {
           consultationPlan: {
@@ -852,7 +858,7 @@ async function getDmPairsForUser(
       prisma.subscription.findMany({
         where: {
           requestedById: user.consulteeProfileId,
-          status: { in: ["APPROVED", "SCHEDULED"] },
+          status: dmEligibleStatusFilter(),
         },
         include: {
           subscriptionPlan: {
@@ -877,7 +883,7 @@ async function getDmPairsForUser(
     ]);
     for (const c of consultations) {
       const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
-      if (!consultantUserId) continue;
+      if (!consultantUserId || consultantUserId === userId) continue;
       const organizationId = bookingOrgId(c);
       const channelId = getDmChannelId(consultantUserId, userId, organizationId);
       pairMap.set(channelId, {
@@ -889,7 +895,7 @@ async function getDmPairsForUser(
     for (const sub of subscriptions) {
       const consultantUserId =
         sub.subscriptionPlan?.consultantProfile?.user?.id;
-      if (!consultantUserId) continue;
+      if (!consultantUserId || consultantUserId === userId) continue;
       const organizationId = bookingOrgId(sub);
       const channelId = getDmChannelId(consultantUserId, userId, organizationId);
       pairMap.set(channelId, {

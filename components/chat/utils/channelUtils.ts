@@ -85,13 +85,27 @@ export const getChannelDisplayInfo = (
     }
   }
 
-  // Fallback
+  // Fallback: a messaging channel with no counterparty, or no `currentUserId`
+  // yet because the client is still connecting.
+  //
+  // This branch used to end in `channel.id`, which is why a broken DM rendered
+  // its raw `dm-<cuid>-<cuid>` key as the conversation title. A channel id is an
+  // internal key — it is never a name, it leaks both participants' user ids into
+  // the UI, and showing it made a real defect (a channel created with no
+  // members, see lib/stream/dm-eligibility.ts) look like a formatting quirk.
+  //
+  // A one-member DM should not exist. If one is on screen, say so plainly
+  // instead of dressing it up, and keep the id out of the title.
+  const isOrphanedDm = isDirectMessage;
+
   return {
-    displayName: channel.data?.name || channel.id || "Unknown",
+    displayName:
+      (channel.data?.name as string | undefined) ||
+      (isOrphanedDm ? "Unavailable conversation" : channel.id || "Unknown"),
     displayImage: undefined,
     isGroupDM: false,
     memberCount: 0,
-    statusText: "No members",
+    statusText: isOrphanedDm ? "No other participants" : "No members",
   };
 };
 

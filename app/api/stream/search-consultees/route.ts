@@ -43,7 +43,14 @@ export async function GET(req: NextRequest) {
 
     // Get all consultees from different relationship types
     const results: ConsulteeSearchResult[] = [];
-    const seenUserIds = new Set<string>(excludeIds);
+    // Seeded with the caller as well as the caller-supplied exclusions. A user
+    // holding BOTH profiles — a consultant who also books sessions — appears in
+    // their own relationship queries the moment they are `requestedBy` on one of
+    // their own plans or share a slot on their own event, and the only previous
+    // filter was `excludeIds` from the query string plus the dialog's existing
+    // members. So they could add themselves to a channel and end up as their own
+    // counterparty. Self-exclusion belongs here, not in the caller.
+    const seenUserIds = new Set<string>([...excludeIds, session.user.id]);
 
     // 1. Get consultees from active consultations
     const consultations = await prisma.consultation.findMany({

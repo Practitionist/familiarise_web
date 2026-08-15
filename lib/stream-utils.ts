@@ -70,6 +70,20 @@ export function getDmChannelId(
   userId2: string,
   organizationId?: string | null,
 ): string {
+  // A pair of one is not a pair. `createChannel` de-duplicates its member array
+  // through a Set, so `[a, a]` silently collapsed to a one-member `messaging`
+  // channel that rendered as its own raw id (channelUtils has no branch for
+  // zero counterparties) and that nothing could ever reply in. Checkout already
+  // refuses self-booking, so reaching here with a self-pair means a caller
+  // resolved the two sides wrongly — which is worth a stack trace, not a
+  // channel. Callers that iterate over untrusted pair lists must filter first;
+  // `getDmPairsForUser` does.
+  if (userId1 === userId2) {
+    throw new Error(
+      `getDmChannelId: refusing to derive a self-DM id for ${userId1}`,
+    );
+  }
+
   // Code-unit ordering, NOT localeCompare. #1134 P0-3: localeCompare sorts by
   // ICU collation — case-insensitive at the primary level and dependent on the
   // runtime's ICU build and default locale — so the same pair yielded different

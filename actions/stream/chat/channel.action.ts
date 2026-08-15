@@ -30,6 +30,7 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
@@ -198,7 +199,21 @@ export async function createChannel(input: {
 }
 
 /**
- * Create a direct message channel between two users
+ * Create a direct message channel between two users.
+ *
+ * The eligibility check is the point of this function now. It used to validate
+ * two non-empty strings and nothing else — no session, no relationship query,
+ * not even `a !== b` — and was safe only by accident, because every caller
+ * happened to be a booking-approval or payment-success path where the link was
+ * already established. That is an invariant held by convention across five call
+ * sites in three files, which is not an invariant. It is enforced here so that
+ * adding a sixth caller cannot quietly reopen the hole.
+ *
+ * Note this deliberately gates on the RELATIONSHIP, not on the caller's
+ * session. Every legitimate caller is server-side and acts on behalf of the
+ * system (a Razorpay webhook has no session at all), so a session check here
+ * would break the create path while adding nothing — the user-initiated
+ * surface is `POST /api/stream/channels/dm`, which does both.
  */
 export async function createDirectMessageChannel(
   currentUserId: string,
@@ -214,6 +229,8 @@ export async function createDirectMessageChannel(
   // Validate inputs
   memberIdSchema.parse(currentUserId);
   memberIdSchema.parse(targetUserId);
+
+  await assertCanDirectMessage(currentUserId, targetUserId);
 
   const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 
