@@ -101,6 +101,9 @@ graph TD
 | Learn about concurrency and locking    | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
 | See all cron jobs and background tasks | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
 | Set up local dev and run tests         | [14-local-development-and-testing.md](./14-local-development-and-testing.md)   |
+| Run the release checklist              | [15-checklist.md](./15-checklist.md)                                           |
+| Follow a recurring event end to end    | [16-recurring-events-journey.md](./16-recurring-events-journey.md)             |
+| Understand org-sponsored bookings      | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                       |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 
