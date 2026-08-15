@@ -38,12 +38,19 @@
  *   npx tsx scripts/stream/ensure-chat-type-grants.ts
  *   npx tsx scripts/stream/ensure-chat-type-grants.ts --apply --open-route-is-deployed
  *   npx tsx scripts/stream/ensure-chat-type-grants.ts --apply --restore-user-create
+ *   npx tsx scripts/stream/ensure-chat-type-grants.ts --apply --rebaseline
  *
  * NOTE: dev, preview and production share one Stream app. A dry run here reads
  * production. An apply writes it.
  */
 import "dotenv/config";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -95,6 +102,8 @@ interface Options {
   apply: boolean;
   restore: boolean;
   deployConfirmed: boolean;
+  /** Overwrite an existing pre-image with the CURRENT live state. */
+  rebaseline: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -102,6 +111,7 @@ function parseArgs(argv: string[]): Options {
     apply: argv.includes("--apply"),
     restore: argv.includes("--restore-user-create"),
     deployConfirmed: argv.includes("--open-route-is-deployed"),
+    rebaseline: argv.includes("--rebaseline"),
   };
 }
 
@@ -344,9 +354,31 @@ export async function ensureChatTypeGrants(opts: Options): Promise<number> {
     settingsProbe.app?.user_search_disallowed_roles ?? [];
 
   if (opts.apply && !opts.restore) {
-    mkdirSync(dirname(PRE_IMAGE_PATH), { recursive: true });
-    writeFileSync(PRE_IMAGE_PATH, JSON.stringify(captured, null, 2));
-    console.log(`Pre-image written to ${PRE_IMAGE_PATH}\n`);
+    // An existing pre-image is NEVER silently overwritten.
+    //
+    // Applying twice would otherwise capture the already-modified state as the
+    // rollback target — so the second run quietly redefines "before" as "after",
+    // and `--restore-user-create` becomes a no-op that reports success. The
+    // failure is invisible until the day someone actually needs to roll back.
+    //
+    // The second run does not need a new snapshot anyway: this script is
+    // idempotent, so by then the live state either already matches the desired
+    // one or the first pre-image is still the correct thing to return to.
+    if (existsSync(PRE_IMAGE_PATH) && !opts.rebaseline) {
+      console.log(
+        `Pre-image already exists at ${PRE_IMAGE_PATH} — keeping it.\n` +
+          `(pass --rebaseline to replace it with the current live state)\n`,
+      );
+    } else {
+      mkdirSync(dirname(PRE_IMAGE_PATH), { recursive: true });
+      // Write-then-rename, so an interrupted write cannot leave a truncated
+      // pre-image where a valid one used to be. Same directory, so the rename
+      // stays on one filesystem and is atomic.
+      const tmpPath = `${PRE_IMAGE_PATH}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(captured, null, 2));
+      renameSync(tmpPath, PRE_IMAGE_PATH);
+      console.log(`Pre-image written to ${PRE_IMAGE_PATH}\n`);
+    }
   }
 
   for (const channelType of CHANNEL_TYPES) {

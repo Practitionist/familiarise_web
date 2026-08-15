@@ -333,18 +333,23 @@ export const ChannelInfoAndManageDialog = ({
       });
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Block failed");
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Block failed");
       }
 
       toast({
         title: "User blocked",
         description: "This user can no longer message you",
       });
-    } catch {
+    } catch (error) {
+      // The server's message, not a generic one. A partial block answers 502
+      // with "Blocked in 1 of 2 conversations" — telling someone only that it
+      // "failed" would hide that half of it succeeded, and telling them it
+      // worked would be worse.
       toast({
         title: "Error",
-        description: "Failed to block user",
+        description:
+          error instanceof Error ? error.message : "Failed to block user",
         variant: "destructive",
       });
     } finally {

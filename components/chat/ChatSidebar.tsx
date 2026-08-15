@@ -218,6 +218,19 @@ export const ChatSidebar = () => {
   // succeeds (not when a fetch is skipped) so a skipped/failed fetch never
   // marks a scope as done. Refetch still happens on a genuine client/scope change.
   const fetchedKeyRef = useRef<string | null>(null);
+  /**
+   * How many rows Stream has actually returned per list, before filtering.
+   *
+   * The pagination offset must count what the SERVER has handed over, not what
+   * survived `isUsableDmChannel`. Using `directMessages.length` meant every
+   * phantom dropped from a page shifted the next offset backwards by one, so
+   * page two re-fetched rows already on screen and the tail of the list became
+   * unreachable — the filter silently ate the pagination.
+   */
+  const fetchedCountRef = useRef<{ team: number; messaging: number }>({
+    team: 0,
+    messaging: 0,
+  });
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
@@ -298,11 +311,19 @@ export const ChatSidebar = () => {
         return;
       }
 
+      const usableDms = dmResponse.filter(isUsableDmChannel);
+
       setTeamChannels(teamResponse);
       // Phantoms filtered out here rather than hidden at render: a row that is
       // merely styled as unavailable is still selectable, still opens, and still
       // accepts a message. See isUsableDmChannel.
-      setDirectMessages(dmResponse.filter(isUsableDmChannel));
+      setDirectMessages(usableDms);
+
+      // Raw counts, for the next page's offset.
+      fetchedCountRef.current = {
+        team: teamResponse.length,
+        messaging: dmResponse.length,
+      };
 
       // Update pagination state — measured against the RAW response length, not
       // the filtered one. `response.length === limit` is Stream's
@@ -320,7 +341,10 @@ export const ChatSidebar = () => {
       if (!initialSelectionDoneRef.current) {
         initialSelectionDoneRef.current = true;
         const mostRecentTeam = teamResponse[0];
-        const mostRecentDM = dmResponse[0];
+        // The FILTERED list — auto-selecting `dmResponse[0]` could open a
+        // phantom on load, which is the exact thing being filtered out
+        // everywhere else.
+        const mostRecentDM = usableDms[0];
         let channelToSelect = null;
         if (mostRecentTeam && mostRecentDM) {
           const teamTime = new Date(
@@ -363,7 +387,6 @@ export const ChatSidebar = () => {
     async (type: "team" | "messaging") => {
       if (!client?.userID || isLoadingMore) return;
 
-      const currentChannels = type === "team" ? teamChannels : directMessages;
       const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
 
       if (!hasMore) return;
@@ -386,7 +409,9 @@ export const ChatSidebar = () => {
         };
         const sort: { last_message_at: -1 } = { last_message_at: -1 };
 
-        const offset = currentChannels.length;
+        // Raw fetched count, never `currentChannels.length` — see
+        // fetchedCountRef.
+        const offset = fetchedCountRef.current[type];
 
         const options = {
           watch: true,
@@ -398,6 +423,8 @@ export const ChatSidebar = () => {
         };
 
         const response = await client.queryChannels(filter, sort, options);
+
+        fetchedCountRef.current[type] += response.length;
 
         if (type === "team") {
           setTeamChannels((prev) => [...prev, ...response]);
@@ -418,8 +445,9 @@ export const ChatSidebar = () => {
     },
     [
       client,
-      teamChannels,
-      directMessages,
+      // `teamChannels` / `directMessages` are deliberately absent: the offset
+      // now comes from `fetchedCountRef`, so this callback no longer reads
+      // either list. Keeping them would rebuild it on every incoming message.
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,

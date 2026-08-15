@@ -26,6 +26,14 @@
  * `team` channels are deliberately out of scope. A webinar channel legitimately
  * sits at one member — its host — between creation and the first registration.
  *
+ * And `messaging` alone is NOT sufficient to identify a DM. Collaborator
+ * channels (`collab-<webinar|class>-<planId>`) are `messaging` too, as are the
+ * admin-created custom ones, and a collab channel can legitimately sit at one
+ * member while co-host invitations are still pending. Deleting those would
+ * destroy live conversations in the name of cleaning up phantoms. The id prefix
+ * is the discriminator, via the same `isDMChannel` the app uses — which is why
+ * `dmo-` and `dmh-` had to be registered there first.
+ *
  * ## Safety
  *
  * Dry run is the default and prints every candidate with its member count,
@@ -47,6 +55,7 @@ import {
   getStreamChatClient,
   isStreamConfigured,
 } from "../../lib/stream-client";
+import { isDMChannel } from "../../lib/stream-channel-ids";
 
 /**
  * Stream caps `queryChannels` at 30 per call regardless of the `limit` passed.
@@ -101,6 +110,7 @@ export async function purgeMemberlessDms(
   const client = getStreamChatClient();
   const candidates: Candidate[] = [];
   let scanned = 0;
+  let dmScanned = 0;
   let offset = 0;
 
   // Every `messaging` channel is walked and the member count checked here,
@@ -118,6 +128,12 @@ export async function purgeMemberlessDms(
     scanned += page.length;
 
     for (const channel of page) {
+      // Prefix first, member count second. Only `dm-`/`dmo-`/`dmh-` ids are
+      // pair conversations; every other `messaging` channel here is a collab or
+      // custom channel with its own rules about how many members it may hold.
+      if (!isDMChannel(channel.id)) continue;
+      dmScanned++;
+
       const memberIds = Object.keys(channel.state?.members ?? {});
       if (memberIds.length >= 2) continue;
 
@@ -147,7 +163,9 @@ export async function purgeMemberlessDms(
     if (page.length < PAGE_SIZE) break;
   }
 
-  console.log(`Scanned ${scanned} messaging channels.`);
+  console.log(
+    `Scanned ${scanned} messaging channels (${dmScanned} were DM-prefixed).`,
+  );
   console.log(`Found ${candidates.length} with fewer than 2 members:\n`);
   for (const c of candidates) {
     console.log(

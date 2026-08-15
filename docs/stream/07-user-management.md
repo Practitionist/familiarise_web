@@ -527,7 +527,7 @@ soft as the alternative. The code does the opposite:
 
 ```typescript
 {
-  user: "soft",      // Recoverable for a 30-day grace period
+  user: "soft",      // Intended 30-day grace period; expiry is NOT enforced yet
   messages: "soft"
 }
 ```

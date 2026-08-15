@@ -78,7 +78,9 @@ export async function POST(req: NextRequest) {
       // failure reported as a policy decision, and the one moment when someone
       // reaching for the block button most needs it to work.
       Sentry.captureException(
-        queryError instanceof Error ? queryError : new Error(String(queryError)),
+        queryError instanceof Error
+          ? queryError
+          : new Error(String(queryError)),
         { tags: { subsystem: "stream" } },
       );
       streamLogger.error("Block: DM channel lookup failed", queryError, {
@@ -131,20 +133,7 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       );
     }
-    if (failures.length > 0) {
-      // Partial success still blocks — but it leaves a writable thread behind,
-      // so it must be visible rather than inferred from a quiet log.
-      Sentry.captureException(
-        new Error("Block: some channel bans failed"),
-        { tags: { subsystem: "stream" } },
-      );
-      streamLogger.warn("Block: some channel bans failed", {
-        userId: session.user.id,
-        targetUserId,
-        failed: failures.length,
-        total: dmChannels.length,
-      });
-    }
+    const blockedCount = dmChannels.length - failures.length;
 
     // Create a moderation report in our DB
     await prisma.moderationReport.create({
@@ -157,9 +146,42 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // A partial block is not a block. Reported AFTER the moderation report is
+    // written, because the attempt genuinely happened and the audit trail should
+    // record it — but the caller must not be told the person can no longer
+    // message them while one shared thread is still writable. The UI branches on
+    // `response.ok` alone, so a 2xx here would render "This user can no longer
+    // message you" over a channel they can still post in.
+    if (failures.length > 0) {
+      Sentry.captureException(new Error("Block: some channel bans failed"), {
+        tags: { subsystem: "stream" },
+      });
+      streamLogger.warn("Block: some channel bans failed", {
+        userId: session.user.id,
+        targetUserId,
+        blocked: blockedCount,
+        failed: failures.length,
+        total: dmChannels.length,
+      });
+
+      return NextResponse.json(
+        {
+          success: false,
+          partial: true,
+          blocked: blockedCount,
+          total: dmChannels.length,
+          error:
+            `Blocked in ${blockedCount} of ${dmChannels.length} conversations. ` +
+            "Please try again to block the rest.",
+        },
+        { status: 502 },
+      );
+    }
+
     streamLogger.info("User blocked", {
       blockedBy: session.user.id,
       targetUserId,
+      channelCount: dmChannels.length,
     });
 
     return NextResponse.json({
@@ -167,7 +189,10 @@ export async function POST(req: NextRequest) {
       message: "User blocked successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to block user", error);
     return NextResponse.json(
       { error: "Failed to block user" },
