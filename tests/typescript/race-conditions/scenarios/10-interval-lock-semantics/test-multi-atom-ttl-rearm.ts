@@ -51,6 +51,13 @@ const MIN_STALL_MS = 2000;
 // apart; without it they differ by the whole stall (~3s). The allowance covers
 // a real-Redis run, where the re-arm itself costs one round trip per atom.
 const MAX_TTL_SPREAD_MS = 1500;
+
+// A re-armed atom keeps its budget minus the 1% clock-drift discount (29700ms
+// of the 30000 above), so this floor sits just under it. Deliberately a fixed
+// number rather than a mirror of the lock's own arithmetic: an expectation
+// recomputed from the implementation agrees with whatever the implementation
+// does, and a drift discount large enough to break this floor is a change to
+// the lock's safety margin that should fail a test.
 const MIN_REARMED_TTL_MS = 28000;
 
 async function runTest() {

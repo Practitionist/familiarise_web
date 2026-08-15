@@ -42,7 +42,7 @@ interface RoundOutcome {
   round: number;
   durationMs: number;
   results: BookingResult[];
-  loserInterval: TestInterval;
+  loserInterval: TestInterval | null;
   winners: number;
 }
 
@@ -52,38 +52,55 @@ async function runRound(round: number): Promise<RoundOutcome> {
   const late = utcInterval("10:30", "12:00");
 
   const barrier = createBarrier(2);
-  const attempts = [
+  // Deferred on purpose: calling attemptIntervalLock builds a promise that is
+  // already running, so an array of calls fixes the start order at the literal
+  // and no later reordering can change it.
+  const startEarly = () =>
     attemptIntervalLock({
       userId: `round-${round}-early`,
       consultantProfileId: consultantId,
       interval: early,
       barrier,
-    }),
+    });
+  const startLate = () =>
     attemptIntervalLock({
       userId: `round-${round}-late`,
       consultantProfileId: consultantId,
       interval: late,
       barrier,
-    }),
-  ];
+    });
 
   // Alternate which side starts first — the crossed order is the whole point.
+  // The winner does not alternate with it, and that is not a flaw in the test:
+  // 10:30 is the late side's FIRST atom and the early side's SECOND, so the
+  // early side is still acquiring 10:00 when the late side takes the atom they
+  // share. Which is why every assertion here counts winners instead of naming one.
   const startedAt = Date.now();
-  const results = await Promise.all(
-    round % 2 === 0 ? attempts : [...attempts].reverse(),
-  );
+  const starters =
+    round % 2 === 0 ? [startEarly, startLate] : [startLate, startEarly];
+  const results = await Promise.all(starters.map((start) => start()));
   const durationMs = Date.now() - startedAt;
 
   const loser = results.find((result) => result.status === 409);
-  const loserInterval = loser?.userId.endsWith("-early") ? early : late;
+  const loserInterval = loser
+    ? (loser.userId.endsWith("-early") ? early : late)
+    : null;
 
   // Every lock from this round is released by now, so the loser's interval must
-  // be free — a rollback that leaked an atom would show up right here.
-  const reacquire = await attemptIntervalLock({
-    userId: `round-${round}-loser-retry`,
-    consultantProfileId: consultantId,
-    interval: loserInterval,
-  });
+  // be free — a rollback that leaked an atom would show up right here. No loser
+  // at all means both overlapping intervals were granted, which is the failure
+  // this scenario exists to catch, so say so rather than probing an arbitrary side.
+  const reacquire = loserInterval
+    ? await attemptIntervalLock({
+        userId: `round-${round}-loser-retry`,
+        consultantProfileId: consultantId,
+        interval: loserInterval,
+      })
+    : assertionResult(
+        `round-${round}-had-a-refusal`,
+        false,
+        `round ${round}: no attempt was refused — both overlapping intervals acquired`,
+      );
 
   return {
     round,
@@ -133,7 +150,7 @@ async function runTest() {
       assertionResult(
         `round-${round.round}-single-winner`,
         round.winners === 1,
-        `round ${round.round}: ${round.winners} winner(s), loser ${round.loserInterval.label} re-acquired in ${round.durationMs}ms`,
+        `round ${round.round}: ${round.winners} winner(s), loser ${round.loserInterval?.label ?? "none"} re-acquired in ${round.durationMs}ms`,
       ),
     );
   });

@@ -88,6 +88,8 @@ async function runTest() {
       atomKeyExists(tailKey),
     ]);
 
+    // The sharper proof is the re-booking, not the key probe: it shows the
+    // rolled-back atoms are usable again, not merely absent from Redis.
     results.push(
       assertionResult(
         "conflict-names-the-held-atom",
@@ -104,10 +106,6 @@ async function runTest() {
         !tailHeld,
         `11:30 held=${tailHeld} (acquisition never got past 11:00)`,
       ),
-    );
-
-    // The sharper proof: the rolled-back atoms are usable, not merely absent.
-    results.push(
       await attemptIntervalLock({
         userId: "head-rebooking",
         consultantProfileId: consultantId,

@@ -47,12 +47,13 @@ async function runTest() {
   const slots = Array.from({ length: CONCURRENT_USERS }, (_, index) =>
     utcIntervalFromMinutes(index * ATOM_MINUTES, (index + 1) * ATOM_MINUTES),
   );
+  const span = utcIntervalFromMinutes(0, CONCURRENT_USERS * ATOM_MINUTES);
 
   const config: TestConfig = {
     testName: "Disjoint-Atom Parallel Load",
     category: "11-load-stress",
     concurrentUsers: CONCURRENT_USERS,
-    slotTime: `${slots[0].label} … ${slots[slots.length - 1].label}`,
+    slotTime: span.label,
     consultantId,
     // 40 bookings + 1 structural assertion.
     expectedSuccesses: CONCURRENT_USERS + 1,
@@ -64,7 +65,7 @@ async function runTest() {
     Category: config.category,
     "Concurrent Users": CONCURRENT_USERS,
     "Consultant ID": consultantId,
-    Slots: `${CONCURRENT_USERS} adjacent ${ATOM_MINUTES}-minute atoms`,
+    Slots: `${CONCURRENT_USERS} adjacent ${ATOM_MINUTES}-minute atoms (${span.label})`,
     "Wall-Clock Ceiling": `${WALL_CLOCK_CEILING_MS}ms`,
     "Expected Outcome": `${CONCURRENT_USERS} bookings, 0 conflicts`,
   });

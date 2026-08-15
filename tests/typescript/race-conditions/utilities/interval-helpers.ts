@@ -49,7 +49,7 @@ function minutesOfClock(hhmm: string): number {
   const [hours, minutes] = hhmm.split(":");
   const total = Number(hours) * 60 + Number(minutes);
   if (!Number.isFinite(total)) {
-    throw new Error(`interval-helpers: malformed clock time "${hhmm}"`);
+    throw new TypeError(`interval-helpers: malformed clock time "${hhmm}"`);
   }
   return total;
 }
@@ -134,8 +134,15 @@ export interface Barrier {
  * Countdown latch. A winner that releases as soon as it acquires lets a
  * retrying loser take the same atoms, which turns "exactly one wins" into a
  * coin flip; holding until every participant has settled makes it a fact.
+ *
+ * The wait is bounded: a participant that never arrives would otherwise hang
+ * the scenario until the CI job's own timeout, which kills the run and saves no
+ * report at all. Failing loudly is worth more than the extra timer.
  */
-export function createBarrier(participants: number): Barrier {
+export function createBarrier(
+  participants: number,
+  timeoutMs = 30000,
+): Barrier {
   let remaining = participants;
   let open: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => {
@@ -146,7 +153,25 @@ export function createBarrier(participants: number): Barrier {
     async arriveAndWait() {
       remaining -= 1;
       if (remaining <= 0) open?.();
-      await gate;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const abandoned = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `createBarrier: ${remaining} participant(s) never arrived within ${timeoutMs}ms`,
+              ),
+            ),
+          timeoutMs,
+        );
+      });
+
+      try {
+        await Promise.race([gate, abandoned]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
 }
@@ -231,7 +256,9 @@ export function resetIntervalRegistry(): void {
  * overlapping intervals both pass the check.
  */
 export async function attemptIntervalBooking(
-  attempt: IntervalAttempt & { writeMs?: number },
+  // No barrier or hold: this one releases as soon as its write lands, which is
+  // what makes the load scenarios drain instead of serialising on a held lock.
+  attempt: Omit<IntervalAttempt, "barrier" | "holdMs"> & { writeMs?: number },
 ): Promise<BookingResult> {
   const {
     userId,
