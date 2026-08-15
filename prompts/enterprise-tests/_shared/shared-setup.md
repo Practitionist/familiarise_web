@@ -18,8 +18,11 @@ For the case skeleton + fix-and-retest gate, see [`case-template.md`](./case-tem
    Trivial (≤5 lines, no schema/cron/payment/auth/compliance) → apply +
    retest. Non-trivial → STOP and ASK before editing. No bug list.
 2. **Verify DB state after every meaningful action.** The UI can lie;
-   the three ledgers (`UsageLedgerEntry`, `FundingLedgerEntry`,
-   `SettlementLedgerEntry`) are the source of truth.
+   the source of truth is the double-entry money ledger
+   (`LedgerAccount` / `LedgerTransaction` / `LedgerEntry`, which
+   replaced `FundingLedgerEntry`, `WalletEntry`, and
+   `SettlementLedgerEntry` in #772) plus `UsageLedgerEntry` for
+   engagement entitlements.
 3. **Test happy + guard paths.** Every route has 4xx branches.
 4. **All money in paise** (1 INR = 100 paise). Never divide by 100 in
    assertions; assert the integer.
@@ -39,21 +42,34 @@ For the case skeleton + fix-and-retest gate, see [`case-template.md`](./case-tem
 
 ## §2 — Seed cohort
 
-The deterministic cohort lives in `prisma/seedFiles/15a-create-organizations.ts`.
-Use these for read-only and happy-path cases. **Do not mutate them
-destructively** — that's what the fresh-org spawn pattern below is for.
+The deterministic cohort lives in `prisma/seedFiles/15a-create-organizations.ts`,
+with the users it draws from created in `1a-create-users.ts`. Use these for
+read-only and happy-path cases. **Do not mutate them destructively** —
+that's what the fresh-org spawn pattern below is for.
 
-| Slug | Capability | FundingSource | Program | OWNER email |
-|---|---|---|---|---|
-| `wipro` | Sponsor (canSponsor=true, canHost=false) | `INVOICE` | LICENSED_SEAT | `founder@wipro.test` |
-| `iit-madras` | Host (canSponsor=false, canHost=true) | — | — | `founder@iitmadras.test` |
-| `learnpro-academy` | Hybrid (canSponsor=true, canHost=true) | `WALLET` | CREDIT_POOL | `founder@learnpro.test` |
-| Rahul solo | Host (single-consultant) | — | — | `rahul@familiarise.test` |
+The org shapes are seeded as follows (corrected 2026-08-14 — an earlier
+version of this table swapped the IIT/LearnPro shapes and listed
+`founder@*.test` owner emails that have never existed in the seeds):
 
-Password for every seeded account: `TestPassword123!`.
+| Slug | Capability | FundingSource | Program |
+|---|---|---|---|
+| `wipro` | Sponsor (canSponsor=true, canHost=false) | `INVOICE` | LICENSED_SEAT |
+| `learnpro-academy` | Host (canSponsor=false, canHost=true) | — | — |
+| `iit-madras` | Hybrid (canSponsor=true, canHost=true) | `WALLET` | CREDIT_POOL |
+| Rahul solo (personal org) | Host (single-consultant) | — | — |
 
-Tour-owner login (operator dashboard `/dashboard/org-workspace/<id>/home`):
-`tour-owner@familiarise.dev` / `SEED_PASSWORD` env (default `SeedPass123!`).
+Owner/expert/learner accounts are picked deterministically from the
+index-based user pool (`firstname.lastname@<domain>` addresses such as
+`samantha.anderson@yahoo.com`), so the full per-org credential roster is
+maintained in ONE place:
+[`docs/enterprise/90-audits/03-verification-guide.md`](../../../docs/enterprise/90-audits/03-verification-guide.md)
+— use it as the login table for these cases.
+
+Password for every seeded account: the `SEED_PASSWORD` env (default
+`SeedPass123!`).
+
+Tour-owner login (operator dashboard, OWNER of Wipro):
+`tour-owner@familiarise.dev` / same `SEED_PASSWORD` default.
 
 ---
 
@@ -173,14 +189,27 @@ defined in `lib/auth-helpers.ts:ORG_ROLE_RANK`.
 platform-level role on `users.role`. `ORG_WORKSPACE` is the gate for
 `POST /api/organizations`.
 
-### Three ledgers (immutable)
-- `UsageLedgerEntry` — engagements consumed (positive on book, negative on reversal).
-- `FundingLedgerEntry` — wallet deltas (`TOPUP` / `BOOKING_DEBIT` / `REFUND_CREDIT` / `ADJUSTMENT` / `GRANT`). Persists `balanceAfterPaise`.
-- `SettlementLedgerEntry` — invoices, payouts, refunds (`INVOICE_ISSUED` / `INVOICE_PAID` / `PAYMENT_RECEIVED` / `REFUND_ISSUED` / `PAYOUT_SENT` / `PAYOUT_REVERSED` / `CHARGEBACK` / `CREDIT_NOTE`).
+### The ledgers (immutable)
 
-Reconciliation invariants in `docs/enterprise/18-three-ledger-discipline.md`.
-Nightly reconciler at `jobs/reconcile/reconcile-ledgers.ts` (03:45 UTC)
-writes `LedgerReconciliationReport` rows.
+#772 replaced the old three-log design (`FundingLedgerEntry`, `WalletEntry`,
+`SettlementLedgerEntry` — all deleted) with ONE double-entry money journal
+plus a separate entitlement ledger:
+
+- `LedgerAccount` / `LedgerTransaction` / `LedgerEntry` — the money journal.
+  Every movement (top-up, booking, refund, payout) is a balanced transaction
+  whose `idempotencyKey` is the originating event (e.g. `topup:<orderId>`,
+  `booking:<paymentId>`); entries are immutable and reversals are explicit
+  counter-transactions, never row mutations.
+- `UsageLedgerEntry` — engagements consumed against program entitlements
+  (positive on book, negative on reversal); its per-period sum must equal
+  `ProgramAssignment.engagementsUsed`.
+
+Cached balances (`BillingAccount.walletBalance`) are derived views over the
+journal, checked nightly by `jobs/reconcile/reconcile-ledgers.ts`, which
+writes `LedgerReconciliationReport` rows and freezes wallet spend on a
+`WALLET_BALANCE_DRIFT` finding. See ADR 01
+(`docs/enterprise/70-design-decisions/01-double-entry-over-three-logs.md`)
+and `docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md`.
 
 ### RateCard bumping
 `RateCard` has `effectiveFrom` / `effectiveTo`. **Rate cards are never
@@ -219,7 +248,9 @@ CONSENT_GRANTED, CONSENT_WITHDRAWN, HRIS_CONFIGURED, HRIS_SYNC_RAN
 ### Stackable funding
 `PaymentLeg` rows attach to a `Payment` when `> 1` funding source
 contributed. Sources: `CARD | WALLET | REFERRAL_CREDIT | INVOICE_ACCRUAL
-| OVERAGE_INVOICE_ACCRUAL | LICENSE`. Single-source payments get no
+| OVERAGE_INVOICE_ACCRUAL | LICENSE`, plus the append-only refund
+counter-entries `INVOICE_ACCRUAL_REVERSAL` and
+`OVERAGE_INVOICE_ACCRUAL_REVERSAL` (#786). Single-source payments get no
 PaymentLeg rows.
 
 ### Razorpay async settlement
@@ -232,8 +263,9 @@ endpoint. Terminal outcomes:
 - **`pending`** — popup `handler` fired but webhook slow; balance catches up on next page load.
 - **`not_paid`** — popup dismissed or `payment.failed` fired.
 
-Webhook handler is idempotent on `WalletEntry.providerOrderId` /
-`Payment.razorpayOrderId`.
+Webhook handling is idempotent on `WalletTopUp.providerOrderId @unique`
+(#772 removed `WalletEntry`): confirmation is an atomic conditional
+PENDING → CONFIRMED claim, so a redelivery is a no-op.
 
 ---
 
@@ -253,7 +285,7 @@ For the platform-wide diagrams: `docs/prisma/schema-map.md`.
 | `BillingAccount` | `"BillingAccount"` | `fundingSource` + `walletBalance` + `creditLimit` |
 | `Contract` | `"Contract"` | status: `DRAFT/ACTIVE/EXPIRED/TERMINATED` |
 | `BillingSubscription` | `"BillingSubscription"` | `PER_SEAT` or `FLAT_FEE` |
-| `WalletEntry` | `"WalletEntry"` | Immutable; `providerOrderId @unique` |
+| `WalletTopUp` | `"WalletTopUp"` | Top-up intents; `providerOrderId @unique` (replaced `WalletEntry`, #772) |
 | `OrganizationInvoice` | `"OrganizationInvoice"` | `invoiceNumber` + `fiscalYear`, per-org unique |
 | `OrgInvoiceCounter` | `org_invoice_counters` | Atomic seq allocator |
 | `PurchaseOrder` | `"PurchaseOrder"` | `@@unique([organizationId, poNumber])` |
@@ -271,9 +303,11 @@ For the platform-wide diagrams: `docs/prisma/schema-map.md`.
 | `SsoProvider` | `"ssoProvider"` | BetterAuth-managed |
 | `OrgDomainClaim` | `org_domain_claims` | `@@map`; verified via DNS TXT |
 | `OrgAuditLog` | `"OrgAuditLog"` | `action: String` free-form |
-| `UsageLedgerEntry` | `"UsageLedgerEntry"` | |
-| `FundingLedgerEntry` | `"FundingLedgerEntry"` | |
-| `SettlementLedgerEntry` | `"SettlementLedgerEntry"` | |
+| `UsageLedgerEntry` | `"UsageLedgerEntry"` | Engagement entitlement ledger |
+| `LedgerAccount` | `"LedgerAccount"` | Money journal — deterministic composite ids |
+| `LedgerTransaction` | `"LedgerTransaction"` | Money journal — `idempotencyKey @unique` |
+| `LedgerEntry` | `"LedgerEntry"` | Money journal — immutable postings |
+| `LedgerAccountBalance` | `"LedgerAccountBalance"` | Materialized per-account balance |
 | `LedgerReconciliationReport` | `ledger_reconciliation_reports` | `@@map` |
 | `ConsentArtifact` | `"ConsentArtifact"` | DPDP grants; SHA-256 `hash` |
 | `DataBreach` | `"DataBreach"` | 72h DPDP reporting deadline |

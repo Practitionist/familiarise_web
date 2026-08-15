@@ -7,6 +7,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
@@ -228,6 +229,25 @@ export async function DELETE(
       initiatedByUserId: session.user.id,
       initiatedBy: isSelfLeave ? "attendee" : "organiser",
     });
+
+    // #1169 PR 4 — a removed/refunded attendee must not keep reading the event
+    // chat until the nightly expiry job notices. Non-throwing by contract.
+    const channelRemoval = await removeUserFromEventChannel(
+      "webinar",
+      webinarId,
+      userId,
+    );
+    if (!channelRemoval.success) {
+      console.warn(
+        JSON.stringify({
+          event: "attendee_channel_removal_failed",
+          eventType: "webinar",
+          eventId: webinarId,
+          userId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
 
     return NextResponse.json({ removed: true, refund });
   } catch (error) {

@@ -79,15 +79,11 @@ export default async function MyArrangementPage({
       consultantProfileId: member.consultantProfileId,
     });
 
-  // Mirror of the learner-side /my-program fix: deep-link to the
-  // consultant's own /appointments tab (where the real Stream Join
-  // button lives — see AppointmentsTab.tsx). /home has no per-session
-  // join, so linking there from "Join now" was a dead end. Carry
-  // ?orgScope=<orgId> so future filter work on the consultant
-  // appointments page can scope correctly.
-  const appointmentsHref = member.consultantProfileId
-    ? `/dashboard/consultant/${member.consultantProfileId}/appointments?orgScope=${orgId}`
-    : `/dashboard?orgScope=${orgId}`;
+  // #1166 ORG-7 — the personal appointments page is personal-pinned (ADR 19)
+  // and structurally ignores ?orgScope=, so deep-linking there could never
+  // show the org-hosted session being joined. The org dashboard's own
+  // appointments surface ("mine" scope) has the in-context Join.
+  const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
 
   return (
     <>
@@ -148,8 +144,9 @@ export default async function MyArrangementPage({
                         : "—"}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {/* Real join needs the Stream client (consultant
-                          dashboard). Gate the link to the 10-min window. */}
+                      {/* Real join lives on the org appointments page (it
+                          mounts the Stream client). Gate the link to the
+                          10-min window. */}
                       {s.joinable ? (
                         <Link
                           href={appointmentsHref}
@@ -169,9 +166,10 @@ export default async function MyArrangementPage({
             </table>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            Sessions you host under {access.org.name}. Join from your{" "}
+            Sessions you host under {access.org.name}. Join from this
+            dashboard&apos;s{" "}
             <Link href={appointmentsHref} className="underline text-primary">
-              consultant dashboard
+              appointments page
             </Link>{" "}
             when the room opens.
           </p>

@@ -916,11 +916,13 @@ model Membership {
 
   /// SCIM 2.0 stable external identity per org. Populated when the
   /// membership was created or last-updated via /scim/v2/Users; null for
-  /// memberships created through the in-app invite flow. Indexed under a
-  /// partial unique constraint scoped to (organizationId, externalScimId)
-  /// so two orgs can map the same IdP user without collision. Allows
-  /// idempotent SCIM upserts and is the canonical key for DELETE
-  /// (deprovision = SUSPEND, never erase).
+  /// memberships created through the in-app invite flow. Indexed under the
+  /// sidecar partial unique `membership_org_scim_key` on
+  /// (organizationId, externalScimId) WHERE externalScimId IS NOT NULL —
+  /// added by #1093 §4; this comment asserted it for months before it
+  /// existed. Two orgs can map the same IdP user without collision; one org
+  /// cannot map them twice. Allows idempotent SCIM upserts and is the
+  /// canonical key for DELETE (deprovision = SUSPEND, never erase).
   externalScimId String?
 
   createdAt DateTime @default(now())
@@ -3050,6 +3052,8 @@ model Subscription {
   @@index([subscriptionPlanId])
   // Requests-tab hot path — mirror of the Consultation composite.
   @@index([subscriptionPlanId, status, requestedAt])
+  // #1169 PR 9 — availability/allocation scans bound by the scheduling window.
+  @@index([schedulingPeriodStartsAt, schedulingPeriodEndsAt])
   @@index([status])
   @@index([requestedById, status])
   @@index([requestedAt])
@@ -3396,6 +3400,8 @@ model Class {
 
   @@index([classPlanId])
   @@index([status])
+  // #1169 PR 9 — availability/allocation scans bound by the scheduling window.
+  @@index([schedulingPeriodStartsAt, schedulingPeriodEndsAt])
 }
 
 model ClassContent {
@@ -3579,6 +3585,12 @@ model Appointment {
   @@index([webinarId])
   @@index([appointmentType])
   @@index([organizationId, createdAt])
+  // #997 — the PENDING request lists anti-join on `appointments.none.
+  // organizationId != null`; these composites let it probe instead of scan.
+  @@index([subscriptionId, organizationId])
+  @@index([classId, organizationId])
+  // #1169 PR 9 — `deletedAt: null` rides nearly every hot filter unindexed.
+  @@index([deletedAt])
 }
 
 enum AppointmentsType {
@@ -3910,6 +3922,7 @@ model SlotOfAppointment {
   @@index([isTentative, startsAt, endsAt])
   @@index([createdAt])
   @@index([completionStatus, endsAt])
+  @@index([deletedAt])
 }
 
 enum SlotCompletionStatus {

@@ -29,6 +29,14 @@ interface StripeCheckoutProps {
   onPaymentSuccess: (response: StripePaymentSuccess) => void;
   onPaymentError: (error: StripePaymentError) => void;
   disabled?: boolean;
+  /**
+   * Ran on the click, before anything is charged; returning false aborts.
+   *
+   * A page gating a finite resource — event seats — can only re-check it here.
+   * `disabled` reflects the last render, and a webinar can fill while the tab
+   * sits open, so without this the buyer pays into a rejection.
+   */
+  onBeforeCheckout?: () => Promise<boolean>;
 }
 
 export default function StripeCheckout({
@@ -36,6 +44,7 @@ export default function StripeCheckout({
   onPaymentSuccess,
   onPaymentError,
   disabled,
+  onBeforeCheckout,
 }: StripeCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -45,6 +54,8 @@ export default function StripeCheckout({
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
 
   const handleCheckout = async () => {
+    // Before the spinner, so an abort leaves the button exactly as it was.
+    if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
     try {
       if (!stripePromise) {

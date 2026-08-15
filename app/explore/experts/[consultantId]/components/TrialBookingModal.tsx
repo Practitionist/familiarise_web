@@ -16,6 +16,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
 
 interface TrialBookingModalProps {
@@ -26,6 +27,10 @@ interface TrialBookingModalProps {
   subscriptionPlanId: string;
   planTitle: string;
   trialDurationMinutes: number;
+  /** #1167 — 0 is a genuinely free trial; anything above is charged. */
+  trialPriceInPaise?: number;
+  /** The plan's own currency. Trials have no separate one. */
+  trialCurrency?: string;
 }
 
 export function TrialBookingModal({
@@ -36,7 +41,13 @@ export function TrialBookingModal({
   subscriptionPlanId,
   planTitle,
   trialDurationMinutes,
+  trialPriceInPaise = 0,
+  trialCurrency = "INR",
 }: Readonly<TrialBookingModalProps>) {
+  const isPaidTrial = trialPriceInPaise > 0;
+  const priceLabel = isPaidTrial
+    ? formatCurrencyAmount(trialPriceInPaise, trialCurrency)
+    : "Free trial";
   const { data: session } = useSession();
   const router = useRouter();
   const { toast } = useToast();
@@ -201,12 +212,23 @@ export function TrialBookingModal({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Plan Info */}
+          {/* Plan Info — the price is the first thing shown. Requesting a
+              trial used to name no number anywhere, so a paid trial read as
+              free right up until the payment link arrived. */}
           <div className="bg-muted rounded-lg p-4">
             <p className="text-sm font-medium text-foreground">{planTitle}</p>
-            <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              <span>{trialDurationMinutes} minute trial</span>
+            <div className="flex items-center justify-between gap-3 mt-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span>{trialDurationMinutes} minute trial</span>
+              </div>
+              <span
+                className={`text-sm font-semibold ${
+                  isPaidTrial ? "text-foreground" : "text-emerald-600"
+                }`}
+              >
+                {priceLabel}
+              </span>
             </div>
           </div>
 
@@ -227,12 +249,20 @@ export function TrialBookingModal({
             </p>
           </div>
 
-          {/* Info */}
+          {/* Info — say when money changes hands. Nothing is charged at
+              request time either way; a paid trial bills on acceptance. */}
           <div className="bg-muted rounded-lg p-4 text-sm text-muted-foreground">
             <p>
               After submitting, the consultant will review your request and
               contact you to schedule a time that works for both of you.
             </p>
+            {isPaidTrial && (
+              <p className="mt-2">
+                You won&apos;t be charged now — we send a payment link for{" "}
+                <strong className="text-foreground">{priceLabel}</strong> after
+                the consultant accepts, and your slot is held until you pay it.
+              </p>
+            )}
           </div>
         </div>
 

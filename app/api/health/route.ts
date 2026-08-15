@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
+import redis, { isMockRedis } from "@/lib/redis";
 
 type BetterStackHealth = {
   configured: boolean;
@@ -67,6 +68,40 @@ async function checkBetterStack(): Promise<{
   }
 }
 
+// #1169/#866 — cron dead-man threshold. Every locked job run refreshes
+// `cron:heartbeat:last` (lib/cron/with-cron-lock.ts); the dispatcher is
+// scheduled every minute and GitHub's throttling delivers it at worst about
+// every 2.75h measured, so >6h of total silence means the scheduled fleet has
+// stopped — the failure the Actions-API heartbeat cannot report about itself.
+const CRON_HEARTBEAT_STALE_MS = 6 * 60 * 60 * 1000;
+
+type CronHeartbeat = {
+  configured: boolean;
+  lastRunAt: string | null;
+  /** null until the fleet has written its first heartbeat. */
+  stale: boolean | null;
+};
+
+async function checkCronHeartbeat(): Promise<CronHeartbeat> {
+  if (isMockRedis()) return { configured: false, lastRunAt: null, stale: null };
+  try {
+    const lastRunAt = await redis.get<string>("cron:heartbeat:last");
+    if (!lastRunAt) return { configured: true, lastRunAt: null, stale: null };
+    const age = Date.now() - Date.parse(lastRunAt);
+    return {
+      configured: true,
+      lastRunAt,
+      stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
+    };
+  } catch (err) {
+    Sentry.logger.warn("Cron heartbeat probe failed", {
+      tags: { subsystem: "api" },
+      extra: { message: err instanceof Error ? err.message : String(err) },
+    });
+    return { configured: true, lastRunAt: null, stale: null };
+  }
+}
+
 export async function GET(request: Request) {
   const includeBetterStack =
     new URL(request.url).searchParams.get("includeBetterStack") === "1";
@@ -85,11 +120,14 @@ export async function GET(request: Request) {
       }),
     ]);
   } catch (err) {
-    Sentry.logger.warn("DB health probe failed", { tags: { subsystem: "api" }, extra: { message: err instanceof Error ? err.message : String(err) } });
+    Sentry.logger.warn("DB health probe failed", {
+      tags: { subsystem: "api" },
+      extra: { message: err instanceof Error ? err.message : String(err) },
+    });
     database = "unreachable";
   }
 
-  const [maintenanceState, stream, betterstack] = await Promise.all([
+  const [maintenanceState, stream, betterstack, cron] = await Promise.all([
     getMaintenanceState(),
     // #473 — the last unmet acceptance criterion on that issue. The breaker
     // existed but nothing surfaced its state, so a Stream outage was invisible
@@ -101,6 +139,7 @@ export async function GET(request: Request) {
           configured: Boolean(process.env.BETTERSTACK_API_KEY),
           reachable: null,
         }),
+    checkCronHeartbeat(),
   ]);
 
   // Stream being down degrades chat and video but leaves booking, payments and
@@ -117,6 +156,7 @@ export async function GET(request: Request) {
     },
     stream,
     betterstack,
+    cron,
     timestamp: new Date().toISOString(),
   });
 }

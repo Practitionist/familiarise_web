@@ -35,6 +35,9 @@ interface RequestedSlotsDialogProps {
   requestedSlots: string[];
   requestedSlotsWithStatus?: SlotWithStatus[]; // New: includes tentative info
   schedulingPeriod?: { startDate?: Date; endDate?: Date };
+  /** Parent's confirm is in flight — hold both exits so a double click can't
+   * fire a second submit. #1163 */
+  confirming?: boolean;
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
 }
@@ -47,6 +50,7 @@ export function RequestedSlotsDialog({
   requestedSlots,
   requestedSlotsWithStatus,
   schedulingPeriod,
+  confirming = false,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
@@ -462,14 +466,18 @@ export function RequestedSlotsDialog({
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t pt-4">
-          <Button variant="outline" onClick={onCancel} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            disabled={loading || confirming}
+          >
             Cancel
           </Button>
 
           <Button
             variant={hasOutsideSlots ? "destructive" : "default"}
             onClick={() => onConfirm(hasOutsideSlots)}
-            disabled={loading || hasConflicts || hasOutsidePeriod}
+            disabled={loading || confirming || hasConflicts || hasOutsidePeriod}
             title={
               hasConflicts
                 ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`

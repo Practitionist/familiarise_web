@@ -620,33 +620,33 @@ export async function PATCH(
                 subscription.appointments &&
                 subscription.appointments.length > 0
               ) {
-                for (const appointment of subscription.appointments) {
-                  await tx.slotOfAppointment.updateMany({
-                    where: { appointmentId: appointment.id },
-                    data: { isTentative: false },
-                  });
-                }
+                // RESCHEDULED rows keep their ORIGINAL startsAt; flipping them
+                // re-confirms the time the consultee asked to leave (#1169
+                // PR 2). One statement, not one per appointment — the loop
+                // multiplied round-trips against the 30s tx budget.
+                await tx.slotOfAppointment.updateMany({
+                  where: {
+                    appointmentId: {
+                      in: subscription.appointments.map((a) => a.id),
+                    },
+                    completionStatus: "SCHEDULED",
+                  },
+                  data: { isTentative: false },
+                });
               }
               return { data: subscription, duplicate: false };
             } else {
-              // No payment - generate payment link
-              const paymentResult = await generatePaymentLinkForSubscription(
-                subscription,
-                startDate,
-                endDate,
-              );
-
-              // Update status to APPROVED_PENDING_PAYMENT — guarded (#836)
+              // No payment — record the approval now; the pay-link is minted
+              // AFTER commit (#1169 PR 2). A gateway round-trip inside a
+              // Serializable transaction pinned a pooled connection, could
+              // blow the 30s budget, and on rollback left a live link for an
+              // approval that never persisted.
               await transitionSubscriptionRequest(tx, {
                 where: { id: subscriptionId },
                 to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
                 data: {
                   schedulingPeriodStartsAt: startDate,
                   schedulingPeriodEndsAt: endDate,
-                  pendingPaymentUrl: paymentResult.checkoutUrl,
-                  requestNotes: subscription.requestNotes
-                    ? `${subscription.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                    : `[System] Payment link generated and sent to user.`,
                 },
               });
               const updatedSubscription = await tx.subscription.findUniqueOrThrow({
@@ -683,30 +683,12 @@ export async function PATCH(
                 },
               });
 
-              // Return email data to send AFTER transaction commits
-              // This prevents holding serializable locks during slow email network calls
               return {
                 data: updatedSubscription,
                 message: "Subscription approved. Payment link sent to user.",
-                paymentUrl: paymentResult.checkoutUrl,
                 requiresPayment: true,
-                paymentAmount: paymentResult.amount,
-                paymentCurrency: paymentResult.currency,
+                needsPaymentLink: true,
                 duplicate: false,
-                emailData: {
-                  email: updatedSubscription.requestedBy.user.email || "",
-                  name: updatedSubscription.requestedBy.user.name || "User",
-                  consultantName:
-                    updatedSubscription.subscriptionPlan.consultantProfile.user
-                      .name || "Consultant",
-                  appointmentType: "subscription" as const,
-                  amount: paymentResult.amount,
-                  currency: paymentResult.currency,
-                  paymentUrl: paymentResult.checkoutUrl,
-                  expiresAt: new Date(
-                    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
-                  ),
-                },
               };
             }
           }
@@ -720,19 +702,98 @@ export async function PATCH(
         },
       );
 
-      // If duplicate, return early
-      if (result.duplicate) {
+      // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
+      // pay-link mint previously failed (#1169 PR 2): fall through so a
+      // re-approval actually re-mints the link.
+      const needsLinkRetry =
+        result.duplicate &&
+        result.data.status === AppointmentStatus.APPROVED_PENDING_PAYMENT &&
+        !result.data.pendingPaymentUrl;
+      if (result.duplicate && !needsLinkRetry) {
         return NextResponse.json({
           data: result.data,
           message: result.message,
         });
       }
 
-      // Send email AFTER transaction commits - prevents holding locks during slow network calls
-      // User can still find the payment link on their dashboard via pendingPaymentUrl if email fails
-      if ("emailData" in result && result.emailData) {
+      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
+      // in-tx comment). Mint failure leaves APPROVED_PENDING_PAYMENT with no
+      // link; re-approval re-enters via needsLinkRetry.
+      let mintedLink: {
+        paymentUrl: string;
+        paymentAmount: number;
+        paymentCurrency: string;
+      } | null = null;
+      if (
+        ("needsPaymentLink" in result && result.needsPaymentLink) ||
+        needsLinkRetry
+      ) {
+        // The 502 below invites a retry, and the retry re-mints — so it may
+        // only ever be reached while NO link exists. Everything after a
+        // successful mint therefore reports and continues (#1166).
+        let paymentResult;
         try {
-          await sendPaymentLinkEmail(result.emailData);
+          paymentResult = await generatePaymentLinkForSubscription(
+            result.data,
+            // On a retry the period was already committed by the first
+            // approval; recomputing it would drift the gateway metadata away
+            // from the row.
+            result.data.schedulingPeriodStartsAt ?? startDate,
+            result.data.schedulingPeriodEndsAt ?? endDate,
+          );
+        } catch (linkError) {
+          Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
+          return NextResponse.json(
+            {
+              data: result.data,
+              error:
+                "The approval was recorded, but generating the payment link failed. Approve again to retry generating the link.",
+              requiresPayment: true,
+              paymentUrl: null,
+            },
+            { status: 502 },
+          );
+        }
+
+        mintedLink = {
+          paymentUrl: paymentResult.checkoutUrl,
+          paymentAmount: paymentResult.amount,
+          paymentCurrency: paymentResult.currency,
+        };
+
+        try {
+          await prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: {
+              pendingPaymentUrl: paymentResult.checkoutUrl,
+              requestNotes: result.data.requestNotes
+                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
+                : `[System] Payment link generated and sent to user.`,
+            },
+          });
+        } catch (persistError) {
+          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+          console.error(
+            `⚠️ Failed to persist payment link for subscription ${subscriptionId}:`,
+            persistError instanceof Error
+              ? persistError.message
+              : "Unknown error",
+          );
+        }
+
+        try {
+          await sendPaymentLinkEmail({
+            email: result.data.requestedBy.user.email || "",
+            name: result.data.requestedBy.user.name || "User",
+            consultantName:
+              result.data.subscriptionPlan.consultantProfile.user.name ||
+              "Consultant",
+            appointmentType: "subscription" as const,
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            paymentUrl: paymentResult.checkoutUrl,
+            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+          });
           console.log(
             `📧 Payment link email sent for subscription ${subscriptionId}`,
           );
@@ -861,9 +922,11 @@ export async function PATCH(
       }
 
       // Return success response (exclude emailData from response)
-      const { emailData: _emailData, ...responseData } =
-        result as typeof result & { emailData?: unknown };
-      return NextResponse.json({ ...responseData, refund: rejectionRefund });
+      return NextResponse.json({
+        ...result,
+        ...mintedLink,
+        refund: rejectionRefund,
+      });
     } catch (error) {
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
       console.error(
@@ -942,7 +1005,14 @@ async function generatePaymentLinkForSubscription(
     appointmentType: "SUBSCRIPTION",
     subscriptionId: subscription.id,
     planId: subscriptionPlan.id,
-    paymentGateway: PaymentGateway.STRIPE, // Default to Stripe, could be made configurable
+    // #1165 — settlement is INR-only; Razorpay is the KYC'd primary gateway,
+    // matching the trial path. Param stays configurable for a scale decision.
+    paymentGateway: PaymentGateway.RAZORPAY,
+    // #1166 ORG-9 — carry org sponsorship when an org-tagged appointment
+    // already exists on the request.
+    organizationId:
+      subscription.appointments?.find((a) => a.organizationId)
+        ?.organizationId ?? undefined,
     schedulingPeriodStartsAt: schedulingPeriodStartsAt.toISOString(),
     schedulingPeriodEndsAt: schedulingPeriodEndsAt.toISOString(),
     notes: subscription.requestNotes ?? undefined,

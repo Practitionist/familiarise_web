@@ -286,19 +286,19 @@ interface NormalizedEngagement {
     appointmentType: string;
     organizationId: string | null;
     // amount is number at runtime — the extended client converts BigInt on read
-    payment: Array<{ id: string; amount: number; paymentStatus: string }>;
+    payment: Array<{
+      id: string;
+      amount: number;
+      paymentStatus: string;
+      deletedAt: Date | null;
+    }>;
   }>;
 }
 
-async function cancelExclusiveEngagement(
+async function loadExclusiveEngagement(
   kind: "consultation" | "subscription",
   engagementId: string,
-  ctx: {
-    initiatedByUserId: string;
-    notes?: string;
-    summary: BulkCancelSummary;
-  },
-) {
+): Promise<NormalizedEngagement | null> {
   const planSelect = {
     select: {
       title: true,
@@ -317,11 +317,19 @@ async function cancelExclusiveEngagement(
       // ADR 23 — attribute the cancellation notification to the dashboard that
       // owns the session rather than defaulting everyone to their personal one.
       organizationId: true,
-      payment: { select: { id: true, amount: true, paymentStatus: true } },
+      payment: {
+        select: {
+          id: true,
+          amount: true,
+          paymentStatus: true,
+          // #781 §B — the refund front door refuses retired rows; carry the
+          // tombstone so the caller can skip them instead of failing on them.
+          deletedAt: true,
+        },
+      },
     },
   } as const;
 
-  let engagement: NormalizedEngagement | null = null;
   if (kind === "consultation") {
     const row = await prisma.consultation.findUnique({
       where: { id: engagementId },
@@ -331,34 +339,41 @@ async function cancelExclusiveEngagement(
         appointment: appointmentSelect,
       },
     });
-    if (row) {
-      engagement = {
-        planTitle: row.consultationPlan?.title,
-        consultantUser: row.consultationPlan?.consultantProfile?.user,
-        consulteeUser: row.requestedBy?.user,
-        appointments: row.appointment ? [row.appointment] : [],
-      };
-    }
-  } else {
-    const row = await prisma.subscription.findUnique({
-      where: { id: engagementId },
-      select: {
-        subscriptionPlan: planSelect,
-        requestedBy: requestedBySelect,
-        appointments: appointmentSelect,
-      },
-    });
-    if (row) {
-      engagement = {
-        planTitle: row.subscriptionPlan?.title,
-        consultantUser: row.subscriptionPlan?.consultantProfile?.user,
-        consulteeUser: row.requestedBy?.user,
-        appointments: row.appointments,
-      };
-    }
+    if (!row) return null;
+    return {
+      planTitle: row.consultationPlan?.title,
+      consultantUser: row.consultationPlan?.consultantProfile?.user,
+      consulteeUser: row.requestedBy?.user,
+      appointments: row.appointment ? [row.appointment] : [],
+    };
   }
-  if (!engagement) return;
 
+  const row = await prisma.subscription.findUnique({
+    where: { id: engagementId },
+    select: {
+      subscriptionPlan: planSelect,
+      requestedBy: requestedBySelect,
+      appointments: appointmentSelect,
+    },
+  });
+  if (!row) return null;
+  return {
+    planTitle: row.subscriptionPlan?.title,
+    consultantUser: row.subscriptionPlan?.consultantProfile?.user,
+    consulteeUser: row.requestedBy?.user,
+    appointments: row.appointments,
+  };
+}
+
+/**
+ * Guarded status move plus the slot soft-cancel that rides with it. Returns 0
+ * when the CAS found nothing to move — the engagement was already terminal.
+ */
+async function casCancelExclusiveEngagement(
+  kind: "consultation" | "subscription",
+  engagementId: string,
+  ctx: { initiatedByUserId: string; notes?: string },
+): Promise<number> {
   const cancellationData = {
     status: "CANCELLED" as const,
     cancellationReason: "MODERATION" as const,
@@ -367,7 +382,7 @@ async function cancelExclusiveEngagement(
     cancelledBy: ctx.initiatedByUserId,
   };
 
-  const moved = await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     const res =
       kind === "consultation"
         ? await tx.consultation.updateMany({
@@ -394,38 +409,71 @@ async function cancelExclusiveEngagement(
     });
     return res.count;
   });
-  if (moved === 0) return; // lost the CAS — already terminal, no refund
+}
 
-  ctx.summary.engagementsCancelled += 1;
+/**
+ * Payments this cancellation owes money back on.
+ *
+ * #1161 — free_ (credit-funded) payments are refundable now: their "refund" is
+ * the credit restoration the front door performs, so a zero-amount row can no
+ * longer shadow a refundable gateway payment.
+ * #781 §B — retired (soft-deleted) rows are NOT: refundBookingPayment refuses
+ * them, so queueing one only mints a false failure and a Sentry event.
+ */
+function refundableEngagementPayments(engagement: NormalizedEngagement) {
+  return engagement.appointments.flatMap((appt) =>
+    appt.payment.filter(
+      (p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null,
+    ),
+  );
+}
 
-  for (const appt of engagement.appointments) {
-    const paid = appt.payment.find(
-      (p) => p.paymentStatus === "SUCCEEDED" && p.amount > 0,
-    );
-    if (paid) {
-      await issueFullRefund(paid.id, ctx.initiatedByUserId, ctx.summary);
-    }
-  }
-
+function notifyExclusiveCancellation(
+  kind: "consultation" | "subscription",
+  engagement: NormalizedEngagement,
+): void {
   const userIds = [
     engagement.consultantUser?.id,
     engagement.consulteeUser?.id,
   ].filter((id): id is string => !!id);
-  if (userIds.length > 0) {
-    const engagementOrgId =
-      engagement.appointments[0]?.organizationId ?? null;
-    void notifyAppointmentCancelled(userIds, {
-      ...notificationScope(engagementOrgId),
-      appointmentType:
-        engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
-      consultantName: engagement.consultantUser?.name || "Consultant",
-      consulteeName: engagement.consulteeUser?.name || "Consultee",
-      planTitle: engagement.planTitle || "N/A",
-      dashboardUrl: notificationHref(engagementOrgId, "appointments"),
-      reason: "MODERATION",
-      cancelledBy: "system",
-    });
+  if (userIds.length === 0) return;
+
+  const engagementOrgId = engagement.appointments[0]?.organizationId ?? null;
+  void notifyAppointmentCancelled(userIds, {
+    ...notificationScope(engagementOrgId),
+    appointmentType:
+      engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
+    consultantName: engagement.consultantUser?.name || "Consultant",
+    consulteeName: engagement.consulteeUser?.name || "Consultee",
+    planTitle: engagement.planTitle || "N/A",
+    dashboardUrl: notificationHref(engagementOrgId, "appointments"),
+    reason: "MODERATION",
+    cancelledBy: "system",
+  });
+}
+
+async function cancelExclusiveEngagement(
+  kind: "consultation" | "subscription",
+  engagementId: string,
+  ctx: {
+    initiatedByUserId: string;
+    notes?: string;
+    summary: BulkCancelSummary;
+  },
+) {
+  const engagement = await loadExclusiveEngagement(kind, engagementId);
+  if (!engagement) return;
+
+  const moved = await casCancelExclusiveEngagement(kind, engagementId, ctx);
+  if (moved === 0) return; // lost the CAS — already terminal, no refund
+
+  ctx.summary.engagementsCancelled += 1;
+
+  for (const p of refundableEngagementPayments(engagement)) {
+    await issueFullRefund(p.id, ctx.initiatedByUserId, ctx.summary);
   }
+
+  notifyExclusiveCancellation(kind, engagement);
 }
 
 async function cancelGroupEvent(
@@ -548,6 +596,9 @@ async function removeAttendee(
       appointment: eventFilter,
       paymentStatus: "SUCCEEDED",
       amount: { gt: 0 },
+      // #781 §B — a retired row is refused by the front door; picking one here
+      // would only mint a false refund failure.
+      deletedAt: null,
     },
     select: { id: true },
   });

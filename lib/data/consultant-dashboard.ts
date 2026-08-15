@@ -52,9 +52,14 @@ const HOME_PENDING_TAKE = 20;
 /**
  * Every appointment this consultant owns or collaborates on. Shared by the
  * Home display read and the active-clients count so the two can never drift.
+ *
+ * #1166 ORG-1 — pinned to `organizationId: null`: personal Home is B2C only
+ * (ADR 19), matching the sibling Appointments page's personal filter. Org
+ * delivery lives on that org's dashboard.
  */
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
+    organizationId: null,
     OR: [
       {
         consultation: {
@@ -498,12 +503,16 @@ export async function getConsultantDashboard(
     }),
     // --- Performance Snapshot Queries ---
     // 1a. Earnings this month (consultant share from ConsultantEarnings, excluding refunded, minus partial refunds)
+    // #1166 ORG-2 — personal (B2C) only, the same filter the Earnings tab
+    // applies (lib/data/consultant-earnings-analytics.ts), so Home and
+    // Earnings show the same number.
     prisma.consultantEarnings.aggregate({
       _sum: { consultantSharePaise: true, refundedShareAmount: true },
       where: {
         consultantProfileId,
         status: { not: "REFUNDED" },
         createdAt: { gte: startOfMonth },
+        payment: { organizationId: null },
       },
     }),
     // 1b. Earnings last month
@@ -513,6 +522,7 @@ export async function getConsultantDashboard(
         consultantProfileId,
         status: { not: "REFUNDED" },
         createdAt: { gte: startOfLastMonth, lt: startOfMonth },
+        payment: { organizationId: null },
       },
     }),
     // 2. Average rating
@@ -528,6 +538,11 @@ export async function getConsultantDashboard(
       _count: true,
       where: {
         appointment: {
+          // #1166 ORG-1 — this predicate is rebuilt rather than shared with
+          // consultantAppointmentScope (different status rules), so the
+          // personal pin has to be repeated or Home's completion rate counts
+          // org sessions the rest of the page excludes.
+          organizationId: null,
           OR: [
             { consultation: { consultationPlan: { consultantProfileId } } },
             { subscription: { subscriptionPlan: { consultantProfileId } } },
@@ -545,6 +560,8 @@ export async function getConsultantDashboard(
       where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },
     }),
     // --- Financial Summary Queries ---
+    // Deliberately GLOBAL (no org filter): payouts settle one instrument
+    // across every context (ADR 19 — views split, instruments don't).
     // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
     prisma.consultantEarnings.aggregate({
       _sum: { consultantSharePaise: true, refundedShareAmount: true },

@@ -25,6 +25,7 @@ import {
   lockConsulteeBooking,
   unlockConsulteeBooking,
   extendLock,
+  extendSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
 } from "@/utils/appointmentlock";
@@ -32,6 +33,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
@@ -688,7 +690,14 @@ export async function validateSlotAvailability(
       AND: [
         { startsAt: { lt: slotEnd } },
         { endsAt: { gt: slotStart } },
-        { isTentative: false }, // Only confirmed bookings
+        // #1169 PR 2 — the `{ isTentative: false }` filter that used to sit
+        // here hid LIVE tentative holds: an in-flight checkout's hold passed
+        // unseen (the exclusion constraint carries the same NOT-isTentative
+        // predicate), so two overlapping holds both reached payment and both
+        // charged. The occupancy term below is the whole check now — it admits
+        // live holds and drops released/expired ones by status, and
+        // cleanup-tentative-slots bounds any stale remainder. Re-adding a
+        // confirmed-only predicate here reopens the double-charge.
         // FIX: Filter by consultant - only check slots belonging to this consultant
         ...(consultantUserId
           ? [
@@ -885,7 +894,7 @@ async function getPlanDataForLock(
 async function acquireCheckoutLock(
   data: CheckoutInput,
   planData: { consultantProfile?: { id: string } },
-): Promise<ApprovalLock | null> {
+): Promise<ApprovalLock | ApprovalLock[] | null> {
   const appointmentType = data.appointmentType;
 
   // Strategy A: Slot-based locking (CONSULTATION + direct SUBSCRIPTION)
@@ -916,9 +925,13 @@ async function acquireCheckoutLock(
       }),
     );
 
+    // #1169 PR 1 — interval-granular: every 30-min atom of [startsAt, endsAt)
+    // is locked, so an overlapping booking with a DIFFERENT start collides
+    // instead of sailing past on a different instant key.
     return await lockSlotBooking(
       consultantProfileId,
       data.startsAt,
+      data.endsAt!,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
     );
   }
@@ -982,12 +995,12 @@ async function acquireCheckoutLock(
  * Release checkout lock safely (for finally blocks)
  */
 async function releaseCheckoutLock(
-  lock: ApprovalLock | null,
+  lock: ApprovalLock | ApprovalLock[] | null,
   lockType: string,
 ): Promise<void> {
   if (!lock) return;
 
-  if (lockType === "slot-based") {
+  if (Array.isArray(lock)) {
     await unlockSlotBooking(lock);
   } else {
     await unlockEventCheckout(lock);
@@ -1852,7 +1865,7 @@ export async function handleCheckout(
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
 ) {
-  let lock: ApprovalLock | null = null;
+  let lock: ApprovalLock | ApprovalLock[] | null = null;
   let lockType = "";
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
   // below; see the ordering note at STEP 2).
@@ -2194,10 +2207,11 @@ export async function handleCheckout(
     // unreliable, and the message must contain "already in progress" so
     // classifyError maps it to LOCK_CONTENTION → 409.
     if (lock) {
-      const renewed = await extendLock(
-        lock,
-        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
-      );
+      const renewalTtl =
+        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000;
+      const renewed = Array.isArray(lock)
+        ? await extendSlotInterval(lock, renewalTtl)
+        : await extendLock(lock, renewalTtl);
       if (!renewed) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
@@ -2250,7 +2264,14 @@ export async function handleCheckout(
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
-      const result = await prisma.$transaction(
+      // #1093 tail — the ONLY Serializable site that wasn't retried: a P2034
+      // under hot-webinar contention surfaced as a generic failure instead of
+      // being retried into the sibling's committed state. Anything the body
+      // does on the OUTER prisma client therefore has to be idempotent across
+      // attempts — see capNearNotified.
+      let capNearNotified = false;
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
         async (tx) => {
           // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
           // tx. The pre-lock check ran on the global client before this tx, so
@@ -2583,8 +2604,14 @@ export async function handleCheckout(
                 capAfter != null &&
                 capAfter > 0 &&
                 before * 5 < capAfter * 4 &&
-                after * 5 >= capAfter * 4
+                after * 5 >= capAfter * 4 &&
+                // #1169 PR 2 — this fires on the OUTER client and is not
+                // rolled back, so a P2034 retry of this tx would ring the
+                // 80% bell twice for one booking. Once per request, matching
+                // the "once per cycle" intent above.
+                !capNearNotified
               ) {
+                capNearNotified = true;
                 const usedPct = Math.round((after / capAfter) * 100);
                 const reportUsed = isCredit ? Math.round(after / 100) : after;
                 const reportCap = isCredit
@@ -2820,6 +2847,7 @@ export async function handleCheckout(
           // safety for edge cases like lock expiry under high load.
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
+        ),
       );
 
       const logMessage = isZeroAmountPayment

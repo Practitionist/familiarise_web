@@ -24,6 +24,7 @@ import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { addMonths, differenceInDays, format } from "date-fns";
 import { useCurrency } from "@/hooks/useCurrency";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
 interface SubscriptionContentItem {
@@ -44,6 +45,11 @@ interface SubscriptionPlanDetails {
   durationInMonths: number;
   trialEnabled?: boolean;
   trialDurationMinutes?: number | null;
+  // #780 result extension already made this a number in paise by the time it
+  // crosses the RSC boundary; the fetcher `include`s it, it was simply never
+  // declared here and so never rendered (#1167).
+  trialPriceInPaise?: number | null;
+  priceCurrency?: string | null;
   subscriptionContents?: SubscriptionContentItem[] | null;
   targetAudience?: string[];
   whatsIncluded?: string[];
@@ -93,6 +99,8 @@ export default function SubscriptionPricingToggle({
     id: string;
     title: string;
     trialDurationMinutes: number;
+    trialPriceInPaise: number;
+    priceCurrency: string;
   } | null>(null);
   const [trialEligibility, setTrialEligibility] = useState<{
     isEligible: boolean;
@@ -112,6 +120,16 @@ export default function SubscriptionPricingToggle({
       (p: SubscriptionPlanDetails) => p.id === selectedOption.id,
     );
   }, [selectedOption, consultantDetails]);
+
+  // #1167 — the CTA names the price. `formatPrice` is not usable here: it takes
+  // INR paise and applies the viewer's FX rate, which would relabel a plan
+  // already denominated in another currency.
+  const trialCtaPrice = useMemo(() => {
+    const paise = selectedPlanDetails?.trialPriceInPaise ?? 0;
+    return paise > 0
+      ? formatCurrencyAmount(paise, selectedPlanDetails?.priceCurrency ?? "INR")
+      : "Free";
+  }, [selectedPlanDetails]);
 
   // Check trial eligibility when plan changes
   useEffect(() => {
@@ -188,6 +206,8 @@ export default function SubscriptionPricingToggle({
         id: selectedPlanDetails.id,
         title: selectedPlanDetails.title,
         trialDurationMinutes: selectedPlanDetails.trialDurationMinutes ?? 0,
+        trialPriceInPaise: selectedPlanDetails.trialPriceInPaise ?? 0,
+        priceCurrency: selectedPlanDetails.priceCurrency ?? "INR",
       });
       setIsTrialModalOpen(true);
     }
@@ -402,6 +422,10 @@ export default function SubscriptionPricingToggle({
                       title: selectedPlanDetails.title,
                       trialDurationMinutes:
                         selectedPlanDetails.trialDurationMinutes ?? 0,
+                      trialPriceInPaise:
+                        selectedPlanDetails.trialPriceInPaise ?? 0,
+                      priceCurrency:
+                        selectedPlanDetails.priceCurrency ?? "INR",
                     });
                     setIsTrialModalOpen(true);
                   }}
@@ -410,7 +434,7 @@ export default function SubscriptionPricingToggle({
                   {trialEligibility.isLoading
                     ? "Checking eligibility..."
                     : trialEligibility.isEligible
-                      ? `Book Trial (${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
+                      ? `Book Trial (${trialCtaPrice}, ${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
                       : "Trial Already Requested"}
                 </Button>
               )}
@@ -577,6 +601,8 @@ export default function SubscriptionPricingToggle({
           subscriptionPlanId={selectedTrialPlan.id}
           planTitle={selectedTrialPlan.title}
           trialDurationMinutes={selectedTrialPlan.trialDurationMinutes}
+          trialPriceInPaise={selectedTrialPlan.trialPriceInPaise}
+          trialCurrency={selectedTrialPlan.priceCurrency}
         />
       )}
 

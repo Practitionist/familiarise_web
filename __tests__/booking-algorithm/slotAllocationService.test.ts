@@ -1914,9 +1914,13 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
       where: { id: "placeholder-apt" },
     });
-    // Its slots are freed via deleteMany scoped to the appointment id.
+    // Its slots are freed via deleteMany scoped to the appointment id —
+    // excluding held-session slots (#1169 PR 1, Recording cascade guard).
     expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "placeholder-apt" },
+      where: {
+        appointmentId: "placeholder-apt",
+        meetingSession: { is: null },
+      },
     });
     // 1:N event → a fresh appointment row is created (no REUSE).
     expect(mockTx.appointment.create).toHaveBeenCalled();
@@ -1976,8 +1980,13 @@ describe("deleteExistingAppointments", () => {
     // ...and NO second row is created on the @unique consultationId (no P2002).
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // The appointment is preserved (slots stripped), never hard-deleted.
+    // #1169 PR 1 — held-session slots are excluded from the strip so a
+    // MeetingSession (and its Recording) can never be cascade-deleted.
     expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "paid-consult-apt" },
+      where: {
+        appointmentId: "paid-consult-apt",
+        meetingSession: { is: null },
+      },
     });
     expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
       where: { id: "paid-consult-apt" },

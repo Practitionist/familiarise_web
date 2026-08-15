@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { Redis } from "@upstash/redis";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -147,25 +148,58 @@ for (const file of fs
   else ok.push(line);
 }
 
-// Always print the full picture: this job's log is the only place the fleet's
-// real cadence is visible, and headroom shrinking over time is the early
-// warning that throttling is getting worse.
-for (const s of skipped) console.log(`  skipped ${s}`);
-for (const s of ok.sort((a, b) => a.localeCompare(b))) console.log(`  ok ${s}`);
-
-if (stale.length > 0) {
-  console.error(
-    `\ncheck-cron-heartbeat: FAILED — ${stale.length} workflow(s) have stopped firing:\n`,
-  );
-  for (const s of stale) console.error(`  - ${s}`);
-  console.error(
-    "\nA scheduled workflow that never starts produces no failed run, so nothing else " +
-      "in this repo would have told you. Check whether GitHub disabled the schedules " +
-      "(60 days of repo inactivity does that automatically) before assuming a code fault.",
-  );
-  process.exit(1);
+/**
+ * #1169/#866 — second dead-man leg. This check watches the fleet through the
+ * Actions API, but nothing watches the check: if GitHub disables schedules
+ * repo-wide, this workflow goes silent along with everything it guards. So the
+ * fleet reports itself out-of-band too: every locked job run refreshes
+ * `cron:heartbeat:last` (see lib/cron/with-cron-lock.ts), this daily run
+ * refreshes it as well, and /api/health flags the key going >6h stale — a
+ * surface an external uptime pinger can watch with no GitHub dependency.
+ * Fail-open: the Redis write must never decide this check's verdict.
+ */
+async function writeFleetHeartbeat(): Promise<void> {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    console.warn(
+      "check-cron-heartbeat: UPSTASH_REDIS env vars not set — skipping heartbeat write",
+    );
+    return;
+  }
+  try {
+    const redis = new Redis({ url, token });
+    await redis.set("cron:heartbeat:last", new Date().toISOString());
+  } catch (err) {
+    console.warn("check-cron-heartbeat: heartbeat write failed:", err);
+  }
 }
 
-console.log(
-  `check-cron-heartbeat: ok (${ok.length} scheduled workflows firing within tolerance, ${skipped.length} skipped)`,
-);
+void writeFleetHeartbeat().finally(() => {
+  // Always print the full picture: this job's log is the only place the fleet's
+  // real cadence is visible, and headroom shrinking over time is the early
+  // warning that throttling is getting worse.
+  for (const s of skipped) console.log(`  skipped ${s}`);
+  for (const s of ok.sort((a, b) => a.localeCompare(b)))
+    console.log(`  ok ${s}`);
+
+  if (stale.length > 0) {
+    console.error(
+      `\ncheck-cron-heartbeat: FAILED — ${stale.length} workflow(s) have stopped firing:\n`,
+    );
+    for (const s of stale) console.error(`  - ${s}`);
+    console.error(
+      "\nA scheduled workflow that never starts produces no failed run, so nothing else " +
+        "in this repo would have told you. Check whether GitHub disabled the schedules " +
+        "(60 days of repo inactivity does that automatically) before assuming a code fault.",
+    );
+    // exitCode, not exit(): the heartbeat write above already settled, but a
+    // hard exit here would also skip any queued stdio flushes.
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(
+    `check-cron-heartbeat: ok (${ok.length} scheduled workflows firing within tolerance, ${skipped.length} skipped)`,
+  );
+});

@@ -1,4 +1,14 @@
 import * as Sentry from "@sentry/nextjs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +29,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronDown,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -81,6 +92,9 @@ interface Request {
   rescheduledSlotCount?: number;
   /** The times the consultee asked for, when they named any. */
   proposal?: RescheduleProposalInfo;
+  /** Which appointment carries `proposal` — the respond endpoint is keyed by
+   * appointment, and a subscription's proposal sits on ONE child. #1163 */
+  proposalAppointmentId?: string;
   /** What the consultee said when booking. */
   requestNotes?: string | null;
 }
@@ -133,6 +147,28 @@ function proposalOf(
   appointment: { rescheduleRequests?: RescheduleProposalInfo[] } | undefined,
 ): RescheduleProposalInfo | undefined {
   return appointment?.rescheduleRequests?.[0];
+}
+
+/**
+ * The proposal "Use Requested Times" can honestly answer via the respond
+ * endpoint: open, consultee-initiated, naming concrete times (#1163).
+ *
+ * COUNTERED stays null — the consultant already answered with a counter and
+ * the ball is with the consultee. So does a preference-only request: with no
+ * named times there is nothing to accept, only the allocate page.
+ */
+function answerableProposal(request: Request): RescheduleProposalInfo | null {
+  const proposal = request.proposal;
+  if (
+    !proposal ||
+    proposal.status !== "PENDING_REVIEW" ||
+    proposal.initiatorRole !== "CONSULTEE" ||
+    !request.proposalAppointmentId ||
+    currentRoundSlots(proposal).length === 0
+  ) {
+    return null;
+  }
+  return proposal;
 }
 
 // Helper function to fetch and process data
@@ -517,6 +553,11 @@ export function RequestSlotAllocationTab({
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
     useState<Request | null>(null);
+  /** Respond-accept in flight — holds the dialog and disables its exits. #1163 */
+  const [respondInFlight, setRespondInFlight] = useState(false);
+  /** Row awaiting the decline confirmation, and the decline in flight. */
+  const [declineTarget, setDeclineTarget] = useState<Request | null>(null);
+  const [declining, setDeclining] = useState(false);
 
   // Fetch requests, available slots, and existing appointments
   const fetchData = useCallback(async () => {
@@ -591,6 +632,9 @@ export function RequestSlotAllocationTab({
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
               proposal: proposalOf(consultation.appointment),
+              proposalAppointmentId: proposalOf(consultation.appointment)
+                ? consultation.appointment?.id
+                : undefined,
               totalSlotCount: totalCount,
             };
           }),
@@ -608,6 +652,11 @@ export function RequestSlotAllocationTab({
             const sessionDuration =
               subscription.subscriptionPlan?.sessionDurationInHours || 1;
             const slotsPerSession = Math.ceil(sessionDuration / 0.5);
+            // At most one child appointment carries a live proposal; keep the
+            // pair so the respond endpoint knows which appointment. #1163
+            const proposalAppointment = subscription.appointments?.find(
+              (appt) => proposalOf(appt),
+            );
 
             // Flatten all slots from all appointments
             const allSlots =
@@ -693,9 +742,8 @@ export function RequestSlotAllocationTab({
               requestNotes: subscription.requestNotes,
               tentativeSlotCount: tentativeCount,
               rescheduledSlotCount: rescheduledCount,
-              proposal: subscription.appointments
-                ?.map(proposalOf)
-                .find(Boolean),
+              proposal: proposalOf(proposalAppointment),
+              proposalAppointmentId: proposalAppointment?.id,
               totalSlotCount: totalCount,
             };
           }),
@@ -771,8 +819,82 @@ export function RequestSlotAllocationTab({
     [fetchData, onUpdate],
   );
 
+  /**
+   * #1163 — the consultee proposed these times, so confirming them is
+   * ANSWERING the proposal, not allocating: the respond endpoint re-validates
+   * through the full allocator under the wide lock and finalizes the request
+   * ACCEPTED, which the allocate PATCH would leave dangling open.
+   */
+  const acceptProposal = async (request: Request) => {
+    setRespondInFlight(true);
+    try {
+      const response = await fetch(
+        `/api/appointments/${request.proposalAppointmentId}/reschedule/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "accept" }),
+        },
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        error?: string;
+      };
+
+      if (response.status === 409 || response.status === 404) {
+        // Withdrawn/answered elsewhere, or the allocator refused the times —
+        // either way this snapshot is stale; resync instead of retrying.
+        toast({
+          title: "Could not confirm",
+          description:
+            data.error || "This proposal can no longer be accepted.",
+          variant: "destructive",
+        });
+        setRequestedSlotsDialogOpen(false);
+        setSelectedRequestForDialog(null);
+        fetchData();
+        onUpdate();
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to confirm the proposed times");
+      }
+
+      toast({
+        title: "Times confirmed",
+        description:
+          data.message ?? "The booking has moved to the proposed times.",
+        variant: "default",
+      });
+      setRequestedSlotsDialogOpen(false);
+      setSelectedRequestForDialog(null);
+      setRequests((prev) => prev.filter((r) => r.id !== request.id));
+      onUpdate();
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client", feature: "slot-allocation" } },
+      );
+      toast(
+        allocationFailed(
+          error instanceof Error
+            ? error.message
+            : "Failed to confirm the proposed times",
+        ),
+      );
+    } finally {
+      setRespondInFlight(false);
+    }
+  };
+
   const handleRequestedAllocation = async (override: boolean) => {
     if (!selectedRequestForDialog) return;
+
+    // A live consultee proposal answers through respond, never allocate. #1163
+    if (answerableProposal(selectedRequestForDialog)) {
+      await acceptProposal(selectedRequestForDialog);
+      return;
+    }
 
     try {
       const endpoint =
@@ -851,27 +973,33 @@ export function RequestSlotAllocationTab({
     }
   };
 
-  const handleDecline = async (request: Request) => {
-    if (request.type !== AppointmentsType.CONSULTATION) return;
+  /** Runs after the confirm dialog — declining rejects a request someone is
+   *  waiting on (and refunds anything paid), so it is never one click. */
+  const handleDeclineConfirm = async () => {
+    const request = declineTarget;
+    if (!request) return;
+    const endpoint =
+      request.type === AppointmentsType.SUBSCRIPTION
+        ? `/api/bookings/subscriptions/${request.id}`
+        : `/api/bookings/consultations/${request.id}`;
+    setDeclining(true);
     try {
-      const response = await fetch(
-        `/api/bookings/consultations/${request.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "REJECTED" }),
-        },
-      );
+      const response = await fetch(endpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "REJECTED" }),
+      });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Failed to decline request");
       }
       toast({
         title: "Request declined",
-        description: "The consultation request has been declined.",
+        description: `The ${getRequestTypeLabel(request.type).toLowerCase()} request has been declined.`,
         variant: "default",
       });
       setRequests((prev) => prev.filter((r) => r.id !== request.id));
+      setDeclineTarget(null);
       onUpdate();
     } catch (error) {
       Sentry.captureException(
@@ -884,6 +1012,8 @@ export function RequestSlotAllocationTab({
           error instanceof Error ? error.message : "Failed to decline request",
         variant: "destructive",
       });
+    } finally {
+      setDeclining(false);
     }
   };
 
@@ -1062,35 +1192,43 @@ export function RequestSlotAllocationTab({
                   Allocate Slots
                 </Button>
                 {/* Hidden for directly booked consultations (Bug #8 fix), and
-                    for anything awaiting reschedule: those slots still carry
-                    the ORIGINAL startsAt, so "using" them would re-confirm the
-                    times the consultee just asked to move. */}
-                {request.requestedTimes &&
-                  request.requestedTimes.length > 0 &&
-                  request.bookingSource === "REQUEST_SUBMITTED" &&
-                  (request.rescheduledSlotCount ?? 0) === 0 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => {
-                        setSelectedRequestForDialog(request);
-                        setRequestedSlotsDialogOpen(true);
-                      }}
-                    >
-                      Use Requested Times
-                    </Button>
-                  )}
+                    for a reschedule that names NO times: released slots still
+                    carry the ORIGINAL startsAt, so "using" them would
+                    re-confirm the times the consultee just asked to move.
+                    A live proposal lifts that suppression — the button then
+                    answers with the PROPOSED times via respond-accept. #1163 */}
+                {(answerableProposal(request) ||
+                  (request.requestedTimes &&
+                    request.requestedTimes.length > 0 &&
+                    request.bookingSource === "REQUEST_SUBMITTED" &&
+                    (request.rescheduledSlotCount ?? 0) === 0)) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={respondInFlight}
+                    onClick={() => {
+                      setSelectedRequestForDialog(request);
+                      setRequestedSlotsDialogOpen(true);
+                    }}
+                  >
+                    Use Requested Times
+                  </Button>
+                )}
               </>
             )}
             {/* Quiet by design: declining is the rarer branch, and nothing is
-                destroyed until the request is actually rejected. */}
-            {request.type === AppointmentsType.CONSULTATION && (
+                destroyed until the confirm dialog is answered. #1163 adds the
+                subscription arm — its PATCH gained the same consultant-only
+                REJECTED path (#1004). */}
+            {(request.type === AppointmentsType.CONSULTATION ||
+              request.type === AppointmentsType.SUBSCRIPTION) && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => handleDecline(request)}
+                disabled={declining}
+                onClick={() => setDeclineTarget(request)}
               >
                 Decline
               </Button>
@@ -1162,7 +1300,16 @@ export function RequestSlotAllocationTab({
           requestType={
             selectedRequestForDialog?.type || AppointmentsType.CONSULTATION
           }
-          requestedSlots={selectedRequestForDialog?.requestedTimes || []}
+          requestedSlots={(() => {
+            // In the proposal case the times under review are the PROPOSED
+            // ones — the stored slots still hold what is being moved away
+            // from. #1163
+            if (!selectedRequestForDialog) return [];
+            const proposal = answerableProposal(selectedRequestForDialog);
+            return proposal
+              ? currentRoundSlots(proposal).map((slot) => slot.startsAt)
+              : selectedRequestForDialog.requestedTimes || [];
+          })()}
           requestedSlotsWithStatus={selectedRequestForDialog?.requestedSlots}
           schedulingPeriod={
             selectedRequestForDialog?.startDate &&
@@ -1173,12 +1320,63 @@ export function RequestSlotAllocationTab({
                 }
               : undefined
           }
+          confirming={respondInFlight}
           onConfirm={handleRequestedAllocation}
           onCancel={() => {
             setRequestedSlotsDialogOpen(false);
             setSelectedRequestForDialog(null);
           }}
         />
+
+        <AlertDialog
+          open={!!declineTarget}
+          onOpenChange={(open) => {
+            if (!open && !declining) setDeclineTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Decline this request?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2">
+                  <p>
+                    <strong>{declineTarget?.requestedBy.user.name}</strong>{" "}
+                    asked for{" "}
+                    <strong>&quot;{declineTarget?.title}&quot;</strong>. This
+                    rejects the whole booking request.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    The consultee is notified, and if they have already paid,
+                    the payment is returned in full.
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={declining}>
+                Keep request
+              </AlertDialogCancel>
+              <AlertDialogAction
+                disabled={declining}
+                className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+                onClick={(event) => {
+                  // Keep the dialog open while in flight; success closes it.
+                  event.preventDefault();
+                  void handleDeclineConfirm();
+                }}
+              >
+                {declining ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Declining...
+                  </>
+                ) : (
+                  "Decline request"
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </CardContent>
     </Card>
   );

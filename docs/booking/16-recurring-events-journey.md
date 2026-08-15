@@ -97,7 +97,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `classContents[]` | Array | Ordered curriculum items (title, description, hoursAllotted) |
 | `collaborators` | Via UI | Co-instructors invited through CollaboratorsTab |
 
-**Key difference from subscription:** Class plans support `ClassCollaborator[]` with revenue share percentages, and the capacity system via `maxParticipants`.
+**Key difference from subscription:** Class plans support co-instructors — `Collaborator[]` rows carrying `collaboratorType: CLASS`, whose revenue shares are stored as integer basis points in `revenueShareBps` (#784 merged the old `ClassCollaborator` and `WebinarCollaborator` models into one `Collaborator`; #772 B5 moved the share off a float percentage) — and the capacity system via `maxParticipants`.
 
 ---
 
@@ -389,7 +389,7 @@ Collaborators are additional consultants who participate in class or webinar del
 
 1. Plan owner searches for consultant by name/email
 2. Sets `role` (CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR)
-3. Sets `revenueSharePercentage` (0-90%, validated: total shares cannot exceed 90%, owner keeps min 10%)
+3. Sets `revenueSharePercentage` (0-90%, validated: total shares cannot exceed 90%, owner keeps min 10%). The percentage is the API surface only; `pctToBps()` converts it to `revenueShareBps` at the database boundary, so the 90% cap is enforced as 9000 bps.
 4. Invitation created with status: PENDING
 5. Invitee receives Novu notification
 6. Invitee responds via `InvitationsPanel` component: ACCEPT or DECLINE
@@ -481,7 +481,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Participant count** | Always 1:1 | 1:many (up to `maxParticipants`) |
 | **Appointments** | 1 Appointment per session, each has N slots | 1 Appointment per session (shared by all participants via M2M user relation on slots) |
 | **Slot sharing** | Slots connected to consultant + 1 consultee | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
-| **Collaborators** | Not supported | `ClassCollaborator[]` with revenue shares |
+| **Collaborators** | Not supported | `Collaborator[]` (`collaboratorType: CLASS`) with `revenueShareBps` shares |
 | **Trial** | Yes (`TrialSession` model) | No |
 | **Recording** | No | Optional |
 | **Certificate** | No | Optional |

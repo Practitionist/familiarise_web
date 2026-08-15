@@ -2,10 +2,11 @@ name: Cleanup Empty Folders
 
 # Storage-only hygiene: removes empty appointment-document folders from
 # Supabase storage. No Prisma — the script talks to the storage API with the
-# service-role key, so this workflow carries only the two Supabase secrets
-# (the old base64 ENV_FILE blob materialized every secret in the runner for
-# no reason). Was silently red: package.json pointed at the script's
-# pre-move path and this was the one cron without a failure pager.
+# service-role key, so this workflow carries the two Supabase secrets plus
+# the Redis pair for the #1169 cron lock (the old base64 ENV_FILE blob
+# materialized every secret in the runner for no reason). Was silently red:
+# package.json pointed at the script's pre-move path and this was the one
+# cron without a failure pager.
 
 on:
   schedule:
@@ -21,6 +22,9 @@ jobs:
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      # #1169 — cron lock (fail-open; without these the run is unlocked, warned).
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
 
     steps:
       - name: Checkout code

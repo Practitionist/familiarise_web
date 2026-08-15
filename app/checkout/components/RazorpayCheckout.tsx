@@ -41,6 +41,13 @@ interface RazorpayOptions {
   theme?: {
     color: string;
   };
+  /**
+   * Closing the gateway sheet fires neither `handler` nor `payment.failed`, so
+   * without this the page sat on "Processing..." forever with no way back.
+   */
+  modal?: {
+    ondismiss?: () => void;
+  };
 }
 
 interface RazorpayInstance {
@@ -63,6 +70,14 @@ interface RazorpayCheckoutProps {
   userEmail?: string;
   userPhone?: string;
   description?: string;
+  /**
+   * Ran on the click, before anything is charged; returning false aborts.
+   *
+   * A page gating a finite resource — event seats — can only re-check it here.
+   * `disabled` reflects the last render, and a webinar can fill while the tab
+   * sits open, so without this the buyer pays into a rejection.
+   */
+  onBeforeCheckout?: () => Promise<boolean>;
 }
 
 export default function RazorpayCheckout({
@@ -74,6 +89,7 @@ export default function RazorpayCheckout({
   userEmail,
   userPhone,
   description,
+  onBeforeCheckout,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -83,7 +99,12 @@ export default function RazorpayCheckout({
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
 
   const handleCheckout = async () => {
+    // Before the spinner, so an abort leaves the button exactly as it was.
+    if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
+    // While the gateway sheet is up it owns the button; only its own exits
+    // (dismiss, failure, verified success) may re-enable it.
+    let gatewayOpened = false;
     try {
       const isLoaded = await loadScript(
         "https://checkout.razorpay.com/v1/checkout.js",
@@ -171,6 +192,7 @@ export default function RazorpayCheckout({
             if (!verifyRes.ok) {
               const err = await verifyRes.json();
               console.error("Payment signature verification failed:", err);
+              setIsProcessing(false);
               onPaymentError({
                 description:
                   "Payment verification failed. Our team will review this transaction.",
@@ -197,20 +219,32 @@ export default function RazorpayCheckout({
         theme: {
           color: "#2563EB", // Familiarise brand blue
         },
+        modal: {
+          ondismiss: () => {
+            setIsProcessing(false);
+            toast({
+              title: "Payment not completed",
+              description:
+                "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
+            });
+          },
+        },
       };
 
       const rzp = new window.Razorpay(options);
       rzp.on("payment.failed", function (response: RazorpayFailedResponse) {
+        setIsProcessing(false);
         onPaymentError(response.error);
       });
       rzp.open();
+      gatewayOpened = true;
     } catch (error) {
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
       onPaymentError({
         description: error instanceof Error ? error.message : "An unexpected error occurred",
       });
     } finally {
-      setIsProcessing(false);
+      if (!gatewayOpened) setIsProcessing(false);
     }
   };
 

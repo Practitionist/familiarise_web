@@ -110,6 +110,13 @@ export async function GET(request: NextRequest) {
     const defaultPersonal = !rawOrgScope && !isPrivileged(session.user.role);
     if (explicitPersonal || defaultPersonal) {
       // Personal — no membership lookup needed.
+      // #997 — composite index rides #1169 PR 9 (#1176). This anti-join is the
+      // PENDING list's remaining server cost: `none` compiles to a correlated
+      // NOT EXISTS that `@@index([subscriptionId])` can seek but not cover, so
+      // every candidate subscription pays a heap fetch to read organizationId.
+      // No Prisma shape is cheaper — `every: { organizationId: null }` is the
+      // same subquery with an extra negation — so the fix is the index, not
+      // the query.
       whereClause.appointments = {
         none: { organizationId: { not: null } },
       };

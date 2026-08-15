@@ -20,6 +20,7 @@ The following table is the index. Read it top-to-bottom for a quick orientation,
 | B8  | Background jobs run on GitHub Actions cron                            | Live   | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
 | B9  | All daily and weekly limit bucketing uses the event's scheduling timezone (default Asia/Kolkata) via `SlotCalculationService`; display stays viewer-local | Live   | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)       |
 | B10 | A dialog-initiated fresh allocation sends `initialAllocation` and is rejected with 409 if confirmed slots already exist | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
+| B11 | Direct slot writers share one `slot-booking:` namespace keyed by 30-minute interval atoms, and booking locks fail closed when Redis is unreachable | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
 
 ## ADR B1 — Thirty-minute atomic slots
 
@@ -62,6 +63,12 @@ The decision to share one helper rather than re-implement the expiry check on ea
 Operations that could race — concurrent allocations for the same consultant, a checkout completing while a reschedule runs — are serialised by a Redis distributed lock acquired before the transaction, and the database carries the constraints that make a double-book impossible even if a lock is ever missed. Auto-allocation, which discovers its slots dynamically under the lock, holds a consultant-wide key. Manual allocation, where the target day is known up front, shards the key by that day (`auto-allocate:{consultantProfileId}:{day}`) so that allocations for different days no longer serialise against one another; same-day requests, which are the actual duplicate risk, still share the key.
 
 The decision is defence in depth rather than relying on either mechanism alone. The lock removes the common-case contention cheaply, and the constraints are the correctness backstop. Allocation is additionally idempotent: a client-supplied `Idempotency-Key` (persisted as a unique `Appointment.allocationIdempotencyKey`) makes a retried or double-submitted allocation return the original result instead of allocating a second time. See [12-concurrency-and-locking.md](./12-concurrency-and-locking.md) for the lock keys and the reconciliation job that detects any overlap the locks did not prevent.
+
+## ADR B11 — One lock namespace per physical resource, keyed by interval atoms
+
+Every direct slot writer — consultation checkout, the request-for-approval path, and trial scheduling — serialises on the same `slot-booking:` Redis keys, one key per 30-minute atom of the interval being booked, acquired in ascending order so two acquisitions can never deadlock. Two rules produced this decision. First, a lock namespace only protects a resource if every writer of that resource uses it: trials previously locked a private `trial-slot-booking:` namespace that no other path read, which meant a trial and a checkout for the same consultant-minute never contended (#1093 §1). Second, a lock keyed on the raw start instant does not cover the interval it belongs to: a 10:00–12:00 booking and an 11:00–12:00 booking held different keys and both proceeded to payment, converting an overlap into a double charge. Atom keys make any overlap collide on its shared atoms.
+
+The allocator deliberately keeps its coarser consultant-wide `auto-allocate:` lock (ADR B7): it discovers slots dynamically under that lock, and its write transaction re-validates conflicts and is backstopped by the `slot_no_confirmed_overlap` exclusion constraint, which — now that trial slots carry `consultantProfileId` — covers every confirmed slot on the platform. Booking locks also fail closed when Redis is unreachable (`BookingLockUnavailableError`, 503) rather than reading as benign contention, mirroring the event-checkout lock's doctrine. Decided 2026-08-14 under #1169 PR 1.
 
 ## ADR B8 — GitHub Actions cron for background jobs
 

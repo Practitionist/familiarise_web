@@ -240,8 +240,9 @@ export function createConsultantQueries(
 
     // Recordings (server-paginated). Unlike its static siblings this entry
     // is a function: page/type/search come from component state, and each
-    // combination must be its own cache entry. The recordings endpoint has
-    // no org-scope support, so scopeKey is deliberately absent from the key.
+    // combination must be its own cache entry. The recordings endpoint is
+    // personal-pinned server-side (#1166 ORG-6), so the key never varies by
+    // scope and scopeKey is deliberately absent from it.
     recordings: (params: ConsultantRecordingsParams = {}) => ({
       queryKey: [
         "consultant-recordings",

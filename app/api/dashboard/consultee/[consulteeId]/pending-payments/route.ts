@@ -57,6 +57,12 @@ export async function GET(
     } as const;
 
     // Fetch all four data sources in parallel
+    //
+    // #1166 ORG-4 — personal surface: sources 1-3 pin organizationId: null
+    // (ADR 19; same personal filter as the payments route). Org-funded
+    // checkouts settle on the org side and never owe the learner a payment.
+    // Trials (source 4) stay unpinned: org tags on trials are attribution
+    // only, and a paid trial always charges the consultee.
     const [
       pendingConsultations,
       pendingSubscriptions,
@@ -68,6 +74,7 @@ export async function GET(
           where: {
             requestedById: consulteeId,
             status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+            appointment: { is: { organizationId: null } },
           },
           include: {
             consultationPlan: {
@@ -91,6 +98,7 @@ export async function GET(
           where: {
             requestedById: consulteeId,
             status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+            appointments: { some: { organizationId: null } },
           },
           include: {
             subscriptionPlan: {
@@ -114,6 +122,7 @@ export async function GET(
           where: {
             userId: consulteeProfile.userId,
             paymentStatus: "PENDING",
+            organizationId: null,
             OR: [
               // Has explicit expiresAt that's still in the future
               { expiresAt: { gt: new Date() } },

@@ -117,6 +117,28 @@ export async function readAppointmentDetail(appointmentId: string) {
         },
       },
       organization: { select: { id: true, name: true } },
+      // #1163 — the live proposal, so the detail page can render it and offer
+      // accept / decline / withdraw instead of "Awaiting schedule confirmation".
+      rescheduleRequests: {
+        where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          round: true,
+          expiresAt: true,
+          initiatorRole: true,
+          initiatedById: true,
+          proposedSlots: {
+            orderBy: { startsAt: "asc" },
+            // round: a COUNTERED request carries both rounds; the card must
+            // show only the current offer.
+            select: { startsAt: true, endsAt: true, round: true },
+          },
+        },
+      },
       slotsOfAppointment: slotsInclude,
     },
   });

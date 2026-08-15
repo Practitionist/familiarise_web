@@ -22,6 +22,9 @@ interface UseEventActionsOptions {
   title: string;
   consultant: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
+  /** #1163 — the org detail route has no `[consulteeId]` param, so a caller
+   * that resolved the id another way must thread it or invalidation no-ops. */
+  consulteeId?: string;
 }
 
 /**
@@ -109,19 +112,29 @@ export function useEventActions({
   title,
   consultant: _consultant,
   type,
+  consulteeId: consulteeIdOverride,
 }: UseEventActionsOptions) {
   const { toast } = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
-  const consulteeId = params?.consulteeId;
+  // Caller's resolved id first: on the org detail route the param is absent,
+  // and trusting it alone made every invalidation there a silent no-op. #1163
+  const consulteeId = consulteeIdOverride || params?.consulteeId;
 
   // Refresh every surface that renders this booking (events across all org
   // scopes via prefix match, plus the home pending-payments widget) without
   // the full-page reload that used to nuke the react-query cache and SPA
   // state after cancel/reschedule.
   const invalidateBookingData = () => {
-    // Outside the consultee route the param is absent; an undefined key
+    // The detail hub renders this booking on every dashboard — always
+    // refresh it, whatever route the action came from. #1163
+    if (appointmentId) {
+      void queryClient.invalidateQueries({
+        queryKey: ["appointment-detail", appointmentId],
+      });
+    }
+    // Outside the consultee route the id may be absent; an undefined key
     // segment would silently match nothing — bail instead.
     if (!consulteeId) return;
     void queryClient.invalidateQueries({

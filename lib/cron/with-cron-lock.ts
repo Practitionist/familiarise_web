@@ -1,4 +1,9 @@
-import { acquireLock, releaseLock, isMockRedis, checkRedisHealth } from "@/lib/redis";
+import redis, {
+  acquireLock,
+  releaseLock,
+  isMockRedis,
+  checkRedisHealth,
+} from "@/lib/redis";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -37,6 +42,74 @@ export interface CronLockOpts {
   failMode: "open" | "closed";
 }
 
+/** #697 — errorLog is @db.Text but a stack dump has no business being unbounded. */
+const ERROR_LOG_MAX_CHARS = 8_000;
+
+/** Fleet-level dead-man key (#866): every locked run refreshes it, so
+ * /api/health can flag >6h of total cron silence without the Actions API. */
+const HEARTBEAT_KEY = "cron:heartbeat:last";
+
+/**
+ * #697 INF-2 — SystemJobExecution trail, written inside the lock so a held-lock
+ * skip leaves no row. Every step is guarded (dynamic import included): the
+ * trail must never fail a job, and a workflow without a generated Prisma
+ * client or DATABASE_URL must degrade to "no trail", not to a crash.
+ */
+async function recordJobStart(jobName: string): Promise<string | null> {
+  try {
+    const { default: prisma } = await import("@/lib/prisma");
+    const row = await prisma.systemJobExecution.create({
+      data: {
+        jobId: jobName, // no job-config table exists; jobName doubles as the id
+        jobName,
+        status: "RUNNING",
+        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "manual",
+      },
+      select: { id: true },
+    });
+    return row.id;
+  } catch (err) {
+    console.warn(`[${jobName}] job-trail start write failed:`, err);
+    return null;
+  }
+}
+
+async function recordJobFinish(
+  jobName: string,
+  executionId: string | null,
+  startedAtMs: number,
+  error?: unknown,
+): Promise<void> {
+  if (!executionId) return;
+  try {
+    const { default: prisma } = await import("@/lib/prisma");
+    await prisma.systemJobExecution.update({
+      where: { id: executionId },
+      data: {
+        status: error === undefined ? "COMPLETED" : "FAILED",
+        endedAt: new Date(),
+        durationMs: Date.now() - startedAtMs,
+        errorLog:
+          error === undefined
+            ? undefined
+            : String(
+                error instanceof Error ? (error.stack ?? error.message) : error,
+              ).slice(0, ERROR_LOG_MAX_CHARS),
+      },
+    });
+  } catch (err) {
+    console.warn(`[${jobName}] job-trail finish write failed:`, err);
+  }
+}
+
+async function touchHeartbeat(jobName: string): Promise<void> {
+  try {
+    await redis.set(HEARTBEAT_KEY, new Date().toISOString());
+  } catch (err) {
+    console.warn(`[${jobName}] heartbeat write failed:`, err);
+  }
+}
+
 export async function withCronLock<T>(
   jobName: string,
   opts: CronLockOpts,
@@ -49,6 +122,8 @@ export async function withCronLock<T>(
     console.warn(
       `[${jobName}] Redis not configured — running UNLOCKED (fail-open)`,
     );
+    // No trail/heartbeat on this path: mock Redis means a laptop or a test,
+    // and the trail exists for the deployed fleet.
     return fn();
   }
 
@@ -63,8 +138,17 @@ export async function withCronLock<T>(
   const token = await acquireLock(key, opts.ttlMs ?? DEFAULT_TTL_MS);
   if (!token) throw new CronLockHeldError(jobName);
 
+  const startedAtMs = Date.now();
+  await touchHeartbeat(jobName);
+  const executionId = await recordJobStart(jobName);
+
   try {
-    return await fn();
+    const result = await fn();
+    await recordJobFinish(jobName, executionId, startedAtMs);
+    return result;
+  } catch (err) {
+    await recordJobFinish(jobName, executionId, startedAtMs, err);
+    throw err;
   } finally {
     await releaseLock(key, token); // never throws; TTL is the safety net
   }
