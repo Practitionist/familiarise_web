@@ -57,6 +57,8 @@ import {
 } from "../../lib/stream-client";
 import { isDMChannel } from "../../lib/stream-channel-ids";
 
+type StreamChatClient = ReturnType<typeof getStreamChatClient>;
+
 /**
  * Stream caps `queryChannels` at 30 per call regardless of the `limit` passed.
  * A `do…while (page.length === PAGE_SIZE)` loop with PAGE_SIZE = 100 exits after
@@ -97,27 +99,61 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
-export async function purgeMemberlessDms(
+/**
+ * Should this channel be deleted, and if so what do we record about it?
+ *
+ * Returns null for anything that must be left alone. Order matters: the prefix
+ * test comes before the member count, because only `dm-`/`dmo-`/`dmh-` ids are
+ * pair conversations. A `collab-<webinar|class>-<planId>` channel is `messaging`
+ * too and legitimately sits at one member while co-host invitations are pending
+ * — checking members first would put it on the delete list.
+ */
+function toCandidate(
+  channel: Awaited<ReturnType<StreamChatClient["queryChannels"]>>[number],
   opts: Options,
-): Promise<{ scanned: number; candidates: number; deleted: number }> {
-  if (!isStreamConfigured()) {
-    console.error(
-      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
-    );
-    return { scanned: 0, candidates: 0, deleted: 0 };
-  }
+): Candidate | null {
+  if (!isDMChannel(channel.id)) return null;
 
-  const client = getStreamChatClient();
+  const memberIds = Object.keys(channel.state?.members ?? {});
+  if (memberIds.length >= 2) return null;
+
+  const messageCount = channel.state?.messages?.length ?? 0;
+  if (opts.keepWithMessages && messageCount > 0) return null;
+
+  const data = channel.data as Record<string, unknown> | undefined;
+  return {
+    cid: channel.cid,
+    id: channel.id ?? "",
+    memberIds,
+    createdById:
+      typeof data?.created_by_id === "string"
+        ? data.created_by_id
+        : ((data?.created_by as { id?: string } | undefined)?.id ?? undefined),
+    createdAt:
+      typeof data?.created_at === "string" ? data.created_at : undefined,
+    lastMessageAt:
+      typeof data?.last_message_at === "string"
+        ? data.last_message_at
+        : undefined,
+  };
+}
+
+/**
+ * Page every `messaging` channel and collect the deletable ones.
+ *
+ * Filtered locally rather than server-side because Stream's channel filters
+ * have no `member_count` operator — `members: { $in: [...] }` needs ids we do
+ * not have, and there is no "fewer than N members" query.
+ */
+async function scanForCandidates(
+  client: StreamChatClient,
+  opts: Options,
+): Promise<{ scanned: number; dmScanned: number; candidates: Candidate[] }> {
   const candidates: Candidate[] = [];
   let scanned = 0;
   let dmScanned = 0;
   let offset = 0;
 
-  // Every `messaging` channel is walked and the member count checked here,
-  // rather than filtered server-side. Stream's channel filters have no
-  // `member_count` operator — `members: { $in: [...] }` needs ids we do not
-  // have, and there is no "fewer than N members" query. So: page everything,
-  // decide locally.
   for (;;) {
     const page = await client.queryChannels(
       { type: "messaging" },
@@ -128,41 +164,24 @@ export async function purgeMemberlessDms(
     scanned += page.length;
 
     for (const channel of page) {
-      // Prefix first, member count second. Only `dm-`/`dmo-`/`dmh-` ids are
-      // pair conversations; every other `messaging` channel here is a collab or
-      // custom channel with its own rules about how many members it may hold.
-      if (!isDMChannel(channel.id)) continue;
-      dmScanned++;
-
-      const memberIds = Object.keys(channel.state?.members ?? {});
-      if (memberIds.length >= 2) continue;
-
-      const data = channel.data as Record<string, unknown> | undefined;
-      const messageCount = channel.state?.messages?.length ?? 0;
-      if (opts.keepWithMessages && messageCount > 0) continue;
-
-      candidates.push({
-        cid: channel.cid,
-        id: channel.id ?? "",
-        memberIds,
-        createdById:
-          typeof data?.created_by_id === "string"
-            ? data.created_by_id
-            : ((data?.created_by as { id?: string } | undefined)?.id ??
-              undefined),
-        createdAt:
-          typeof data?.created_at === "string" ? data.created_at : undefined,
-        lastMessageAt:
-          typeof data?.last_message_at === "string"
-            ? data.last_message_at
-            : undefined,
-      });
+      if (isDMChannel(channel.id)) dmScanned++;
+      const candidate = toCandidate(channel, opts);
+      if (candidate) candidates.push(candidate);
     }
 
     offset += page.length;
     if (page.length < PAGE_SIZE) break;
   }
 
+  return { scanned, dmScanned, candidates };
+}
+
+/** Print every candidate in full. This is what an operator reads before applying. */
+function reportCandidates(
+  candidates: Candidate[],
+  scanned: number,
+  dmScanned: number,
+): void {
   console.log(
     `Scanned ${scanned} messaging channels (${dmScanned} were DM-prefixed).`,
   );
@@ -175,16 +194,13 @@ export async function purgeMemberlessDms(
         `    last_message_at: ${c.lastMessageAt ?? "never"}`,
     );
   }
+}
 
-  if (candidates.length === 0) return { scanned, candidates: 0, deleted: 0 };
-
-  if (!opts.apply) {
-    console.log(
-      `\n(dry run — pass --apply to delete these ${candidates.length})`,
-    );
-    return { scanned, candidates: candidates.length, deleted: 0 };
-  }
-
+/** Snapshot, then delete in batches. Returns how many were deleted. */
+async function deleteCandidates(
+  client: StreamChatClient,
+  candidates: Candidate[],
+): Promise<number> {
   // Written BEFORE the delete. Unlike the grants script — where the pre-image
   // only matters if a write succeeded — a delete is unrecoverable, so the
   // snapshot has to exist even if the delete then fails halfway.
@@ -199,7 +215,37 @@ export async function purgeMemberlessDms(
     deleted += batch.length;
     console.log(`  deleted ${deleted}/${candidates.length}`);
   }
+  return deleted;
+}
 
+export async function purgeMemberlessDms(
+  opts: Options,
+): Promise<{ scanned: number; candidates: number; deleted: number }> {
+  if (!isStreamConfigured()) {
+    console.error(
+      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
+    );
+    return { scanned: 0, candidates: 0, deleted: 0 };
+  }
+
+  const client = getStreamChatClient();
+  const { scanned, dmScanned, candidates } = await scanForCandidates(
+    client,
+    opts,
+  );
+
+  reportCandidates(candidates, scanned, dmScanned);
+
+  if (candidates.length === 0) return { scanned, candidates: 0, deleted: 0 };
+
+  if (!opts.apply) {
+    console.log(
+      `\n(dry run — pass --apply to delete these ${candidates.length})`,
+    );
+    return { scanned, candidates: candidates.length, deleted: 0 };
+  }
+
+  const deleted = await deleteCandidates(client, candidates);
   return { scanned, candidates: candidates.length, deleted };
 }
 
