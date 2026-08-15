@@ -142,6 +142,36 @@ While registering this: `dmo-` and `dmh-` were never declared in
 call sites addressed the wrong type), `isDMChannel` answered false for two of the
 three forms, and the reconciler never saw them at all.
 
+## Amendment, same day: the eager sync is retired
+
+Widening `DM_ELIGIBLE_STATUSES` to include `COMPLETED` had a consequence this
+ADR did not think through. `COMPLETED` is an absorbing state, so
+`getDmPairsForUser` no longer returns _currently active_ work — it returns every
+consultation or subscription the consultant has ever finished. Neither query
+carries a `take`, and `syncUserEventChannels` made a Stream API call per pair,
+five at a time, on every cold dashboard load. A consultant with 500 completed
+bookings would pay 100 serial waves in the background of every visit, growing
+forever.
+
+The add pass is therefore gone. `syncUserEventChannels` now computes the
+expected set and runs the **reconcile-and-remove** pass only. Creation moved to
+where it is actually needed: `POST /api/stream/channels/open` provisions the one
+channel someone opens, at the moment they open it, and booking approval and
+payment success still provision eagerly at transaction time.
+
+The removal half cannot move to an on-demand path — nothing else notices that a
+membership _ought_ to be revoked — which is why it stays on the sync.
+
+The trade: a user who has lost membership to a channel that still exists is no
+longer silently re-added on load. They recover by opening the conversation from
+search, which routes through `/open`. `addUserToDmChannel` was deleted with the
+pass; it duplicated `createDirectMessageChannel` and, unlike it, ran no
+eligibility check.
+
+This does **not** change the eligibility rule. Ever-transacted still governs who
+may hold a DM; it simply no longer governs how many channels get provisioned
+speculatively.
+
 ## Consequences
 
 `checkUserRelationship` no longer swallows errors into `false`. That read as

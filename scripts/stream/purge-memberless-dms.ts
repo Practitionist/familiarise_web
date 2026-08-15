@@ -48,7 +48,7 @@
  * NOTE: a dry run READS production. An apply DELETES from production.
  */
 import "dotenv/config";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -205,7 +205,13 @@ async function deleteCandidates(
   // only matters if a write succeeded — a delete is unrecoverable, so the
   // snapshot has to exist even if the delete then fails halfway.
   mkdirSync(dirname(PRE_IMAGE_PATH), { recursive: true });
-  writeFileSync(PRE_IMAGE_PATH, JSON.stringify(candidates, null, 2));
+  // Write-then-rename, matching ensure-chat-type-grants. An interrupted write
+  // would otherwise leave a truncated pre-image where a previous run's valid
+  // one used to be — losing the record of what an EARLIER purge deleted, which
+  // is the only thing that makes this reversible at all.
+  const tmpPath = `${PRE_IMAGE_PATH}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(candidates, null, 2));
+  renameSync(tmpPath, PRE_IMAGE_PATH);
   console.log(`\nPre-image written to ${PRE_IMAGE_PATH}`);
 
   let deleted = 0;

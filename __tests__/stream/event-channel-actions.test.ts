@@ -748,7 +748,13 @@ describe("Event Channel Actions", () => {
       );
     });
 
-    it("should handle partial failures gracefully", async () => {
+    // Was "should handle partial failures gracefully", asserting the add
+    // pass's success/fail tally. That pass is gone: the sync no longer creates
+    // or joins channels, it only removes memberships the user is no longer
+    // entitled to. `POST /api/stream/channels/open` provisions on demand
+    // instead, so the sync's unbounded per-pair Stream calls — which grew with
+    // every COMPLETED booking, forever — are not paid on dashboard load.
+    it("creates no channels — the add pass is retired", async () => {
       mockPrisma.user.findUnique.mockResolvedValue({
         consultantProfileId: null,
         consulteeProfileId: "consultee-123",
@@ -772,14 +778,7 @@ describe("Event Channel Actions", () => {
         },
       ]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
-
       mockCache.getMembershipCached.mockReturnValue(false);
-      // Pair 1 addMembers succeeds; pair 2 addMembers rejects (falls through to create)
-      mockChannel.addMembers
-        .mockResolvedValueOnce({})
-        .mockRejectedValueOnce(new Error("addMembers failed"));
-      // Pair 2's fallthrough create also fails → pair 2 counted as failed
-      mockChannel.create.mockRejectedValueOnce(new Error("Create failed"));
 
       const { syncUserEventChannels } =
         await import("../../actions/stream/chat/event-channel.action");
@@ -787,8 +786,12 @@ describe("Event Channel Actions", () => {
       const result = await syncUserEventChannels("user-with-failures");
 
       expect(result.success).toBe(true);
-      expect(result.channelsSynced).toBe(1);
-      expect(result.failed).toBe(1);
+      // Both pairs are still EXPECTED — that set drives the stale-removal pass
+      // and must stay complete, or the reconciler evicts live conversations.
+      expect(result.channelsSynced).toBe(2);
+      // The point of the change: no Stream writes for those two pairs.
+      expect(mockChannel.create).not.toHaveBeenCalled();
+      expect(mockChannel.addMembers).not.toHaveBeenCalled();
     });
 
     it("should throw on invalid user ID", async () => {

@@ -621,48 +621,35 @@ export async function syncUserEventChannels(
       ),
     ]);
 
-    // --- Add pass: join any channels the user is missing ---
+    // --- There is no longer an add pass. ---
+    //
+    // This used to walk `eventIds` and `dmPairs` five at a time, calling
+    // `addUserToEventChannel` / `addUserToDmChannel` for every one, creating
+    // any channel that did not exist yet. It ran on every cold dashboard load.
+    //
+    // Two things made that untenable. It is unbounded: neither
+    // `getDmPairsForUser` nor the event helpers carry a `take`, and since
+    // `DM_ELIGIBLE_STATUSES` includes `COMPLETED` — an absorbing state — the
+    // pair list is every consultation the consultant has EVER finished, so it
+    // only grows. A consultant with 500 completed bookings paid 100 serial
+    // waves of Stream calls in the background of every load. And it is now
+    // redundant: `POST /api/stream/channels/open` creates the channel on
+    // demand, with both members, at the moment someone actually opens the
+    // conversation. Provisioning 500 channels on the chance one gets opened is
+    // work done for nothing.
+    //
+    // `expectedChannelIds` above is still computed — the reconcile pass below
+    // needs it to decide what is stale, and that half is not replaceable by an
+    // on-demand path: nothing else notices that a membership OUGHT to be
+    // revoked.
+    //
+    // The trade, stated plainly: a user who has lost membership to a channel
+    // that still exists is no longer silently re-added here. They recover by
+    // opening the conversation from search, which routes through
+    // `/api/stream/channels/open` and re-adds them. Booking approval and
+    // payment success still provision channels eagerly, so this only affects
+    // repair, not creation.
     const BATCH_SIZE = 5;
-    let successCount = 0;
-    let failCount = 0;
-
-    if (eventIds.length > 0) {
-      for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
-        const batch = eventIds.slice(i, i + BATCH_SIZE);
-
-        const results = await Promise.allSettled(
-          batch.map((event) =>
-            addUserToEventChannel(event.type, event.id, userId),
-          ),
-        );
-
-        results.forEach((result) => {
-          if (result.status === "fulfilled") successCount++;
-          else failCount++;
-        });
-      }
-    }
-
-    // --- DM add-pass: one channel per pair PER FUNDING CONTEXT ---
-    // A pair working both B2C and through an org now has two threads, and this
-    // pass joins the user to each. `dmPairs` is already keyed that way.
-    for (let i = 0; i < dmPairs.length; i += BATCH_SIZE) {
-      const batch = dmPairs.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map((pair) =>
-          addUserToDmChannel(
-            pair.consultantUserId,
-            pair.consulteeUserId,
-            userId,
-            pair.organizationId,
-          ),
-        ),
-      );
-      results.forEach((r) => {
-        if (r.status === "fulfilled") successCount++;
-        else failCount++;
-      });
-    }
 
     // --- Reconciliation pass: remove user from stale channels ---
     // Query Stream for every channel this user currently belongs to.
@@ -733,9 +720,9 @@ export async function syncUserEventChannels(
     const duration = Date.now() - startTime;
     streamLogger.info("Channel sync completed", {
       userId,
-      successCount,
-      failCount,
+      expectedChannels: expectedChannelIds.size,
       staleChannelsRemoved: staleRemovedCount,
+      staleFailed: staleFailCount,
       durationMs: duration,
     });
 
@@ -744,8 +731,11 @@ export async function syncUserEventChannels(
 
     return {
       success: true,
-      channelsSynced: successCount,
-      failed: failCount,
+      // Kept for the existing callers' shape. Nothing is "synced" in the
+      // create sense any more; this is how many channels the user is expected
+      // to be in, which is the useful number for the same debugging.
+      channelsSynced: expectedChannelIds.size,
+      failed: staleFailCount,
       staleChannelsRemoved: staleRemovedCount,
       durationMs: duration,
     };
@@ -910,113 +900,17 @@ async function getDmPairsForUser(
 }
 
 /**
- * Create or join a DM channel for a consultant-consultee pair.
+ * `addUserToDmChannel` used to live here — a private create-or-join for a
+ * consultant/consultee pair, called only by the sync's DM add pass.
+ *
+ * Removed with that pass. It duplicated `createDirectMessageChannel` in
+ * `channel.action.ts`, which is what `POST /api/stream/channels/open` and the
+ * booking paths use, and which unlike this one runs the eligibility gate.
+ * Leaving an ungated, unused channel-provisioning helper in the module is an
+ * invitation to wire it back in without the check.
  */
-async function addUserToDmChannel(
-  consultantUserId: string,
-  consulteeUserId: string,
-  currentUserId: string,
-  /** Funding context — the channel key differs per org (see getDmChannelId). */
-  organizationId: string | null,
-): Promise<{ success: boolean; channelId: string; created?: boolean }> {
-  const channelId = getDmChannelId(
-    consultantUserId,
-    consulteeUserId,
-    organizationId,
-  );
-  const channelType = "messaging";
 
-  if (getMembershipCached(channelId, currentUserId) === true) {
-    return { success: true, channelId };
-  }
-
-  const client = getStreamChatClient();
-  const channel = client.channel(channelType, channelId);
-
-  // Try adding to existing channel first
-  try {
-    // #473 — surface breaker-open as StreamUnavailableError so an outage
-    // doesn't get mistaken for "channel missing" and trigger a doomed create.
-    await withStreamCircuitBreaker(
-      () => channel.addMembers([currentUserId]),
-      () => {
-        throw new StreamUnavailableError();
-      },
-    );
-    markMembership(channelId, currentUserId, true);
-    return { success: true, channelId };
-  } catch (addError) {
-    if (addError instanceof StreamUnavailableError) throw addError;
-    // Channel may not exist — fall through to creation
-  }
-
-  // Create the DM channel
-  await upsertUsersToStream([consultantUserId, consulteeUserId]);
-  const channelWithData = client.channel(channelType, channelId, {
-    members: [consultantUserId, consulteeUserId],
-    created_by_id: consultantUserId,
-    dm_consultant_user_id: consultantUserId,
-    dm_consultee_user_id: consulteeUserId,
-  } as Record<string, unknown>);
-  // F-HIGH-3: same adopt-on-duplicate-create contract as the event path — a
-  // concurrent creator of this DM wins the race, we adopt their channel.
-  let adoptRetryFailed = false;
-  try {
-    await withStreamCircuitBreaker(
-      () => channelWithData.create(),
-      () => {
-        throw new StreamUnavailableError();
-      },
-    );
-  } catch (createError) {
-    if (!isChannelAlreadyExistsError(createError)) throw createError;
-
-    streamLogger.info("Lost channel-create race; adopting existing channel", {
-      channelId,
-      currentUserId,
-    });
-
-    // The winner's roster snapshot may predate us — retry our own membership
-    // once. Best-effort: logged on failure, never fatal to the join.
-    try {
-      await channel.addMembers([currentUserId]);
-    } catch (adoptError) {
-      adoptRetryFailed = true;
-      streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
-        channelId,
-        currentUserId,
-        error: adoptError,
-      });
-    }
-  }
-
-  // Lazy-create bypasses createChannel, so the #899 channel-scoped host
-  // grant is repeated here. Non-fatal: chat still works without it.
-  try {
-    await channelWithData.assignRoles([
-      { user_id: consultantUserId, channel_role: "channel_moderator" },
-    ]);
-  } catch (grantError) {
-    streamLogger.warn("Failed to grant channel_moderator to DM consultant", {
-      channelId,
-      consultantUserId,
-      error: grantError,
-    });
-  }
-
-  markChannelExists(channelType, channelId);
-  // Same uncached-on-failed-retry rule as the event path above.
-  if (!adoptRetryFailed) {
-    markMembership(channelId, currentUserId, true);
-  }
-  streamLogger.info("Created DM channel", {
-    channelId,
-    consultantUserId,
-    consulteeUserId,
-  });
-  return { success: true, channelId, created: true };
-}
-
+=======
 /**
  * F-HIGH-2 — Postgres rows outlive Stream channels. The retention cron
  * hard-deletes a channel once `retentionDays` have passed since its last slot,

@@ -144,6 +144,23 @@ describe("POST /api/stream/users/block", () => {
     expect(second.banUser).toHaveBeenCalled();
   });
 
+  it("answers 503 and writes no report when every ban fails", async () => {
+    mockQueryChannels.mockResolvedValue([
+      channel("dm-a-b", "fail"),
+      channel("dmo-org-pair", "fail"),
+    ]);
+
+    const response = await post();
+    const body = await response.json();
+
+    // The header names three outcomes; this is the third, and it was the one
+    // left untested. It differs from the partial case in a way that matters:
+    // nothing was blocked, so there is no action to audit.
+    expect(response.status).toBe(503);
+    expect(body.success).toBeUndefined();
+    expect(mockPrisma.moderationReport.create).not.toHaveBeenCalled();
+  });
+
   it("answers 503 when the Stream lookup itself fails", async () => {
     mockQueryChannels.mockRejectedValue(new Error("Stream down"));
 

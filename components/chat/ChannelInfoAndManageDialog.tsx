@@ -162,19 +162,36 @@ export const ChannelInfoAndManageDialog = ({
       // in the codebase without ever being in the path. Membership is what
       // Stream's own permissions key off, which makes an unchecked add the
       // widest hole in the chat surface.
-      for (const userId of userIds) {
-        await addMemberToChannel(
-          channel.id,
-          userId,
-          // `Channel["type"]` is a bare `string` in stream-chat; the action
-          // takes the narrowed union. Every channel this dialog can open is one
-          // of the two.
-          channel.type as "messaging" | "team",
-        );
+      // allSettled, not a sequential loop: one rejection used to abandon every
+      // remaining id AND skip the toast, so adding five people and failing on
+      // the second silently added one. Same reasoning as the block route.
+      const results = await Promise.allSettled(
+        userIds.map((userId) =>
+          addMemberToChannel(
+            channel.id as string,
+            userId,
+            // `Channel["type"]` is a bare `string` in stream-chat; the action
+            // takes the narrowed union. Every channel this dialog can open is
+            // one of the two.
+            channel.type as "messaging" | "team",
+          ),
+        ),
+      );
+
+      const added = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.length - added;
+
+      if (added === 0) {
+        throw new Error("Could not add anyone to this channel");
       }
+
       toast({
-        title: "Success",
-        description: `${userIds.length} member${userIds.length !== 1 ? "s" : ""} added successfully`,
+        title: failed > 0 ? "Partially added" : "Success",
+        description:
+          failed > 0
+            ? `Added ${added} of ${results.length}. Please retry the rest.`
+            : `${added} member${added !== 1 ? "s" : ""} added successfully`,
+        variant: failed > 0 ? "destructive" : undefined,
       });
       // Refresh the member list
       loadMembers();

@@ -80,7 +80,11 @@ export const AddMembersDialog = ({
 
       try {
         const response = await fetch(
-          `/api/stream/search-consultees?term=${encodeURIComponent(term)}&exclude=${exclude}`,
+          // Both halves encoded. `term` was, `exclude` was not — so a member id
+          // containing `&`, `+`, `#` or a space truncated or corrupted the
+          // exclusion set, and people already in the channel reappeared as
+          // addable.
+          `/api/stream/search-consultees?term=${encodeURIComponent(term)}&exclude=${encodeURIComponent(exclude)}`,
           { signal: controller.signal },
         );
 
@@ -120,10 +124,21 @@ export const AddMembersDialog = ({
   // Abort on close as well as unmount: the dialog resets its state when it
   // closes, and a late response would repopulate the list behind it.
   useEffect(() => {
-    if (!open) abortRef.current?.abort();
-  }, [open]);
+    if (!open) {
+      debouncedSearch.cancel();
+      abortRef.current?.abort();
+    }
+  }, [open, debouncedSearch]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      // See ChannelSearch — use-debounce v10 leaves trailing callbacks armed
+      // across unmount.
+      debouncedSearch.cancel();
+      abortRef.current?.abort();
+    },
+    [debouncedSearch],
+  );
 
   const toggleSelection = (userId: string) => {
     setSelectedIds((prev) => {

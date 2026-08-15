@@ -93,6 +93,15 @@ export const ChannelSearch = () => {
    * in the list underneath.
    */
   const [settledQuery, setSettledQuery] = useState("");
+  /**
+   * A search that FAILED, as distinct from one that found nothing.
+   *
+   * The catch used to set `settledQuery` and leave the results empty, which is
+   * indistinguishable from a successful empty search — so a 500 or a dropped
+   * connection rendered as "No results found for michael". That is the most
+   * misleading thing it could say: it tells you the person does not exist.
+   */
+  const [searchError, setSearchError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   /**
    * Latest-wins guard, mirroring `hooks/scheduling/useCalendarData.ts`.
@@ -178,6 +187,7 @@ export const ChannelSearch = () => {
       abortRef.current = null;
       setSearchResults([]);
       setSettledQuery("");
+      setSearchError(null);
       setLoading(false);
       // Cleared here too. `handleSearch` used to early-return BEFORE the
       // setOpenError below, so a 403 refusal outlived the input that produced
@@ -198,6 +208,7 @@ export const ChannelSearch = () => {
       // A refusal from the previous attempt must not outlive the query that
       // caused it.
       setOpenError(null);
+      setSearchError(null);
 
       const response = await fetch(
         `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}`,
@@ -222,6 +233,7 @@ export const ChannelSearch = () => {
       console.error("Error searching appointments:", error);
       setSearchResults([]);
       setSettledQuery(term);
+      setSearchError("Search is unavailable right now. Please try again.");
     } finally {
       if (requestId === requestIdRef.current) setLoading(false);
     }
@@ -238,7 +250,17 @@ export const ChannelSearch = () => {
 
   // Abort anything outstanding when the component goes away, so a resolved
   // fetch cannot setState on an unmounted tree.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      // `use-debounce` v10 does NOT auto-cancel on unmount, so a trailing
+      // callback can fire after the component is gone and start a search
+      // nobody is waiting for. Abort covers a request already issued; cancel
+      // covers one still sitting in the timer.
+      debouncedSearch.cancel();
+      abortRef.current?.abort();
+    },
+    [debouncedSearch],
+  );
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -262,6 +284,7 @@ export const ChannelSearch = () => {
   const dismiss = useCallback(() => {
     setSearchResults([]);
     setOpenError(null);
+    setSearchError(null);
   }, []);
 
   useEffect(() => {
@@ -375,8 +398,10 @@ export const ChannelSearch = () => {
    * only goes true once the fetch actually starts 300ms later.
    */
   const isPending = term.length >= 2 && (loading || settledQuery !== term);
-  const showNoResults = term.length >= 2 && !isPending && !hasResults;
-  const isOpen = hasResults || openError !== null || showNoResults;
+  const showNoResults =
+    term.length >= 2 && !isPending && !hasResults && searchError === null;
+  const isOpen =
+    hasResults || openError !== null || searchError !== null || showNoResults;
 
   return (
     <div className="channel-search relative" ref={containerRef}>
@@ -399,6 +424,14 @@ export const ChannelSearch = () => {
               className="px-3 py-2 text-sm text-muted-foreground border-b border-border last:border-b-0"
             >
               {openError}
+            </div>
+          )}
+          {searchError && (
+            <div
+              role="status"
+              className="px-3 py-2 text-sm text-destructive border-b border-border last:border-b-0"
+            >
+              {searchError}
             </div>
           )}
           {/*

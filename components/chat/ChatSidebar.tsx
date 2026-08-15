@@ -804,7 +804,18 @@ export const ChatSidebar = () => {
           <div className="p-4 text-center text-sm text-destructive">
             <p>Conversations could not be loaded.</p>
           </div>
-        ) : directMessages.length > 0 ? (
+        ) : (
+          // NOT `directMessages.length > 0 ? list : emptyState`.
+          //
+          // The list is filtered (phantom DMs are dropped, see
+          // isUsableDmChannel) but `hasMoreDMChannels` is measured against the
+          // RAW page length. So a page whose 20 rows are all phantoms leaves the
+          // list empty with more pages still to come — and with the load-more
+          // button living inside the non-empty branch, the empty state rendered
+          // "No conversations yet" over a stranded list the user could not
+          // reach. The button is now tied to `hasMoreDMChannels` alone, and the
+          // empty state only claims there is nothing when there is genuinely
+          // nothing left to fetch.
           <div>
             {directMessages.map((channel) => (
               <ChannelItem
@@ -814,6 +825,15 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+
+            {directMessages.length === 0 && !hasMoreDMChannels && (
+              <div className="p-4 text-center text-muted-foreground text-sm">
+                {isConsultant
+                  ? "No conversations yet. Conversations will appear here once clients book sessions."
+                  : "No conversations yet. Book a consultation to start chatting."}
+              </div>
+            )}
+
             {hasMoreDMChannels && (
               <div className="p-2">
                 <Button
@@ -825,16 +845,12 @@ export const ChatSidebar = () => {
                 >
                   {isLoadingMore
                     ? "Loading..."
-                    : `Showing ${directMessages.length} conversations — Load more`}
+                    : directMessages.length === 0
+                      ? "Load conversations"
+                      : `Showing ${directMessages.length} conversations — Load more`}
                 </Button>
               </div>
             )}
-          </div>
-        ) : (
-          <div className="p-4 text-center text-muted-foreground text-sm">
-            {isConsultant
-              ? "No conversations yet. Conversations will appear here once clients book sessions."
-              : "No conversations yet. Book a consultation to start chatting."}
           </div>
         )}
       </div>

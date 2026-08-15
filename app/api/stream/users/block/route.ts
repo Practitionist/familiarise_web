@@ -153,10 +153,26 @@ export async function POST(req: NextRequest) {
     // `response.ok` alone, so a 2xx here would render "This user can no longer
     // message you" over a channel they can still post in.
     if (failures.length > 0) {
-      Sentry.captureException(new Error("Block: some channel bans failed"), {
-        tags: { subsystem: "stream" },
-      });
-      streamLogger.warn("Block: some channel bans failed", {
+      // The actual rejection, not just a synthetic marker. The all-fail branch
+      // above passes `failures[0]`; this one discarded it and reported counts
+      // only, so the alert said a partial block happened without saying why —
+      // which is the one thing you need to know to act on it.
+      const firstReason =
+        failures[0]?.status === "rejected" ? failures[0].reason : undefined;
+      Sentry.captureException(
+        firstReason instanceof Error
+          ? firstReason
+          : new Error("Block: some channel bans failed"),
+        {
+          tags: { subsystem: "stream" },
+          extra: {
+            blocked: blockedCount,
+            failed: failures.length,
+            total: dmChannels.length,
+          },
+        },
+      );
+      streamLogger.error("Block: some channel bans failed", firstReason, {
         userId: session.user.id,
         targetUserId,
         blocked: blockedCount,

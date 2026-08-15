@@ -564,7 +564,19 @@ const StreamProviderImpl = ({
       }
     };
 
-    // Defer the connect off the critical path (#248).
+    // Defer the connect off the critical path (#248) — but only briefly.
+    //
+    // The timeout was 2000ms, and on a cold load that is not a ceiling, it is
+    // the ACTUAL wait: the main thread is saturated by dashboard hydration and
+    // by evaluating the Stream Chat + Video chunk, so the browser never finds
+    // an idle period and fires at the deadline every time. Two seconds of the
+    // Messages skeleton were this line.
+    //
+    // The deferral still earns its place — it keeps the socket handshake from
+    // competing with first paint of the dashboard behind it — so it stays, at a
+    // budget that yields to hydration without becoming the dominant cost. If
+    // this ever needs tuning again, measure with `streamLogger.timing()` rather
+    // than guessing; it warns above 5s and currently has no callers.
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
       idleHandle = (
         window as Window & {
@@ -573,7 +585,7 @@ const StreamProviderImpl = ({
             opts?: { timeout: number },
           ) => number;
         }
-      ).requestIdleCallback(run, { timeout: 2000 });
+      ).requestIdleCallback(run, { timeout: 300 });
     } else {
       timeoutHandle = setTimeout(run, 0);
     }

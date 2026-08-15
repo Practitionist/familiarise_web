@@ -412,6 +412,21 @@ export async function GET(request: NextRequest) {
     );
 
     for (const consultation of consultations) {
+      // One bad row must not take the whole search down.
+      //
+      // `getDmChannelId` throws on a self-pair — deliberately, because a
+      // one-member DM is unusable and silently collapsing it was the original
+      // bug. But it is called here inside a loop over query results, so a
+      // single legacy self-booked row (checkout blocks these now; seeded and
+      // pre-guard data may still hold them) throws past this handler and the
+      // outer catch answers 500 for the ENTIRE search. The user sees "no
+      // results" for every query that happens to match that row.
+      if (
+        consultation.consultationPlan.consultantProfile.user.id ===
+        consultation.requestedBy.user.id
+      ) {
+        continue;
+      }
       const organizationId = bookingOrgId(consultation);
       results.push({
         id: consultation.id,
@@ -436,6 +451,13 @@ export async function GET(request: NextRequest) {
     }
 
     for (const subscription of subscriptions) {
+      // Same self-pair guard as the consultation loop above.
+      if (
+        subscription.subscriptionPlan.consultantProfile.user.id ===
+        subscription.requestedBy.user.id
+      ) {
+        continue;
+      }
       const organizationId = bookingOrgId(subscription);
       results.push({
         id: subscription.id,
