@@ -258,6 +258,13 @@ export function useCalendarData(
   // by the poll timer to schedule the next tick and by the return-to-tab
   // listeners to decide between refetch-now and re-arm.
   const availabilityFetchedAtRef = useRef(Number.NaN);
+  // The availability fetch currently in flight, or null. A poll must not start
+  // one while a NAVIGATION fetch is still running: the poll bumps the request
+  // id, and the navigation's own `finally` is id-guarded, so it would skip its
+  // `setLoading(false)` while the background request — which never touches
+  // `loading` — leaves the grid on the skeleton for good. Above 60s of
+  // response time that is the whole first load. The poll waits for it instead.
+  const availabilityInFlightRef = useRef<Promise<void> | null>(null);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): TimeSlot[] => {
@@ -315,6 +322,14 @@ export function useCalendarData(
 
     const requestId = ++availabilityRequestIdRef.current;
     availabilityFetchedAtRef.current = Date.now();
+
+    // Published so the poll can WAIT on this request instead of racing it.
+    // Resolve-only, so a waiter's `finally` can never see a rejection.
+    let settleInFlight: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      settleInFlight = resolve;
+    });
+    availabilityInFlightRef.current = inFlight;
 
     try {
       // The window is the VISIBLE range, never the scheduling period — at
@@ -411,6 +426,13 @@ export function useCalendarData(
         title: "Error",
         description: errorMessage,
       });
+    } finally {
+      // Clear only if no LATER request has taken the ref over — that one owns
+      // it until it settles itself.
+      if (availabilityInFlightRef.current === inFlight) {
+        availabilityInFlightRef.current = null;
+      }
+      settleInFlight();
     }
   }, [
     consultantId,
@@ -808,6 +830,16 @@ export function useCalendarData(
 
     const tick = () => {
       if (disposed || !poll()) return;
+      // A navigation (or post-allocation) fetch is still running. Starting a
+      // poll now would bump the request id out from under it and strand its
+      // id-guarded `setLoading(false)` — the grid would sit on the skeleton
+      // until the next navigation. Wait for that answer, which is the fresher
+      // one anyway, and re-arm behind it.
+      const inFlight = availabilityInFlightRef.current;
+      if (inFlight) {
+        void inFlight.finally(arm);
+        return;
+      }
       // Serialized: the next tick is armed only once this fetch settles, so a
       // slow response never stacks polls behind it.
       void fetchAvailabilitySlots({ background: true }).finally(arm);
