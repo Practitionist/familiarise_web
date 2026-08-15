@@ -10,7 +10,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
+import { formatCurrencyAmount } from "@/utils/formatting";
+
+/** What `GET /api/appointments/[id]/cancel/preview` answers. */
+interface CancelRefundPreview {
+  refundPct: number;
+  estimatedRefundPaise: number;
+  currency: string;
+  /**
+   * Null when the booking has no live session at all, and on the whole-event
+   * rail, which never consults the clock.
+   */
+  hoursUntilNextSession: number | null;
+  prorated: boolean;
+  creditFunded: boolean;
+  /**
+   * Cancelling a class or webinar refunds the entire roster in full, not the
+   * viewer's own seat — `estimatedRefundPaise` is then the sum across
+   * `attendeeCount` paid attendees.
+   */
+  wholeEvent?: boolean;
+  attendeeCount?: number | null;
+}
 
 interface CancelConfirmationDialogProps {
   isOpen: boolean;
@@ -30,6 +53,11 @@ interface CancelConfirmationDialogProps {
    * #1005 — group self-leave uses different copy than a full booking cancel.
    */
   mode?: "cancel" | "leave";
+  /**
+   * #1167 — enables the concrete refund quote. Absent means the caller cannot
+   * name the Appointment row, and the dialog keeps the policy sentence.
+   */
+  appointmentId?: string | null;
 }
 
 export function CancelConfirmationDialog({
@@ -42,8 +70,32 @@ export function CancelConfirmationDialog({
   isLoading = false,
   isPendingPayment = false,
   mode = "cancel",
+  appointmentId,
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
+
+  // Only the cancel path: an unpaid request has nothing to quote, and leaving a
+  // group event refunds through the roster route rather than this one.
+  const previewEnabled =
+    isOpen && !!appointmentId && !isLeave && !isPendingPayment;
+  const { data: preview, isLoading: isPreviewLoading } =
+    useQuery<CancelRefundPreview>({
+      queryKey: ["cancel-refund-preview", appointmentId],
+      queryFn: async () => {
+        const response = await fetch(
+          `/api/appointments/${appointmentId}/cancel/preview`,
+        );
+        if (!response.ok) throw new Error("Could not estimate the refund");
+        return response.json();
+      },
+      enabled: previewEnabled,
+      // Money owed moves with the clock (the notice tiers), so this is never
+      // served from cache across openings.
+      staleTime: 0,
+      gcTime: 0,
+      retry: false,
+    });
+
   // Flattened from a nested ternary — Sonar flags nested ternaries in JSX;
   // the three outcomes are easier to skim as sequential assignments.
   let dialogTitle: string;
@@ -54,6 +106,109 @@ export function CancelConfirmationDialog({
   } else {
     dialogTitle = `Cancel ${appointmentType}?`;
   }
+
+  /**
+   * The refund line. A quote only replaces the policy sentence when the server
+   * actually produced one — a 403, a network failure or a booking the preview
+   * cannot price all fall back to saying what is still true rather than
+   * guessing at a number someone would act on.
+   */
+  const renderRefundLine = () => {
+    if (isPreviewLoading) {
+      return (
+        <p className="text-muted-foreground text-sm inline-flex items-center gap-1.5">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Checking what you&apos;d get back…
+        </p>
+      );
+    }
+    if (!preview) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          If a payment was captured, any refund follows the booking&apos;s
+          cancellation policy.
+        </p>
+      );
+    }
+    // Cancelling a class or webinar is not a quote about the viewer's own seat.
+    // The POST route hands the whole event to `refundWholeEventPayments`, which
+    // refunds every attendee in full — so an organiser, who owns no seat, was
+    // being told "no refund at this notice" about a click that returns the
+    // entire roster's money.
+    if (preview.wholeEvent) {
+      const attendees = preview.attendeeCount ?? 0;
+      if (attendees === 0) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            Nobody has paid for a seat yet, so cancelling refunds nothing.
+          </p>
+        );
+      }
+      return (
+        <p className="text-muted-foreground text-sm">
+          Cancelling this event refunds all{" "}
+          <strong className="text-foreground">
+            {attendees} {attendees === 1 ? "attendee" : "attendees"}
+          </strong>{" "}
+          in full —{" "}
+          <strong className="text-foreground">
+            ~
+            {formatCurrencyAmount(
+              preview.estimatedRefundPaise,
+              preview.currency,
+            )}
+          </strong>{" "}
+          in total.
+        </p>
+      );
+    }
+    if (preview.creditFunded) {
+      // #1161 — credit restoration is all-or-nothing. Only a full-refund window
+      // restores automatically; inside a partial window the cancellation still
+      // stands but the credits are escalated for a human, not returned. The
+      // dialog said "they'll be restored" for both, which was a promise the
+      // money path does not keep.
+      if (preview.refundPct === 100) {
+        return (
+          <p className="text-muted-foreground text-sm">
+            You paid with referral credits — they&apos;ll be restored to your
+            balance.
+          </p>
+        );
+      }
+      return (
+        <p className="text-muted-foreground text-sm">
+          You paid with referral credits, and this cancellation falls in a
+          partial-refund window — restoration is reviewed manually rather than
+          returned automatically.
+        </p>
+      );
+    }
+    if (preview.estimatedRefundPaise > 0) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          You&apos;ll be refunded{" "}
+          <strong className="text-foreground">
+            ~
+            {formatCurrencyAmount(
+              preview.estimatedRefundPaise,
+              preview.currency,
+            )}
+          </strong>{" "}
+          ({preview.refundPct}%
+          {preview.prorated ? ", prorated for sessions already held" : ""}).
+          Refunds reach your original payment method in 5–7 working days.
+        </p>
+      );
+    }
+    return (
+      <p className="text-muted-foreground text-sm">
+        No refund at this notice — cancelling now returns nothing under the
+        booking&apos;s cancellation policy.
+      </p>
+    );
+  };
+
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
@@ -84,14 +239,12 @@ export function CancelConfirmationDialog({
                   <p className="text-red-600 font-medium">
                     This action cannot be undone.
                   </p>
-                  {(appointmentType === "Consultation" ||
-                    appointmentType === "Subscription" ||
-                    appointmentType === "Trial") && (
-                    <p className="text-muted-foreground text-sm">
-                      If a payment was captured, any refund follows the
-                      booking&apos;s cancellation policy.
-                    </p>
-                  )}
+                  {previewEnabled ||
+                  appointmentType === "Consultation" ||
+                  appointmentType === "Subscription" ||
+                  appointmentType === "Trial"
+                    ? renderRefundLine()
+                    : null}
                 </>
               )}
             </div>
@@ -103,7 +256,7 @@ export function CancelConfirmationDialog({
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            disabled={isLoading}
+            disabled={isLoading || isPreviewLoading}
             className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
           >
             {isLoading ? (

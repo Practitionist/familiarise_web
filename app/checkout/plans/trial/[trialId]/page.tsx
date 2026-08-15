@@ -7,16 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 import { TrialPayButton } from "./TrialPayButton";
+import { ViewerLocalTime } from "./ViewerLocalTime";
 
 /**
  * Branded checkout page for a paid trial.
  *
- * NOT YET LINKED. `TrialSession.pendingPaymentUrl` still points at the Razorpay
- * hosted pay-link, which is what the approval email and every dashboard
- * affordance open. This page exists so switching to our own surface later is a
- * one-line change (point pendingPaymentUrl here) rather than a fresh build.
+ * LINKED as of #1167 from the surfaces that hold a trial id — the consultee
+ * dashboard's pending-payments widget and the appointment sheet's "Pay now".
+ * `TrialSession.pendingPaymentUrl` still stores the gateway pay-link (the
+ * approval email opens it directly), and this page hands off to it; what
+ * changed is that the buyer now sees the amount, the duration and the
+ * deadline on our own surface before leaving for the gateway.
  *
  * It deliberately does NOT create a payment intent. Unlike the four
  * direct-purchase checkout families, a trial's intent already exists — it was
@@ -69,6 +73,18 @@ export default async function TrialCheckoutPage({
             orderBy: { startsAt: "asc" },
             take: 1,
           },
+          // The amount the gateway will actually take. `createApprovalPaymentIntent`
+          // froze it onto this row when the consultant accepted, and minted the
+          // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
+          // stays editable underneath. Quoting the plan meant a consultant who
+          // repriced after accepting turned this page into a number the charge
+          // would not honour.
+          payment: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: "asc" },
+            take: 1,
+            select: { amount: true, currency: true },
+          },
         },
       },
     },
@@ -79,6 +95,14 @@ export default async function TrialCheckoutPage({
   if (!trial || trial.consulteeProfile.userId !== session.user.id) notFound();
 
   const startsAt = trial.appointment?.slotsOfAppointment[0]?.startsAt ?? null;
+  // Prefer the frozen charge; fall back to the plan only before a payment
+  // exists, where the plan price genuinely IS the quote.
+  const chargedPayment = trial.appointment?.payment[0] ?? null;
+  const amountPaise = Number(
+    chargedPayment?.amount ?? trial.subscriptionPlan.trialPriceInPaise,
+  );
+  const amountCurrency =
+    chargedPayment?.currency ?? trial.subscriptionPlan.priceCurrency;
   const isPayable =
     trial.status === "AWAITING_PAYMENT" &&
     Boolean(trial.pendingPaymentUrl) &&
@@ -108,11 +132,7 @@ export default async function TrialCheckoutPage({
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Amount</span>
               <span className="font-semibold text-foreground">
-                {new Intl.NumberFormat("en-IN", {
-                  style: "currency",
-                  currency: trial.subscriptionPlan.priceCurrency,
-                  maximumFractionDigits: 0,
-                }).format(Number(trial.subscriptionPlan.trialPriceInPaise) / 100)}
+                {formatCurrencyAmount(amountPaise, amountCurrency)}
               </span>
             </div>
             <div className="flex items-center justify-between">
@@ -130,12 +150,10 @@ export default async function TrialCheckoutPage({
                   <CalendarClock className="h-3.5 w-3.5" />
                   Session
                 </span>
-                <span className="text-foreground">
-                  {startsAt.toLocaleString("en-IN", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </span>
+                <ViewerLocalTime
+                  value={startsAt.toISOString()}
+                  className="text-foreground"
+                />
               </div>
             )}
           </div>
@@ -146,11 +164,8 @@ export default async function TrialCheckoutPage({
               {trial.paymentDueAt && (
                 <p className="text-center text-xs text-muted-foreground">
                   Your slot is held until{" "}
-                  {trial.paymentDueAt.toLocaleString("en-IN", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                  . After that it is released to other learners.
+                  <ViewerLocalTime value={trial.paymentDueAt.toISOString()} />.
+                  After that it is released to other learners.
                 </p>
               )}
             </>

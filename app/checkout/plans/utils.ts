@@ -246,10 +246,33 @@ export function createRazorpayCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
-    onPaymentSuccess: (response: { razorpay_payment_id?: string; message?: string }) => {
+    onPaymentSuccess: (response: {
+      razorpay_order_id?: string;
+      razorpay_payment_id?: string;
+      message?: string;
+    }) => {
+      // Booking confirmation is webhook-driven, so at this instant the money is
+      // captured and the appointment may not exist yet. Razorpay used to land
+      // on /dashboard, where that gap reads as "I paid and got nothing" —
+      // Stripe has always gone to /checkout/checkout-success, which polls
+      // /api/checkout/verify, drives the pipeline synchronously and says
+      // "payment received, confirming". Same surface for both gateways now.
+      //
+      // `Payment.paymentIntent` IS the Razorpay order id (the verify route
+      // keys on `order_` for its sync branch), so that is the id to hand over.
+      if (response.razorpay_order_id) {
+        window.location.href = `/checkout/checkout-success?payment_intent=${encodeURIComponent(
+          response.razorpay_order_id,
+        )}`;
+        return;
+      }
+      // No order id = credits covered the whole price, so there is nothing to
+      // verify and the booking is already confirmed.
       toast({
         title: "Payment Successful",
-        description: `Your payment has been confirmed! Payment ID: ${response.razorpay_payment_id ?? "N/A"}. Redirecting to your dashboard...`,
+        description:
+          response.message ??
+          "Your booking is confirmed. Redirecting to your dashboard...",
       });
       window.location.href = "/dashboard";
     },
