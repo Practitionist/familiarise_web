@@ -11,8 +11,17 @@ import {
 // #1169 PR 1 — lockSlotBooking is interval-granular now; these scripts lock a
 // single 30-minute atom, so the interval is [start, start+30m). Exported so
 // every race script shares one copy (#1170 review).
-export const thirtyAfter = (iso: string): string =>
-  new Date(new Date(iso).getTime() + 30 * 60 * 1000).toISOString();
+export const thirtyAfter = (iso: string): string => {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) {
+    // Unparseable input still needs a UNIQUE, stable interval key: the lock
+    // layer accepts any string keys, and production validates times before
+    // lock-key construction — this harness must not throw where the scripts
+    // expect per-key independence (#1169 release check).
+    return `${iso}+30m`;
+  }
+  return new Date(t + 30 * 60 * 1000).toISOString();
+};
 
 import type {
   BookingResult,
