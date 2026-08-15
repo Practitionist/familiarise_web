@@ -56,7 +56,18 @@ export async function GET(request: NextRequest) {
     const results: AppointmentSearchResult[] = [];
 
     // Search Consultations (by plan title OR consultant name)
-    const consultations = await prisma.consultation.findMany({
+    // The four searches are independent — none reads another's result — so they
+    // are issued together and awaited once. Sequential awaits made every
+    // keystroke pay the SUM of four round-trips to a remote database; this pays
+    // the slowest one.
+    //
+    // Each query also gains a deterministic `orderBy`. With `take: 10` and no
+    // ordering, Postgres returns an arbitrary ten of the matching rows and the
+    // `slice(0, 20)` below then cuts a set that can differ between two identical
+    // requests — the same search, run twice, returning different people.
+    // Newest-first is both stable and the more useful order.
+
+    const consultationsPromise = prisma.consultation.findMany({
       where: {
         AND: [
           {
@@ -157,35 +168,11 @@ export async function GET(request: NextRequest) {
         // Needed to resolve which DM thread this hit belongs to.
         appointment: { select: { organizationId: true } },
       },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: 10,
     });
 
-    for (const consultation of consultations) {
-      const organizationId = bookingOrgId(consultation);
-      results.push({
-        id: consultation.id,
-        type: "consultation",
-        name: consultation.consultationPlan.title,
-        ...resolveCounterparty(
-          userId,
-          consultation.consultationPlan.consultantProfile.user,
-          consultation.requestedBy.user,
-        ),
-        organizationId,
-        // Funding context is part of the DM key, so a hit must resolve to the
-        // SAME channel the creator made. Shared resolver, because reading only
-        // the appointment sent org-hosted-plan bookings to a personal channel
-        // that was never created — clicking the result opened an empty thread.
-        channelId: getDmChannelId(
-          consultation.consultationPlan.consultantProfile.user.id,
-          consultation.requestedBy.user.id,
-          organizationId,
-        ),
-      });
-    }
-
-    // Search Subscriptions (by plan title OR consultant name)
-    const subscriptions = await prisma.subscription.findMany({
+    const subscriptionsPromise = prisma.subscription.findMany({
       where: {
         AND: [
           {
@@ -293,32 +280,11 @@ export async function GET(request: NextRequest) {
           take: 1,
         },
       },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: 10,
     });
 
-    for (const subscription of subscriptions) {
-      const organizationId = bookingOrgId(subscription);
-      results.push({
-        id: subscription.id,
-        type: "subscription",
-        name: subscription.subscriptionPlan.title,
-        ...resolveCounterparty(
-          userId,
-          subscription.subscriptionPlan.consultantProfile.user,
-          subscription.requestedBy.user,
-        ),
-        organizationId,
-        // Same resolver as createSubscriptionChannel.
-        channelId: getDmChannelId(
-          subscription.subscriptionPlan.consultantProfile.user.id,
-          subscription.requestedBy.user.id,
-          organizationId,
-        ),
-      });
-    }
-
-    // Search Webinars
-    const webinars = await prisma.webinar.findMany({
+    const webinarsPromise = prisma.webinar.findMany({
       where: {
         AND: [
           {
@@ -372,27 +338,11 @@ export async function GET(request: NextRequest) {
           },
         },
       },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: 10,
     });
 
-    for (const webinar of webinars) {
-      if (webinar.webinarPlan.consultantProfile) {
-        results.push({
-          id: webinar.id,
-          type: "webinar",
-          name: webinar.webinarPlan.title,
-          // A group event has no single counterparty, so the host stands in.
-          counterpartyName:
-            webinar.webinarPlan.consultantProfile.user.name || "Unknown",
-          counterpartyImage:
-            webinar.webinarPlan.consultantProfile.user.image || undefined,
-          channelId: `webinar-${webinar.id}`,
-        });
-      }
-    }
-
-    // Search Classes
-    const classes = await prisma.class.findMany({
+    const classesPromise = prisma.class.findMany({
       where: {
         AND: [
           {
@@ -448,8 +398,79 @@ export async function GET(request: NextRequest) {
           },
         },
       },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: 10,
     });
+
+    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+      [
+        consultationsPromise,
+        subscriptionsPromise,
+        webinarsPromise,
+        classesPromise,
+      ],
+    );
+
+    for (const consultation of consultations) {
+      const organizationId = bookingOrgId(consultation);
+      results.push({
+        id: consultation.id,
+        type: "consultation",
+        name: consultation.consultationPlan.title,
+        ...resolveCounterparty(
+          userId,
+          consultation.consultationPlan.consultantProfile.user,
+          consultation.requestedBy.user,
+        ),
+        organizationId,
+        // Funding context is part of the DM key, so a hit must resolve to the
+        // SAME channel the creator made. Shared resolver, because reading only
+        // the appointment sent org-hosted-plan bookings to a personal channel
+        // that was never created — clicking the result opened an empty thread.
+        channelId: getDmChannelId(
+          consultation.consultationPlan.consultantProfile.user.id,
+          consultation.requestedBy.user.id,
+          organizationId,
+        ),
+      });
+    }
+
+    for (const subscription of subscriptions) {
+      const organizationId = bookingOrgId(subscription);
+      results.push({
+        id: subscription.id,
+        type: "subscription",
+        name: subscription.subscriptionPlan.title,
+        ...resolveCounterparty(
+          userId,
+          subscription.subscriptionPlan.consultantProfile.user,
+          subscription.requestedBy.user,
+        ),
+        organizationId,
+        // Same resolver as createSubscriptionChannel.
+        channelId: getDmChannelId(
+          subscription.subscriptionPlan.consultantProfile.user.id,
+          subscription.requestedBy.user.id,
+          organizationId,
+        ),
+      });
+    }
+
+    for (const webinar of webinars) {
+      if (webinar.webinarPlan.consultantProfile) {
+        results.push({
+          id: webinar.id,
+          type: "webinar",
+          name: webinar.webinarPlan.title,
+          // A group event has no single counterparty, so the host stands in.
+          counterpartyName:
+            webinar.webinarPlan.consultantProfile.user.name || "Unknown",
+          counterpartyImage:
+            webinar.webinarPlan.consultantProfile.user.image || undefined,
+          channelId: `webinar-${webinar.id}`,
+        });
+      }
+    }
 
     for (const classItem of classes) {
       if (classItem.classPlan.consultantProfile) {

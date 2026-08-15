@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import Image from "next/image";
 import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
@@ -56,6 +57,17 @@ type GroupedConversation = {
   hasConsultation: boolean;
   hasSubscription: boolean;
   channelId: string;
+  /**
+   * The plan titles behind this row, deduplicated.
+   *
+   * Rendered because the route matches on plan title as well as on names, so a
+   * row could match a query the UI never showed: searching "michael" surfacing
+   * a conversation with Robert Brown is correct if Robert booked a plan called
+   * "Michael's…", but with only the counterparty's name on screen it reads as a
+   * broken search. One row can hold more than one title — a consultation and a
+   * subscription with the same person share a channel.
+   */
+  planTitles: string[];
 };
 
 export const ChannelSearch = () => {
@@ -71,7 +83,29 @@ export const ChannelSearch = () => {
   );
   /** Why the last open attempt failed, shown inside the dropdown. */
   const [openError, setOpenError] = useState<string | null>(null);
+  /**
+   * The query `searchResults` actually answers.
+   *
+   * Without this there is no way to distinguish "searched and found nothing"
+   * from "have not searched yet", and the empty state rendered during the
+   * 300ms debounce gap — announcing "No results found for michael" before a
+   * request had been issued, on every keystroke, while the matching person sat
+   * in the list underneath.
+   */
+  const [settledQuery, setSettledQuery] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * Latest-wins guard, mirroring `hooks/scheduling/useCalendarData.ts`.
+   *
+   * The AbortController below stops the NETWORK work, but a response that has
+   * already been parsed is past the point of cancellation and still queued for
+   * React's state pipeline. Only the response matching the most recently issued
+   * request may commit — checked before every setState, including the one that
+   * clears `loading`, because a stale reply's `finally` otherwise turns the
+   * spinner off while a newer request is still in flight.
+   */
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Extracted from the memo below to keep its cognitive complexity under the
   // threshold SonarCloud enforces. The merge rule is the interesting part
@@ -85,6 +119,9 @@ export const ChannelSearch = () => {
     if (existing) {
       existing.hasConsultation ||= result.type === "consultation";
       existing.hasSubscription ||= result.type === "subscription";
+      if (!existing.planTitles.includes(result.name)) {
+        existing.planTitles.push(result.name);
+      }
       return;
     }
     byChannel.set(result.channelId, {
@@ -95,6 +132,7 @@ export const ChannelSearch = () => {
       hasConsultation: result.type === "consultation",
       hasSubscription: result.type === "subscription",
       channelId: result.channelId,
+      planTitles: [result.name],
     });
   };
 
@@ -128,11 +166,32 @@ export const ChannelSearch = () => {
     };
   }, [searchResults]);
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim() || query.trim().length < 2) {
+  const runSearch = useCallback(async (raw: string) => {
+    const term = raw.trim();
+
+    // Abort whatever is still in flight. Nobody is waiting on it, and on a
+    // route that fires every 300ms of typing the abandoned work is real server
+    // cost, not just a wasted response.
+    abortRef.current?.abort();
+
+    if (term.length < 2) {
+      abortRef.current = null;
       setSearchResults([]);
+      setSettledQuery("");
+      setLoading(false);
+      // Cleared here too. `handleSearch` used to early-return BEFORE the
+      // setOpenError below, so a 403 refusal outlived the input that produced
+      // it: emptying the box left an error panel floating over a blank search,
+      // and `isOpen` kept the dropdown up with no way to dismiss it.
+      setOpenError(null);
       return;
     }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // Bumped synchronously, before the first await, so two searches started in
+    // the same tick still get distinct ids.
+    const requestId = ++requestIdRef.current;
 
     try {
       setLoading(true);
@@ -141,7 +200,8 @@ export const ChannelSearch = () => {
       setOpenError(null);
 
       const response = await fetch(
-        `/api/stream/channels/search-appointments?q=${encodeURIComponent(query.trim())}`,
+        `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}`,
+        { signal: controller.signal },
       );
 
       if (!response.ok) {
@@ -149,32 +209,42 @@ export const ChannelSearch = () => {
       }
 
       const results: AppointmentSearchResult[] = await response.json();
+
+      if (requestId !== requestIdRef.current) return;
       setSearchResults(results);
+      setSettledQuery(term);
     } catch (error) {
+      // An abort is this component cancelling its own request, not a failure.
+      // Treating it as one would clear the results the newer request is about
+      // to populate.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (requestId !== requestIdRef.current) return;
       console.error("Error searching appointments:", error);
       setSearchResults([]);
+      setSettledQuery(term);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  }, [query]);
+  }, []);
 
-  // Debounced search effect
+  // 300ms, matching the five other search inputs in the app, and now via the
+  // same `use-debounce` helper they use rather than a hand-rolled setTimeout.
+  // The delay was never what felt slow — the empty-state flash inside it was.
+  const debouncedSearch = useDebouncedCallback(runSearch, 300);
+
   useEffect(() => {
-    if (!query.trim() || query.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
+    debouncedSearch(query);
+  }, [query, debouncedSearch]);
 
-    const timeoutId = setTimeout(() => {
-      handleSearch();
-    }, 300); // 300ms delay
-
-    return () => clearTimeout(timeoutId);
-  }, [query, handleSearch]);
+  // Abort anything outstanding when the component goes away, so a resolved
+  // fetch cannot setState on an unmounted tree.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handleSearch();
+    // Submit means "now", so skip the pending debounce rather than adding a
+    // second in-flight request alongside it.
+    debouncedSearch.flush();
   };
 
   /**
@@ -298,7 +368,15 @@ export const ChannelSearch = () => {
     });
 
   const hasResults = groupedConversations.length > 0 || events.length > 0;
-  const isOpen = hasResults || openError !== null;
+  const term = query.trim();
+  /**
+   * True from the keystroke until a response for THIS query has committed —
+   * covering the debounce wait, which `loading` does not, because `loading`
+   * only goes true once the fetch actually starts 300ms later.
+   */
+  const isPending = term.length >= 2 && (loading || settledQuery !== term);
+  const showNoResults = term.length >= 2 && !isPending && !hasResults;
+  const isOpen = hasResults || openError !== null || showNoResults;
 
   return (
     <div className="channel-search relative" ref={containerRef}>
@@ -321,6 +399,18 @@ export const ChannelSearch = () => {
               className="px-3 py-2 text-sm text-muted-foreground border-b border-border last:border-b-0"
             >
               {openError}
+            </div>
+          )}
+          {/*
+            The empty state lives INSIDE the dropdown now. It used to be a
+            second absolutely-positioned box carrying identical
+            `absolute z-50 mt-1 w-full` classes, so whenever a refusal coexisted
+            with an empty result set the two rendered on top of each other at
+            the same coordinates.
+          */}
+          {showNoResults && (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              No results found for &ldquo;{query}&rdquo;
             </div>
           )}
           {/* Conversations Section (Consultants with consultations/subscriptions) */}
@@ -374,6 +464,13 @@ export const ChannelSearch = () => {
                               : "Subscription"}
                         </span>
                       </div>
+
+                      {/* What matched — see GroupedConversation.planTitles */}
+                      {conversation.planTitles.length > 0 && (
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">
+                          {conversation.planTitles.join(" · ")}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -442,13 +539,6 @@ export const ChannelSearch = () => {
               })}
             </>
           )}
-        </div>
-      )}
-
-      {/* No results message */}
-      {query.trim().length >= 2 && !loading && !hasResults && (
-        <div className="absolute z-50 mt-1 w-full bg-popover text-muted-foreground rounded-md shadow-xl border border-border p-4 text-center text-sm">
-          No results found for &ldquo;{query}&rdquo;
         </div>
       )}
     </div>
