@@ -14,10 +14,10 @@ import {
 export const thirtyAfter = (iso: string): string => {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) {
-    // Unparseable input still needs a UNIQUE, stable interval key: the lock
-    // layer accepts any string keys, and production validates times before
-    // lock-key construction — this harness must not throw where the scripts
-    // expect per-key independence (#1169 release check).
+    // Stay total on unparseable input: the interval lock layer refuses
+    // zero-atom intervals itself (fail closed), and the invalid-time scenario
+    // asserts that refusal — a throw here would crash the whole runner
+    // instead of exercising it.
     return `${iso}+30m`;
   }
   return new Date(t + 30 * 60 * 1000).toISOString();

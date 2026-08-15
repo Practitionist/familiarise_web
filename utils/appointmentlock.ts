@@ -503,8 +503,14 @@ export async function lockSlotInterval(
   const end = new Date(endsAt);
   const atoms = slotAtomStarts(start, end);
   if (atoms.length === 0) {
+    // toISOString throws on Invalid Date — format defensively so unparseable
+    // input surfaces this refusal, not a RangeError from the message itself.
+    const fmt = (d: Date, raw: Date | string) =>
+      Number.isNaN(d.getTime())
+        ? `unparseable(${String(raw)})`
+        : d.toISOString();
     throw new Error(
-      `lockSlotInterval: empty interval ${start.toISOString()} → ${end.toISOString()}`,
+      `lockSlotInterval: empty interval ${fmt(start, startsAt)} → ${fmt(end, endsAt)}`,
     );
   }
 
