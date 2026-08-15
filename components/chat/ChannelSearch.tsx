@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
@@ -19,6 +19,27 @@ const EVENT_TYPE_CONFIG = {
     icon: BookOpenIcon,
   },
 } as const;
+
+/** A search hit for a group event. Narrower than AppointmentSearchResult. */
+type EventSearchResult = AppointmentSearchResult & {
+  type: "webinar" | "class";
+};
+
+const isEventResult = (r: AppointmentSearchResult): r is EventSearchResult =>
+  r.type === "webinar" || r.type === "class";
+
+/**
+ * What `/api/stream/channels/open` accepts.
+ *
+ * A discriminated union rather than `Record<string, unknown>`: the route parses
+ * this with a zod discriminated union, and typing the client side as an open
+ * bag meant a wrong `eventType` — `"consultation"` reaching the event arm, say —
+ * failed at runtime with a 400 instead of at compile time. The route is the
+ * authority on the shape; this mirrors it.
+ */
+type OpenChannelRequest =
+  | { kind: "dm"; counterpartyUserId: string; organizationId: string | null }
+  | { kind: "event"; eventType: "webinar" | "class"; eventId: string };
 
 /**
  * One row per conversation: a consultation and a subscription with the same
@@ -48,6 +69,34 @@ export const ChannelSearch = () => {
   const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
     [],
   );
+  /** Why the last open attempt failed, shown inside the dropdown. */
+  const [openError, setOpenError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Extracted from the memo below to keep its cognitive complexity under the
+  // threshold SonarCloud enforces. The merge rule is the interesting part
+  // anyway: a consultation and a subscription with the same person are two
+  // reasons to be in ONE thread, not two threads.
+  const mergeConversationRow = (
+    byChannel: Map<string, GroupedConversation>,
+    result: AppointmentSearchResult,
+  ) => {
+    const existing = byChannel.get(result.channelId);
+    if (existing) {
+      existing.hasConsultation ||= result.type === "consultation";
+      existing.hasSubscription ||= result.type === "subscription";
+      return;
+    }
+    byChannel.set(result.channelId, {
+      counterpartyName: result.counterpartyName,
+      counterpartyImage: result.counterpartyImage,
+      counterpartyUserId: result.counterpartyUserId,
+      organizationId: result.organizationId,
+      hasConsultation: result.type === "consultation",
+      hasSubscription: result.type === "subscription",
+      channelId: result.channelId,
+    });
+  };
 
   // Group 1:1 rows by CHANNEL, keep events separate.
   //
@@ -58,7 +107,7 @@ export const ChannelSearch = () => {
   // on it.
   const { groupedConversations, events } = useMemo(() => {
     const byChannel = new Map<string, GroupedConversation>();
-    const eventResults: AppointmentSearchResult[] = [];
+    const eventResults: EventSearchResult[] = [];
 
     // Defensive check in case searchResults is undefined
     if (!searchResults || !Array.isArray(searchResults)) {
@@ -66,25 +115,10 @@ export const ChannelSearch = () => {
     }
 
     for (const result of searchResults) {
-      if (result.type === "consultation" || result.type === "subscription") {
-        const existing = byChannel.get(result.channelId);
-        if (existing) {
-          if (result.type === "consultation") existing.hasConsultation = true;
-          if (result.type === "subscription") existing.hasSubscription = true;
-        } else {
-          byChannel.set(result.channelId, {
-            counterpartyName: result.counterpartyName,
-            counterpartyImage: result.counterpartyImage,
-            counterpartyUserId: result.counterpartyUserId,
-            organizationId: result.organizationId,
-            hasConsultation: result.type === "consultation",
-            hasSubscription: result.type === "subscription",
-            channelId: result.channelId,
-          });
-        }
-      } else {
-        // Webinars and classes shown individually
+      if (isEventResult(result)) {
         eventResults.push(result);
+      } else {
+        mergeConversationRow(byChannel, result);
       }
     }
 
@@ -102,6 +136,9 @@ export const ChannelSearch = () => {
 
     try {
       setLoading(true);
+      // A refusal from the previous attempt must not outlive the query that
+      // caused it.
+      setOpenError(null);
 
       const response = await fetch(
         `/api/stream/channels/search-appointments?q=${encodeURIComponent(query.trim())}`,
@@ -141,6 +178,39 @@ export const ChannelSearch = () => {
   };
 
   /**
+   * Dismiss the dropdown on an outside click or Escape.
+   *
+   * Neither existed. The only way to close this was to pick a result or empty
+   * the input, so a search you had changed your mind about stayed on screen
+   * over the channel list indefinitely — and once a failed open stopped
+   * clearing the query, there was no way to close it at all.
+   *
+   * `pointerdown`, not `click`: a `click` listener fires after the button's own
+   * handler and after focus moves, which on a touch device closed the panel
+   * before the tap that opened a row could land.
+   */
+  const dismiss = useCallback(() => {
+    setSearchResults([]);
+    setOpenError(null);
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(event.target as Node)) dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [dismiss]);
+
+  /**
    * Ask the SERVER for the channel, then watch what it hands back.
    *
    * The previous implementation called `client.channel(type, id).watch()` on an
@@ -157,9 +227,10 @@ export const ChannelSearch = () => {
    * time `watch()` runs here, the channel is known to exist.
    */
   const openResolvedChannel = async (
-    body: Record<string, unknown>,
+    body: OpenChannelRequest,
   ): Promise<void> => {
     if (!client) return;
+    setOpenError(null);
 
     try {
       const response = await fetch("/api/stream/channels/open", {
@@ -169,13 +240,17 @@ export const ChannelSearch = () => {
       });
 
       if (!response.ok) {
-        const detail = await response.json().catch(() => null);
-        // 403 is the eligibility gate refusing, which is a legitimate answer,
-        // not a fault. Surfacing it as an error toast would be wrong; the row
-        // should not have been offered in the first place.
-        console.error(
-          "Could not open conversation:",
-          detail?.error ?? response.status,
+        const detail = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        // A 403 here is the eligibility gate refusing, which is a legitimate
+        // answer rather than a fault — but it still has to be SAID. This branch
+        // used to `console.error` and return, and because the return skipped the
+        // reset at the bottom of the function, the dropdown stayed open with the
+        // same rows and no explanation. It read as a frozen menu.
+        setOpenError(
+          detail?.error ??
+            "Could not open this conversation. Please try again.",
         );
         return;
       }
@@ -189,33 +264,44 @@ export const ChannelSearch = () => {
       await channel.watch();
       setActiveChannel(channel);
       openConversation();
+      // Only cleared on the success path. On a refusal the query is kept so the
+      // message below has something to sit under and the person can pick a
+      // different row.
+      setQuery("");
+      setSearchResults([]);
     } catch (error) {
       console.error("Error opening channel:", error);
+      setOpenError("Could not open this conversation. Please try again.");
     }
-
-    // Clear search
-    setQuery("");
-    setSearchResults([]);
   };
 
-  const handleConversationClick = (conversation: GroupedConversation) =>
-    openResolvedChannel({
+  const handleConversationClick = (conversation: GroupedConversation) => {
+    // Group-event rows carry no counterparty, and a malformed payload would be
+    // rejected by the route's zod schema as a 400 — a worse message than this
+    // one. Guard rather than round-trip.
+    if (!conversation.counterpartyUserId) {
+      setOpenError("This conversation is missing its participant.");
+      return;
+    }
+    void openResolvedChannel({
       kind: "dm",
       counterpartyUserId: conversation.counterpartyUserId,
       organizationId: conversation.organizationId ?? null,
     });
+  };
 
-  const handleEventClick = (result: AppointmentSearchResult) =>
-    openResolvedChannel({
+  const handleEventClick = (result: EventSearchResult) =>
+    void openResolvedChannel({
       kind: "event",
       eventType: result.type,
       eventId: result.id,
     });
 
   const hasResults = groupedConversations.length > 0 || events.length > 0;
+  const isOpen = hasResults || openError !== null;
 
   return (
-    <div className="channel-search relative">
+    <div className="channel-search relative" ref={containerRef}>
       <form onSubmit={handleSearchSubmit} className="relative">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
@@ -227,8 +313,16 @@ export const ChannelSearch = () => {
         />
       </form>
 
-      {hasResults && (
+      {isOpen && (
         <div className="absolute z-50 mt-1 w-full bg-popover text-popover-foreground rounded-md shadow-xl border border-border max-h-72 overflow-auto">
+          {openError && (
+            <div
+              role="status"
+              className="px-3 py-2 text-sm text-muted-foreground border-b border-border last:border-b-0"
+            >
+              {openError}
+            </div>
+          )}
           {/* Conversations Section (Consultants with consultations/subscriptions) */}
           {groupedConversations.length > 0 && (
             <>
@@ -240,6 +334,7 @@ export const ChannelSearch = () => {
               {groupedConversations.map((conversation) => (
                 <button
                   key={conversation.channelId}
+                  type="button"
                   className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
                   onClick={() => handleConversationClick(conversation)}
                 >
@@ -302,6 +397,7 @@ export const ChannelSearch = () => {
                 return (
                   <button
                     key={`${event.type}-${event.id}`}
+                    type="button"
                     className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
                     onClick={() => handleEventClick(event)}
                   >

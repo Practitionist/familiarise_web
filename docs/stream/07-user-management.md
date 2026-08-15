@@ -486,11 +486,11 @@ Total Failed Deletions:       1
    }
    ```
 
-5. **Delete Stale Users**
+5. **Delete Stale Users** — soft, matching the job.
    ```typescript
    const deleteResponse = await serverStreamClient.deleteUsers(
      staleUsersInPage,
-     { user: "hard", messages: "hard" },
+     { user: "soft", messages: "soft" },
    );
    ```
 
@@ -533,19 +533,45 @@ soft as the alternative. The code does the opposite:
 ```
 
 There is no hard-delete follow-up job yet — the `TODO` in
-`scripts/stream/stream-sync.ts` is tracked as #535. That matters for the DPDP
-§12 erasure path, which scrubs the local `User` row and makes no Stream call at
-all: Stream-side removal happens only incidentally, when this reaper next
-notices the row is gone, and stops at soft.
+`scripts/stream/stream-sync.ts` is tracked as #535.
+
+**What that means concretely, for a DPDP §12 erasure request.**
+`lib/compliance/erasure/scrub-user.ts` pseudonymises the local `User` row and
+makes no Stream call at all. Stream-side removal is therefore incidental: the
+nightly reaper notices the local row is gone and issues a *soft* delete, which
+is the state the data then stays in.
+
+- **Retention window:** the soft delete is described in the code as a 30-day
+  grace period, but nothing expires it, because the job that would is #535. In
+  practice the retention is indefinite.
+- **Who can still read it:** nobody through the app — a soft-deleted Stream user
+  cannot connect, and their messages are hidden from clients. It remains
+  readable by anything holding the API secret: the Stream dashboard, a data
+  export, and our own server-side clients.
+- **Should erasure trigger a hard delete?** Yes, and it does not today. The
+  correct shape is for the erasure path to call Stream directly with
+  `{ user: "hard", messages: "hard" }` rather than waiting for a reaper whose
+  input is "absent from Postgres" — an erasure is a specific, authorised
+  instruction about one identified person, which is exactly the case where hard
+  delete is safe and the reaper's inference is not. Deferred to #535; until it
+  lands, an erasure request that must be provably complete has to be finished by
+  hand in the Stream dashboard.
 
 **Alternative Options:**
 
 ```typescript
 {
-  user: "soft",      // Mark as deleted but keep data
-  messages: "soft"   // Mark messages as deleted
+  user: "hard",      // Irreversible; purges the user and their data
+  messages: "hard"
 }
 ```
+
+Hard delete is what #535 will eventually run as a second pass over rows the soft
+delete has already aged out. It is deliberately not what the nightly reaper does:
+the reaper's input is "present in Stream, absent from Postgres", and that set
+includes anyone the local database has merely failed to return — a bad migration,
+a partial restore, a query bug. Soft-deleting that is a bad day; hard-deleting it
+is unrecoverable.
 
 ### Error Handling
 

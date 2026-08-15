@@ -41,12 +41,13 @@ import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { getDmChannelId } from "@/lib/stream-utils";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import {
   canDirectMessage,
-  DM_ELIGIBLE_STATUSES,
+  DmNotPermittedError,
 } from "@/lib/stream/dm-eligibility";
+import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
+import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { streamLogger } from "@/lib/stream-logger";
@@ -64,6 +65,22 @@ const bodySchema = z.discriminatedUnion("kind", [
     eventId: z.string().min(1),
   }),
 ]);
+
+/**
+ * Which event states can still open a chat.
+ *
+ * Mirrors `search-appointments` exactly. The two are the read and the write
+ * halves of one flow: search decides which rows are offered, this route decides
+ * which are openable, and any disagreement means a row you can see but cannot
+ * click — or worse, one you can click that search would never have shown. The
+ * whole point of this PR is that three copies of "who may talk" had drifted, so
+ * a fourth divergence introduced by its own fix would be a poor result.
+ */
+const OPENABLE_EVENT_STATUSES = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+] as const;
 
 /**
  * Is the caller a participant in this event — an attendee on one of its slots,
@@ -84,6 +101,7 @@ async function isEventParticipant(
     const hit = await prisma.webinar.findFirst({
       where: {
         id: eventId,
+        status: { in: [...OPENABLE_EVENT_STATUSES] },
         OR: [
           {
             appointment: {
@@ -104,6 +122,7 @@ async function isEventParticipant(
   const hit = await prisma.class.findFirst({
     where: {
       id: eventId,
+      status: { in: [...OPENABLE_EVENT_STATUSES] },
       OR: [
         {
           appointments: {
@@ -128,11 +147,21 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
   const userId = auth.session.user.id;
 
+  // Keyed on the user, after auth, before any Prisma or Stream work. This route
+  // is cheap to call and expensive to serve — an eligibility check plus a Stream
+  // create — and `streamApiLimiter` already existed for exactly this and had no
+  // callers. Route-slugged, per the helper's own guidance on sharing a limiter.
+  const limited = await applyRateLimit(streamApiLimiter, `open:${userId}`);
+  if (limited) return limited;
+
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(await request.json());
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -160,17 +189,18 @@ export async function POST(request: NextRequest) {
       // Idempotent: Stream's create is an upsert for an existing id, and the
       // member list is passed atomically so the pair is always both members —
       // which is the whole difference from what `watch()` was doing.
-      await createDirectMessageChannel(
+      //
+      // The returned `channelId` is used rather than re-deriving it with
+      // `getDmChannelId`. Same inputs, same helper, so the two agreed — but
+      // deriving an id twice is two chances to derive it differently, and this
+      // codebase has already lost conversation history once to exactly that
+      // (#1134 P0-3, the `localeCompare` re-keying). One derivation, one source.
+      const { channelId } = await createDirectMessageChannel(
         userId,
         counterpartyUserId,
         organizationId,
       );
 
-      const channelId = getDmChannelId(
-        userId,
-        counterpartyUserId,
-        organizationId,
-      );
       return NextResponse.json({ channelType: "messaging", channelId });
     }
 
@@ -192,6 +222,15 @@ export async function POST(request: NextRequest) {
         : `${CLASS_PREFIX}${eventId}`;
     return NextResponse.json({ channelType: "team", channelId });
   } catch (error) {
+    // A refusal is an answer, not an incident. This is currently unreachable —
+    // the DM branch checks `canDirectMessage` before calling — but
+    // `createDirectMessageChannel` asserts eligibility itself, so a future
+    // caller, or a booking cancelled between the check and the create, would
+    // otherwise page someone at 3am for a gate doing its job.
+    if (error instanceof DmNotPermittedError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "stream" } },

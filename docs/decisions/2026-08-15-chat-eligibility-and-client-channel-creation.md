@@ -15,7 +15,7 @@ refresh the thread was gone.
 Four symptoms, two defects, and neither of them is what the report sounds like.
 
 **The label.** `app/api/stream/channels/search-appointments/route.ts` is
-correctly scoped — the caller must be the consultee *or* the consultant on every
+correctly scoped — the caller must be the consultee _or_ the consultant on every
 row it returns — but it labelled every row `consultantName`. On a consultee's
 dashboard that names the other party. On a consultant's it names the viewer. The
 `channelId` underneath was always right and always pointed at the real
@@ -25,7 +25,7 @@ row subtitled "Consultation & Subscription".
 
 **The phantom channel.** `ChannelSearch` opened a result with
 `client.channel(type, id).watch()` on an id the browser had computed. In
-`stream-chat`, `watch()` posts to the channel *query* endpoint — the same
+`stream-chat`, `watch()` posts to the channel _query_ endpoint — the same
 endpoint `create()` posts to; `channel.create()` is literally
 `query({ created_by_id })`. So watching an id that does not exist creates it,
 and created that way with no `members` array the caller becomes `created_by` and
@@ -40,11 +40,11 @@ the pair — it is a property of the id not existing.
 The id did not exist because the three answers to "are these two people
 connected?" disagreed:
 
-| | statuses |
-|---|---|
-| `checkUserRelationship` | APPROVED, SCHEDULED (+ subscription window open) |
-| `getDmPairsForUser` (the reconciler) | APPROVED, SCHEDULED |
-| the two search routes | APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED |
+|                                      | statuses                                                 |
+| ------------------------------------ | -------------------------------------------------------- |
+| `checkUserRelationship`              | APPROVED, SCHEDULED (+ subscription window open)         |
+| `getDmPairsForUser` (the reconciler) | APPROVED, SCHEDULED                                      |
+| the two search routes                | APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED |
 
 Search was widest, so it offered rows for bookings the create path had never
 fired for. And `checkUserRelationship` — the only implementation of the rule,
@@ -90,7 +90,7 @@ from the expected set it builds from that constant.
 
 ### 2. The client never names a channel
 
-`POST /api/stream/channels/open` takes *who* or *what* to talk to — a
+`POST /api/stream/channels/open` takes _who_ or _what_ to talk to — a
 counterparty user id, or an event type and id — and re-derives the channel id
 server-side from the caller's session. A client-supplied channel id would be an
 authorization bypass by construction, since the id is a pure function of the two

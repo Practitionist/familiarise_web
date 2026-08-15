@@ -121,7 +121,20 @@ export const CreateChannelDialog = ({
     setIsLoading(true);
 
     try {
-      if (selectedEvent && selectedEvent !== "custom") {
+      // Three states, not two. `selectedEvent` initialises to `null`, so an
+      // `if (event) … else custom` split sent "nothing chosen" down the custom
+      // branch — which for a consultant is a request the route answers 403.
+      // Each state is now named.
+      if (!selectedEvent) {
+        toast({
+          title: "Error",
+          description: "Please choose what this channel is for",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (selectedEvent !== "custom") {
         // Event-linked channel creation - use server-side API with full participant lists
         const [eventType, eventId] = selectedEvent.split("-");
 
@@ -163,6 +176,16 @@ export const CreateChannelDialog = ({
           description:
             result.message || `Channel "${channelName}" created successfully`,
         });
+      } else if (!canCreateCustomChannel) {
+        // Belt and braces: the option is hidden for callers who cannot use it,
+        // but a stale `selectedEvent` from before a role change would otherwise
+        // reach the route and come back 403 with no explanation.
+        toast({
+          title: "Not allowed",
+          description: "Only staff can create channels that aren't tied to an event",
+          variant: "destructive",
+        });
+        return;
       } else {
         // Custom channel creation — server-side, same as the event branch.
         //

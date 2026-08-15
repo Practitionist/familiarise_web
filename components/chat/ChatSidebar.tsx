@@ -18,7 +18,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../ui/tooltip";
-import { getChannelDisplayInfo } from "./utils/channelUtils";
+import {
+  getChannelDisplayInfo,
+  isUsableDmChannel,
+} from "./utils/channelUtils";
 import { useChatPane } from "./ChatPaneContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { useSession } from "@/lib/auth-client";
@@ -296,9 +299,16 @@ export const ChatSidebar = () => {
       }
 
       setTeamChannels(teamResponse);
-      setDirectMessages(dmResponse);
+      // Phantoms filtered out here rather than hidden at render: a row that is
+      // merely styled as unavailable is still selectable, still opens, and still
+      // accepts a message. See isUsableDmChannel.
+      setDirectMessages(dmResponse.filter(isUsableDmChannel));
 
-      // Update pagination state
+      // Update pagination state — measured against the RAW response length, not
+      // the filtered one. `response.length === limit` is Stream's
+      // "there may be more" signal, and comparing a filtered count to the limit
+      // would report no-more-pages the moment a single phantom is dropped from
+      // an otherwise full page.
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
 
@@ -393,7 +403,11 @@ export const ChatSidebar = () => {
           setTeamChannels((prev) => [...prev, ...response]);
           setHasMoreTeamChannels(response.length === options.limit);
         } else {
-          setDirectMessages((prev) => [...prev, ...response]);
+          setDirectMessages((prev) => [
+            ...prev,
+            ...response.filter(isUsableDmChannel),
+          ]);
+          // Raw length again — see fetchChannels.
           setHasMoreDMChannels(response.length === options.limit);
         }
       } catch (error) {
@@ -485,7 +499,7 @@ export const ChatSidebar = () => {
       setDirectMessages((prevChannels) => {
         const existingIds = new Set(prevChannels.map((ch) => ch.cid));
         const newChannels = recentDMChannels.filter(
-          (ch) => !existingIds.has(ch.cid),
+          (ch) => !existingIds.has(ch.cid) && isUsableDmChannel(ch),
         );
         if (newChannels.length > 0) {
           return [...newChannels, ...prevChannels]; // New channels at top

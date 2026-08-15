@@ -24,6 +24,27 @@ const userIdsSchema = z
   .min(1, "At least one user ID required");
 const searchTermSchema = z.string().min(1, "Search term is required").max(100);
 
+/** How many results the caller actually sees. */
+const SEARCH_RESULT_LIMIT = 20;
+
+/**
+ * How many name/email matches to pull before the relationship filter runs.
+ *
+ * These have to be different numbers. The relationship filter is applied in JS
+ * after the query, so capping the query at the display limit meant the database
+ * picked 20 rows alphabetically and the filter then discarded whichever of them
+ * were strangers — a search for a common surname could return twenty unrelated
+ * people, filter to zero, and never see the actual client sitting at position
+ * twenty-one. The filter was silently competing with the limit for the same
+ * budget.
+ *
+ * 200 is a deliberate ceiling rather than an unbounded fetch: `contains` on
+ * `name`/`email` is a sequential scan, and this runs on every keystroke past two
+ * characters. Wide enough that the filter is choosing from real candidates,
+ * narrow enough that a one-letter-over-the-minimum query cannot walk the table.
+ */
+const SEARCH_CANDIDATE_LIMIT = 200;
+
 /**
  * Upserts a user to Stream Chat
  * Uses caching to avoid redundant upserts
@@ -298,7 +319,7 @@ export const searchUsersWithRelationships = async (
           consultantProfileId: true,
           consulteeProfileId: true,
         },
-        take: 20,
+        take: SEARCH_CANDIDATE_LIMIT,
         orderBy: [{ name: "asc" }],
       }),
     ]);
@@ -452,13 +473,18 @@ export const searchUsersWithRelationships = async (
       return an < bn ? -1 : an > bn ? 1 : 0;
     });
 
+    // Truncated here, AFTER filtering and sorting — never in the query.
+    const page = usersWithRelationships.slice(0, SEARCH_RESULT_LIMIT);
+
     streamLogger.debug("User search completed", {
       term: validatedTerm,
-      matchedCount: users.length,
-      resultCount: usersWithRelationships.length,
+      candidateCount: users.length,
+      relatedCount: usersWithRelationships.length,
+      resultCount: page.length,
+      candidateLimitHit: users.length === SEARCH_CANDIDATE_LIMIT,
     });
 
-    return usersWithRelationships;
+    return page;
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
     streamLogger.error("User search failed", error, {

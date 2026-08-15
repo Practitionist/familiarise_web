@@ -45,15 +45,22 @@ type ProfileIds = {
 };
 
 /**
- * A consultation links the pair if either direction holds. Both directions are
- * checked because one person may hold both profiles — a consultant who also
- * books sessions as a consultee is an ordinary account shape here, not an edge
- * case, and reading only one direction silently denied half of those pairs.
+ * The (consultant, consultee) pairings these two people could form.
+ *
+ * Both directions, because one person may hold both profiles — a consultant who
+ * also books sessions as a consultee is an ordinary account shape here, not an
+ * edge case, and reading only one direction silently denied half of those pairs.
+ * Returns zero, one or two pairings; zero means no relationship is even
+ * expressible and the caller can skip its query entirely.
+ *
+ * Shared by both link checks. The two used to carry byte-identical copies of
+ * this, differing only in the Prisma model they then queried, which is precisely
+ * the setup where a fix lands in one copy and not the other.
  */
-async function hasConsultationLink(
+function buildDirections(
   a: ProfileIds,
   b: ProfileIds,
-): Promise<boolean> {
+): Array<{ consultant: string; consultee: string }> {
   const directions: Array<{ consultant: string; consultee: string }> = [];
   if (a.consultantProfileId && b.consulteeProfileId) {
     directions.push({
@@ -67,6 +74,15 @@ async function hasConsultationLink(
       consultee: a.consulteeProfileId,
     });
   }
+  return directions;
+}
+
+/** A consultation links the pair if either direction holds. */
+async function hasConsultationLink(
+  a: ProfileIds,
+  b: ProfileIds,
+): Promise<boolean> {
+  const directions = buildDirections(a, b);
   if (directions.length === 0) return false;
 
   const hit = await prisma.consultation.findFirst({
@@ -96,19 +112,7 @@ async function hasSubscriptionLink(
   a: ProfileIds,
   b: ProfileIds,
 ): Promise<boolean> {
-  const directions: Array<{ consultant: string; consultee: string }> = [];
-  if (a.consultantProfileId && b.consulteeProfileId) {
-    directions.push({
-      consultant: a.consultantProfileId,
-      consultee: b.consulteeProfileId,
-    });
-  }
-  if (b.consultantProfileId && a.consulteeProfileId) {
-    directions.push({
-      consultant: b.consultantProfileId,
-      consultee: a.consulteeProfileId,
-    });
-  }
+  const directions = buildDirections(a, b);
   if (directions.length === 0) return false;
 
   const hit = await prisma.subscription.findFirst({

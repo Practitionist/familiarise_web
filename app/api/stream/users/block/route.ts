@@ -55,7 +55,13 @@ export async function POST(req: NextRequest) {
     // which catches all three id forms (`dm-`, `dmo-`, `dmh-`) without this
     // route having to know they exist.
     const chatClient = getStreamChatClient();
-    let dmChannels: Awaited<ReturnType<typeof chatClient.queryChannels>> = [];
+
+    // `limit: 30` is Stream's real per-call cap for queryChannels regardless of
+    // what you pass, and it is not a constraint here: the filter matches
+    // channels whose membership is EXACTLY this pair, which is one personal
+    // thread plus at most one per organization, and `lib/auth.ts` caps a user at
+    // `organizationLimit: 5`. Six is the ceiling. No pagination needed.
+    let dmChannels: Awaited<ReturnType<typeof chatClient.queryChannels>>;
     try {
       dmChannels = await chatClient.queryChannels(
         {
@@ -66,11 +72,23 @@ export async function POST(req: NextRequest) {
         { limit: 30 },
       );
     } catch (queryError) {
+      // 5xx, NOT the 403 below. An earlier version assigned `[]` here and fell
+      // through, so a Stream outage told two people mid-conversation that they
+      // "can only block users you have a conversation with" — an infrastructure
+      // failure reported as a policy decision, and the one moment when someone
+      // reaching for the block button most needs it to work.
+      Sentry.captureException(
+        queryError instanceof Error ? queryError : new Error(String(queryError)),
+        { tags: { subsystem: "stream" } },
+      );
       streamLogger.error("Block: DM channel lookup failed", queryError, {
         userId: session.user.id,
         targetUserId,
       });
-      dmChannels = [];
+      return NextResponse.json(
+        { error: "Could not block this user right now. Please try again." },
+        { status: 503 },
+      );
     }
 
     if (dmChannels.length === 0) {
@@ -83,10 +101,48 @@ export async function POST(req: NextRequest) {
     // Ban in every shared DM, not just the one they happen to be looking at.
     // A block is about the person; leaving their org thread writable while the
     // personal one is banned would be a block that does not block.
-    for (const dmChannel of dmChannels) {
-      await dmChannel.banUser(targetUserId, {
-        banned_by_id: session.user.id,
-        reason: "user_block",
+    //
+    // `allSettled`, not a sequential loop: the loop aborted on the first
+    // rejection, so a transient failure on the personal thread left the org
+    // thread unbanned AND skipped the moderation report — the worst of the three
+    // possible outcomes. Now every channel is attempted, and the block stands as
+    // long as one succeeded.
+    const banResults = await Promise.allSettled(
+      dmChannels.map((dmChannel) =>
+        dmChannel.banUser(targetUserId, {
+          banned_by_id: session.user.id,
+          reason: "user_block",
+        }),
+      ),
+    );
+
+    const failures = banResults.filter((r) => r.status === "rejected");
+    if (failures.length === dmChannels.length) {
+      Sentry.captureException(new Error("Block: every channel ban failed"), {
+        tags: { subsystem: "stream" },
+      });
+      streamLogger.error("Block: every channel ban failed", failures[0], {
+        userId: session.user.id,
+        targetUserId,
+        channelCount: dmChannels.length,
+      });
+      return NextResponse.json(
+        { error: "Could not block this user right now. Please try again." },
+        { status: 503 },
+      );
+    }
+    if (failures.length > 0) {
+      // Partial success still blocks — but it leaves a writable thread behind,
+      // so it must be visible rather than inferred from a quiet log.
+      Sentry.captureException(
+        new Error("Block: some channel bans failed"),
+        { tags: { subsystem: "stream" } },
+      );
+      streamLogger.warn("Block: some channel bans failed", {
+        userId: session.user.id,
+        targetUserId,
+        failed: failures.length,
+        total: dmChannels.length,
       });
     }
 

@@ -10,6 +10,30 @@ export interface ChannelDisplayInfo {
 }
 
 /**
+ * Is this a direct message that actually has someone on the other end?
+ *
+ * A `messaging` channel with fewer than two members is a phantom. They exist
+ * because `channel.watch()` posts to the same endpoint `channel.create()` does,
+ * so watching a channel id that does not exist yet CREATES it — with the caller
+ * as `created_by` and no members at all. Every client-side path that could do
+ * that is now gone, and `ensure-chat-type-grants.ts` revokes `create-channel`
+ * from the `user` role so Stream itself refuses, but neither of those helps with
+ * the ones already sitting on the app: dev, preview and production share one
+ * Stream app, and a phantom is a real channel that a real message can be posted
+ * into. `scripts/stream/purge-memberless-dms.ts` deletes them; this keeps them
+ * off the screen in the meantime, and keeps any future one unreachable rather
+ * than merely mislabelled.
+ *
+ * Deliberately scoped to `messaging`. A `team` channel legitimately sits at one
+ * member — a webinar channel is created with its host before anyone registers —
+ * so applying this to events would hide real, working channels.
+ */
+export const isUsableDmChannel = (channel: Channel): boolean => {
+  if (channel.type !== "messaging") return true;
+  return Object.keys(channel.state?.members ?? {}).length >= 2;
+};
+
+/**
  * Get consistent display information for any channel across all chat components
  */
 export const getChannelDisplayInfo = (

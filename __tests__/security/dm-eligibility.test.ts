@@ -56,9 +56,7 @@ function noRelationships() {
 }
 
 function bothUsersExist(a: unknown, b: unknown) {
-  mockPrisma.user.findUnique
-    .mockResolvedValueOnce(a)
-    .mockResolvedValueOnce(b);
+  mockPrisma.user.findUnique.mockResolvedValueOnce(a).mockResolvedValueOnce(b);
 }
 
 async function load() {
@@ -256,5 +254,34 @@ describe("assertCanDirectMessage", () => {
     await expect(
       assertCanDirectMessage("stranger-a", "stranger-b"),
     ).rejects.toBeInstanceOf(DmNotPermittedError);
+  });
+});
+
+describe("buildDirections is shared, not duplicated", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    noRelationships();
+  });
+
+  // The two link checks used to carry byte-identical copies of the
+  // direction-building. Asserting both produce the same OR shape is what stops
+  // a fix landing in one and not the other.
+  it("consultation and subscription build the same directions", async () => {
+    bothUsersExist(DUAL, DUAL);
+
+    const { canDirectMessage } = await load();
+    await canDirectMessage("dual-a", "dual-b");
+
+    const consultationOr =
+      mockPrisma.consultation.findFirst.mock.calls[0][0].where.OR;
+    const subscriptionOr =
+      mockPrisma.subscription.findFirst.mock.calls[0][0].where.OR;
+
+    expect(consultationOr).toHaveLength(subscriptionOr.length);
+    expect(
+      consultationOr.map((d: { requestedById: string }) => d.requestedById),
+    ).toEqual(
+      subscriptionOr.map((d: { requestedById: string }) => d.requestedById),
+    );
   });
 });

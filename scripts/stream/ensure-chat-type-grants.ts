@@ -43,11 +43,13 @@
  * production. An apply writes it.
  */
 import "dotenv/config";
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { getStreamChatClient, isStreamConfigured } from "../../lib/stream-client";
+import {
+  getStreamChatClient,
+  isStreamConfigured,
+} from "../../lib/stream-client";
 
 /** The two built-in channel types this app uses. Nothing else is in play. */
 const CHANNEL_TYPES = ["messaging", "team"] as const;
@@ -69,10 +71,25 @@ const REVOKED_ROLES = ["user", "guest"] as const;
  *
  * Stream's permission names are kebab-case in the grants arrays.
  */
-const REVOKED_PERMISSIONS = ["create-channel", "update-channel-members"] as const;
+const REVOKED_PERMISSIONS = [
+  "create-channel",
+  "update-channel-members",
+] as const;
 
 /** Roles barred from client-side `queryUsers`. Same reasoning as above. */
 const USER_SEARCH_DISALLOWED_ROLES = ["user", "guest"];
+
+/**
+ * Where the pre-image lives. Committed to a stable, repo-relative path rather
+ * than a pid-suffixed temp file, because `--restore-user-create` reads it back
+ * on a LATER invocation — a path only the writing process could name made the
+ * rollback flag unusable in practice.
+ */
+const PRE_IMAGE_PATH = join(
+  process.cwd(),
+  ".stream-backups",
+  "chat-type-grants.json",
+);
 
 interface Options {
   apply: boolean;
@@ -88,6 +105,11 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
+/** Code-unit ordering. Passed explicitly everywhere, never `localeCompare`. */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /**
  * Stable stringify for comparing two independent reads.
  *
@@ -97,19 +119,33 @@ function parseArgs(argv: string[]): Options {
  * discarded settings it never touched. A false alarm on this check is
  * expensive: it is the thing that says whether a production config wipe just
  * happened.
- *
- * Code-unit ordering, never `localeCompare` — same rule as the channel ids.
  */
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, val) =>
     val && typeof val === "object" && !Array.isArray(val)
       ? Object.fromEntries(
           Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0,
+            byCodeUnit(a, b),
           ),
         )
       : val,
   );
+}
+
+/** What we snapshot before writing, and read back to roll forward from. */
+interface PreImage {
+  capturedAt: string;
+  channelTypes: Record<string, Record<string, string[]>>;
+  userSearchDisallowedRoles: string[];
+}
+
+function readPreImage(): PreImage | null {
+  if (!existsSync(PRE_IMAGE_PATH)) return null;
+  try {
+    return JSON.parse(readFileSync(PRE_IMAGE_PATH, "utf8")) as PreImage;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -145,6 +181,121 @@ function requireDeployConfirmation(opts: Options): boolean {
   return false;
 }
 
+/**
+ * The grants this channel type should end up with.
+ *
+ * Restore returns the PRE-IMAGE verbatim, not "the current grants plus
+ * everything we might have revoked". The difference matters: an earlier version
+ * re-added every entry in `REVOKED_PERMISSIONS` to `user` and `guest`
+ * unconditionally, so rolling back granted permissions those roles may never
+ * have held. A rollback that can hand out more access than the change it is
+ * undoing is worse than no rollback — and this script's entire justification is
+ * that its production write is safely reversible.
+ *
+ * Restoring therefore requires a pre-image. If there is none, this returns null
+ * and the caller refuses rather than guessing.
+ */
+function computeGrants(
+  channelType: string,
+  existingGrants: Record<string, string[]>,
+  opts: Options,
+  preImage: PreImage | null,
+): Record<string, string[]> | null {
+  if (opts.restore) {
+    return preImage?.channelTypes?.[channelType] ?? null;
+  }
+
+  const grants: Record<string, string[]> = Object.fromEntries(
+    Object.entries(existingGrants).map(([role, perms]) => [role, [...perms]]),
+  );
+
+  for (const role of REVOKED_ROLES) {
+    // A role absent from this type's grants map is not an error — Stream's
+    // built-in types do not all carry the same role keys, and inventing one
+    // would grant permissions rather than remove them.
+    if (!grants[role]) continue;
+    grants[role] = grants[role].filter(
+      (g) => !(REVOKED_PERMISSIONS as readonly string[]).includes(g),
+    );
+  }
+  return grants;
+}
+
+/** Per-role before/after table for the permissions this script touches. */
+function logGrantDiff(
+  channelType: string,
+  existingGrants: Record<string, string[]>,
+  grants: Record<string, string[]>,
+): void {
+  console.log(`Channel type: ${channelType}`);
+  for (const role of REVOKED_ROLES) {
+    if (!existingGrants[role]) {
+      console.log(`  ${role.padEnd(8)} (role absent on this channel type)`);
+      continue;
+    }
+    for (const perm of REVOKED_PERMISSIONS) {
+      const had = (existingGrants[role] ?? []).includes(perm);
+      const now = (grants[role] ?? []).includes(perm);
+      console.log(`  ${role.padEnd(8)} ${perm.padEnd(24)} ${had} → ${now}`);
+    }
+  }
+}
+
+/**
+ * App-level user-search lockdown.
+ *
+ * Restore reinstates the pre-image value, NOT `[]`. Writing an empty array on
+ * rollback would clear whatever the app already had before this script first
+ * ran — undoing someone else's setting in the name of undoing ours.
+ */
+async function syncUserSearchSetting(
+  client: ReturnType<typeof getStreamChatClient>,
+  opts: Options,
+  preImage: PreImage | null,
+): Promise<boolean> {
+  // Asymmetry in stream-chat v9's types, not in the API: the field is declared
+  // on the READ shape (`AppSettingsAPIResponse.app`) but missing from the WRITE
+  // shape (`AppSettings`). Stream's own docs show it being written via
+  // `updateAppSettings`, so the write below carries a narrow cast.
+  const settings = await client.getAppSettings();
+  const current = settings.app?.user_search_disallowed_roles ?? [];
+
+  const desired = opts.restore
+    ? (preImage?.userSearchDisallowedRoles ?? null)
+    : USER_SEARCH_DISALLOWED_ROLES;
+
+  if (desired === null) {
+    console.error(
+      "🛑 Cannot restore user_search_disallowed_roles — no pre-image on disk.",
+    );
+    return false;
+  }
+
+  if (
+    canonical([...current].sort(byCodeUnit)) ===
+    canonical([...desired].sort(byCodeUnit))
+  ) {
+    console.log("✅ user_search_disallowed_roles already correct — no change");
+    return false;
+  }
+
+  console.log(
+    `App setting: user_search_disallowed_roles ` +
+      `[${current.join(", ")}] → [${desired.join(", ")}]`,
+  );
+  if (opts.apply) {
+    // NOTE: `updateAppSettings` REPLACES the field it is given rather than
+    // merging — the trap documented at length in
+    // ensure-webhook-subscription.ts. Only this one key is passed, so the
+    // event_hooks that script manages are untouched.
+    await client.updateAppSettings({
+      user_search_disallowed_roles: desired,
+    } as Parameters<typeof client.updateAppSettings>[0]);
+    console.log("  written");
+  }
+  return true;
+}
+
 export async function ensureChatTypeGrants(opts: Options): Promise<number> {
   // Before the read — a refusal should not depend on Stream being reachable.
   if (!requireDeployConfirmation(opts)) return 1;
@@ -156,110 +307,80 @@ export async function ensureChatTypeGrants(opts: Options): Promise<number> {
     return 1;
   }
 
+  const preImage = readPreImage();
+  if (opts.restore && !preImage) {
+    console.error(
+      `🛑 Cannot restore — no pre-image at ${PRE_IMAGE_PATH}.\n` +
+        "Restoring without one would mean guessing which permissions each role\n" +
+        "originally held, and guessing upward grants access nobody asked for.\n" +
+        "Reinstate the grants from the Stream dashboard instead.",
+    );
+    return 1;
+  }
+
   const client = getStreamChatClient();
 
   let changed = false;
-  const preImage: Record<string, unknown> = {};
+  const captured: PreImage = {
+    capturedAt: new Date().toISOString(),
+    channelTypes: {},
+    userSearchDisallowedRoles: [],
+  };
 
+  // Snapshot everything BEFORE writing anything. The previous version wrote the
+  // pre-image after the last successful write, to a pid-suffixed path in
+  // tmpdir — so a run that failed halfway left no snapshot at all, and even a
+  // clean run left one that the next invocation could not find. A rollback file
+  // that only exists when nothing went wrong is not a rollback file.
   for (const channelType of CHANNEL_TYPES) {
     const existing = await client.getChannelType(channelType);
-    const existingGrants = (existing.grants ?? {}) as Record<string, string[]>;
-    preImage[channelType] = existingGrants;
+    captured.channelTypes[channelType] = (existing.grants ?? {}) as Record<
+      string,
+      string[]
+    >;
+  }
+  const settingsProbe = await client.getAppSettings();
+  captured.userSearchDisallowedRoles =
+    settingsProbe.app?.user_search_disallowed_roles ?? [];
 
-    const grants: Record<string, string[]> = Object.fromEntries(
-      Object.entries(existingGrants).map(([role, perms]) => [role, [...perms]]),
-    );
+  if (opts.apply && !opts.restore) {
+    mkdirSync(dirname(PRE_IMAGE_PATH), { recursive: true });
+    writeFileSync(PRE_IMAGE_PATH, JSON.stringify(captured, null, 2));
+    console.log(`Pre-image written to ${PRE_IMAGE_PATH}\n`);
+  }
 
-    for (const role of REVOKED_ROLES) {
-      const roleGrants = grants[role];
-      // A role absent from this type's grants map is not an error — Stream's
-      // built-in types do not all carry the same role keys, and inventing one
-      // would grant permissions rather than remove them.
-      if (!roleGrants) continue;
+  for (const channelType of CHANNEL_TYPES) {
+    const existingGrants = captured.channelTypes[channelType];
+    const grants = computeGrants(channelType, existingGrants, opts, preImage);
 
-      if (opts.restore) {
-        for (const perm of REVOKED_PERMISSIONS) {
-          if (!roleGrants.includes(perm)) roleGrants.push(perm);
-        }
-      } else {
-        grants[role] = roleGrants.filter(
-          (g) => !REVOKED_PERMISSIONS.includes(g as never),
-        );
-      }
+    if (!grants) {
+      console.error(
+        `🛑 No pre-image entry for channel type "${channelType}" — skipping.`,
+      );
+      continue;
     }
 
     if (canonical(existingGrants) === canonical(grants)) {
-      console.log(`✅ channel type "${channelType}" already correct — no change`);
+      console.log(
+        `✅ channel type "${channelType}" already correct — no change`,
+      );
       continue;
     }
 
-    console.log(`Channel type: ${channelType}`);
-    for (const role of REVOKED_ROLES) {
-      if (!existingGrants[role]) {
-        console.log(`  ${role.padEnd(8)} (role absent on this channel type)`);
-        continue;
-      }
-      for (const perm of REVOKED_PERMISSIONS) {
-        const had = (existingGrants[role] ?? []).includes(perm);
-        const now = (grants[role] ?? []).includes(perm);
-        console.log(`  ${role.padEnd(8)} ${perm.padEnd(24)} ${had} → ${now}`);
-      }
-    }
+    logGrantDiff(channelType, existingGrants, grants);
+    changed = true;
 
-    if (!opts.apply) {
-      changed = true;
-      continue;
-    }
+    if (!opts.apply) continue;
 
     await client.updateChannelType(channelType, { grants });
-    changed = true;
     console.log(`  written`);
   }
 
-  // App-level: stop client-side user enumeration.
-  // Asymmetry in stream-chat v9's types, not in the API: the field is declared
-  // on the READ shape (`AppSettingsAPIResponse.app`) but missing from the WRITE
-  // shape (`AppSettings`). Stream's own docs show it being written via
-  // `updateAppSettings`, so the write below carries a narrow cast rather than a
-  // workaround.
-  const settings = await client.getAppSettings();
-  const currentDisallowed = settings.app?.user_search_disallowed_roles ?? [];
-  preImage.user_search_disallowed_roles = currentDisallowed;
-
-  const desiredDisallowed = opts.restore ? [] : USER_SEARCH_DISALLOWED_ROLES;
-
-  if (canonical([...currentDisallowed].sort()) !== canonical([...desiredDisallowed].sort())) {
-    console.log(
-      `App setting: user_search_disallowed_roles ` +
-        `[${currentDisallowed.join(", ")}] → [${desiredDisallowed.join(", ")}]`,
-    );
-    if (opts.apply) {
-      // NOTE: `updateAppSettings` REPLACES the field it is given rather than
-      // merging — the trap documented at length in
-      // ensure-webhook-subscription.ts. Only this one key is passed, so the
-      // event_hooks that script manages are untouched.
-      await client.updateAppSettings({
-        user_search_disallowed_roles: desiredDisallowed,
-      } as Parameters<typeof client.updateAppSettings>[0]);
-      console.log("  written");
-    }
-    changed = true;
-  } else {
-    console.log("✅ user_search_disallowed_roles already correct — no change");
-  }
+  const settingChanged = await syncUserSearchSetting(client, opts, preImage);
+  changed = changed || settingChanged;
 
   if (!changed) return 0;
-
-  if (!opts.apply) {
-    console.log("\n(dry run — pass --apply to write)");
-    return 0;
-  }
-
-  // Pre-image on disk, after the write rather than before it: a snapshot is
-  // only worth keeping if there is something to roll back to.
-  const path = join(tmpdir(), `stream-chat-grants-preimage-${process.pid}.json`);
-  writeFileSync(path, JSON.stringify(preImage, null, 2));
-  console.log(`\nPre-image written to ${path}`);
+  if (!opts.apply) console.log("\n(dry run — pass --apply to write)");
 
   return 0;
 }
