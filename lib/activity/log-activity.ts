@@ -110,7 +110,7 @@ export async function logConsultationCancelled(
   consultationId: string,
   actor: ActivityActor,
   planTitle: string,
-  cancelledBy: "consultant" | "consultee",
+  cancelledBy: "consultant" | "consultee" | "system",
 ) {
   return logActivity({
     activityType: "CONSULTATION_CANCELLED",
@@ -174,7 +174,7 @@ export async function logSubscriptionCancelled(
   subscriptionId: string,
   actor: ActivityActor,
   planTitle: string,
-  cancelledBy: "consultant" | "consultee",
+  cancelledBy: "consultant" | "consultee" | "system",
 ) {
   return logActivity({
     activityType: "SUBSCRIPTION_CANCELLED",

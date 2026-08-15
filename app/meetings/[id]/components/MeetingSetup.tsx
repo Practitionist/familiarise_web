@@ -291,8 +291,12 @@ const MeetingSetup = ({ setIsSetupComplete, meetingId }: MeetingSetupProps) => {
     }
   };
 
-  const joinLabel =
-    clock.phase === "in-progress" || clock.phase === "overrunning"
+  const joinLabel = consent.loading
+    ? // The button is disabled for as long as this fetch is out. Without a
+      // label for it the control just looks broken, and the notice it is
+      // waiting on has not rendered yet to explain itself.
+      "Checking recording notice..."
+    : clock.phase === "in-progress" || clock.phase === "overrunning"
       ? "Join now"
       : clock.phase === "early"
         ? "Join early"

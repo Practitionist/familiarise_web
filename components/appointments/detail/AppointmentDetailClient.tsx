@@ -38,6 +38,7 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
 
@@ -161,7 +162,11 @@ export function AppointmentDetailClient({
 
   const { vm, recordings } = mapped;
   const action = adapter.primaryAction(vm);
-  const overflow = adapter.overflowItems(vm);
+  // #1163 — the proposal card below IS the answer surface; the adapter's
+  // "Review reschedule request" list affordance would only link back here.
+  const overflow = adapter
+    .overflowItems(vm)
+    .filter((item) => item.key !== "reschedule-proposal");
   const badge = eventUnionStatusBadge(vm.status);
   const payments = detail.appointment.payment ?? [];
   const orgName =
@@ -187,6 +192,10 @@ export function AppointmentDetailClient({
     ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
   const hasConfirmedSessions = vm.sessions.some((s) => !s.isTentative);
+  // #1163 — the read narrows to open statuses and takes one, so [0] is THE
+  // live proposal; the card is the answer surface "Awaiting schedule
+  // confirmation" never offered.
+  const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
 
   return (
     <DashboardErrorBoundary>
@@ -309,6 +318,14 @@ export function AppointmentDetailClient({
             </div>
           )}
         </div>
+
+        {openProposal && (
+          <RescheduleProposalCard
+            appointmentId={appointmentId}
+            proposal={openProposal}
+            role={role}
+          />
+        )}
 
         <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-4">

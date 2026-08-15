@@ -18,6 +18,8 @@ The database was reset and reseeded (`small` mode). This guide gives you **every
 
 ## 🔑 Credentials (all password = `SeedPass123!`)
 
+> This table is the authoritative seed-cohort roster; the agent-run case files under [`prompts/enterprise-tests/`](../../../prompts/enterprise-tests/) reference it from their shared setup ([`_shared/shared-setup.md`](../../../prompts/enterprise-tests/_shared/shared-setup.md) §2) rather than maintaining a copy. If a reseed ever changes these logins, update both places.
+
 ### Canonical demo login (start here)
 | Login | Role | Org | What it shows |
 |---|---|---|---|

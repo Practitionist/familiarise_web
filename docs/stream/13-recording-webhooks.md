@@ -138,7 +138,7 @@ stateDiagram-v2
 | `EXPIRED`      | Stream URL expired, not transferred | STREAM_S3    | No            |
 | `FAILED`       | Recording capture failed            | N/A          | No            |
 
-As of #689 (STR-2/3), a failed *transfer* no longer lands in `FAILED`. Every transfer failure path reverts the recording to `READY` so that both the cron job and the manual `/transfer` route can retry it, since a `FAILED` status would permanently dead-end the recording (the manual route only accepts `READY` recordings). `FAILED` is now reached only by a capture/processing failure, not by a transfer error.
+As of #689 (STR-2/3), a failed _transfer_ no longer lands in `FAILED`. Every transfer failure path reverts the recording to `READY` so that both the cron job and the manual `/transfer` route can retry it, since a `FAILED` status would permanently dead-end the recording (the manual route only accepts `READY` recordings). `FAILED` is now reached only by a capture/processing failure, not by a transfer error.
 
 ### Storage Type Transitions
 
@@ -163,7 +163,7 @@ model Recording {
   recordedAt          DateTime
   streamRecordingId   String?         // Stream filename identifier
   streamCallId        String?         // Associated Stream call ID
-  storageType         StorageType     @default(STREAM_S3)
+  storageType         RecordingStorageType @default(STREAM_S3)
   status              RecordingStatus @default(READY)
   streamUrlExpiresAt  DateTime?       // When Stream URL expires
   transferredAt       DateTime?       // When transferred to Supabase
@@ -181,7 +181,7 @@ model Recording {
   updatedAt           DateTime        @updatedAt
 }
 
-enum StorageType {
+enum RecordingStorageType {
   STREAM_S3
   SUPABASE
 }
@@ -329,16 +329,16 @@ sequenceDiagram
 
 ### Handled Event Types
 
-| Event Type                         | Description                          | Handler                            |
-| ---------------------------------- | ------------------------------------ | ---------------------------------- |
-| `call.recording_started`           | Recording has begun                  | `handleRecordingStarted()`         |
-| `call.recording_stopped`           | Recording has stopped                | `handleRecordingStopped()`         |
-| `call.recording_ready`             | Recording is processed and available | `handleRecordingReady()`           |
-| `call.recording_failed`            | Recording failed                     | `handleRecordingFailed()`          |
-| `call.session_ended`               | A participant's session ended        | `handleSessionEnded()`             |
-| `call.ended`                       | The entire call has ended            | `handleCallEnded()`                |
-| `call.session_participant_joined`  | A participant joined the call        | `handleSessionParticipantJoined()` |
-| `call.session_participant_left`    | A participant left the call          | `handleSessionParticipantLeft()`   |
+| Event Type                        | Description                          | Handler                            |
+| --------------------------------- | ------------------------------------ | ---------------------------------- |
+| `call.recording_started`          | Recording has begun                  | `handleRecordingStarted()`         |
+| `call.recording_stopped`          | Recording has stopped                | `handleRecordingStopped()`         |
+| `call.recording_ready`            | Recording is processed and available | `handleRecordingReady()`           |
+| `call.recording_failed`           | Recording failed                     | `handleRecordingFailed()`          |
+| `call.session_ended`              | A participant's session ended        | `handleSessionEnded()`             |
+| `call.ended`                      | The entire call has ended            | `handleCallEnded()`                |
+| `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
+| `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
 
 ### Per-Attendee Attendance Capture
 
@@ -520,12 +520,12 @@ sequenceDiagram
 
 ### Transfer Configuration
 
-| Setting             | Value        | Description                           |
-| ------------------- | ------------ | ------------------------------------- |
-| `MAX_TRANSFER_SIZE` | 500MB        | Maximum file size for direct transfer |
-| `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name          |
+| Setting             | Value        | Description                                                                                                                                                                                         |
+| ------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAX_TRANSFER_SIZE` | 500MB        | Maximum file size for direct transfer                                                                                                                                                               |
+| `RECORDINGS_BUCKET` | "recordings" | Supabase storage bucket name                                                                                                                                                                        |
 | `daysBeforeExpiry`  | 5            | Days before expiry to start transfer (default). The production jobs pass 14 — the full Stream URL lifetime — so every READY permanent recording is swept near-ready rather than near-expiry (#899). |
-| `batchSize`         | 10           | Max recordings per cron run           |
+| `batchSize`         | 10           | Max recordings per cron run                                                                                                                                                                         |
 
 ### Storage Path Format
 
@@ -710,6 +710,87 @@ Sync recordings from Stream API for the current user.
 
 ---
 
+### Recording Consent Routes
+
+Consent is asked for before anyone joins, not while a recording is running. Both
+handlers are gated by `resolveMeetingAccess`, the same resolver the join gate
+uses, so only somebody actually on this appointment can read the notice or
+record a decision about it. Without that gate the endpoint would leak which
+meeting identifiers exist and which of them are recorded.
+
+#### GET /api/meetings/[meetingId]/recording-consent
+
+Returns the notice this person must be shown before joining, if any.
+
+**Authorization:** any participant on the appointment.
+
+**Response:**
+
+```json
+{
+  "required": true,
+  "regime": "OPT_OUT",
+  "noticeVersion": 1,
+  "decision": null
+}
+```
+
+`regime` is `OPT_OUT` for one-to-one sessions, where declining is real and
+costs nothing — the person still joins and the host's recording endpoint
+refuses. It is `ACKNOWLEDGE` for group events, where the recording is part of
+what attendees bought and the only action available is to understand it.
+
+`required: false` means there is nothing to disclose, and the client should not
+block joining.
+
+#### POST /api/meetings/[meetingId]/recording-consent
+
+Records a decision.
+
+**Authorization:** any participant on the appointment, for their own decision
+only.
+
+**Request:**
+
+```json
+{ "decision": "GRANTED" }
+```
+
+`decision` is `GRANTED` or `DECLINED`.
+
+**Implementation notes.** Three details of these handlers are easy to
+reintroduce incorrectly.
+
+Neither handler loads the meeting a second time. `resolveMeetingAccess` already
+joins the session, its slot and all four plan relations in order to decide
+whether the caller is the host, so it returns `meetingSessionId` and
+`appointment` and the handlers read them off the result. Both used to re-run the
+same `findUnique` immediately after the access check, which on this deployment
+is serialized latency rather than parallel work. See the
+[ADR](../decisions/2026-08-13-meeting-access-returns-what-it-loaded.md).
+
+The choice between 404 and 403 comes from `access.reason === "not_found"`, never
+from comparing `access.message` against a string. Rewording a user-facing
+message must not be able to change a status code.
+
+Enforcement is at recording start only. The `DECLINED` check lives inside the
+atomic claim in `POST /api/stream/recordings/start`, so a decline arriving
+between the read and the write loses the race rather than being ignored. A
+decline made _after_ recording has begun has no effect, because what should
+happen to the recording that already exists is an open product question rather
+than an implementation gap. It is tracked in #1146.
+
+**Client.** `useRecordingConsent` in
+`app/meetings/[id]/components/RecordingConsentNotice.tsx` returns a
+`ConsentGate` of `{ satisfied, loading, node }`. `loading` is true only while
+the fetch is outstanding, which the lobby needs in order to distinguish that
+window from a genuinely outstanding decision — `satisfied` is false in both, and
+the Join button is disabled in both. `MeetingSetup` reads it and labels the
+button "Checking recording notice..." rather than leaving it disabled with
+nothing on screen accounting for it.
+
+---
+
 ### Webhook Route
 
 #### POST /api/stream/webhooks
@@ -771,8 +852,7 @@ const payment = await prisma.payment.findFirst({
 // keeps it. The same isPaymentEntitled() helper guards all four entitlement
 // paths: the single-recording route, getPaidPlanIds, syncRecordingsForConsultee,
 // and the meetings recording-info endpoint.
-const hasPaidEnrollment =
-  payment != null && isPaymentEntitled(payment); // lib/payments/utils/refund-balance.ts
+const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/payments/utils/refund-balance.ts
 ```
 
 ### Recording Visibility Rules

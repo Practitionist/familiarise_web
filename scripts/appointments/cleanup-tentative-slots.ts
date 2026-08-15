@@ -62,7 +62,13 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     // Find tentative slots with no successful payment AND whose parent event
     // is not actively pending review (PENDING / APPROVED_PENDING_PAYMENT).
     // Without this check, we could release slots a consultant is reviewing.
+    // #1169 PR 6 — per-run cap (expire-event-channels precedent): an
+    // unbounded scan over every stale tentative row OOMs/times out the
+    // function before it pages. Oldest-first so hourly runs drain a backlog.
+    const MAX_SLOTS_PER_RUN = 5000;
     const staleTentativeSlots = await prisma.slotOfAppointment.findMany({
+      take: MAX_SLOTS_PER_RUN,
+      orderBy: { updatedAt: "asc" },
       where: {
         isTentative: true,
         // Grace runs from the LAST write, not creation: a reschedule flips
@@ -155,6 +161,17 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
         },
       },
     });
+
+    if (staleTentativeSlots.length === MAX_SLOTS_PER_RUN) {
+      console.warn(
+        JSON.stringify({
+          event: "cleanup_tentative_slots_capped",
+          cap: MAX_SLOTS_PER_RUN,
+          note: "backlog exceeds one run; the next scheduled run continues",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
 
     console.log(`Found ${staleTentativeSlots.length} stale tentative slots`);
 

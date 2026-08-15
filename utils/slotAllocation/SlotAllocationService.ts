@@ -2693,10 +2693,14 @@ export class SlotAllocationService {
 
     // Schema declares Appointment.payment as Payment[] (one Appointment
     // can carry multiple Payments historically — refunds/retries chain
-    // off the original). Flatten and pick the org-tagged one.
+    // off the original). Flatten and pick the EARLIEST org-tagged one:
+    // an unordered .find() over a retry chain debits whichever row the DB
+    // happened to return first, landing utilization on the wrong
+    // ProgramAssignment cycle (#1169 PR 1).
     const orgPayment = subscription?.appointments
       .flatMap((a) => a.payment)
-      .find((p) => !!p.organizationId);
+      .filter((p) => !!p.organizationId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
 
     if (!orgPayment || !orgPayment.organizationId) {
       // PERSONAL-funded subscription — no org cap to debit.
@@ -3039,7 +3043,14 @@ export class SlotAllocationService {
           // re-linked to the new slots — same reason as the onlyTentative
           // branch. Without this, re-scheduling a confirmed, not-yet-started
           // class orphans its enrolled learners (all slots here are removed).
-          slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          // meetingSession rides along so held-session slots can be preserved
+          // (#1169 PR 1 — deleting them cascades MeetingSession → Recording).
+          slotsOfAppointment: {
+            include: {
+              user: { select: { id: true } },
+              meetingSession: { select: { id: true } },
+            },
+          },
           _count: { select: { payment: true } },
         },
       });
@@ -3058,7 +3069,14 @@ export class SlotAllocationService {
 
       await Promise.all(
         existingAppointments.map((appointment) => {
-          if ((appointment._count?.payment ?? 0) > 0) {
+          // #1169 PR 1 — a slot whose MeetingSession already happened is
+          // history, not availability: deleting it cascades MeetingSession →
+          // Recording. Preserve the appointment and every held-session slot;
+          // only sessionless slots are freed.
+          const hasHeldSession = appointment.slotsOfAppointment.some(
+            (slot) => slot.meetingSession !== null,
+          );
+          if ((appointment._count?.payment ?? 0) > 0 || hasHeldSession) {
             // Keep the Appointment (and its Payment + ConsultantEarnings audit
             // trail); strip its slots. No-op for the slot-less subscription
             // placeholder, but frees slots for any other payment-bearing case.
@@ -3069,7 +3087,10 @@ export class SlotAllocationService {
               reusableAppointmentId = appointment.id;
             }
             return tx.slotOfAppointment.deleteMany({
-              where: { appointmentId: appointment.id },
+              where: {
+                appointmentId: appointment.id,
+                meetingSession: { is: null },
+              },
             });
           }
           return tx.appointment.delete({ where: { id: appointment.id } });

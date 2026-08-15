@@ -22,7 +22,9 @@ import { flushJobSentry } from "@/lib/observability/job-sentry";
 // These jobs call external APIs to create/cancel financial objects,
 // or mutate financial state (earnings, payouts, refunds) that could
 // become inconsistent during a partial deployment.
-const FINANCIAL_JOB_NAMES = new Set([
+// Exported for the lock-registry drift test (#1169): every member that is
+// cron-scheduled must hold a fail-closed lock.
+export const FINANCIAL_JOB_NAMES = new Set([
   "process-payouts",
   "create-payout-batch",
   "handle-stuck-payouts",
@@ -99,6 +101,9 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
         error instanceof Error ? error.message : String(error)
       }) — proceeding`,
     );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "maintenance" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "maintenance" } },
+    );
   }
 }

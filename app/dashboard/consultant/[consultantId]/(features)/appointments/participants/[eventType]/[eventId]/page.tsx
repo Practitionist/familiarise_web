@@ -25,6 +25,7 @@
 import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
+import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
@@ -32,11 +33,24 @@ import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { ToastAction } from "@/components/ui/toast";
+import { useToast } from "@/hooks/use-toast";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
@@ -60,6 +74,16 @@ type ParticipantsResponse =
 // Registered-participant rows are flattened from the event's slot users.
 type RegisteredParticipant = { id: string; name?: string; email?: string };
 
+/**
+ * What the DELETE handler answers (#1003). `refund` is null when the seat was
+ * never paid for, and `{ amountRefundedPaise: 0 }` when the policy tier
+ * returned nothing — two different facts the toast has to keep apart.
+ */
+type RemoveParticipantResult = {
+  removed: boolean;
+  refund: { amountRefundedPaise: number; refundPct: number } | null;
+};
+
 const fetchParticipants = async (
   apiSegment: string,
   eventId: string,
@@ -77,22 +101,26 @@ const removeParticipant = async ({
   apiSegment: string;
   eventId: string;
   userId: string;
-}) => {
+}): Promise<RemoveParticipantResult> => {
   const response = await fetch(
     `/api/participants/${apiSegment}/${eventId}?userId=${userId}`,
     { method: "DELETE" },
   );
   if (!response.ok) throw new Error("Failed to remove participant");
   // Only the class and webinar handlers are reachable (EVENT_KINDS admits no
-  // others) and both answer JSON — a refund summary since #1003. None of it is
-  // rendered, so it is deliberately not read. Both also answer 200 for an
-  // already-removed participant, so a repeat click still invalidates the
-  // roster rather than surfacing a failure.
+  // others) and both answer JSON — a refund summary since #1003. Both also
+  // answer 200 for an already-removed participant, so a repeat click still
+  // invalidates the roster rather than surfacing a failure.
+  return response.json();
 };
 
 export default function EventParticipantsPage() {
   const params = useParams();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  // The person the confirm dialog is about; null closes it.
+  const [pendingRemoval, setPendingRemoval] =
+    useState<RegisteredParticipant | null>(null);
 
   const eventType = params.eventType as string;
   const eventId = params.eventId as string;
@@ -106,17 +134,57 @@ export default function EventParticipantsPage() {
 
   const removeParticipantMutation = useMutation({
     mutationFn: removeParticipant,
-    onSuccess: () => {
+    // The organiser is told what actually happened to the money, not a generic
+    // "removed". A removal issues a refund server-side and used to say so
+    // nowhere at all — the response was explicitly discarded.
+    onSuccess: (result) => {
       queryClient.invalidateQueries({
         queryKey: ["event-participants", eventType, eventId],
       });
+      let description: string;
+      if (!result.removed) {
+        description = "They were already off the roster — nothing changed.";
+      } else if (!result.refund) {
+        description =
+          "No payment was found for this seat, so nothing was refunded.";
+      } else if (result.refund.amountRefundedPaise > 0) {
+        // INR: settlement is INR-only by design, and the refund summary
+        // carries no currency of its own.
+        description = `${formatCurrencyAmount(result.refund.amountRefundedPaise, "INR")} refunded (${result.refund.refundPct}% of the seat). It reaches them in 5–7 working days.`;
+      } else {
+        description = `No refund was due under the cancellation policy (${result.refund.refundPct}%).`;
+      }
+      toast({ title: "Participant removed", description });
     },
-    onError: (err) => {
+    onError: (err, variables) => {
       Sentry.captureException(
         err instanceof Error ? err : new Error(String(err)),
         { tags: { subsystem: "client" } },
       );
       console.error("Error removing participant:", err);
+      // A lost response is not proof of a lost write: the DELETE may have
+      // disconnected the attendee AND issued their refund before the
+      // connection dropped. "Nothing was changed and no refund was issued" was
+      // the one claim this handler cannot support, and a retry cannot recover
+      // the original refund result either — it would answer `removed: false`.
+      // Refresh the roster instead, and say only what is actually known.
+      queryClient.invalidateQueries({
+        queryKey: ["event-participants", eventType, eventId],
+      });
+      toast({
+        title: "Could not confirm the removal",
+        description:
+          "We couldn't confirm whether they were removed or refunded. The roster has been refreshed — try again if they're still listed.",
+        variant: "destructive",
+        action: (
+          <ToastAction
+            altText="Retry removing this participant"
+            onClick={() => removeParticipantMutation.mutate(variables)}
+          >
+            Retry
+          </ToastAction>
+        ),
+      });
     },
   });
 
@@ -124,16 +192,39 @@ export default function EventParticipantsPage() {
   // the URL is a hand-edit or a stale link.
   if (!kind) notFound();
 
-  const handleRemoveParticipant = (userId: string) => {
+  const handleConfirmRemoval = () => {
+    if (!pendingRemoval) return;
     removeParticipantMutation.mutate({
       apiSegment: kind.apiSegment,
       eventId,
-      userId,
+      userId: pendingRemoval.id,
     });
+    setPendingRemoval(null);
   };
 
   if (isLoading) return <TableSkeleton />;
-  if (error) return <div>Error loading event data</div>;
+  if (error) {
+    return (
+      <Card className="mt-6">
+        <CardContent className="py-10 text-center space-y-3">
+          <p className="text-sm text-muted-foreground">
+            We couldn&apos;t load this roster.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["event-participants", eventType, eventId],
+              })
+            }
+          >
+            Try again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const event = data?.webinarEvent ?? data?.classEvent;
   if (!event) return <div>Event not found</div>;
@@ -183,7 +274,7 @@ export default function EventParticipantsPage() {
     <Button
       variant="outline"
       size="sm"
-      onClick={() => handleRemoveParticipant(participant.id)}
+      onClick={() => setPendingRemoval(participant)}
       disabled={removeParticipantMutation.isPending}
     >
       {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
@@ -223,6 +314,48 @@ export default function EventParticipantsPage() {
           />
         </CardContent>
       </Card>
+
+      {/* Removing someone spends money: the seat is refunded under the
+          organiser tier, which is a full refund at any notice. One click with
+          no confirmation and no mention of the refund is not a decision the
+          organiser got to make. */}
+      <AlertDialog
+        open={pendingRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRemoval(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {pendingRemoval?.name ?? "this participant"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  They lose access to {plan.title} and their seat is released
+                  back to the event.
+                </p>
+                <p>
+                  Because you are removing them, their seat is refunded in full
+                  under the organiser tier of the cancellation policy — at any
+                  notice, including after the session has started. A seat that
+                  was never paid for refunds nothing.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep them enrolled</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              onClick={handleConfirmRemoval}
+            >
+              Remove and refund
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

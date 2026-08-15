@@ -26,11 +26,13 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useCurrency } from "@/hooks/useCurrency";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 
 interface PendingPayment {
   id: string;
-  type: "consultation" | "subscription" | "webinar" | "class";
+  /** `trial` was missing here while the API had been emitting it since #1046. */
+  type: "consultation" | "subscription" | "webinar" | "class" | "trial";
   title: string;
   consultantName: string;
   amount: number;
@@ -188,8 +190,36 @@ export function PendingPaymentsWidget({
     setCancelTarget(null);
   }, [cancelTarget, cancelGatewayPending, cancelApprovalPending]);
 
+  // Widget-shaped, not absent. `return null` collapsed the sidebar column and
+  // then pushed everything back down when the query landed.
   if (loading) {
-    return null;
+    return (
+      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden h-full flex flex-col">
+        <div className="px-5 py-4 border-b border-border shrink-0">
+          <h3 className="flex items-center gap-2 font-semibold text-foreground text-sm">
+            <CreditCard className="h-4 w-4 text-muted-foreground/70" />
+            Pending Payments
+          </h3>
+        </div>
+        <div className="divide-y divide-border flex-1">
+          {[0, 1].map((row) => (
+            <div key={row} className="px-5 py-3.5 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="h-3.5 w-2/3 rounded bg-muted animate-pulse" />
+                  <div className="h-3 w-1/3 rounded bg-muted animate-pulse" />
+                </div>
+                <div className="h-3.5 w-14 rounded bg-muted animate-pulse" />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="h-3 w-24 rounded bg-muted animate-pulse" />
+                <div className="h-7 w-20 rounded-md bg-muted animate-pulse" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   if (error) {
@@ -269,7 +299,13 @@ export function PendingPaymentsWidget({
                   </p>
                 </div>
                 <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
-                  {formatPrice(payment.amount)}
+                  {/* `formatPrice` assumes INR paise and applies the viewer's
+                      FX rate, so a payment already denominated in another
+                      currency was converted a second time and relabelled.
+                      Only INR rows go through the converter now. */}
+                  {payment.currency && payment.currency.toUpperCase() !== "INR"
+                    ? formatCurrencyAmount(payment.amount, payment.currency)
+                    : formatPrice(payment.amount)}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2.5">
@@ -357,6 +393,15 @@ export function PendingPaymentsWidget({
                       size="sm"
                       className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
                       onClick={() => {
+                        // #1167 — a trial has a branded checkout page of our
+                        // own (`payment.id` IS the TrialSession id here), which
+                        // shows the amount, the duration and the hold deadline
+                        // before handing off to the gateway. Everything else
+                        // still opens the gateway link directly.
+                        if (payment.type === "trial") {
+                          router.push(`/checkout/plans/trial/${payment.id}`);
+                          return;
+                        }
                         if (
                           payment.paymentUrl &&
                           /^https?:\/\//.test(payment.paymentUrl)
@@ -370,7 +415,9 @@ export function PendingPaymentsWidget({
                       }}
                     >
                       Pay Now
-                      <ExternalLink className="ml-1 h-3 w-3" />
+                      {payment.type !== "trial" && (
+                        <ExternalLink className="ml-1 h-3 w-3" />
+                      )}
                     </Button>
                   </span>
                 )}

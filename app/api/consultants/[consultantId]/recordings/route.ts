@@ -57,6 +57,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         search,
         page,
         limit,
+        // #1166 ORG-6 — personal dashboard endpoint, so pin personal
+        // (ADR 19). An org recordings surface would pass its own orgId.
+        organizationId: null,
       },
     );
 

@@ -332,6 +332,7 @@ export function useConsultantAppointmentsAdapter(
             consultant={activeVm.counterpart.name}
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
+            appointmentId={activeVm.appointmentId}
           />
 
           <UnscheduleConfirmationDialog

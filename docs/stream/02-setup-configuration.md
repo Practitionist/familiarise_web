@@ -108,7 +108,7 @@ STREAM_SYNC_SECRET=""
 DATABASE_URL=""
 DIRECT_URL=""
 
-# NextAuth
+# Better Auth
 NEXTAUTH_SECRET=""
 NEXTAUTH_URL=""
 
@@ -476,14 +476,16 @@ This provider manages both chat and video client connections. See the actual imp
 
 ```typescript
 import StreamProvider from "@/providers/StreamProvider";
-import { getServerSession } from "next-auth";
+import { headers } from "next/headers";
+
+import { auth } from "@/lib/auth";
 
 export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession();
+  const session = await auth.api.getSession({ headers: await headers() });
 
   return (
     <html lang="en">

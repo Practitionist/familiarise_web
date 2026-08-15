@@ -3,7 +3,7 @@ title: Personal-vs-org dashboard split by org-ness, and one navigation entry per
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-07-30
+last-reviewed: 2026-08-14
 ---
 
 # ADR 19 — Dashboards split by org-ness, and a nav entry is a destination
@@ -59,3 +59,13 @@ Because the same permission matrix now backs the navigation, the guards and the 
 The failure has an inverted form that the matrix does not catch, and the organization Requests entry had it. Its gate was `myArrangement.read`, an exact-role EXPERT key, while the page behind it admits anyone whose membership carries a `consultantProfileId`. An OWNER who also delivers could therefore reach the page by URL but had no navigation entry leading to it — a reachable surface with no way to reach it, which is as much a drift as a visible tab that 403s. The gate now tests the profile, which is the real predicate, and keeps the role check only as the cheap path for the common case. The lesson generalizes: a nav gate has to encode the same condition the page enforces, not a role that usually implies it.
 
 No redirect layer was written for the routes that moved. The product is pre-MVP, no URL has escaped into a bookmark, a sent email or a delivered notification, and the three in-app callers of moved routes were repointed instead. A post-launch move of the same kind would need redirects and should not read this decision as precedent.
+
+## Addendum (2026-08-14) — the seam is closed on both sides (#1166)
+
+The org-scoping audit found that the split had shipped with a hole and a workaround stacked on top of it, and this addendum records how both were resolved.
+
+The hole was in the `orgMember` scope of the shared appointments query. Its participation filter covered sessions a member booked and sessions a member delivers, but a webinar or class registrant appears in neither: group events share one `Appointment` and registrants exist only as slot holders. An org-sponsored attendee's session was therefore invisible on both dashboards — the personal side excludes org rows by design, and the org side could not match them. The scope now carries a third arm on slot membership, mirroring the predicate the consultee events read has always used, so attendance is participation everywhere.
+
+The workaround was that the consultee Home and Payments pages defaulted org members to `orgScope=all`, precisely because the org dashboard could not show those sessions. With the attendee arm in place, both pages were reverted to the personal default their sibling Appointments page uses, which restores the rule this decision states: personal surfaces pin `organizationId: null`, and org activity is read in the org dashboard. The same personal pin was extended to the consultant Home read and to the legacy consultee dashboard API routes, which had predated the split and still aggregated across contexts.
+
+One rule is also narrowed. The MANAGER-facing org appointments list previously matched sessions the org hosts or merely funded, while the detail page behind each row admits only sessions the org actually owns, so a funded-elsewhere row was a link to a 404. The list now matches org-owned rows only. Visibility into seats an organization funded in another organization's events is the responsibility of the money views, which already carry those payments.

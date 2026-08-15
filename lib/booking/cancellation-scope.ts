@@ -37,11 +37,13 @@ import {
 const LIVE_SLOT_STATUSES = ["SCHEDULED", "RESCHEDULED"] as const;
 
 export type BookingRefundContext = {
-  /** The single SUCCEEDED, non-zero payment funding this booking, if any. */
+  /** The single SUCCEEDED payment funding this booking (zero-amount credit-funded included), if any. */
   paidPayment: {
     id: string;
     /** Gross captured — the base the policy percentage applies to. */
     amountPaise: number;
+    /** #1161 — free_ (credit-funded) detection for the restoration rail. */
+    paymentIntent: string;
     /**
      * Gross less anything already given back. Callers must clamp to this: a
      * percentage of the gross overshoots on a payment with an earlier partial
@@ -114,13 +116,19 @@ export async function resolveBookingRefundContext(
       payment: {
         where: {
           paymentStatus: "SUCCEEDED",
-          amount: { gt: 0 },
+          // #1161 — no amount floor: a fully-credit-funded payment (amount 0,
+          // free_ intent) must surface here or the cancel route's credit-
+          // restoration branch can never fire (it was dead code behind this
+          // filter — caught by the #1180 preview work).
           deletedAt: null,
           ...(payerUserId ? { userId: payerUserId } : {}),
         },
         select: {
           id: true,
           amount: true,
+          // #1161 — free_ detection: a fully-credit-funded payment refunds as
+          // credit restoration, which the amount-based tier math cannot see.
+          paymentIntent: true,
           ...REFUNDABLE_BALANCE_SELECT,
         },
         orderBy: { createdAt: "asc" },
@@ -164,6 +172,7 @@ export async function resolveBookingRefundContext(
     ? {
         id: payment.id,
         amountPaise: Number(payment.amount),
+        paymentIntent: payment.paymentIntent,
         refundablePaise: refundableBalancePaise(Number(payment.amount), payment),
       }
     : null;

@@ -81,9 +81,14 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
-  // Write both Redis keys concurrently to minimize inconsistency window
+  // Write both Redis keys concurrently to minimize inconsistency window.
+  // #697 INF-1 — 24h TTL: an OFFLINE phase whose owner loses access must not
+  // keep the platform down forever. Every setMaintenanceState call refreshes
+  // the clock, so a tended window outlives the TTL; an abandoned one expires
+  // to OFF. Long windows need a refresh at least daily (runbook rule).
+  const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
   await Promise.all([
-    redis.set(REDIS_KEYS.PHASE, phase),
+    redis.set(REDIS_KEYS.PHASE, phase, { ex: MAINTENANCE_KEY_TTL_SECONDS }),
     redis.set(
       REDIS_KEYS.CONFIG,
       JSON.stringify({
@@ -92,6 +97,7 @@ export async function setMaintenanceState(
         bypassSecret: config.bypassSecret ?? null,
         betterstackIncidentId: config.betterstackIncidentId ?? null,
       }),
+      { ex: MAINTENANCE_KEY_TTL_SECONDS },
     ),
   ]);
 

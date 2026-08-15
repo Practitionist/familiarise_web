@@ -2,12 +2,12 @@
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+  ResponsiveModalTrigger,
+} from "@/components/ui/responsive-modal";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useEventsByUser } from "@/hooks/useEvents";
 import { PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
@@ -35,6 +36,10 @@ export const CreateChannelDialog = ({
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { client, setActiveChannel } = useChatContext();
+  // Creating a channel is an explicit "take me there". Below `md` the
+  // conversation pane stays hidden until this runs, so without it the new
+  // channel opens behind the list the dialog just closed over.
+  const { openConversation } = useChatPane();
   const { toast } = useToast();
 
   // Fetch user's events
@@ -109,10 +114,6 @@ export const CreateChannelDialog = ({
         // Event-linked channel creation - use server-side API with full participant lists
         const [eventType, eventId] = selectedEvent.split("-");
 
-        console.log(
-          `Creating ${eventType} channel for event ${eventId} via API`,
-        );
-
         const response = await fetch("/api/stream/channels/create", {
           method: "POST",
           headers: {
@@ -132,8 +133,6 @@ export const CreateChannelDialog = ({
           throw new Error(result.error || "Failed to create channel");
         }
 
-        console.log("Channel created via API:", result.data);
-
         // Find the created channel and set it as active
         const channelId = `${eventType}-${eventId}`;
         const channel = client.channel("team", channelId);
@@ -141,8 +140,8 @@ export const CreateChannelDialog = ({
         // Query the channel to ensure it's loaded and properly synchronized
         try {
           await channel.query();
-          console.log("Channel queried successfully:", channel.cid);
           setActiveChannel(channel);
+          openConversation();
         } catch (queryError) {
           console.error("Error querying created channel:", queryError);
           // Still show success but mention refresh might be needed
@@ -157,10 +156,6 @@ export const CreateChannelDialog = ({
         // Custom channel creation - use client-side creation (no predefined participants)
         const channelId = crypto.randomUUID();
 
-        console.log(
-          `Creating custom team channel: ${channelId} with name: ${channelName}`,
-        );
-
         const channel = client.channel("team", channelId, {
           name: channelName,
           members: [currentUserId], // Only creator for custom channels
@@ -168,10 +163,10 @@ export const CreateChannelDialog = ({
         });
 
         await channel.create();
-        console.log(`Created custom channel ${channel.cid}`);
 
         // Set the new channel as active
         setActiveChannel(channel);
+        openConversation();
 
         toast({
           title: "Success",
@@ -201,7 +196,9 @@ export const CreateChannelDialog = ({
   };
 
   return (
-    <Dialog
+    // ResponsiveModal, so this becomes a bottom sheet on a phone instead of a
+    // 425px-wide centred dialog squeezed onto a 375px screen.
+    <ResponsiveModal
       open={open}
       onOpenChange={(isOpen) => {
         setOpen(isOpen);
@@ -212,19 +209,21 @@ export const CreateChannelDialog = ({
         }
       }}
     >
-      <DialogTrigger asChild>
+      <ResponsiveModalTrigger asChild>
         <Button
           variant="ghost"
           size="sm"
-          className="p-1 text-white hover:bg-blue-700"
+          aria-label="Create a channel"
+          title="Create a channel"
+          className="p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <PlusIcon className="h-4 w-4" />
         </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>Create New Channel</DialogTitle>
-        </DialogHeader>
+      </ResponsiveModalTrigger>
+      <ResponsiveModalContent className="sm:max-w-[425px]">
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>Create New Channel</ResponsiveModalTitle>
+        </ResponsiveModalHeader>
         <form onSubmit={handleCreateChannel} className="space-y-4 pt-4">
           <div className="space-y-2">
             <Label htmlFor="eventSelect">
@@ -268,7 +267,7 @@ export const CreateChannelDialog = ({
               required // Make name required
             />
             {selectedEvent && selectedEvent !== "custom" && (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Channel name is set by the selected event.
               </p>
             )}
@@ -278,7 +277,7 @@ export const CreateChannelDialog = ({
             {isLoading ? "Creating..." : "Create Channel"}
           </Button>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 };

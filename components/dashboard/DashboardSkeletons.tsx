@@ -39,8 +39,25 @@ export function PageSkeleton() {
 export function ChatSkeleton() {
   return (
     <div className="-m-4 flex h-[calc(100dvh-3.5rem-4rem)] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem)] lg:-m-8">
-      {/* Channel list */}
-      <div className="hidden w-72 shrink-0 space-y-4 border-r border-border p-4 sm:block">
+      <ChatSkeletonPanes />
+    </div>
+  );
+}
+
+/**
+ * The two panes without the full-bleed wrapper above, for the surfaces that
+ * already supply their own — the Messages tabs, which show this while the
+ * Stream socket connects. Nesting the wrapped version there would apply the
+ * negative margin and the height calc twice.
+ */
+export function ChatSkeletonPanes() {
+  return (
+    <div className="flex h-full w-full overflow-hidden">
+      {/* Channel list. Mirrors ChatLayout: full-width and visible below `md`,
+          a fixed rail above it. The old `hidden sm:block` was the inverse of
+          the loaded state — under 640px it showed the conversation and hid the
+          list, which is the one pane the chat actually shows there. */}
+      <div className="w-full shrink-0 space-y-4 border-r border-border p-4 md:w-80">
         <Skeleton className="h-10 w-full" />
         <div className="space-y-2">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
@@ -55,8 +72,9 @@ export function ChatSkeleton() {
         </div>
       </div>
 
-      {/* Conversation */}
-      <div className="flex flex-1 flex-col">
+      {/* Conversation. Hidden below `md`, exactly as ChatLayout hides it until
+          openConversation() runs. */}
+      <div className="hidden flex-1 flex-col md:flex">
         <div className="flex items-center gap-3 border-b border-border p-4">
           <Skeleton className="h-10 w-10 rounded-full" />
           <Skeleton className="h-5 w-40" />

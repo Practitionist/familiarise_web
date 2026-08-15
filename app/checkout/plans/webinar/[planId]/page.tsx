@@ -30,6 +30,7 @@ import {
   handleUnifiedCheckout,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
+import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import type { AppliedDiscount } from "@/types/checkout";
@@ -70,7 +71,12 @@ export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
   webinars: (PrismaWebinar & {
     appointment:
       | (Appointment & {
-          slotsOfAppointment: SlotOfAppointment[];
+          // `user` is what makes a seat count a seat — `fetchWebinarPlanDetail`
+          // has always included it, the type simply never said so, and
+          // `countWebinarParticipants` answers 0 in silence when it is absent.
+          slotsOfAppointment: (SlotOfAppointment & {
+            user: { id: string }[];
+          })[];
         })
       | null;
   })[];
@@ -258,6 +264,20 @@ export default function WebinarCheckoutPage({
         if (targetWebinar.status === "CANCELLED") {
           throw new Error("This webinar has been cancelled.");
         }
+        // Seats can go while this tab sits open. The server holds the real
+        // gate under the allocation lock; this stops the buyer paying into a
+        // rejection.
+        if (
+          getWebinarCapacity({
+            webinar: targetWebinar,
+            plan: { maxParticipants: planData.data.maxParticipants },
+            excludeUserIds: planData.data.consultantProfile?.user?.id
+              ? [planData.data.consultantProfile.user.id]
+              : [],
+          }).isFull
+        ) {
+          throw new Error("This webinar is now full.");
+        }
 
         const checkoutData = createCheckoutData({
           appointmentType: "WEBINAR",
@@ -326,9 +346,10 @@ export default function WebinarCheckoutPage({
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
-      resolvedSearchParams,
       planData?.data?.id,
       planData?.data?.webinars,
+      planData?.data?.maxParticipants,
+      planData?.data?.consultantProfile?.user?.id,
       handleApiError,
       handleCheckoutSuccess,
       toast,
@@ -339,6 +360,66 @@ export default function WebinarCheckoutPage({
       currency,
     ],
   );
+
+  /**
+   * Re-check the seat count against the click, not the last render.
+   *
+   * The gate above lives inside `handleCheckout`, whose only production caller
+   * is the development mock-pay button — the real Razorpay and Stripe controls
+   * take `checkoutData` and open the gateway themselves. So the soft gate was
+   * inert exactly where money moves: a webinar that filled while this tab sat
+   * open still let the buyer pay into a rejection.
+   *
+   * `no-store` because the plan endpoint is cached `s-maxage=60`, and a
+   * minute-old seat count is the thing being corrected. Refreshing `planData`
+   * also re-derives `isSoldOut`, so both gateway buttons disable behind this.
+   *
+   * A failed check does NOT block the sale: the allocation lock on the server
+   * is the authority, and refusing a paying customer because a display query
+   * timed out trades a real sale for a race we do not own.
+   */
+  const revalidateSeatsBeforePayment = useCallback(async () => {
+    if (!validatedSearchParams?.eventId) return true;
+    try {
+      const response = await fetch(
+        `/api/plans/webinars/${resolvedParams.planId}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return true;
+      const fresh: PlanResponse = await response.json();
+      const freshWebinar = fresh.data?.webinars?.find(
+        (w) => w.id === validatedSearchParams.eventId,
+      );
+      if (!fresh.data || !freshWebinar) return true;
+
+      setPlanData(fresh);
+
+      if (
+        getWebinarCapacity({
+          webinar: freshWebinar,
+          plan: { maxParticipants: fresh.data.maxParticipants },
+          excludeUserIds: fresh.data.consultantProfile?.user?.id
+            ? [fresh.data.consultantProfile.user.id]
+            : [],
+        }).isFull
+      ) {
+        toast({
+          title: "This webinar is now full",
+          description:
+            "The last seat went while this page was open, so we stopped the payment before you were charged.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }, [
+    resolvedParams.planId,
+    validatedSearchParams?.eventId,
+    toast,
+  ]);
 
   useEffect(() => {
     async function fetchPlanData() {
@@ -494,8 +575,26 @@ export default function WebinarCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  const nextSession =
-    planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
+  // The instance being bought, not the plan's first one — ?eventId names it.
+  const targetWebinar = validatedSearchParams?.eventId
+    ? planDetails?.webinars?.find((w) => w.id === validatedSearchParams.eventId)
+    : planDetails?.webinars?.[0];
+
+  // Date and time of the session being paid for, for the same reason.
+  const nextSession = targetWebinar?.appointment?.slotsOfAppointment?.[0];
+
+  // Seats, honestly. This line used to print the PLAN's maxParticipants, which
+  // an instance override silently contradicts, and counted nobody — so a sold
+  // out webinar advertised its full capacity and took the money anyway.
+  const capacity =
+    targetWebinar && planDetails
+      ? getWebinarCapacity({
+          webinar: targetWebinar,
+          plan: { maxParticipants: planDetails.maxParticipants },
+          excludeUserIds: userDetails?.id ? [userDetails.id] : [],
+        })
+      : null;
+  const isSoldOut = capacity?.isFull ?? false;
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -586,8 +685,14 @@ export default function WebinarCheckoutPage({
               <div>{planDetails?.durationInHours || 1} hours</div>
             </div>
             <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Max Participants</div>
-              <div>{planDetails?.maxParticipants || "Unlimited"}</div>
+              <div className="text-muted-foreground">Seats left</div>
+              <div className={isSoldOut ? "font-medium text-red-600" : ""}>
+                {capacity
+                  ? isSoldOut
+                    ? "Sold out"
+                    : `${capacity.remaining} of ${capacity.max}`
+                  : (planDetails?.maxParticipants ?? "—")}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Language</div>
@@ -815,7 +920,11 @@ export default function WebinarCheckoutPage({
                       </div>
                     </div>
                   </div>
-                  {gateway.isActive ? (
+                  {isSoldOut ? (
+                    <Button variant="outline" disabled>
+                      Sold out
+                    </Button>
+                  ) : gateway.isActive ? (
                     <div className="flex gap-2">
                       {validatedSearchParams &&
                       gateway.gateway === "RAZORPAY" ? (
@@ -834,7 +943,8 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
+                          onBeforeCheckout={revalidateSeatsBeforePayment}
+                          disabled={isMaintenanceBlocked || isSoldOut}
                         />
                       ) : validatedSearchParams &&
                         gateway.gateway === "STRIPE" ? (
@@ -853,7 +963,8 @@ export default function WebinarCheckoutPage({
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
+                          onBeforeCheckout={revalidateSeatsBeforePayment}
+                          disabled={isMaintenanceBlocked || isSoldOut}
                         />
                       ) : null}
                       {process.env.NODE_ENV === "development" && (

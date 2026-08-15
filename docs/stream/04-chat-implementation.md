@@ -61,16 +61,33 @@ Consistent channel ID naming ensures predictable behavior and prevents duplicate
 
 ### Direct Messages
 
-**Format**: `{userId1}-{userId2}` (alphabetically sorted)
+Direct-message ids are derived, never stored. The pair of user ids is put into a
+fixed order and the channel id is built from it, so both participants compute the
+same id independently and the conversation is found rather than recreated.
 
-**Implementation**:
+**Format**: `dm-{idA}-{idB}` for a personal conversation, where `idA` and `idB`
+are the two user ids in **code-unit** order. An organization-scoped conversation
+uses `dmo-{orgDigest}-{pairDigest}` instead, and a personal pair whose ids are
+too long for Stream's 64-character ceiling falls back to a hashed `dmh-` form.
+
+**Implementation**: always call the helper. Do not re-derive the id inline.
 
 ```typescript
-// Alphabetically sort user IDs using localeCompare
-const channelId = [currentUserId, targetUserId]
-  .sort((a, b) => a.localeCompare(b))
-  .join("-");
+import { getDmChannelId } from "@/lib/stream-utils";
+
+const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 ```
+
+> **Never sort these ids with `localeCompare`.** It orders by ICU collation,
+> which is case-insensitive at the primary level and depends on the runtime's
+> ICU build and default locale, so the same pair of ids produces different
+> channel ids in different environments. This is not hypothetical: commit
+> `01162093` changed a plain `.sort()` to `.sort((a, b) => a.localeCompare(b))`
+> and silently re-keyed most mixed-case pairs, orphaning their history behind a
+> new empty channel. Better Auth ids are mixed-case and cuids are lowercase, so
+> the two orderings genuinely disagree here. Both variants were still live in
+> production months later. The helper uses `a < b ? [a, b] : [b, a]`, which is
+> code-unit ordering and is stable everywhere.
 
 **Example**:
 
@@ -241,11 +258,12 @@ export async function createChannel({
 export async function createDirectMessageChannel(
   currentUserId: string,
   targetUserId: string,
+  // Context this conversation belongs to. Omitted or null means personal, and
+  // the channel then carries no org tag. Every caller must pass the same value
+  // the reconciler will later derive, or the two compute different ids.
+  organizationId?: string | null,
 ) {
-  // Create a unique channel ID for the DM using alphabetical sorting
-  const channelId = [currentUserId, targetUserId]
-    .sort((a, b) => a.localeCompare(b))
-    .join("-");
+  const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 
   return createChannel({
     channelType: "messaging",
@@ -579,7 +597,22 @@ await channel.addMembers(members); // Separate operation
 
 ### 3. Consistent ID Formatting
 
-**Good**:
+**Good** — one helper owns the derivation, so every call site agrees:
+
+```typescript
+import { getDmChannelId } from "@/lib/stream-utils";
+
+const channelId = getDmChannelId(userId1, userId2, organizationId);
+```
+
+**Bad** — unsorted, so the two participants compute different ids:
+
+```typescript
+const channelId = `${userId1}-${userId2}`;
+```
+
+**Also bad, and harder to spot** — sorted, but by a locale-dependent
+comparator, so the same pair yields different ids on different machines:
 
 ```typescript
 const channelId = [userId1, userId2]
@@ -587,11 +620,8 @@ const channelId = [userId1, userId2]
   .join("-");
 ```
 
-**Bad**:
-
-```typescript
-const channelId = `${userId1}-${userId2}`; // Not sorted!
-```
+This second form looks correct and has already shipped once. See the note under
+[Direct Messages](#direct-messages) for what it cost.
 
 ### 4. Proper Error Handling
 

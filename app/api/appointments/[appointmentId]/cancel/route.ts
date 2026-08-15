@@ -17,6 +17,7 @@ import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
   refundWholeEventPayments,
@@ -169,7 +170,18 @@ export async function POST(
 
     const isPrivilegedUser = isPrivileged(session.user.role);
 
-    if (!isParticipant && !isPrivilegedUser) {
+    // #1166 — an admin of the org that FUNDS this booking may cancel it. They
+    // act on the payer side: the tier logic below must never read them as
+    // consultant-initiated.
+    const isOrgAdminActor =
+      !isParticipant &&
+      !isPrivilegedUser &&
+      (await isOrgAdminOfAppointment(
+        session.user.id,
+        appointment.organizationId,
+      ));
+
+    if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
@@ -428,6 +440,14 @@ export async function POST(
             session.user.id !== undefined &&
             consultantUserId === session.user.id) ||
           (isPrivilegedUser && session.user.id !== consulteeUserId);
+        // #1161 — a fully-credit-funded booking: its refund IS the credit
+        // restoration, all-or-nothing. Full restoration when the cancellation
+        // is not the buyer's choice or falls in a full-refund window; a
+        // payer-initiated late cancel escalates (partial credit restoration is
+        // an unmade product call — same residual as attendee-leave).
+        const isFreeCreditFunded =
+          paidPayment.amountPaise === 0 &&
+          paidPayment.paymentIntent.startsWith("free_");
         // A booking with no session ever scheduled has INFINITE notice, not
         // negative notice. Mapping "never allocated" onto the same -1 as
         // "already started" made cancelling earlier score worse than
@@ -450,47 +470,81 @@ export async function POST(
         // payment with an earlier partial refund the gross overshoots, the
         // operation throws AMOUNT_EXCEEDS_REFUNDABLE, and the catch below turns
         // that into "refunded 0" — the buyer loses the remainder they were owed.
+        // #1006 — linear per-session proration. The refundable base is the
+        // undelivered share of the plan price; the policy tier then applies to
+        // that base. A fully-undelivered subscription reduces to the old
+        // whole-price behavior.
+        // The denominator is every session the plan ever held time for, which
+        // is `slotsTotal` — NOT completed+live. Summing only those two drops
+        // every terminal-but-not-completed session out of the plan, and the
+        // undelivered share is then measured against a plan that has shrunk:
+        // three UNVERIFIED past sessions (held offline, no MeetingSession row)
+        // and seven live ones scored 7/7 and refunded the whole price for a
+        // plan that was 30% consumed.
+        //
+        // `slotsTotal === 0` keeps the full gross deliberately: that is the
+        // never-scheduled plan, which `neverScheduled` above already tiers at
+        // 100%. Zeroing the base there would refund nothing for a plan the
+        // buyer paid for and never received a minute of.
+        const proratedBasePaise =
+          appointment.subscription && bookingCtx.slotsTotal > 0
+            ? Math.floor(
+                (paidPayment.amountPaise * bookingCtx.sessionsRemaining) /
+                  bookingCtx.slotsTotal,
+              )
+            : paidPayment.amountPaise;
         const refundAmount = Math.min(
-          Math.floor((paidPayment.amountPaise * refundPct) / 100),
+          Math.floor((proratedBasePaise * refundPct) / 100),
           paidPayment.refundablePaise,
         );
 
-        // #1006 — a subscription that has already delivered sessions has no
-        // agreed proration rule, and the tier alone would hand back the full
-        // plan price for sessions the consultant has already held. The
-        // cancellation stands; the refund is escalated rather than guessed.
-        const needsProrationRule =
-          !!appointment.subscription && bookingCtx.sessionsCompleted > 0;
-
-        if (needsProrationRule) {
-          // Durable, not just a log line: this is money owed to a buyer whose
-          // sessions have already been cancelled, so it has to land somewhere an
-          // ops surface actually drains. recordSystemError is that surface.
-          await recordSystemError({
-            organizationId: appointment.organizationId ?? null,
-            category: "PAYMENT",
-            summary:
-              `Cancelled a partially-consumed subscription (${bookingCtx.sessionsCompleted} of ` +
-              `${bookingCtx.sessionsCompleted + bookingCtx.sessionsRemaining} sessions delivered); ` +
-              `refund needs the #1006 proration rule and is owed manually`,
-            err: new Error("SUBSCRIPTION_PRORATION_UNDEFINED"),
-            context: {
-              appointmentId,
-              subscriptionId: appointment.subscription?.id,
-              paymentId: paidPayment.id,
-              paidPaise: paidPayment.amountPaise,
-              refundablePaise: paidPayment.refundablePaise,
-              sessionsCompleted: bookingCtx.sessionsCompleted,
-              sessionsRemaining: bookingCtx.sessionsRemaining,
-              tierRefundPct: refundPct,
-            },
-          }).catch(() => {});
-          refund = {
-            amountRefundedPaise: 0,
-            refundPct,
-            status: "MANUAL_REVIEW",
-            requiresManualReview: true,
-          };
+        // Credit-funded first: its refund is a credit restoration, which is
+        // all-or-nothing, so the tiered amount above does not apply to it.
+        // (#1006's partly-consumed escalation used to branch here; the linear
+        // proration in `proratedBasePaise` replaced it — see the PR for why.)
+        if (isFreeCreditFunded) {
+          if (refundPct === 100) {
+            try {
+              const restored = await refundBookingPayment({
+                paymentId: paidPayment.id,
+                reason: "cancellation (credit-funded booking, full restoration)",
+                initiatedByUserId: session.user.id,
+              });
+              refund = {
+                // Report what the restoration actually returned. Hardcoding 0
+                // reintroduced the ambiguity this field exists to remove — the
+                // status says REFUNDED while the amount reads like the policy
+                // owed nothing.
+                amountRefundedPaise: restored.amountRefundedPaise,
+                refundPct: 100,
+                status: "REFUNDED",
+                requiresManualReview: false,
+              };
+            } catch (freeErr) {
+              Sentry.captureException(freeErr instanceof Error ? freeErr : new Error(String(freeErr)), { tags: { subsystem: "bookings" } });
+              refund = {
+                amountRefundedPaise: 0,
+                refundPct: 100,
+                status: "FAILED",
+                requiresManualReview: true,
+              };
+            }
+          } else {
+            await recordSystemError({
+              organizationId: appointment.organizationId ?? null,
+              category: "PAYMENT",
+              summary:
+                "Credit-funded booking cancelled inside a partial-refund window; partial credit restoration has no product rule yet (#1161)",
+              err: new Error("FREE_CREDIT_PARTIAL_RESTORATION_UNDEFINED"),
+              context: { appointmentId, paymentId: paidPayment.id, refundPct },
+            }).catch(() => {});
+            refund = {
+              amountRefundedPaise: 0,
+              refundPct,
+              status: "MANUAL_REVIEW",
+              requiresManualReview: true,
+            };
+          }
         } else if (refundAmount > 0) {
           try {
             const r = await refundBookingPayment({
@@ -650,10 +704,14 @@ export async function POST(
       name: session.user.name || "User",
       image: session.user.image,
     };
+    // #1169 PR 4 — three-way, matching the notification payload above: a
+    // platform/org actor is "system", never mislabeled as the consultee.
     const cancelledBy =
       session.user.id === notificationMeta.consultantUserId
         ? ("consultant" as const)
-        : ("consultee" as const);
+        : isParticipant
+          ? ("consultee" as const)
+          : ("system" as const);
 
     if (appointment.consultation) {
       const cpId =

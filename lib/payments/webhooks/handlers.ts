@@ -832,9 +832,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       notifUserIds.push(consultantUserId);
     }
 
+    // #1085 — the template renders a session time; omitting it left an empty
+    // placeholder in the user's very first booking notification.
+    const firstSlot = await prisma.slotOfAppointment.findFirst({
+      where: { appointmentId },
+      orderBy: { startsAt: "asc" },
+      select: { startsAt: true },
+    });
     void notifyAppointmentBooked(notifUserIds, {
       ...scope,
       appointmentId,
+      dateTime: firstSlot?.startsAt.toISOString(),
       appointmentType: metadata.appointmentType,
       consultantName: consultantNameForNotif,
       consulteeName: userName || "User",
@@ -901,6 +909,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               },
             },
           },
+          // A trial appointment has none of the four relations above — the
+          // consultant hangs off TrialSession directly. Without this the
+          // resolution below yields undefined, the guard fails, and the TRIAL
+          // branch added below never executes for the only appointments that
+          // can reach it.
+          trialSession: {
+            include: { consultantProfile: true },
+          },
         },
       });
 
@@ -910,7 +926,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         appointmentForChannel?.subscription?.subscriptionPlan
           ?.consultantProfile ||
         appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
-        appointmentForChannel?.class?.classPlan?.consultantProfile;
+        appointmentForChannel?.class?.classPlan?.consultantProfile ||
+        // `TrialSession.consultantProfile` is the required, authoritative
+        // relation — not `trialSession.subscriptionPlan.consultantProfile`,
+        // which is the plan author and can differ.
+        appointmentForChannel?.trialSession?.consultantProfile;
 
       const consultantUserId = consultantProfile?.userId;
 

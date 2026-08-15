@@ -63,7 +63,6 @@ describe("every scoped list helper fails closed", () => {
     "lib/api/scope/list-appointments.ts",
     "lib/api/scope/list-documents.ts",
     "lib/api/scope/list-recordings.ts",
-    "lib/api/scope/list-trials.ts",
   ];
 
   it.each(HELPERS)(

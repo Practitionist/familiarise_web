@@ -150,9 +150,17 @@ async function detectDoubleBookings(): Promise<{
     // overlaps involving unpaid/tentative holds (PENDING, APPROVED,
     // APPROVED_PENDING_PAYMENT) are caught too — the old payment-only query
     // missed them.
+    // #1169 PR 6 — window-bound: reconciling ALL future slots scans without
+    // limit as the book grows; overlaps meaningfully surface within the
+    // scheduling horizon, and later runs cover later windows.
+    const RECONCILE_WINDOW_DAYS = 60;
+    const windowEnd = new Date(
+      Date.now() + RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    );
     const confirmedSlots = await prisma.slotOfAppointment.findMany({
       where: {
         endsAt: { gt: new Date() }, // Only future slots
+        startsAt: { lt: windowEnd },
         appointment: {
           AND: [
             { OR: buildOccupiedAppointmentFilter() },

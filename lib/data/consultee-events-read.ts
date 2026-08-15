@@ -22,6 +22,36 @@ import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
+/**
+ * #1163 — the live proposal, so the consultee SEES a consultant-initiated
+ * reschedule and can answer it (accept / decline / withdraw), instead of
+ * "Awaiting schedule confirmation" forever.
+ *
+ * Only the two 1:1 kinds carry proposals (`supportsProposals`), and the respond
+ * route refuses anything else, so this rides consultation + subscription and
+ * nothing else — loading it on a group event would cost a relation read per row
+ * on a TTFB-bound query to render an answer nobody can give.
+ */
+const liveProposalInclude = {
+  where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+  orderBy: { createdAt: "desc" },
+  take: 1,
+  select: {
+    id: true,
+    status: true,
+    reason: true,
+    round: true,
+    expiresAt: true,
+    initiatorRole: true,
+    initiatedById: true,
+    proposedSlots: {
+      orderBy: { startsAt: "asc" },
+      // #1163 — the consultee card filters these to the current round.
+      select: { startsAt: true, endsAt: true, round: true },
+    },
+  },
+} satisfies Prisma.Appointment$rescheduleRequestsArgs;
+
 /** Thrown when the consulteeId has no profile — route maps to 404. */
 export class ConsulteeProfileNotFoundError extends Error {
   constructor(consulteeId: string) {
@@ -119,6 +149,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
+              rescheduleRequests: liveProposalInclude,
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -162,6 +193,7 @@ export async function readConsulteeEvents(
           },
           appointments: {
             include: {
+              rescheduleRequests: liveProposalInclude,
               slotsOfAppointment: {
                 orderBy: { startsAt: "asc" },
                 include: {

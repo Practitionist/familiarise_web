@@ -7,7 +7,10 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
-import { EventCheckoutLockUnavailableError } from "@/utils/appointmentlock";
+import {
+  EventCheckoutLockUnavailableError,
+  BookingLockUnavailableError,
+} from "@/utils/appointmentlock";
 import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
@@ -43,6 +46,12 @@ export async function POST(req: NextRequest) {
     // #828 — fast-path replay: a double-click / network retry / second tab
     // with the same key gets the original attempt's response, never a second
     // Payment + tentative slots + gateway order.
+    // #1093 §3 — a nullable unique deduplicates nothing: every keyless
+    // checkout previously had NO double-charge protection while the code read
+    // as though the index covered it. Mint server-side when absent so the
+    // column is never null in practice; the NOT NULL flip is staged for the
+    // pre-MVP reset.
+    validatedData.clientIdempotencyKey ??= globalThis.crypto.randomUUID();
     replayKey = validatedData.clientIdempotencyKey;
     if (replayKey) {
       const replay = await replayByIdempotencyKey(session.user.id, replayKey);
@@ -123,6 +132,20 @@ export async function POST(req: NextRequest) {
     // typed 503; classifyError is message-only and would mislabel it 500. Honor
     // the structured status so the client sees a retryable 503, not a 500.
     if (error instanceof EventCheckoutLockUnavailableError) {
+      return NextResponse.json(
+        {
+          error:
+            "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
+          errorType: error.code,
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // #1169 PR 1 — the slot/consultee booking locks fail closed the same way;
+    // without this branch classifyError mislabelled the outage as a 500.
+    if (error instanceof BookingLockUnavailableError) {
       return NextResponse.json(
         {
           error:

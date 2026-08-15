@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
-import { lockSlotBooking, unlockSlotBooking } from "@/utils/appointmentlock";
+import {
+  lockSlotBooking,
+  unlockSlotBooking,
+  BookingLockUnavailableError,
+} from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import {
@@ -45,7 +49,50 @@ export async function POST(req: NextRequest) {
       slotOfAvailabilityWeeklyId,
       slotOfAvailabilityCustomId,
       consultationPlanId,
+      organizationId,
     } = parseResult.data;
+
+    // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
+    // the request carried no org, so the approved booking billed the member's
+    // personal card with no wallet debit, seat consumption, or attribution.
+    // The request now carries it, stamped onto the Appointment below; the
+    // approval pay-link and Payment row inherit it from there.
+    if (organizationId) {
+      const [org, membership] = await Promise.all([
+        prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: { canSponsor: true, status: true },
+        }),
+        prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId,
+            },
+          },
+          select: { status: true },
+        }),
+      ]);
+      // Same gate the checkout path applies: PENDING_VERIFICATION orgs may
+      // still transact, anything else (suspended/inactive) may not. Without
+      // it a suspended org rides the Appointment and then the Payment row,
+      // and nothing re-checks status downstream.
+      const orgTransactable =
+        org?.status === "ACTIVE" || org?.status === "PENDING_VERIFICATION";
+      if (
+        !org?.canSponsor ||
+        !orgTransactable ||
+        membership?.status !== "ACTIVE"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This organization cannot sponsor your booking (it is not a sponsor org, it is not in good standing, or you are not an active member).",
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     const startTime = new Date(startsAt);
     const endTime = new Date(endsAt);
@@ -96,9 +143,10 @@ export async function POST(req: NextRequest) {
     let lock;
 
     try {
-      // ACQUIRE LOCK for this specific slot
+      // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
+      // per 30-min atom, so overlapping requests with different starts collide)
       // Use default 60s TTL (15s was too short for slow database operations)
-      lock = await lockSlotBooking(consultantProfileId, startsAt);
+      lock = await lockSlotBooking(consultantProfileId, startsAt, endsAt);
 
       console.log(
         JSON.stringify({
@@ -194,6 +242,9 @@ export async function POST(req: NextRequest) {
           appointment: {
             create: {
               appointmentType: "CONSULTATION",
+              // #1166 ORG-9 — org attribution rides the appointment from the
+              // moment the request exists.
+              organizationId: organizationId ?? null,
               slotsOfAppointment: {
                 create: slotChunksToCreate,
               },
@@ -279,6 +330,15 @@ export async function POST(req: NextRequest) {
           timestamp: new Date().toISOString(),
         }),
       );
+
+      // #1169 PR 1 — Redis-down fails closed with a structured 503; without
+      // this branch the outage fell through to the generic 500 below.
+      if (lockError instanceof BookingLockUnavailableError) {
+        return NextResponse.json(
+          { error: lockError.message },
+          { status: lockError.httpStatus },
+        );
+      }
 
       // Check if error is lock acquisition failure (type-safe)
       if (lockError instanceof SlotLockError) {
