@@ -8,30 +8,56 @@ import {
   CronLockUnavailableError,
   LONG_JOB_TTL_MS,
 } from "../../lib/cron/with-cron-lock";
-import {
+import redis, {
   acquireLock,
   releaseLock,
   isMockRedis,
   checkRedisHealth,
 } from "../../lib/redis";
+import prisma from "../../lib/prisma";
 
+// Both mocks are declared on the RELATIVE path while the module under test
+// imports the `@/` alias. tsconfig maps `@/*` → `./*`, so next/jest resolves
+// the two specifiers to one module and a single registration covers both.
 jest.mock("../../lib/redis", () => ({
+  __esModule: true,
+  // #1169 — the wrapper now writes the fleet heartbeat through the default
+  // export; without it `redis.set` is a TypeError swallowed by touchHeartbeat.
+  default: { set: jest.fn() },
   acquireLock: jest.fn(),
   releaseLock: jest.fn().mockResolvedValue(undefined),
   isMockRedis: jest.fn(),
   checkRedisHealth: jest.fn(),
 }));
 
+// #697 — the trail is reached through `await import("@/lib/prisma")` inside the
+// wrapper. Unmocked, a test run would load the real client.
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    systemJobExecution: { create: jest.fn(), update: jest.fn() },
+  },
+}));
+
 const mockAcquire = acquireLock as jest.Mock;
 const mockRelease = releaseLock as jest.Mock;
 const mockIsMock = isMockRedis as jest.Mock;
 const mockHealth = checkRedisHealth as jest.Mock;
+const mockSet = (redis as unknown as { set: jest.Mock }).set;
+const trail = (
+  prisma as unknown as {
+    systemJobExecution: { create: jest.Mock; update: jest.Mock };
+  }
+).systemJobExecution;
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsMock.mockReturnValue(false);
   mockHealth.mockResolvedValue(true);
   mockAcquire.mockResolvedValue("token-1");
+  mockSet.mockResolvedValue("OK");
+  trail.create.mockResolvedValue({ id: "exec-1" });
+  trail.update.mockResolvedValue({});
 });
 
 describe("withCronLock", () => {
@@ -40,7 +66,10 @@ describe("withCronLock", () => {
     await expect(
       withCronLock("dunning", { failMode: "closed" }, fn),
     ).resolves.toBe("done");
-    expect(mockAcquire).toHaveBeenCalledWith("cron:lock:dunning", 15 * 60 * 1000);
+    expect(mockAcquire).toHaveBeenCalledWith(
+      "cron:lock:dunning",
+      15 * 60 * 1000,
+    );
     expect(mockRelease).toHaveBeenCalledWith("cron:lock:dunning", "token-1");
   });
 
@@ -108,5 +137,137 @@ describe("withCronLock", () => {
     await expect(
       withCronLock("cleanup-auth-tokens", { failMode: "open" }, async () => 1),
     ).rejects.toBeInstanceOf(CronLockHeldError);
+  });
+});
+
+/**
+ * #697 INF-2 — the SystemJobExecution trail. The job is the product; the trail
+ * is bookkeeping about it. Every assertion here exists to keep that ordering
+ * true, because a trail that can fail a payout run is worse than no trail.
+ */
+describe("withCronLock job trail (#697)", () => {
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  it("opens a RUNNING row and closes it COMPLETED with a duration", async () => {
+    await withCronLock("dunning", { failMode: "closed" }, async () => "ok");
+
+    expect(trail.create).toHaveBeenCalledTimes(1);
+    expect(trail.create.mock.calls[0][0].data).toMatchObject({
+      jobId: "dunning",
+      jobName: "dunning",
+      status: "RUNNING",
+    });
+    expect(trail.update).toHaveBeenCalledTimes(1);
+    const finish = trail.update.mock.calls[0][0];
+    expect(finish.where).toEqual({ id: "exec-1" });
+    expect(finish.data.status).toBe("COMPLETED");
+    expect(finish.data.errorLog).toBeUndefined();
+    expect(typeof finish.data.durationMs).toBe("number");
+    expect(finish.data.endedAt).toBeInstanceOf(Date);
+  });
+
+  it("closes the row FAILED with the stack, and still rethrows", async () => {
+    const boom = new Error("payout gateway 500");
+    await expect(
+      withCronLock("process-payouts", { failMode: "closed" }, async () => {
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+
+    const finish = trail.update.mock.calls[0][0];
+    expect(finish.data.status).toBe("FAILED");
+    expect(finish.data.errorLog).toContain("payout gateway 500");
+  });
+
+  it("truncates errorLog — @db.Text is not a licence for unbounded stacks", async () => {
+    const huge = new Error("x".repeat(50_000));
+    await expect(
+      withCronLock("dunning", { failMode: "closed" }, async () => {
+        throw huge;
+      }),
+    ).rejects.toBe(huge);
+
+    expect(trail.update.mock.calls[0][0].data.errorLog).toHaveLength(8_000);
+  });
+
+  it("a failed trail OPEN never fails the job, and skips the close", async () => {
+    trail.create.mockRejectedValue(new Error("no DATABASE_URL"));
+    const fn = jest.fn().mockResolvedValue("still ran");
+
+    await expect(
+      withCronLock("cleanup-auth-tokens", { failMode: "open" }, fn),
+    ).resolves.toBe("still ran");
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    // No row id means nothing to update — and no second failure to swallow.
+    expect(trail.update).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed trail CLOSE never fails the job", async () => {
+    trail.update.mockRejectedValue(new Error("connection reset"));
+    await expect(
+      withCronLock("cleanup-auth-tokens", { failMode: "open" }, async () => 7),
+    ).resolves.toBe(7);
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed trail CLOSE never masks the job's own error", async () => {
+    trail.update.mockRejectedValue(new Error("connection reset"));
+    const boom = new Error("the real failure");
+    await expect(
+      withCronLock("dunning", { failMode: "closed" }, async () => {
+        throw boom;
+      }),
+    ).rejects.toBe(boom);
+  });
+
+  it("writes no trail when the lock is held — a skip is not a run", async () => {
+    mockAcquire.mockResolvedValue(null);
+    await expect(
+      withCronLock("dunning", { failMode: "closed" }, async () => 1),
+    ).rejects.toBeInstanceOf(CronLockHeldError);
+    expect(trail.create).not.toHaveBeenCalled();
+  });
+
+  it("writes no trail on the unlocked mock-Redis path", async () => {
+    mockIsMock.mockReturnValue(true);
+    await withCronLock(
+      "cleanup-auth-tokens",
+      { failMode: "open" },
+      async () => 1,
+    );
+    expect(trail.create).not.toHaveBeenCalled();
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #866 — the fleet dead-man. /api/health reads this one key, so every locked
+ * run has to refresh it and none of them may die trying.
+ */
+describe("withCronLock fleet heartbeat (#866)", () => {
+  it("refreshes cron:heartbeat:last with an ISO timestamp", async () => {
+    await withCronLock("dunning", { failMode: "closed" }, async () => null);
+
+    expect(mockSet).toHaveBeenCalledTimes(1);
+    const [key, value] = mockSet.mock.calls[0];
+    expect(key).toBe("cron:heartbeat:last");
+    expect(Number.isNaN(Date.parse(value as string))).toBe(false);
+  });
+
+  it("a failed heartbeat write never fails the job", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mockSet.mockRejectedValue(new Error("upstash 503"));
+
+    await expect(
+      withCronLock("dunning", { failMode: "closed" }, async () => "ok"),
+    ).resolves.toBe("ok");
+
+    warn.mockRestore();
   });
 });
