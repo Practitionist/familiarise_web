@@ -701,7 +701,23 @@ export async function GET(
       }
     }
 
-    return NextResponse.json({ data: slotsByDate }, { status: 200 });
+    return NextResponse.json(
+      { data: slotsByDate },
+      {
+        status: 200,
+        headers: {
+          // #1164 — browser-only cache for the polling grid. `private`, not
+          // the sibling's `public, s-maxage`: the same URL answers differently
+          // by session (includeAppointmentDetails/consulteeUserId gates
+          // above), so a shared cache would cross identities. Bounded
+          // staleness is safe — allocation re-validates server-side — and the
+          // one caller that must never see it, the post-allocation refetch,
+          // asks for `cache: "no-store"` (AllocationService, #1164).
+          // #1164 — no SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old (adversarial review)
+          "Cache-Control": "private, max-age=30",
+        },
+      },
+    );
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     console.error("Error fetching availability slots:", error);

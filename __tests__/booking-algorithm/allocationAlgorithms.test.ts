@@ -1,15 +1,15 @@
 /**
- * Comprehensive tests for AllocationAlgorithms
+ * Tests for AllocationAlgorithms, the client's pre-validation + submission
+ * layer.
  *
  * Covers:
  * - manualAllocate (validation, business rules, error handling)
- * - autoAllocate (all strategies, error handling)
  * - allocateRequestedSlots (validation, delegation; formerly preAllocate)
- * - allocateConsultationSlots (session duration fix verification)
- * - allocateWebinarSlots (consecutive slot finding)
- * - allocateRecurringSlots (weekly distribution, session duration fix)
- * - selectCallsFromWeek (spacing, consecutive block selection)
- * - sortSlotsByPreference / scoring functions
+ *
+ * The auto cases that used to live here exercised the client auto-allocator
+ * (strategies, scoring, weekly distribution) deleted in #997/#1132 — product
+ * code has picked slots server-side since #997 Phase 1. Auto is covered by
+ * slotAllocationService.test.ts and preference-scored-allocation.test.ts.
  */
 
 import "./setup";
@@ -19,10 +19,10 @@ import {
   type AllocationOptions,
 } from "@/lib/scheduling/allocationAlgorithms";
 import { AllocationService } from "@/lib/scheduling/allocationService";
+// eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import {
   makeTimeSlot,
   makeConsecutiveTimeSlots,
-  makeWeekOfAvailability,
 } from "./__mocks__/booking.mockData";
 
 // Use jest.spyOn instead of jest.mock to avoid bracket-path resolution issue
@@ -274,257 +274,6 @@ describe("AllocationAlgorithms.manualAllocate", () => {
       pastConfirmedSlotCount: 4, // should be ignored for consultations
     });
     expect(result.success).toBe(true);
-  });
-});
-
-// ─── autoAllocate ───────────────────────────────────────────────────────────
-
-describe("AllocationAlgorithms.autoAllocate", () => {
-  it("should return error when not enough slots available", async () => {
-    const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 1);
-    const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-      eventType: "consultation",
-      eventId: "event-1",
-      durationInHours: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("Not enough slots");
-  });
-
-  it("should return error for unsupported event type", async () => {
-    const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-    const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-      eventType: "unknown" as any,
-      eventId: "event-1",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  describe("consultation strategy", () => {
-    it("should select earliest consecutive slots for 1-hour consultation", async () => {
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "consultation",
-        eventId: "event-1",
-        durationInHours: 1,
-      });
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots.length).toBe(2);
-      expect(result.strategy).toBe("earliest-available");
-    });
-
-    it("should select 3 slots for 1.5-hour consultation (fix verification)", async () => {
-      // Need at least 2 consecutive 1-hour availability blocks
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "consultation",
-        eventId: "event-1",
-        durationInHours: 1.5,
-      });
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots.length).toBe(3);
-    });
-
-    it("should select 1 slot for 0.5-hour consultation", async () => {
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 2);
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "consultation",
-        eventId: "event-1",
-        durationInHours: 0.5,
-      });
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots.length).toBe(1);
-    });
-  });
-
-  describe("webinar strategy", () => {
-    it("should find consecutive slots for 2-hour webinar", async () => {
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 6);
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "webinar",
-        eventId: "event-1",
-        durationInHours: 2,
-      });
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots.length).toBe(4);
-      expect(result.strategy).toBe("consecutive-slots");
-    });
-
-    it("should fail when no consecutive block is large enough", async () => {
-      // Two separate 30-min slots with a gap
-      const slots = [
-        makeTimeSlot("2025-06-01T09:00:00Z", "2025-06-01T09:30:00Z"),
-        makeTimeSlot("2025-06-01T10:00:00Z", "2025-06-01T10:30:00Z"),
-      ];
-
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "webinar",
-        eventId: "event-1",
-        durationInHours: 1,
-      });
-      // 1-hour webinar needs 2 consecutive slots, but these have a gap
-      expect(result.success).toBe(false);
-    });
-  });
-
-  describe("subscription/class strategy", () => {
-    it("should return error when dates are missing", async () => {
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 10);
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "subscription",
-        eventId: "event-1",
-        sessionDurationInHours: 1,
-        sessionsPerWeek: 1,
-      });
-      // Missing startDate/endDate → allocateRecurringSlots returns []
-      expect(result.success).toBe(false);
-    });
-
-    it("should distribute calls across weeks", async () => {
-      // Create slots across 2 weeks
-      const week1Slots = makeWeekOfAvailability("2025-06-01T00:00:00Z", 10);
-      const week2Slots = makeWeekOfAvailability("2025-06-08T00:00:00Z", 10);
-      const allSlots = [...week1Slots, ...week2Slots];
-
-      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
-        eventType: "subscription",
-        eventId: "event-1",
-        sessionDurationInHours: 1,
-        sessionsPerWeek: 1,
-        startDate: new Date("2025-06-01"),
-        endDate: new Date("2025-06-14"),
-      });
-
-      if (result.success) {
-        // Should have distributed across weeks
-        expect(result.selectedSlots.length).toBeGreaterThan(0);
-        expect(result.strategy).toBe("optimal-distribution");
-      }
-    });
-
-    // Finding #1: auto-allocate must honor the per-day cap the manual path enforces
-    // (subscription 1/day). Monday has two well-separated slots (09:00 + 14:00, >2h
-    // apart, so spacing alone would NOT block a 2nd same-day call); Tuesday has one.
-    it("caps subscriptions at 1 call/day and spreads across days, not clustering", async () => {
-      const monMorning = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 1);
-      const monAfternoon = makeFutureConsecutiveSlots("2025-06-02T14:00:00Z", 1);
-      const tueMorning = makeFutureConsecutiveSlots("2025-06-03T09:00:00Z", 1);
-      const allSlots = [...monMorning, ...monAfternoon, ...tueMorning];
-
-      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
-        eventType: "subscription",
-        eventId: "event-1",
-        sessionDurationInHours: 0.5, // slotsPerCall = 1
-        sessionsPerWeek: 2,
-        totalSessions: 2,
-        startDate: new Date("2025-06-02T00:00:00Z"),
-        endDate: new Date("2025-06-08T00:00:00Z"),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots).toHaveLength(2);
-      const days = new Set(
-        result.selectedSlots.map(
-          (s) => s.startTime.toISOString().split("T")[0],
-        ),
-      );
-      expect(days.size).toBe(2); // 1 call/day across 2 days, not 2 on Monday
-    });
-
-    it("allows classes 2 sessions on the same day", async () => {
-      const monMorning = makeFutureConsecutiveSlots("2025-06-02T09:00:00Z", 1);
-      const monAfternoon = makeFutureConsecutiveSlots("2025-06-02T14:00:00Z", 1);
-      const allSlots = [...monMorning, ...monAfternoon];
-
-      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
-        eventType: "class",
-        eventId: "event-1",
-        sessionDurationInHours: 0.5,
-        sessionsPerWeek: 2,
-        totalSessions: 2,
-        startDate: new Date("2025-06-02T00:00:00Z"),
-        endDate: new Date("2025-06-08T00:00:00Z"),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.selectedSlots).toHaveLength(2);
-      const days = new Set(
-        result.selectedSlots.map(
-          (s) => s.startTime.toISOString().split("T")[0],
-        ),
-      );
-      expect(days.size).toBe(1); // classes may place both on Monday (2/day)
-    });
-  });
-
-  // #1065 — the preference-FILTER cases that lived here are gone with the code
-  // they covered. A preference that removes candidates can answer "no slots
-  // available" with the calendar wide open; scoring replaced it, and the
-  // replacement is pinned in preference-scored-allocation.test.ts. What remains
-  // here are the genuinely hard exclusions: a past or booked slot is not a
-  // less-liked time, it is not a time.
-  describe("unplaceable-slot exclusion", () => {
-    it("should filter out past slots", async () => {
-      const pastSlots = makeFutureConsecutiveSlots("2024-01-01T09:00:00Z", 4);
-      const futureSlots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
-      const allSlots = [...pastSlots, ...futureSlots];
-
-      const result = await AllocationAlgorithms.autoAllocate(allSlots as any, {
-        eventType: "consultation",
-        eventId: "event-1",
-        durationInHours: 1,
-      });
-      expect(result.success).toBe(true);
-      // Selected slots should all be in the future
-      result.selectedSlots.forEach((s) => {
-        expect(s.startTime.getTime()).toBeGreaterThan(
-          new Date("2025-01-01").getTime(),
-        );
-      });
-    });
-
-    it("should filter out booked slots", async () => {
-      const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4, {
-        isBooked: true,
-      });
-      const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-        eventType: "consultation",
-        eventId: "event-1",
-        durationInHours: 0.5,
-      });
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Not enough slots");
-    });
-
-  });
-
-  it("should handle AllocationService failure in autoAllocate", async () => {
-    mockAllocateSlots.mockResolvedValue({
-      success: false,
-      error: "Conflict",
-    });
-
-    const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
-    const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-      eventType: "consultation",
-      eventId: "event-1",
-      durationInHours: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Conflict");
-  });
-
-  it("should handle thrown errors in autoAllocate", async () => {
-    mockAllocateSlots.mockRejectedValue(new Error("Timeout"));
-
-    const slots = makeFutureConsecutiveSlots("2025-06-01T09:00:00Z", 4);
-    const result = await AllocationAlgorithms.autoAllocate(slots as any, {
-      eventType: "consultation",
-      eventId: "event-1",
-      durationInHours: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toBe("Timeout");
   });
 });
 

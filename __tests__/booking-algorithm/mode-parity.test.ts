@@ -1,8 +1,11 @@
 /**
- * Mode parity: the three allocation entry points (manual / auto / requested)
- * must agree on required-slot math — including the in-progress reschedule
- * reduction — and auto-allocate's output must pass the manual validators
- * under the shared UTC bucketing.
+ * Mode parity: the surviving client allocation entry points (manual /
+ * requested) must agree on required-slot math — including the in-progress
+ * reschedule reduction. Auto mode has no client engine left to compare since
+ * #997/#1132 (the server picks under `isAuto`), so the auto cases here — which
+ * only ever exercised the deleted client oracle — are gone; the server's picks
+ * are covered by slotAllocationService.test.ts ("Auto allocation", "Auto
+ * allocation - timezone day shift") and preference-scored-allocation.test.ts.
  */
 
 process.env.TZ = "Asia/Kolkata";
@@ -18,12 +21,8 @@ import {
   validateEventSlots,
   getEventConstraints,
   getSlotLimits,
-  groupSlotsByDay,
 } from "@/lib/scheduling/slotSelectionValidation";
-import {
-  validateSlotDistribution,
-  type TimeSlot,
-} from "@/lib/scheduling/calendarUtils";
+import { type TimeSlot } from "@/lib/scheduling/calendarUtils";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
 
@@ -50,175 +49,7 @@ afterAll(() => {
   jest.useRealTimers();
 });
 
-/** Availability grid: `hoursPerDay` hours of 30-min slots per day for every
- * day in [start, days). Times chosen to include the IST/UTC boundary. */
-function makeAvailabilityGrid(
-  startISO: string,
-  days: number,
-  hoursPerDay = 4,
-): TimeSlot[] {
-  const slots: TimeSlot[] = [];
-  const dayStart = new Date(startISO);
-  for (let d = 0; d < days; d++) {
-    const base = new Date(dayStart.getTime() + d * 24 * 60 * 60 * 1000);
-    slots.push(
-      ...(makeConsecutiveTimeSlots(
-        base.toISOString(),
-        hoursPerDay * 2,
-      ) as TimeSlot[]),
-    );
-  }
-  return slots;
-}
-
-const FUTURE_SUNDAY = "2026-08-02T09:00:00.000Z"; // Sunday, relative to pinned clock
-
-describe("auto-allocate output passes manual validation (UTC bucketing)", () => {
-  it.each([
-    { sessionsPerWeek: 1, sessionDurationInHours: 1 },
-    { sessionsPerWeek: 2, sessionDurationInHours: 1.5 },
-    { sessionsPerWeek: 3, sessionDurationInHours: 0.5 },
-  ])(
-    "subscription %o: picked slots satisfy every manual validator",
-    async ({ sessionsPerWeek, sessionDurationInHours }) => {
-      const startDate = new Date("2026-08-02T00:00:00.000Z"); // Sunday
-      const endDate = new Date("2026-08-29T23:59:59.000Z"); // Saturday (4 weeks)
-      const totalSessions = 4 * sessionsPerWeek;
-      const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
-
-      const options: AllocationOptions = {
-        eventType: "subscription",
-        eventId: "sub-1",
-        sessionsPerWeek,
-        sessionDurationInHours,
-        startDate,
-        endDate,
-        totalSessions,
-        maxCallsPerDay: 1,
-      };
-
-      const result = await AllocationAlgorithms.autoAllocate(
-        makeAvailabilityGrid(FUTURE_SUNDAY, 28, 6),
-        options,
-      );
-
-      expect(result.success).toBe(true);
-      const picked = result.selectedSlots;
-      expect(picked).toHaveLength(totalSessions * slotsPerCall);
-
-      // The same selection must pass the interactive validators…
-      const validationOptions = {
-        sessionsPerWeek,
-        sessionDurationInHours,
-        maxTotalCalls: totalSessions,
-        startDate,
-        endDate,
-      };
-      const constraints = getEventConstraints("subscription", validationOptions);
-      const limits = getSlotLimits("subscription", validationOptions);
-      const verdict = validateEventSlots(
-        picked,
-        "subscription",
-        constraints,
-        limits,
-        validationOptions,
-      );
-      expect(verdict.errors).toEqual([]);
-      expect(verdict.isValid).toBe(true);
-
-      // …and the manual-allocate weekly distribution check…
-      const distribution = validateSlotDistribution(
-        picked,
-        sessionsPerWeek * slotsPerCall,
-      );
-      expect(distribution.isValid).toBe(true);
-
-      // …and the per-day cap under UTC day keys.
-      groupSlotsByDay(picked).forEach((daySlots) => {
-        expect(daySlots.length).toBeLessThanOrEqual(slotsPerCall);
-      });
-    },
-  );
-
-  it("explicit non-default timezone is honored end-to-end (America/New_York)", async () => {
-    const schedulingTimezone = "America/New_York";
-    const startDate = new Date("2026-08-02T00:00:00.000Z");
-    const endDate = new Date("2026-08-29T23:59:59.000Z");
-    const options: AllocationOptions = {
-      eventType: "subscription",
-      eventId: "sub-tz",
-      sessionsPerWeek: 1,
-      sessionDurationInHours: 1,
-      startDate,
-      endDate,
-      totalSessions: 4,
-      maxCallsPerDay: 1,
-      schedulingTimezone,
-    };
-
-    const result = await AllocationAlgorithms.autoAllocate(
-      makeAvailabilityGrid(FUTURE_SUNDAY, 28, 6),
-      options,
-    );
-    expect(result.success).toBe(true);
-
-    const validationOptions = {
-      sessionsPerWeek: 1,
-      sessionDurationInHours: 1,
-      maxTotalCalls: 4,
-      startDate,
-      endDate,
-      schedulingTimezone,
-    };
-    const verdict = validateEventSlots(
-      result.selectedSlots,
-      "subscription",
-      getEventConstraints("subscription", validationOptions),
-      getSlotLimits("subscription", validationOptions),
-      validationOptions,
-    );
-    expect(verdict.errors).toEqual([]);
-
-    // Per-day cap holds under the SAME (non-default) timezone the allocator used
-    groupSlotsByDay(result.selectedSlots, schedulingTimezone).forEach(
-      (daySlots) => {
-        expect(daySlots.length).toBeLessThanOrEqual(2);
-      },
-    );
-    expect(
-      validateSlotDistribution(result.selectedSlots, 2, schedulingTimezone)
-        .isValid,
-    ).toBe(true);
-  });
-
-  it("class: per-day cap of 2 sessions holds in the auto output", async () => {
-    const startDate = new Date("2026-08-02T00:00:00.000Z");
-    const endDate = new Date("2026-08-29T23:59:59.000Z");
-    const options: AllocationOptions = {
-      eventType: "class",
-      eventId: "class-1",
-      sessionsPerWeek: 2,
-      sessionDurationInHours: 1,
-      startDate,
-      endDate,
-      totalSessions: 8,
-      maxSessionsPerDay: 2,
-    };
-
-    const result = await AllocationAlgorithms.autoAllocate(
-      makeAvailabilityGrid(FUTURE_SUNDAY, 28, 8),
-      options,
-    );
-    expect(result.success).toBe(true);
-
-    groupSlotsByDay(result.selectedSlots).forEach((daySlots) => {
-      // ≤ 2 sessions of 2 atoms per UTC day
-      expect(daySlots.length).toBeLessThanOrEqual(2 * 2);
-    });
-  });
-});
-
-describe("required-count parity across the three modes", () => {
+describe("required-count parity across the surviving modes", () => {
   const base: AllocationOptions = {
     eventType: "subscription",
     eventId: "sub-1",

@@ -264,17 +264,39 @@ export class SlotCalculationService {
   ): Date {
     const { year, month, day, weekday } = this.getCalendarParts(d, timeZone);
     const sundayLocalMidnightAsUtc = Date.UTC(year, month - 1, day - weekday);
-    // Zoned-midnight → UTC instant, two-pass to absorb a DST edge at the boundary.
+    return new Date(this.zonedMidnightInstant(sundayLocalMidnightAsUtc, timeZone));
+  }
+
+  /**
+   * The UTC instant at which the day-limit bucket containing `d` starts —
+   * 00:00 of that calendar day in the given timezone. #1076 — the cap
+   * messages name the bucket's span on the viewer's clock.
+   */
+  static startOfDayInTz(
+    d: Date,
+    timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
+  ): Date {
+    const { year, month, day } = this.getCalendarParts(d, timeZone);
+    return new Date(
+      this.zonedMidnightInstant(Date.UTC(year, month - 1, day), timeZone),
+    );
+  }
+
+  /** Zoned-midnight wall time → UTC instant, two-pass to absorb a DST edge at the boundary. */
+  private static zonedMidnightInstant(
+    localMidnightAsUtcMs: number,
+    timeZone: string,
+  ): number {
     const offset = this.tzOffsetMinutes(
       timeZone,
-      new Date(sundayLocalMidnightAsUtc),
+      new Date(localMidnightAsUtcMs),
     );
-    let instant = sundayLocalMidnightAsUtc - offset * 60_000;
+    let instant = localMidnightAsUtcMs - offset * 60_000;
     const offsetAtInstant = this.tzOffsetMinutes(timeZone, new Date(instant));
     if (offsetAtInstant !== offset) {
-      instant = sundayLocalMidnightAsUtc - offsetAtInstant * 60_000;
+      instant = localMidnightAsUtcMs - offsetAtInstant * 60_000;
     }
-    return new Date(instant);
+    return instant;
   }
 
   /**

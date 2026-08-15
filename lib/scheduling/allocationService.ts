@@ -477,6 +477,14 @@ export class AllocationService {
      * this user's calendar.
      */
     consulteeUserId?: string,
+    /**
+     * #1164 — skip the browser's HTTP cache for this request. The route now
+     * answers `private, max-age=30`, which is right for navigation and polling
+     * and wrong immediately after a mutation: the
+     * post-allocation refetch would be served the pre-allocation body and the
+     * consultant would not see the slots they just booked.
+     */
+    bypassHttpCache?: boolean,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -507,6 +515,7 @@ export class AllocationService {
       }
       const response = await fetch(
         `/api/slots/availability-with-allocation/${consultantId}?${params}`,
+        bypassHttpCache ? { cache: "no-store" } : undefined,
       );
       if (!response.ok) {
         const errorData = await response.json();

@@ -55,6 +55,7 @@ import {
   sessionBeingRescheduled,
   slotUnavailable,
   notEnoughConsecutive,
+  schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -848,7 +849,12 @@ export function UnifiedCalendar({
 
           // sessionsPerWeek is guaranteed truthy by the enclosing guard
           if (totalCompletedThisWeek >= sessionsPerWeek) {
-            toast(weeklyLimitReached(sessionsPerWeek));
+            toast(
+              weeklyLimitReached(
+                sessionsPerWeek,
+                schedulingWeekBucket(intervalStart, schedulingTimezone),
+              ),
+            );
             return;
           }
         }
@@ -1520,7 +1526,13 @@ export function UnifiedCalendar({
         </div>
 
         <div className="text-sm text-muted-foreground">
-          Timezone: {browserTimezone}
+          {/* #1076 — the day/week caps bucket on the EVENT's scheduling
+              timezone, not the viewer's. When they differ, say so here
+              instead of letting the viewer assume their own midnight. Only
+              cap-bearing surfaces thread the prop; others keep the old line. */}
+          {schedulingTimezone && schedulingTimezone !== browserTimezone
+            ? `Times shown in ${browserTimezone} · Limits counted in ${schedulingTimezone}`
+            : `Timezone: ${browserTimezone}`}
         </div>
       </div>
 

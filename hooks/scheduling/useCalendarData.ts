@@ -10,6 +10,11 @@ import {
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
+import {
+  nextPollDelay,
+  shouldPoll,
+  shouldRefetchOnReturn,
+} from "@/lib/scheduling/availabilityPolling";
 import { INTERVALS } from "@/utils/timeSlotsMeta";
 
 /**
@@ -249,6 +254,10 @@ export function useCalendarData(
   // matching the MOST RECENTLY issued request may commit state; a stale one
   // is silently dropped instead of repainting the wrong week.
   const availabilityRequestIdRef = useRef(0);
+  // #1164 — when the last availability fetch was ISSUED (nav or poll), read
+  // by the poll timer to schedule the next tick and by the return-to-tab
+  // listeners to decide between refetch-now and re-arm.
+  const availabilityFetchedAtRef = useRef(Number.NaN);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): TimeSlot[] => {
@@ -294,10 +303,18 @@ export function useCalendarData(
   }, [consultantId, toast]);
 
   // FIXED: Proper date range filtering for availability slots
-  const fetchAvailabilitySlots = useCallback(async (): Promise<void> => {
+  const fetchAvailabilitySlots = useCallback(async (
+    options?: {
+      /** A poll nobody asked for: report failure silently (see the catch). */
+      background?: boolean;
+      /** Skip the browser HTTP cache — the caller just changed the data. */
+      fresh?: boolean;
+    },
+  ): Promise<void> => {
     if (!consultantId) return;
 
     const requestId = ++availabilityRequestIdRef.current;
+    availabilityFetchedAtRef.current = Date.now();
 
     try {
       // The window is the VISIBLE range, never the scheduling period — at
@@ -331,6 +348,7 @@ export function useCalendarData(
         undefined,
         includeAppointmentDetails,
         consulteeUserId,
+        options?.fresh,
       );
 
       // A newer request was issued (user moved on) while this one was in
@@ -383,6 +401,10 @@ export function useCalendarData(
       // reports this exact error (see fetchConsultantDetails above).
       const errorMessage =
         error instanceof Error ? error.message : "Failed to fetch availability";
+      // #1164 — a background poll failed: the grid still shows the last good
+      // answer and the next tick retries, so neither the banner nor a toast is
+      // the user's problem. A flaky minute would otherwise toast every 60s.
+      if (options?.background) return;
       setError(errorMessage);
       toast({
         variant: "destructive",
@@ -757,6 +779,76 @@ export function useCalendarData(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoad, consultantId, fetchAvailabilitySlots]);
 
+  // Effect 3 — #1164 background freshness. The grid never refreshed after
+  // open, so a slot booked elsewhere stayed green until the user navigated.
+  // Poll the date-dependent availability (~60s), paused while the tab is
+  // hidden, with an immediate refetch on a stale return (visibility/focus).
+  // Polling, not push: the grid is a hint and allocation re-validates
+  // server-side (see lib/scheduling/availabilityPolling.ts). A poll landing
+  // after a navigation is discarded by the availabilityRequestIdRef guard in
+  // fetchAvailabilitySlots, exactly like any other stale response.
+  useEffect(() => {
+    if (!autoLoad || !consultantId) return;
+    if (typeof document === "undefined") return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const poll = (): boolean =>
+      shouldPoll({ enabled: true, visibilityState: document.visibilityState });
+
+    const arm = () => {
+      if (disposed || !poll()) return;
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(
+        tick,
+        nextPollDelay(Date.now() - availabilityFetchedAtRef.current),
+      );
+    };
+
+    const tick = () => {
+      if (disposed || !poll()) return;
+      // Serialized: the next tick is armed only once this fetch settles, so a
+      // slow response never stacks polls behind it.
+      void fetchAvailabilitySlots({ background: true }).finally(arm);
+    };
+
+    // Focus and visibilitychange BOTH fire on a tab return; whichever runs
+    // first refetches and stamps availabilityFetchedAtRef, so the second sees
+    // sub-floor staleness and only re-arms (see shouldRefetchOnReturn).
+    const onReturn = () => {
+      if (disposed || !poll()) {
+        if (timer !== null) clearTimeout(timer);
+        return;
+      }
+      if (shouldRefetchOnReturn(Date.now() - availabilityFetchedAtRef.current)) {
+        tick();
+      } else {
+        arm();
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        // Paused: nothing polls a hidden tab; onReturn re-arms it.
+        if (timer !== null) clearTimeout(timer);
+      } else {
+        onReturn();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onReturn);
+    arm();
+
+    return () => {
+      disposed = true;
+      if (timer !== null) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [autoLoad, consultantId, fetchAvailabilitySlots]);
+
   // ENHANCEMENT: Individual refetch functions for granular control
   const refetchConsultant = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -770,7 +862,9 @@ export function useCalendarData(
   const refetchAvailability = useCallback(async (): Promise<void> => {
     setLoading(true);
     try {
-      await fetchAvailabilitySlots();
+      // The explicit refetch is what runs after an allocation, so it must not
+      // be answered from the 30s browser cache the route now permits (#1164).
+      await fetchAvailabilitySlots({ fresh: true });
     } finally {
       setLoading(false);
     }
