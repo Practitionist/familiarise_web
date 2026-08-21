@@ -139,15 +139,14 @@ describe("flow availability by context", () => {
       ctx({ isOrgContext: true, isOrgOperator: true }),
       "ORG_ADMIN_DISPUTE",
     )!;
-    const turn = new FlowchartResolver(flow);
-    void turn;
     const billing = flow.nodes["billing"];
     const conduct = flow.nodes["conduct"];
-    expect(billing.kind === "TERMINAL" && billing.resolved).toBe(true);
-    expect(conduct.kind === "TERMINAL" && conduct.escalate).toBe(true);
-    expect(conduct.kind === "TERMINAL" && conduct.reason).toBe(
-      "org_conduct_dispute",
-    );
+    expect(billing?.kind).toBe("TERMINAL");
+    expect(conduct?.kind).toBe("TERMINAL");
+    if (billing?.kind !== "TERMINAL" || conduct?.kind !== "TERMINAL") return;
+    expect(billing.resolved).toBe(true);
+    expect(conduct.escalate).toBe(true);
+    expect(conduct.reason).toBe("org_conduct_dispute");
   });
 
   it("carries machine-readable reasons on escalating terminals", () => {

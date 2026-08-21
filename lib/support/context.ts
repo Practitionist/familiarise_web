@@ -29,7 +29,10 @@ export async function buildSupportContext(
       organizationId: true,
       cancellationPolicySnapshot: true,
       slotsOfAppointment: {
-        where: { completionStatus: "SCHEDULED" },
+        // Current-or-next active slot only — a past SCHEDULED row would
+        // otherwise drive stage/startsAt/endsAt stale when a rebooked slot
+        // exists.
+        where: { completionStatus: "SCHEDULED", endsAt: { gt: new Date() } },
         orderBy: { startsAt: "asc" },
         take: 1,
         select: { startsAt: true, endsAt: true },

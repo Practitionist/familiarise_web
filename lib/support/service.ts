@@ -20,7 +20,7 @@ import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
 import { decideEscalation } from "./escalation";
 import { priorityForReason } from "./priority";
-import type { SupportAction, SupportContext } from "./types";
+import type { SupportAction, SupportContext, FlowNode } from "./types";
 
 export interface RunTurnInput {
   /** Chosen intent — set on the first turn (or to switch intents). */
@@ -38,8 +38,10 @@ export interface RunTurnInput {
   isOrgParty?: boolean;
 }
 
-/** The only intents an org party may raise on a member's session. */
-const ORG_PARTY_CATEGORIES = new Set<SupportThreadCategory>([
+/** The only intents an org party may raise on a member's session. Shared with
+ *  the route layer, which 403s on it — one definition so the two gates can
+ *  never drift. */
+export const ORG_PARTY_CATEGORIES: ReadonlySet<SupportThreadCategory> = new Set([
   "ORG_ADMIN_DISPUTE",
   "SPONSORSHIP_BILLING",
 ]);
@@ -141,6 +143,46 @@ export async function runSupportTurn(
     userMessage: input.userMessage,
   });
 
+  // Server truth for the recording processing window: the flow's within/beyond
+  // 48h branch is client-claimed, so verify it against the slot's actual end.
+  // Claiming "within" after the window has really expired is re-anchored onto
+  // the flow's escalation terminal; the reverse (claiming "beyond" early) is
+  // left alone — wanting a human is never wrong.
+  if (
+    category === "RECORDING_ACCESS" &&
+    turn.resolved &&
+    ctx.endsAt &&
+    Date.now() - ctx.endsAt.getTime() > 48 * 3_600_000
+  ) {
+    const terminal = Object.values(flow.nodes).find(
+      (n): n is Extract<FlowNode, { kind: "TERMINAL" }> =>
+        n.kind === "TERMINAL" && !!n.escalate,
+    );
+    if (terminal) {
+      return escalate(
+        ctx,
+        thread.id,
+        thread.supportTicketId,
+        category,
+        {
+          messages: [
+            {
+              sender: "BOT",
+              body: terminal.body,
+              metadata: { nodeId: terminal.id },
+            },
+          ],
+          nextNodeId: null,
+          actions: [],
+          escalate: true,
+          resolved: false,
+        },
+        input.userMessage,
+        terminal.reason ?? "recording_missing",
+      );
+    }
+  }
+
   const decision = decideEscalation(ctx, turn, input.userMessage);
   if (decision.escalate) {
     return escalate(
@@ -163,8 +205,10 @@ export async function runSupportTurn(
   const isRepresent =
     !!currentNodeId && turn.nextNodeId === currentNodeId;
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
+  // A free-text message is user activity even on a re-present turn (the
+  // duplicate-suppression only covers the BOT's re-rendered prompt).
   const wroteMessages =
-    (!!input.userMessage || turn.messages.length > 0) && !isRepresent;
+    !!input.userMessage || (turn.messages.length > 0 && !isRepresent);
   await prisma.$transaction(async (tx) => {
     if (input.userMessage) {
       await tx.supportMessage.create({

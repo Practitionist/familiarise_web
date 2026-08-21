@@ -10,8 +10,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { runSupportTurn } from "@/lib/support/service";
+import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
 import { AppointmentIdParams } from "@/schemas/support";
@@ -24,8 +25,7 @@ import {
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
 
-/** The intents an org operator may raise on a member's session. */
-const ORG_PARTY_CATEGORIES = new Set(["ORG_ADMIN_DISPUTE", "SPONSORSHIP_BILLING"]);
+const SUPPORT_ROUTE = "appointments.support";
 
 const CATEGORY = z.enum([
   "CANCEL_REFUND",
@@ -49,8 +49,6 @@ const turnSchema = z
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",
   });
-
-const SUPPORT_ROUTE = "appointments.support";
 
 export async function GET(
   _req: NextRequest,
@@ -87,9 +85,15 @@ export async function GET(
           title: f.title,
         }));
       }
-    } catch {
+    } catch (cause) {
       // Intent resolution is an optimization — the sheet falls back to its
-      // static list and the POST path still gates authoritatively.
+      // static list and the POST path still gates authoritatively. But a
+      // persistent regression here would be invisible, so record it.
+      Sentry.captureException(cause, {
+        tags: { subsystem: "support", code: "INTENTS_DEGRADED" },
+        extra: { route: SUPPORT_ROUTE, appointmentId },
+        level: "warning",
+      });
     }
 
     return NextResponse.json({ data: thread, intents });

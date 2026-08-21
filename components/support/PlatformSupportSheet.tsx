@@ -44,7 +44,12 @@ interface PlatformFlow {
 }
 
 interface TurnResponse {
-  messages: { sender: string; body: string }[];
+  messages: {
+    sender: string;
+    body: string;
+    /** PROMPT nodes carry their tappable options here (flow-walk). */
+    metadata?: { options?: { id: string; label: string }[] } | null;
+  }[];
   nextNodeId: string | null;
   resolved: boolean;
   escalated: boolean;
@@ -111,7 +116,13 @@ export function PlatformSupportSheet({
       setMessages((m) => [
         ...m,
         ...(vars.userMessage ? [{ sender: "USER" as const, body: vars.userMessage }] : []),
-        ...result.messages.map((m) => ({ sender: m.sender as Sender, body: m.body })),
+        // metadata.options MUST survive the trip — a PROMPT without its
+        // options is a dead end (no buttons, free text can't advance it).
+        ...result.messages.map((msg) => ({
+          sender: msg.sender as Sender,
+          body: msg.body,
+          options: msg.metadata?.options ?? undefined,
+        })),
       ]);
       setNodeId(result.nextNodeId);
       if (result.escalated) {
@@ -131,6 +142,7 @@ export function PlatformSupportSheet({
   });
 
   const startFlow = (flow: PlatformFlow) => {
+    if (turn.isPending) return;
     setFlowId(flow.id);
     setNodeId(null);
     setMessages([]);
@@ -178,12 +190,26 @@ export function PlatformSupportSheet({
           {!flowId &&
             (catalog.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : catalog.isError ? (
+              <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+                {(catalog.error as Error)?.message ??
+                  "Couldn't load support topics."}{" "}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-1"
+                  onClick={() => catalog.refetch()}
+                >
+                  Retry
+                </Button>
+              </div>
             ) : (
               <div className="flex flex-col gap-2">
                 {(catalog.data ?? []).map((f) => (
                   <Button
                     key={f.id}
                     variant="outline"
+                    disabled={turn.isPending}
                     className="h-auto justify-start py-2 text-left"
                     onClick={() => startFlow(f)}
                   >

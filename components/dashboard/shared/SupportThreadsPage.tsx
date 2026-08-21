@@ -94,6 +94,10 @@ function planTitleOf(a: ThreadDetail["appointment"]): string {
 export function SupportThreadsPage() {
   const [status, setStatus] = useState<string>("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The reply draft lives in React state: a DOM-read textarea never cleared
+  // after send (duplicate replies on a second click) and bled drafts across
+  // threads when the selection changed.
+  const [draft, setDraft] = useState("");
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -139,6 +143,7 @@ export function SupportThreadsPage() {
     },
     onSuccess: () => {
       toast({ title: "Reply sent" });
+      setDraft("");
       invalidate();
     },
     onError: (e: unknown) =>
@@ -236,7 +241,10 @@ export function SupportThreadsPage() {
             rows.map((t) => (
               <button
                 key={t.id}
-                onClick={() => setSelectedId(t.id)}
+                onClick={() => {
+                  setSelectedId(t.id);
+                  setDraft("");
+                }}
                 className={
                   "block w-full px-4 py-3 text-left transition-colors hover:bg-muted/50 " +
                   (selectedId === t.id ? "bg-muted" : "")
@@ -274,7 +282,19 @@ export function SupportThreadsPage() {
         {/* Detail */}
         {selectedId && (
           <div className="lg:col-span-3 rounded-lg border border-border p-4">
-            {detail.isLoading || !d ? (
+            {detail.isError ? (
+              <div className="flex h-64 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                {(detail.error as Error)?.message ??
+                  "Couldn't load this conversation."}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => detail.refetch()}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : detail.isLoading || !d ? (
               <Skeleton className="h-64 w-full" />
             ) : (
               <div className="flex h-full flex-col gap-3">
@@ -347,14 +367,14 @@ export function SupportThreadsPage() {
                     id={`reply-${d.id}`}
                     rows={2}
                     placeholder="Write your reply…"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => {
                       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                        const v = (e.target as HTMLTextAreaElement).value.trim();
-                        if (v)
-                          reply.mutate({
-                            threadId: d.id,
-                            message: v,
-                          });
+                        e.preventDefault();
+                        const v = draft.trim();
+                        if (v && !reply.isPending)
+                          reply.mutate({ threadId: d.id, message: v });
                       }
                     }}
                   />
@@ -383,14 +403,10 @@ export function SupportThreadsPage() {
                     </div>
                     <Button
                       size="sm"
-                      disabled={reply.isPending}
-                      onClick={() => {
-                        const el = document.getElementById(
-                          `reply-${d.id}`,
-                        ) as HTMLTextAreaElement | null;
-                        const v = el?.value.trim();
-                        if (v) reply.mutate({ threadId: d.id, message: v });
-                      }}
+                      disabled={reply.isPending || !draft.trim()}
+                      onClick={() =>
+                        reply.mutate({ threadId: d.id, message: draft.trim() })
+                      }
                     >
                       Send reply
                     </Button>

@@ -138,7 +138,7 @@ describe("authorizeAppointment — the org-party grant is opt-in", () => {
     expect(mockedMembershipFind).not.toHaveBeenCalled();
   });
 
-  it("with orgParty, an ACTIVE member holding operations.read earns their own thread", async () => {
+  it("with orgParty, an ACTIVE member holding operations.read earns their own thread — metadata only, NO detail", async () => {
     mockedGetSession.mockResolvedValue(operatorSession);
     mockedMembershipFind.mockResolvedValue(activeMembership);
     mockedHasOrgPermission.mockReturnValue(true);
@@ -147,8 +147,10 @@ describe("authorizeAppointment — the org-party grant is opt-in", () => {
       userId: "op1",
       isOrgParty: true,
       organizationId: "org-1",
-      detail: DETAIL,
     });
+    // ADR 20 hardening: the org operator's grant must not carry the session
+    // content graph (recordings, payment, participants).
+    expect((auth as { detail?: unknown })).not.toHaveProperty("detail");
     expect(mockedMembershipFind).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -170,7 +172,7 @@ describe("authorizeAppointment — the org-party grant is opt-in", () => {
     });
   });
 
-  it("with orgParty, an INACTIVE membership stays FORBIDDEN", async () => {
+  it("with orgParty, no ACTIVE membership stays FORBIDDEN", async () => {
     mockedGetSession.mockResolvedValue(operatorSession);
     mockedMembershipFind.mockResolvedValue(null);
     expect(await authorizeAppointment("a1", true)).toEqual({

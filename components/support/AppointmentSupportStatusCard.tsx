@@ -56,11 +56,16 @@ export function AppointmentSupportStatusCard({
 }) {
   const { data } = useQuery({
     queryKey: ["support-thread", appointmentId],
-    queryFn: async (): Promise<{ thread: ThreadSummary | null }> => {
+    // Same key AND same payload shape as SupportThreadSheet — the sheet reads
+    // this cache entry and needs `intents` too, not a thread-only stub.
+    queryFn: async (): Promise<{
+      thread: ThreadSummary | null;
+      intents: { category: string; title: string }[];
+    }> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`);
       if (!res.ok) await throwSupportError(res, "support status card");
       const json = await res.json();
-      return { thread: json.data };
+      return { thread: json.data, intents: json.intents ?? [] };
     },
   });
 

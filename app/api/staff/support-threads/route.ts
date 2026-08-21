@@ -59,8 +59,14 @@ export async function GET(req: NextRequest) {
       });
     }
     const search = searchParams.get("search");
-    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20")));
+    // Non-numeric input must fall back, not NaN its way into Prisma (a 500
+    // for what is a client input error).
+    const toInt = (raw: string | null, fallback: number) => {
+      const parsed = Number.parseInt(raw ?? "", 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const page = Math.max(1, toInt(searchParams.get("page"), 1));
+    const limit = Math.min(50, Math.max(1, toInt(searchParams.get("limit"), 20)));
     const offset = (page - 1) * limit;
 
     const where: Prisma.AppointmentSupportThreadWhereInput = {};
@@ -76,6 +82,9 @@ export async function GET(req: NextRequest) {
       ];
     }
 
+    // Buckets describe the FILTERED list — every constraint except the status
+    // filter itself (else filtering to one status hides all other buckets).
+    const { status: _statusFilter, ...countsWhere } = where;
     const [threads, total, counts] = await Promise.all([
       prisma.appointmentSupportThread.findMany({
         where,
@@ -108,6 +117,7 @@ export async function GET(req: NextRequest) {
       prisma.appointmentSupportThread.count({ where }),
       prisma.appointmentSupportThread.groupBy({
         by: ["status"],
+        where: countsWhere,
         _count: { _all: true },
       }),
     ]);

@@ -32,6 +32,7 @@ const mockedCaptureMessage = Sentry.captureMessage as jest.Mock;
 const IdSchema = z.object({ id: z.string().min(1).max(64) });
 
 beforeEach(() => {
+  jest.clearAllMocks();
   jest.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -76,6 +77,16 @@ describe("supportError envelope", () => {
     expect(body.error).toBe("Thread not found");
     expect(body.code).toBe("NOT_FOUND");
   });
+
+  it("keeps 5xx detail server-side — never echoed to the client", async () => {
+    const res = supportError({
+      status: 500,
+      code: "INTERNAL",
+      detail: { upstream: "connect ECONNREFUSED db.internal:5432" },
+    });
+    const body = await bodyOf(res);
+    expect(body).not.toHaveProperty("detail");
+  });
 });
 
 describe("Sentry policy", () => {
@@ -102,6 +113,13 @@ describe("Sentry policy", () => {
       expect.any(Error),
       expect.objectContaining({ level: "warning" }),
     );
+  });
+
+  it("applies the 401/429 exemption on the cause path too", () => {
+    supportError({ status: 401, code: "UNAUTHORIZED", cause: new Error("stale token") });
+    supportError({ status: 429, code: "RATE_LIMITED", cause: new Error("burst") });
+    expect(mockedCaptureException).not.toHaveBeenCalled();
+    expect(mockedCaptureMessage).not.toHaveBeenCalled();
   });
 
   it("causeless 4xx is a captureMessage warning — visible, quiet", () => {
@@ -131,26 +149,35 @@ describe("Sentry policy", () => {
 describe("parseRouteParams", () => {
   it("answers ok with parsed data on valid input", async () => {
     const out = await parseRouteParams(IdSchema, { id: "demo0813-appt-ba" }, { route: "t" });
-    expect(out.ok).toBe(true);
-    if (out.ok) expect(out.data.id).toBe("demo0813-appt-ba");
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data.id).toBe("demo0813-appt-ba");
   });
 
   it("answers with an INVALID_ID envelope (no response throw) on bad input", async () => {
     const out = await parseRouteParams(IdSchema, { id: "" }, { route: "t" });
-    expect(out.ok).toBe(false);
-    if (!out.ok) {
-      expect(out.response.status).toBe(400);
-      const body = await bodyOf(out.response);
-      expect(body.code).toBe("INVALID_ID");
-      // Developer detail survives in the envelope…
-      expect(body.detail).toBeDefined();
-      // …but never leaks into the user copy.
-      expect(typeof body.error).toBe("string");
-    }
+    if (out.ok) throw new Error("expected failure");
+    expect(out.response.status).toBe(400);
+    const body = await bodyOf(out.response);
+    expect(body.code).toBe("INVALID_ID");
+    // Developer detail survives in the envelope…
+    expect(body.detail).toBeDefined();
+    // …but never leaks into the user copy.
+    expect(typeof body.error).toBe("string");
   });
 
   it("rejects over-long ids that could abuse downstream queries", async () => {
     const out = await parseRouteParams(IdSchema, { id: "x".repeat(65) }, { route: "t" });
-    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected failure");
+    expect(out.response.status).toBe(400);
+  });
+
+  it("accepts a params PROMISE — handlers pass it unawaited", async () => {
+    const out = await parseRouteParams(
+      IdSchema,
+      Promise.resolve({ id: "slug-id" }),
+      { route: "t" },
+    );
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.data.id).toBe("slug-id");
   });
 });

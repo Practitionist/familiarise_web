@@ -11,7 +11,8 @@
  * Sentry policy: 5xx capture the ORIGINAL exception (full stack) with route
  * context; 4xx capture as warnings so client/server contract drift is visible
  * without paging anyone — except 401/429, which are expected client behavior
- * and would only be noise.
+ * and stay uncaptured on every path. `detail` echoes to the client only for
+ * client-fault statuses; 5xx detail is Sentry-only.
  */
 
 import { NextResponse } from "next/server";
@@ -55,25 +56,29 @@ export function supportError(opts: {
   const message = opts.message ?? USER_COPY[opts.code];
   const tags = { subsystem: "support", code: opts.code };
   const extra = { ...opts.context, detail: opts.detail };
+  // Expected client behavior (auth, throttling) is noise on EVERY path.
+  const ignored = opts.status === 401 || opts.status === 429;
 
   if (opts.cause !== undefined) {
     // Devs first: local runs often have no DSN, so the SDK would swallow it.
     console.error("[support]", opts.context?.route ?? "", opts.cause);
     // An exception happened — capture IT (stack intact), not a re-wrap.
-    Sentry.captureException(opts.cause, {
-      tags,
-      extra,
-      level: opts.status >= 500 ? "error" : "warning",
-    });
+    if (!ignored) {
+      Sentry.captureException(opts.cause, {
+        tags,
+        extra,
+        level: opts.status >= 500 ? "error" : "warning",
+      });
+    }
   } else if (opts.status >= 500) {
     Sentry.captureMessage(`[${opts.code}] ${message}`, {
       tags,
       extra,
       level: "error",
     });
-  } else if (opts.status !== 401 && opts.status !== 429) {
-    // Expected client behavior (auth, throttling) is noise; everything else
-    // 4xx is worth seeing as a warning (contract drift, bad deep links).
+  } else if (!ignored) {
+    // Everything else 4xx is worth seeing as a warning (contract drift, bad
+    // deep links).
     Sentry.captureMessage(`[${opts.code}] ${message}`, {
       tags,
       extra,
@@ -85,7 +90,12 @@ export function supportError(opts: {
     {
       error: message,
       code: opts.code,
-      ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
+      // Developer detail rides to the client only on client-fault statuses
+      // (zod flattens, ids). A 5xx's detail can carry upstream messages —
+      // that stays server-side (Sentry `extra` above).
+      ...(opts.detail !== undefined && opts.status < 500
+        ? { detail: opts.detail }
+        : {}),
     },
     { status: opts.status },
   );

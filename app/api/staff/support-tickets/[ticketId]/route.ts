@@ -69,7 +69,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             createdAt: true,
             lastMessageAt: true,
             messages: {
-              orderBy: { createdAt: "asc" },
+              // Newest 50, re-ordered ascending below — the ticket page needs
+              // a bounded preview, not the whole transcript; the dedicated
+              // thread route serves full history.
+              orderBy: { createdAt: "desc" },
+              take: 50,
               select: { id: true, sender: true, body: true, createdAt: true },
             },
           },
@@ -178,6 +182,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       ...ticket,
+      // Transcript was fetched newest-50 for the bound; hand it back oldest-
+      // first, the ascending shape the page has always rendered.
+      ...(ticket.appointmentSupportThread
+        ? {
+            appointmentSupportThread: {
+              ...ticket.appointmentSupportThread,
+              messages: [...ticket.appointmentSupportThread.messages].reverse(),
+            },
+          }
+        : {}),
       linkedConsultation,
       linkedSubscription,
       linkedPayment,
@@ -282,18 +296,24 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       validatedData.status !== "ON_HOLD" &&
       validatedData.status !== "OPEN"
     ) {
+      // CLOSED is guarded UNCONDITIONALLY — a status-conditional notIn array
+      // (e.g. [] for RESOLVED) is a no-op filter in Prisma and could clobber
+      // a thread a staff member already closed.
       await prisma.appointmentSupportThread.updateMany({
         where: {
           supportTicketId: ticketId,
-          status: { notIn: validatedData.status === "CLOSED" ? ["CLOSED"] : [] },
+          status: { notIn: ["CLOSED"] },
         },
         data: {
           status: validatedData.status,
+          // RESOLVED stamps the clock, re-open clears it, CLOSED keeps it —
+          // same semantics as the thread route's own PATCH.
           ...(validatedData.status === "RESOLVED"
             ? { resolvedAt: new Date() }
-            : validatedData.status === "IN_PROGRESS"
-              ? { resolvedAt: null }
-              : {}),
+            : {}),
+          ...(validatedData.status === "IN_PROGRESS"
+            ? { resolvedAt: null }
+            : {}),
         },
       });
     }

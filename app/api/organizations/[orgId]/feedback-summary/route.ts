@@ -40,11 +40,18 @@ export async function GET(
   // Round to one decimal — an average of 4.333333 renders worse than it reads.
   const round1 = (n: number | null) => (n === null ? null : Math.round(n * 10) / 10);
 
+  // Minimum cohort size: below this, the "average" is (part of) one member's
+  // exact private rating and the count makes the disclosure trivial — which
+  // ADR 20 forbids. Suppress until the aggregate is actually anonymous.
+  const MIN_COHORT = 3;
+
   return NextResponse.json({
     data: {
-      averageRating: round1(overall._avg.rating),
+      averageRating:
+        overall._count._all >= MIN_COHORT ? round1(overall._avg.rating) : null,
       totalResponses: overall._count._all,
-      averageRating30d: round1(last30._avg.rating),
+      averageRating30d:
+        last30._count._all >= MIN_COHORT ? round1(last30._avg.rating) : null,
       responses30d: last30._count._all,
     },
   });

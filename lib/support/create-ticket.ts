@@ -104,8 +104,41 @@ export async function createSupportTicket(
     },
     include: { responses: true, attachments: true },
   });
-  await notifyStaff(ticket);
+  // The ticket is already committed — a notification failure must not turn a
+  // successful create into a 500, or the retrying client files a duplicate.
+  await notifyStaff(ticket).catch((error) => {
+    console.error("support: staff notification failed", {
+      ticketId: ticket.id,
+      error,
+    });
+  });
   return ticket;
+}
+
+/**
+ * Best-effort escalation dedup for the platform intake: a replayed terminal
+ * turn (double-click, client retry) reuses the user's still-OPEN ticket for
+ * the same flow outcome instead of filing a twin. Runtime check, not a schema
+ * unique — the schema is frozen (#705) and the same issue type may legitimately
+ * recur once resolved, so the window is bounded. The lookup+create race window
+ * is accepted (low volume; worst case one duplicate, same as pre-helper).
+ */
+export async function findRecentOpenEscalation(
+  userId: string,
+  issueType: SupportIssueType,
+  organizationId: string | null,
+): Promise<SupportTicket | null> {
+  const dedupeWindow = new Date(Date.now() - 30 * 60_000);
+  return prisma.supportTicket.findFirst({
+    where: {
+      userId,
+      issueType,
+      organizationId: organizationId ?? undefined,
+      status: "OPEN",
+      createdAt: { gte: dedupeWindow },
+    },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 /**

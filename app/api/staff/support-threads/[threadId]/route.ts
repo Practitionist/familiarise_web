@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { SupportThreadIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 
@@ -170,8 +171,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         ticketTitle: thread.supportTicket?.title ?? "Support",
         message,
         respondedBy: session.user.name ?? "Support",
-        // Deep-link into the appointment detail where the thread lives.
-        dashboardUrl: `/dashboard`,
+        // Org-hosted threads land on the org appointments surface; B2C stays a
+        // bare /dashboard and the capability router picks the viewer's tree
+        // (resolve-href doctrine — never guess the personal route).
+        dashboardUrl: notificationHref(thread.organizationId, "appointments"),
         // ADR 23 — inherit the thread's org-ness (attribution only).
         ...notificationScope(thread.organizationId),
       });
@@ -223,28 +226,38 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const now = new Date();
-    // CAS on the thread's own status: the WHERE clause is the transition rule.
-    const updated = await prisma.appointmentSupportThread.updateMany({
-      where: { id: thread.id, status: { notIn: ["CLOSED"] } },
-      data: {
-        status,
-        resolvedAt: status === "RESOLVED" ? now : null,
-      },
+    // One transaction: the queue and the thread must move together, or the
+    // header's "never disagrees" promise is a lie on a partial failure.
+    const updatedCount = await prisma.$transaction(async (tx) => {
+      // CAS on the thread's own status: the WHERE clause is the transition rule.
+      const updated = await tx.appointmentSupportThread.updateMany({
+        where: { id: thread.id, status: { notIn: ["CLOSED"] } },
+        data: {
+          status,
+          // RESOLVED stamps the resolution clock; a re-open clears it; CLOSED
+          // keeps whatever it had (closing a resolved thread must not erase
+          // its resolution time).
+          ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
+          ...(status === "IN_PROGRESS" ? { resolvedAt: null } : {}),
+        },
+      });
+      if (updated.count === 0) return 0;
+
+      // Mirror to the linked ticket so the queue never disagrees with the thread.
+      if (thread.supportTicketId) {
+        await tx.supportTicket.updateMany({
+          where: { id: thread.supportTicketId, status: { notIn: ["CLOSED"] } },
+          data: { status, lastMessageAt: now },
+        });
+      }
+      return updated.count;
     });
-    if (updated.count === 0) {
+    if (updatedCount === 0) {
       return supportError({
         status: 409,
         code: "CONFLICT",
         message: "Thread is closed and can no longer change status",
         context: { route: THREAD_ROUTE, action: "status", threadId, attemptedStatus: status },
-      });
-    }
-
-    // Mirror to the linked ticket so the queue never disagrees with the thread.
-    if (thread.supportTicketId) {
-      await prisma.supportTicket.updateMany({
-        where: { id: thread.supportTicketId, status: { notIn: ["CLOSED"] } },
-        data: { status, lastMessageAt: now },
       });
     }
 

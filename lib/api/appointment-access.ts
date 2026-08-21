@@ -29,13 +29,24 @@ export type CodedAuthz = {
   status: number;
 };
 
+/** Org-party success — METADATA ONLY. `detail` is deliberately absent: the
+ *  full appointment graph (recordings, payment, participants, sibling slots)
+ *  must never be reachable through an org operator's grant (ADR 20), not even
+ *  by a future consumer's convenience. */
 export type PartyAuthz = {
   userId: string;
-  isOrgParty: boolean;
-  /** The appointment's owning org (CSAT attribution, org-party scoping). */
+  isOrgParty: true;
+  /** The appointment's owning org (org-party intent scoping). */
   organizationId: string | null;
-  /** Already loaded for the gate — callers needing the payload reuse this
-   *  instead of paying a second read. */
+};
+
+/** Participant/staff success — carries the already-loaded detail so callers
+ *  needing the payload reuse it instead of paying a second read. */
+export type ParticipantAuthz = {
+  userId: string;
+  isOrgParty: false;
+  /** The appointment's owning org (CSAT attribution). */
+  organizationId: string | null;
   detail: TAppointmentDetail;
 };
 
@@ -46,13 +57,11 @@ export async function authorizeAppointment(
 export async function authorizeAppointment(
   appointmentId: string,
   orgParty?: false,
-): Promise<
-  CodedAuthz | { userId: string; isOrgParty: false; organizationId: string | null; detail: TAppointmentDetail }
->;
+): Promise<CodedAuthz | ParticipantAuthz>;
 export async function authorizeAppointment(
   appointmentId: string,
   orgParty = false,
-): Promise<CodedAuthz | PartyAuthz> {
+): Promise<CodedAuthz | PartyAuthz | ParticipantAuthz> {
   const session = await getSession();
   if (!session?.user?.id) return { code: "UNAUTHORIZED", status: 401 };
   const detail = await readAppointmentDetail(appointmentId);
@@ -67,7 +76,7 @@ export async function authorizeAppointment(
   // #support-hub — org-party branch. Grants the operator their OWN thread on
   // this appointment (org-party intents only); never widens read access to
   // another user's conversation. Only routes that declare an org-party
-  // surface may take this branch.
+  // surface may take this branch — and the grant returns no session content.
   if (orgParty) {
     if (organizationId) {
       const membership = await prisma.membership.findFirst({
@@ -79,7 +88,7 @@ export async function authorizeAppointment(
         select: { role: true },
       });
       if (membership && hasOrgPermission(membership.role, "operations.read")) {
-        return { userId: session.user.id, isOrgParty: true, organizationId, detail };
+        return { userId: session.user.id, isOrgParty: true, organizationId };
       }
     }
   }

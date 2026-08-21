@@ -98,6 +98,33 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   if (!allowed) return null;
 
   const s = summary.data;
+  // A failed request is not "no data" — show it, with a way out.
+  const summaryError = summary.isError ? (
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+      Couldn&apos;t load the quality summary.{" "}
+      <Button
+        variant="outline"
+        size="sm"
+        className="ml-1"
+        onClick={() => summary.refetch()}
+      >
+        Retry
+      </Button>
+    </div>
+  ) : null;
+  const threadsError = threads.isError ? (
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+      Couldn&apos;t load member conversations.{" "}
+      <Button
+        variant="outline"
+        size="sm"
+        className="ml-1"
+        onClick={() => threads.refetch()}
+      >
+        Retry
+      </Button>
+    </div>
+  ) : null;
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-8">
@@ -107,36 +134,42 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
           Session quality
         </h2>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-border p-4">
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Star className="h-3.5 w-3.5" /> All-time average rating
-            </p>
-            {summary.isLoading ? (
-              <Skeleton className="mt-2 h-7 w-20" />
-            ) : (
-              <p className="mt-1 text-2xl font-semibold text-foreground">
-                {s?.averageRating ?? "—"}
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  {s?.totalResponses ?? 0} private ratings
-                </span>
-              </p>
-            )}
-          </div>
-          <div className="rounded-lg border border-border p-4">
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Star className="h-3.5 w-3.5" /> Last 30 days
-            </p>
-            {summary.isLoading ? (
-              <Skeleton className="mt-2 h-7 w-20" />
-            ) : (
-              <p className="mt-1 text-2xl font-semibold text-foreground">
-                {s?.averageRating30d ?? "—"}
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  {s?.responses30d ?? 0} responses
-                </span>
-              </p>
-            )}
-          </div>
+          {summaryError ? (
+            summaryError
+          ) : (
+            <>
+              <div className="rounded-lg border border-border p-4">
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Star className="h-3.5 w-3.5" /> All-time average rating
+                </p>
+                {summary.isLoading ? (
+                  <Skeleton className="mt-2 h-7 w-20" />
+                ) : (
+                  <p className="mt-1 text-2xl font-semibold text-foreground">
+                    {s?.averageRating ?? "—"}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      {s?.totalResponses ?? 0} private ratings
+                    </span>
+                  </p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Star className="h-3.5 w-3.5" /> Last 30 days
+                </p>
+                {summary.isLoading ? (
+                  <Skeleton className="mt-2 h-7 w-20" />
+                ) : (
+                  <p className="mt-1 text-2xl font-semibold text-foreground">
+                    {s?.averageRating30d ?? "—"}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      {s?.responses30d ?? 0} responses
+                    </span>
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Ratings are private to the participant and the platform — this card is
@@ -171,7 +204,9 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
             ))}
           </div>
         </div>
-        {threads.isLoading ? (
+        {threadsError ? (
+          threadsError
+        ) : threads.isLoading ? (
           <Skeleton className="h-24 w-full" />
         ) : (threads.data?.length ?? 0) === 0 ? (
           <p className="text-sm text-muted-foreground">

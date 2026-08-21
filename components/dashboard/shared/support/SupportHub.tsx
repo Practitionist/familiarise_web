@@ -178,13 +178,23 @@ function SessionsTab({
     staleTime: 60_000,
   });
 
+  // Capped once so the cache key and the request always agree — keying on
+  // membership COUNT served stale org sets when content changed under a
+  // constant count, and refetched needlessly when a 4th+ org changed.
+  const orgIds = useMemo(
+    () => (memberships.data ?? []).slice(0, 3).map((m) => m.organizationId),
+    [memberships.data],
+  );
+
   const appointments = useQuery({
-    queryKey: ["support-hub-recent-sessions", memberships.data?.length ?? 0],
+    queryKey: ["support-hub-recent-sessions", orgIds],
     enabled: memberships.isSuccess,
     queryFn: async (): Promise<AppointmentRow[]> => {
       // Personal (B2C) first, then each ACTIVE org's member scope — capped at
       // three orgs so a pathological membership list can't fan out.
-      const orgs = (memberships.data ?? []).slice(0, 3);
+      const orgs = (memberships.data ?? []).filter((m) =>
+        orgIds.includes(m.organizationId),
+      );
       const fetchScope = async (orgScope?: string) => {
         const qs = orgScope
           ? `?pageSize=5&orgScope=${encodeURIComponent(orgScope)}`
@@ -212,6 +222,7 @@ function SessionsTab({
       }
       // Most recent slot first — the picker is "your recent sessions".
       return merged
+        .slice()
         .sort(
           (a, b) =>
             Date.parse(b.slotsOfAppointment?.[0]?.startsAt ?? "0") -
@@ -249,6 +260,18 @@ function SessionsTab({
           <div className="space-y-2">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-full" />
+          </div>
+        ) : appointments.isError ? (
+          <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+            Couldn't load your recent sessions.{" "}
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-1"
+              onClick={() => appointments.refetch()}
+            >
+              Retry
+            </Button>
           </div>
         ) : (appointments.data?.length ?? 0) === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -293,6 +316,18 @@ function SessionsTab({
         </h3>
         {threads.isLoading ? (
           <Skeleton className="h-20 w-full" />
+        ) : threads.isError ? (
+          <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+            Couldn't load your support conversations.{" "}
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-1"
+              onClick={() => threads.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
         ) : (threads.data?.length ?? 0) === 0 ? (
           <p className="text-sm text-muted-foreground">
             Nothing open — when you raise an issue about a session it lives here.

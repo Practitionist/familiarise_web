@@ -303,6 +303,9 @@ model AppointmentSupportThread {
   @@index([userId, status])
   @@index([organizationId, status])
   @@index([status, createdAt])
+  // #support-hub — the ops inbox sorts by last activity, usually status-
+  // filtered; without this every page sorts the whole filtered set.
+  @@index([status, lastMessageAt])
 }
 
 model SupportMessage {

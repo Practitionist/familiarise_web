@@ -136,14 +136,17 @@ export function SupportThreadSheet({
   });
   const thread = data?.thread ?? null;
 
-  // Server-gated intents win; fall back to the static list filtered by org.
-  const availableIntents =
-    data?.intents && data.intents.length > 0
+  // Server-gated intents win; the static list is an ERROR fallback only —
+  // while the gated request is in flight, no chips render (a stage- or role-
+  // invalid category must not be submittable before the server has spoken).
+  const availableIntents = data
+    ? data.intents.length > 0
       ? data.intents.map((i) => ({ category: i.category, label: i.title }))
       : INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => ({
           category: i.category,
           label: i.label,
-        }));
+        }))
+    : [];
 
   const turn = useMutation({
     mutationFn: async (body: {
@@ -187,14 +190,18 @@ export function SupportThreadSheet({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        {trigger ?? (
-          <Button variant="outline" size="sm">
-            <LifeBuoy className="mr-1.5 h-4 w-4" />
-            Get help
-          </Button>
-        )}
-      </SheetTrigger>
+      {/* Controlled-open call sites render no trigger: a hidden placeholder
+          would swallow Radix's focus return and dump keyboard users on body. */}
+      {controlledOpen === undefined && (
+        <SheetTrigger asChild>
+          {trigger ?? (
+            <Button variant="outline" size="sm">
+              <LifeBuoy className="mr-1.5 h-4 w-4" />
+              Get help
+            </Button>
+          )}
+        </SheetTrigger>
+      )}
       <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md">
         <SheetHeader className="px-5 pb-3 pt-5">
           <div className="flex items-start justify-between gap-2 pr-6">
@@ -272,19 +279,23 @@ export function SupportThreadSheet({
         {/* Controls */}
         <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
           {!started ? (
-            <div className="flex flex-wrap gap-2">
-              {availableIntents.map((i) => (
-                <Button
-                  key={i.category}
-                  variant="outline"
-                  size="sm"
-                  disabled={turnPending}
-                  onClick={() => turn.mutate({ category: i.category })}
-                >
-                  {i.label}
-                </Button>
-              ))}
-            </div>
+            availableIntents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {availableIntents.map((i) => (
+                  <Button
+                    key={i.category}
+                    variant="outline"
+                    size="sm"
+                    disabled={turnPending}
+                    onClick={() => turn.mutate({ category: i.category })}
+                  >
+                    {i.label}
+                  </Button>
+                ))}
+              </div>
+            )
           ) : (
             options.length > 0 && (
               <div className="flex flex-wrap gap-2">

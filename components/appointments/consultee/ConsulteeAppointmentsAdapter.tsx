@@ -500,7 +500,6 @@ export function useConsulteeAppointmentsAdapter(options?: {
                 ? `/dashboard/consultee/${consulteeId}/appointments/${activeVm.appointmentId}`
                 : undefined
             }
-            trigger={<span aria-hidden className="hidden" />}
           />
         )}
 

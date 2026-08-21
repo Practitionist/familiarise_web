@@ -33,7 +33,7 @@ import {
   issueTypeForFlow,
   type PlatformSupportContext,
 } from "@/lib/support/platform-flows";
-import { createSupportTicket } from "@/lib/support/create-ticket";
+import { createSupportTicket, findRecentOpenEscalation } from "@/lib/support/create-ticket";
 import { priorityForReason } from "@/lib/support/priority";
 
 const turnSchema = z
@@ -105,10 +105,6 @@ export async function POST(req: NextRequest) {
     }
     userId = session.user.id;
 
-    // Escalation creates a ticket — same spam budget as the legacy form.
-    const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
-    if (rl) return rl;
-
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
@@ -159,19 +155,41 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ---- Escalation: the only write. Summarize the walked path + free text
-    // into the ticket so ops sees the flow's conclusions, not just a title.
+    // ---- Escalation: the only write. The ticket spam budget is charged
+    // HERE, not on navigation turns — walking a multi-node flow must never
+    // spend the same budget as filing a ticket, or a user can be throttled
+    // before reaching the terminal.
+    const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
+    if (rl) return rl;
+
     const reason = turn.reason ?? "platform_escalated";
     const issueType = issueTypeForFlow(flow, reason);
     const priority = priorityForReason(reason);
 
-    // Operator org attribution — only an org the caller is an ACTIVE member
-    // of, never a client-asserted id.
+    // Org attribution — operator-billing scope only. An explicit orgId that
+    // isn't one of the caller's ACTIVE memberships is a forged/spoofed
+    // attribution: 403, never a silent downgrade to a B2C ticket. Inference
+    // (sole membership) applies only on the operator billing flow, where org
+    // context is the point — a B2C flow must not silently inherit it.
     let organizationId: string | null = null;
-    if (input.orgId && ctx.organizationIds.includes(input.orgId)) {
-      organizationId = input.orgId;
-    } else if (!input.orgId && ctx.organizationIds.length === 1) {
-      organizationId = ctx.organizationIds[0];
+    if (input.orgId && !ctx.organizationIds.includes(input.orgId)) {
+      return supportError({
+        status: 403,
+        code: "FORBIDDEN",
+        context: {
+          route: "support.platform",
+          action: "turn",
+          flowId: flow.id,
+          attemptedOrgId: input.orgId,
+        },
+      });
+    }
+    if (flow.id === "ORG_OPERATOR_BILLING") {
+      if (input.orgId) {
+        organizationId = input.orgId;
+      } else if (ctx.organizationIds.length === 1) {
+        organizationId = ctx.organizationIds[0];
+      }
     }
 
     const walkedPath = input.nodeId
@@ -186,9 +204,27 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join(" ");
 
-    // Payment dedup parity with the legacy form (findOpenTicketForPayment)
-    // applies when the intake gains a paymentId selector — the escalation
-    // seam above is the single place to add it.
+    // Replay dedup: a double-clicked/retried terminal turn reuses the user's
+    // recent OPEN ticket for the same outcome instead of filing a twin.
+    const recent = await findRecentOpenEscalation(
+      session.user.id,
+      issueType,
+      organizationId,
+    );
+    if (recent) {
+      return NextResponse.json({
+        data: {
+          flowId: flow.id,
+          messages: turn.messages,
+          nextNodeId: null,
+          resolved: false,
+          escalated: true,
+          actions: turn.actions,
+          supportTicketId: recent.id,
+          deduped: true,
+        },
+      });
+    }
 
     const ticket = await createSupportTicket({
       userId: session.user.id,

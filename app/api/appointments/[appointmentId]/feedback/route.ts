@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { canAccessAppointment } from "@/lib/data/appointment-detail";
 import { AppointmentIdParams } from "@/schemas/support";
 import {
   parseRouteParams,
@@ -66,6 +67,16 @@ export async function POST(
     const auth = await authorizeAppointment(appointmentId);
     if ("code" in auth) {
       return appointmentAuthzError(auth, { route: FEEDBACK_ROUTE, appointmentId });
+    }
+    // CSAT is a PARTICIPANT's private rating: staff/admin read access must
+    // not become write access — a privileged non-participant's row would
+    // pollute the org quality aggregate with a rating they never earned.
+    if (!canAccessAppointment(auth.userId, auth.detail)) {
+      return supportError({
+        status: 403,
+        code: "FORBIDDEN",
+        context: { route: FEEDBACK_ROUTE, appointmentId },
+      });
     }
 
     const body = feedbackSchema.safeParse(await req.json().catch(() => ({})));

@@ -8,15 +8,17 @@
  */
 
 import { NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { supportError } from "@/lib/api/support-http";
+
+const MEMBERSHIPS_ROUTE = "user.org-memberships";
 
 export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
 
     const memberships = await prisma.membership.findMany({
@@ -36,11 +38,12 @@ export async function GET() {
         role: m.role,
       })),
     });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to load memberships" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: MEMBERSHIPS_ROUTE, action: "list" },
+    });
   }
 }

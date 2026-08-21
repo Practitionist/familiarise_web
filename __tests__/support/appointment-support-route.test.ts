@@ -18,12 +18,31 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 
+// The REAL appointmentAuthzError must run (its mapping is what the route
+// ships), so appointment-access is only half-mocked below — which means its
+// own imports need mocks too, or requireActual drags in better-auth's ESM.
+jest.mock("../../lib/auth-server", () => ({
+  __esModule: true,
+  getSession: jest.fn(),
+}));
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  isPrivileged: jest.fn(),
+}));
+jest.mock("../../lib/auth/org-permissions", () => ({
+  __esModule: true,
+  hasOrgPermission: jest.fn(),
+}));
+jest.mock("../../lib/data/appointment-detail", () => ({
+  __esModule: true,
+  readAppointmentDetail: jest.fn(),
+  canAccessAppointment: jest.fn(),
+}));
+
 jest.mock("../../lib/api/appointment-access", () => ({
   __esModule: true,
+  ...jest.requireActual("../../lib/api/appointment-access"),
   authorizeAppointment: jest.fn(),
-  // Real mapping — the coded failure must reach the wire as the envelope.
-  appointmentAuthzError: jest.requireActual("../../lib/api/support-http")
-    .supportError,
 }));
 
 jest.mock("../../lib/prisma", () => ({

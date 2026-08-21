@@ -203,7 +203,6 @@ describe("runSupportTurn", () => {
     mockBuildContext.mockResolvedValue(
       ctx({ isOrgContext: true, isOrgOperator: true, organizationId: "org1" }),
     );
-    mockPrisma.supportTicket.create.mockResolvedValue({ id: "ticket3" });
 
     // A participant-only intent reaching the service from an org party is
     // clamped to ORG_ADMIN_DISPUTE — which has a self-serve flow, so the turn
@@ -213,6 +212,9 @@ describe("runSupportTurn", () => {
       isOrgParty: true,
     });
     expect(r?.escalated).toBe(false);
+    // The clamped flow self-serves — no ticket may be filed for the smuggled
+    // intent.
+    expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled();
     expect(mockPrisma.appointmentSupportThread.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ category: "ORG_ADMIN_DISPUTE" }),

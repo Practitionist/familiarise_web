@@ -34,7 +34,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - No email-to-ticket ingestion or Zendesk bridge.
 - `refundId` link exists; auto-refund-from-ticket unclear.
 - No ticket merge/dedup when user opens three tickets for one failed payment.
-- Priority auto-escalation not evident in code.
+- Time-based priority auto-escalation is absent (the reason→priority mapping exists in `lib/support/priority.ts`).
 - Concurrent staff status updates are last-write-wins (no version).
 
 ## Unhappy paths & user psychology

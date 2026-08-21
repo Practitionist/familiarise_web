@@ -28,7 +28,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -122,18 +124,19 @@ export function CreateTicketDialog({
               </SelectTrigger>
               <SelectContent>
                 {Object.entries(PLATFORM_ISSUE_TYPE_CATEGORIES).map(
-                  ([category, types], idx) => (
-                    <div key={category}>
-                      {idx > 0 && <div className="my-1" />}
-                      <div className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  ([category, types]) => (
+                    <SelectGroup key={category}>
+                      {/* Group + label associate the heading with its options
+                          for assistive technology, unlike styled divs. */}
+                      <SelectLabel className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                         {category}
-                      </div>
+                      </SelectLabel>
                       {types.map((t) => (
                         <SelectItem key={t} value={t}>
                           {ISSUE_TYPE_LABELS[t]}
                         </SelectItem>
                       ))}
-                    </div>
+                    </SelectGroup>
                   ),
                 )}
               </SelectContent>

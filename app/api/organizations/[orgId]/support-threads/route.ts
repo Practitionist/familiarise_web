@@ -12,7 +12,7 @@
  * __tests__/security/org-scope-payload-allowlist.test.ts. The transcript
  * belongs to the participant and (once escalated) the platform's support team.
  *
- * Query params: `status`, `category`, `page`, `perPage`.
+ * Query params: `status`, `category`, `page`, `pageSize`.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
