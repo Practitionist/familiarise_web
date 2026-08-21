@@ -621,6 +621,14 @@ async function processSinglePayout(payout: {
   // Declared outside the try so the catch can tell a gateway-accepted payout
   // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
   let providerPayoutId: string | undefined;
+  // TDS outcome, hoisted for the same reason: the gateway-accepted quarantine
+  // write below must persist these, or the eventual COMPLETED webhook books
+  // its ledger legs from `tdsDeducted ?? 0` — overstating CASH by the withheld
+  // amount, never crediting TDS_PAYABLE, and skipping recordTDSDeduction.
+  let tdsDeductedPaise = 0;
+  let netAmountPaise: number | null = null;
+  let tdsRateAppliedBps: number | null = null;
+  const financialYear = getIndianFinancialYear();
   try {
     // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
     // in #850): only one runner — GH job, admin route, concurrent invocation
@@ -668,7 +676,6 @@ async function processSinglePayout(payout: {
     // Form 26Q filing), so we signal only PAN-on-file presence; a missing PAN takes
     // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
     // Section-195 cases, so RESIDENT is safe here.
-    const financialYear = getIndianFinancialYear();
 
     // #785 — restore the ₹50K FY cumulative threshold dropped when this path
     // moved 194J→194-O. No withholding until cumulative FY payouts cross
@@ -772,6 +779,10 @@ async function processSinglePayout(payout: {
           };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
+    tdsDeductedPaise = tds.tdsAmountPaise;
+    netAmountPaise = payoutAmountAfterTDS;
+    tdsRateAppliedBps =
+      tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null;
 
     if (tds.tdsAmountPaise > 0) {
       console.log(
@@ -846,6 +857,13 @@ async function processSinglePayout(payout: {
           data: {
             providerPayoutId,
             status: PayoutStatus.PROCESSING,
+            // Persist the TDS outcome alongside the quarantine: the COMPLETED
+            // webhook derives its ledger legs and TDS record from these
+            // fields, and zeros there silently mis-book the withholding.
+            tdsDeducted: tdsDeductedPaise,
+            netAmount: netAmountPaise,
+            tdsRateAppliedBps,
+            tdsFinancialYear: financialYear,
             failureReason:
               `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
                 0,
@@ -1068,12 +1086,26 @@ export async function handlePayoutWebhook(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Atomic conditional update: only transition if payout is NOT already terminal.
-    // Uses updateMany with status filter so concurrent duplicates cannot both succeed.
+    // Atomic conditional update. Two guards:
+    //  - Terminal incoming statuses (COMPLETED/FAILED/CANCELLED) may claim any
+    //    non-terminal row, but never COMPLETED/CANCELLED/REVERSED — a late
+    //    `payout.processed` after a bank reversal used to overwrite
+    //    REVERSED → COMPLETED and re-run the TDS delete/recreate.
+    //  - Non-terminal incoming statuses (PENDING/PROCESSING from queued/
+    //    pending webhooks) apply only to PROCESSING rows: the old guard let a
+    //    late `payout.queued` flip FAILED → PENDING after the FAILED handler
+    //    had already released the earnings, leaving a payable-looking row
+    //    with none.
+    const terminalIncoming =
+      payoutStatus === PayoutStatus.COMPLETED ||
+      payoutStatus === PayoutStatus.FAILED ||
+      payoutStatus === PayoutStatus.CANCELLED;
     const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: payout.id,
-        status: { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] },
+        status: terminalIncoming
+          ? { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED, PayoutStatus.REVERSED] }
+          : { in: [PayoutStatus.PROCESSING] },
       },
       data: {
         status: payoutStatus,
