@@ -2,10 +2,11 @@ name: Expire Stale Requests
 
 on:
   schedule:
-    # Hourly at :40 (booking-journey audit B1 — a PENDING consultation pins a
+    # Hourly at :10 (booking-journey audit B1 — a PENDING consultation pins a
     # tentative slot, so expiry runs hourly against the 48h threshold instead
-    # of daily against 30 days). Off the :00/:20/:30 slots other crons use.
-    - cron: "40 * * * *"
+    # of daily against 30 days). Minute chosen against the cron-stagger grid —
+    # check-workflow-hygiene rejects recurring start collisions.
+    - cron: "10 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

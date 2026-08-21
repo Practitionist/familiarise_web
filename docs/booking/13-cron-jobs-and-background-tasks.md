@@ -31,7 +31,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-slots.ts`             | `/api/cleanup/tentative-slots`             |
 | Cleanup stale pending consultations | `30 * * * *`    | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
 | Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
-| Expire stale requests               | `40 * * * *`    | Every hour, at :40      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
+| Expire stale requests               | `10 * * * *`    | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
 | Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-slot-availability.ts`         | `/api/cleanup/reconcile-slot-availability` |
 | Detect consultant no-shows          | `17 * * * *`    | Every hour, at :17      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                  |
 
@@ -147,7 +147,7 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 | Field              | Value                                            |
 | ------------------ | ------------------------------------------------ |
-| **Schedule**       | `40 * * * *` -- every hour, at :40               |
+| **Schedule**       | `10 * * * *` -- every hour, at :10               |
 | **Source**         | `scripts/appointments/expire-stale-requests.ts`  |
 | **API**            | `app/api/cleanup/expire-stale-requests/route.ts` |
 | **GitHub Actions** | `.github/workflows/expire-stale-requests.yml`    |
