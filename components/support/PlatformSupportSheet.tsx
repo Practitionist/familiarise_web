@@ -167,7 +167,7 @@ export function PlatformSupportSheet({
         )}
       </SheetTrigger>
       <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md">
-        <SheetHeader>
+        <SheetHeader className="px-5 pb-3 pt-5">
           <SheetTitle>How can we help?</SheetTitle>
           <SheetDescription>
             {flowId
@@ -176,7 +176,7 @@ export function PlatformSupportSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="my-4 flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="flex-1 space-y-3 overflow-y-auto px-5 pb-2">
           {!flowId &&
             (catalog.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
@@ -241,7 +241,7 @@ export function PlatformSupportSheet({
         </div>
 
         {flowId && !done && (
-          <div className="space-y-3 border-t border-border pt-3">
+          <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
             {options.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {options.map((o) => (

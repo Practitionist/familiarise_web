@@ -60,6 +60,9 @@ export async function GET(req: NextRequest) {
               take: 1,
               select: { startsAt: true, endsAt: true },
             },
+            // Org tag so the hub can label org-hosted sessions AND withhold
+            // the "Go to appointment" link (no detail page exists for them).
+            organization: { select: { id: true, name: true } },
             consultation: {
               select: { consultationPlan: { select: { title: true } } },
             },
@@ -89,6 +92,7 @@ export async function GET(req: NextRequest) {
       appointment: {
         appointmentType: t.appointment.appointmentType,
         startsAt: t.appointment.slotsOfAppointment[0]?.startsAt ?? null,
+        organizationName: t.appointment.organization?.name ?? null,
         planTitle:
           t.appointment.consultation?.consultationPlan?.title ??
           t.appointment.subscription?.subscriptionPlan?.title ??

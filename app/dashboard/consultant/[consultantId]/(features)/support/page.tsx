@@ -15,6 +15,7 @@ export default async function SupportPage({
   return (
     <SupportHub
       profileId={p.consultantId}
+      appointmentsHrefBase={`/dashboard/consultant/${p.consultantId}/appointments`}
       feedbackHref="feedback"
       helpHref="help"
     />

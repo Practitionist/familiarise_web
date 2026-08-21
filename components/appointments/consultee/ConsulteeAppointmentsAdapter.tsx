@@ -495,6 +495,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
             appointmentId={activeVm.appointmentId}
             open
             onOpenChange={(open) => !open && closeDialog()}
+            appointmentHref={
+              activeVm.appointmentId && consulteeId
+                ? `/dashboard/consultee/${consulteeId}/appointments/${activeVm.appointmentId}`
+                : undefined
+            }
             trigger={<span aria-hidden className="hidden" />}
           />
         )}

@@ -27,13 +27,16 @@ import {
   Bot,
   UserRound,
   Headset,
+  Building2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Plus } from "lucide-react";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
+import { CreateTicketDialog } from "./CreateTicketDialog";
 
 // ---------------------------------------------------------------------------
 // Types + small helpers
@@ -51,6 +54,7 @@ interface ThreadRow {
   appointment: {
     appointmentType: string;
     startsAt: string | null;
+    organizationName?: string | null;
     planTitle: string | null;
   };
 }
@@ -71,6 +75,13 @@ interface AppointmentRow {
   webinar?: { webinarPlan?: { title?: string } };
   class?: { classPlan?: { title?: string } };
   slotsOfAppointment?: { startsAt: string }[];
+  organization?: { id: string; name: string } | null;
+}
+
+interface OrgMembership {
+  organizationId: string;
+  orgName: string;
+  role: string;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -137,7 +148,13 @@ function bucketize<T extends { status: string }>(
 // Subtab: Sessions
 // ---------------------------------------------------------------------------
 
-function SessionsTab({ profileId }: { profileId?: string }) {
+function SessionsTab({
+  profileId,
+  appointmentsHrefBase,
+}: {
+  profileId?: string;
+  appointmentsHrefBase?: string;
+}) {
   const threads = useQuery({
     queryKey: ["user-support-threads"],
     queryFn: async (): Promise<ThreadRow[]> => {
@@ -148,13 +165,65 @@ function SessionsTab({ profileId }: { profileId?: string }) {
     },
   });
 
+  // Active org memberships — org-hosted sessions live under the org scope
+  // (personal pins organizationId: null, ADR 19), so without this merge an
+  // org LEARNER/EXPERT would have no per-session support entry point.
+  const memberships = useQuery({
+    queryKey: ["user-org-memberships"],
+    queryFn: async (): Promise<OrgMembership[]> => {
+      const res = await fetch("/api/user/org-memberships");
+      if (!res.ok) return [];
+      const { data } = await res.json();
+      return data;
+    },
+    staleTime: 60_000,
+  });
+
   const appointments = useQuery({
-    queryKey: ["support-hub-recent-sessions"],
+    queryKey: ["support-hub-recent-sessions", memberships.data?.length ?? 0],
+    enabled: memberships.isSuccess,
     queryFn: async (): Promise<AppointmentRow[]> => {
-      const res = await fetch("/api/appointments?pageSize=5");
-      if (!res.ok) throw new Error("Failed to load sessions");
-      const json = await res.json();
-      return json.data ?? json.appointments ?? [];
+      // Personal (B2C) first, then each ACTIVE org's member scope — capped at
+      // three orgs so a pathological membership list can't fan out.
+      const orgs = (memberships.data ?? []).slice(0, 3);
+      const fetchScope = async (orgScope?: string) => {
+        const qs = orgScope
+          ? `?pageSize=5&orgScope=${encodeURIComponent(orgScope)}`
+          : "?pageSize=5";
+        const res = await fetch(`/api/appointments${qs}`);
+        if (!res.ok) return [];
+        const json = await res.json();
+        return (json.data ?? json.appointments ?? []) as AppointmentRow[];
+      };
+      const [personal, ...orgLists] = await Promise.all([
+        fetchScope(),
+        ...orgs.map((m) => fetchScope(m.organizationId)),
+      ]);
+      const orgNameById = new Map(
+        orgs.map((m) => [m.organizationId, m.orgName]),
+      );
+      // Merge + dedupe (a session can only be in one scope by construction,
+      // but dedupe keeps the invariant local rather than trusted).
+      const seen = new Set<string>();
+      const merged: AppointmentRow[] = [];
+      for (const row of [...personal, ...orgLists.flat()]) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        merged.push(row);
+      }
+      // Most recent slot first — the picker is "your recent sessions".
+      return merged
+        .sort(
+          (a, b) =>
+            Date.parse(b.slotsOfAppointment?.[0]?.startsAt ?? "0") -
+            Date.parse(a.slotsOfAppointment?.[0]?.startsAt ?? "0"),
+        )
+        .slice(0, 8)
+        .map((r) =>
+          r.organization
+            ? { ...r, organization: { ...r.organization, name: orgNameById.get(r.organization.id) ?? r.organization.name } }
+            : r,
+        );
     },
   });
 
@@ -163,6 +232,13 @@ function SessionsTab({ profileId }: { profileId?: string }) {
     [threads.data],
   );
 
+  // "Go to appointment" only for B2C rows — org-hosted sessions have no
+  // per-session detail page by design (ADR 20 addendum), so a link would 404.
+  const hrefFor = (appointmentId: string, orgScoped?: boolean) =>
+    appointmentsHrefBase && !orgScoped
+      ? `${appointmentsHrefBase}/${appointmentId}`
+      : undefined;
+
   return (
     <div className="space-y-8">
       {/* Recent sessions — pick one, get help (the Swiggy order-picker) */}
@@ -170,7 +246,7 @@ function SessionsTab({ profileId }: { profileId?: string }) {
         <h3 className="mb-3 text-sm font-semibold text-foreground">
           Your recent sessions
         </h3>
-        {appointments.isLoading ? (
+        {appointments.isLoading || memberships.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-full" />
@@ -189,13 +265,22 @@ function SessionsTab({ profileId }: { profileId?: string }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">
                     {planTitleOf(a)}
+                    {a.organization && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                        <Building2 className="h-3 w-3" />
+                        {a.organization.name}
+                      </span>
+                    )}
                   </p>
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <CalendarDays className="h-3 w-3" />
                     {fmtDate(a.slotsOfAppointment?.[0]?.startsAt)}
                   </p>
                 </div>
-                <SupportThreadSheet appointmentId={a.id} />
+                <SupportThreadSheet
+                  appointmentId={a.id}
+                  appointmentHref={hrefFor(a.id, !!a.organization)}
+                />
               </li>
             ))}
           </ul>
@@ -228,6 +313,12 @@ function SessionsTab({ profileId }: { profileId?: string }) {
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-foreground">
                               {t.appointment.planTitle ?? "Session"}
+                              {t.appointment.organizationName && (
+                                <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                                  <Building2 className="h-3 w-3" />
+                                  {t.appointment.organizationName}
+                                </span>
+                              )}
                               <span className="ml-2 text-xs font-normal text-muted-foreground">
                                 {fmtDate(t.appointment.startsAt)}
                               </span>
@@ -251,6 +342,10 @@ function SessionsTab({ profileId }: { profileId?: string }) {
                             </Badge>
                             <SupportThreadSheet
                               appointmentId={t.appointmentId}
+                              appointmentHref={hrefFor(
+                                t.appointmentId,
+                                !!t.appointment.organizationName,
+                              )}
                               trigger={
                                 <Button variant="ghost" size="sm">
                                   View
@@ -358,13 +453,28 @@ function PlatformTab({
 
       {/* Tickets, bucketed by status, latest activity first */}
       <section>
-        <h3 className="mb-3 text-sm font-semibold text-foreground">My requests</h3>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-foreground">My requests</h3>
+          <CreateTicketDialog />
+        </div>
         {tickets.isLoading ? (
           <Skeleton className="h-20 w-full" />
         ) : sorted.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No platform requests yet.
-          </p>
+          <div className="rounded-lg border border-dashed border-border p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              No platform requests yet.
+            </p>
+            <div className="mt-3">
+              <CreateTicketDialog
+                trigger={
+                  <Button variant="outline" size="sm">
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    Create your first request
+                  </Button>
+                }
+              />
+            </div>
+          </div>
         ) : (
           <div className="space-y-6">
             {BUCKETS.map(({ key, label }) =>
@@ -417,6 +527,7 @@ export function SupportHub({
   orgId,
   feedbackHref,
   helpHref,
+  appointmentsHrefBase,
 }: {
   /** Profile id of the mounting dashboard (consultee/consultant) — passed
    *  through for parity with the standalone request pages. */
@@ -425,6 +536,10 @@ export function SupportHub({
   orgId?: string;
   feedbackHref?: string;
   helpHref?: string;
+  /** Base path to a session's detail page (personal trees only). Enables the
+   *  "Go to appointment" link inside the thread sheet. Deliberately omitted on
+   *  org surfaces (ADR 20: no per-session drill-in for org roles). */
+  appointmentsHrefBase?: string;
 }) {
   const [tab, setTab] = useState<"sessions" | "platform">("sessions");
 
@@ -454,7 +569,10 @@ export function SupportHub({
       </div>
 
       {tab === "sessions" ? (
-        <SessionsTab profileId={profileId} />
+        <SessionsTab
+          profileId={profileId}
+          appointmentsHrefBase={appointmentsHrefBase}
+        />
       ) : (
         <PlatformTab orgId={orgId} feedbackHref={feedbackHref} helpHref={helpHref} />
       )}

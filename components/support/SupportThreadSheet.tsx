@@ -10,8 +10,9 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LifeBuoy, Send, UserRound, Bot } from "lucide-react";
+import { CalendarDays, LifeBuoy, Send, UserRound, Bot } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -91,6 +92,7 @@ export function SupportThreadSheet({
   open: controlledOpen,
   onOpenChange,
   trigger,
+  appointmentHref,
 }: {
   appointmentId: string;
   isOrgContext?: boolean;
@@ -99,6 +101,9 @@ export function SupportThreadSheet({
   onOpenChange?: (open: boolean) => void;
   /** Custom trigger node (ignored when `open` is controlled). */
   trigger?: React.ReactNode;
+  /** When provided, the header carries a "Go to appointment" link. Deliberately
+   *  omitted on org surfaces (ADR 20: no per-session drill-in for org roles). */
+  appointmentHref?: string;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -186,8 +191,18 @@ export function SupportThreadSheet({
         )}
       </SheetTrigger>
       <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Help with this session</SheetTitle>
+        <SheetHeader className="px-5 pb-3 pt-5">
+          <div className="flex items-start justify-between gap-2 pr-6">
+            <SheetTitle>Help with this session</SheetTitle>
+            {appointmentHref && (
+              <Button variant="outline" size="sm" asChild className="shrink-0">
+                <Link href={appointmentHref}>
+                  <CalendarDays className="mr-1.5 h-4 w-4" />
+                  Go to appointment
+                </Link>
+              </Button>
+            )}
+          </div>
           <SheetDescription>
             {isHuman
               ? "You're connected with our support team — they'll reply here."
@@ -196,7 +211,7 @@ export function SupportThreadSheet({
         </SheetHeader>
 
         {/* Conversation */}
-        <div className="my-4 flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="flex-1 space-y-3 overflow-y-auto px-5 pb-2">
           {!started && (
             <p className="text-sm text-muted-foreground">
               What do you need help with?
@@ -250,7 +265,7 @@ export function SupportThreadSheet({
         </div>
 
         {/* Controls */}
-        <div className="space-y-3 border-t border-border pt-3">
+        <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
           {!started ? (
             <div className="flex flex-wrap gap-2">
               {availableIntents.map((i) => (
