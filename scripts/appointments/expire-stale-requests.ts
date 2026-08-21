@@ -103,15 +103,24 @@ async function expirePendingConsultations(): Promise<{
       },
     });
 
-    // Release the tentative holds the expired requests pinned. Scoped to
-    // isTentative so an already-confirmed slot (impossible for a PENDING
-    // request, but cheap to assert) is never touched.
+    // Release the tentative holds the expired requests pinned. The WHERE
+    // re-checks the consultation's status AT DELETE TIME (CodeRabbit triage):
+    // between the stale read above and this statement a consultant can
+    // approve a request (PENDING → APPROVED), and deleting by appointmentId
+    // alone would strip the hold from a booking that just came back to life.
+    // Scoped to isTentative so an already-confirmed slot is never touched.
     let slotsReleased = 0;
     if (expiredAppointmentIds.length > 0) {
       const slotResult = await prisma.slotOfAppointment.deleteMany({
         where: {
           appointmentId: { in: expiredAppointmentIds },
           isTentative: true,
+          appointment: {
+            consultation: {
+              id: { in: expiredIds },
+              status: AppointmentStatus.EXPIRED,
+            },
+          },
         },
       });
       slotsReleased = slotResult.count;

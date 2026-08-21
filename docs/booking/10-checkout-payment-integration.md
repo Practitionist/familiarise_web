@@ -210,9 +210,10 @@ Runs inside a Prisma `$transaction`. If anything fails here, the entire phase ro
 | 6    | `confirmExistingAppointment()` -- set `isTentative: false`                       |
 |      | — Webinar/class: the status stamp is a CAS guard (`EVENT_ALLOWED_FROM.SCHEDULED`); on a CANCELLED/DRAFT event nothing is confirmed and `capturedAfterTerminal` routes Phase 2 to an auto-refund (B2) |
 | 7    | `confirmApprovalStatus()` -- transition `APPROVED_PENDING_PAYMENT` to `APPROVED` |
-| 8    | Send payment success email                                                       |
 
 If metadata validation fails, the payment is marked as `SUCCEEDED` with description `REQUIRES_MANUAL_RECOVERY` and a P1 critical alert is logged. The appointment is NOT created -- manual intervention required.
+
+**Legacy Flow + GiST overlap (B8b)**: a legacy-shape capture whose slot chunks overlap an already-confirmed booking trips the `slot_no_confirmed_overlap` exclusion inside the create. The handler catches the violation, stamps the payment `SUCCEEDED` outside the rolled-back transaction, and auto-refunds it — instead of leaving the webhook to be re-delivered into the same constraint forever.
 
 **Legacy Flow + GiST overlap (B8b)**: a legacy-shape capture whose slot chunks overlap an already-confirmed booking trips the `slot_no_confirmed_overlap` exclusion inside the create. The handler catches the violation, stamps the payment `SUCCEEDED` outside the rolled-back transaction, and auto-refunds it — instead of leaving the webhook to be re-delivered into the same constraint forever.
 
@@ -224,6 +225,7 @@ Runs outside the transaction. Failures are logged but do not roll back the payme
 | ---- | ---------------------------------------------------------------- | -------------------------------- |
 | 1    | `createEarningsFromPayment()`                                    | `sync-payment-earnings` cron job |
 | 2    | `createInvoiceFromPayment()`                                     | Manual reconciliation            |
+| 3    | `sendPaymentSuccessNotification()` -- payment-success email (M7: runs post-commit so a rollback cannot leave a false confirmation) | N/A                              |
 | 4    | `notifyPaymentSuccess()` via Novu (to consultee)                 | N/A                              |
 | 5    | `notifyAppointmentBooked()` via Novu (to consultant + consultee) — **skipped when the appointment has no slots yet** (subscription placeholder): the template renders a session time, and a blank placeholder was the payer's first booking message. Allocation-time notification lands with PR 2c. | N/A                              |
 

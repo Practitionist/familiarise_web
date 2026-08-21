@@ -123,7 +123,7 @@ Booking algorithm Pre-MVP wave (`fix/booking-algorithm`, tracker #1072).
 
 | Fix | Severity | Description | Files / Issues |
 | --- | -------- | ----------- | -------------- |
-| Allocation audit wave (PR #1191) | Critical | Class session duration unified on the plan field (the avg-of-contents derivation disagreed with /validate and slot creation); auto-allocate honors the validator's per-day caps (class 2/day — dense classes no longer unallocatable); payment-guarded appointment deletes (`deleteMany where payment: { none }`, closing a Payment-cascade race); occupancy reads bounded to live intervals; `deletedAt` excluded from every occupancy path. | `SlotAllocationService.ts`, `sessionCaps.ts` |
+| Allocation audit wave (PR #1191) | Critical | Class session duration unified on the plan field (the avg-of-contents derivation disagreed with /validate and slot creation); auto-allocate honors the validator's per-day caps (class 2/day — dense classes no longer unallocatable); payment-guarded appointment deletes (`deleteMany where payment: { none }`, closing a Payment-cascade race); occupancy reads bounded to live intervals; `deletedAt` excluded from every occupancy path. | `SlotAllocationService.ts`, `sessionCaps.ts` — PR #1191 |
 | Journey hardening wave (PR 2a) | Critical | See the entries marked **B1–B9** below — from the full booking-journey + flash-sale audit. |
 
 ### Booking-journey audit fixes (PR 2a)

@@ -486,10 +486,18 @@ export const getUpcomingAppointments = (
 
   // Drop dead/tentative rows up front (B7) so neither the expansion below nor
   // the per-appointment checks can resurrect a released or unconfirmed slot.
-  const withLiveSlots = appointments.map((appointment) => ({
-    ...appointment,
-    slotsOfAppointment: liveSlotsOf(appointment),
-  }));
+  // An appointment whose rows ALL died (every session cancelled or
+  // rescheduled away) drops out entirely — with zero live rows it has nothing
+  // to show, and the raw-slot readers below would re-admit it (CodeRabbit
+  // triage). Appointments that arrived with NO rows at all keep legacy
+  // behavior (their liveness is decided by the checks below, not slots).
+  const withLiveSlots = appointments.flatMap((appointment) => {
+    const live = liveSlotsOf(appointment);
+    if (live.length === 0 && (appointment.slotsOfAppointment ?? []).length > 0) {
+      return [];
+    }
+    return [{ ...appointment, slotsOfAppointment: live }];
+  });
 
   // First filter out completed appointments
   const filteredAppointments = withLiveSlots.filter((appointment) => {

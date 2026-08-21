@@ -121,11 +121,20 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
       }),
     );
 
-    // Only TENTATIVE slots of the expired appointments are released.
+    // Only TENTATIVE slots of consultations that are STILL expired at delete
+    // time are released — the relational guard re-checks status at write
+    // time, so a request approved between the read and the delete keeps its
+    // hold (CodeRabbit triage on the approve-race).
     expect(prisma.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
       where: {
         appointmentId: { in: ["apt-1", "apt-2"] },
         isTentative: true,
+        appointment: {
+          consultation: {
+            id: { in: ["c1", "c2", "c3"] },
+            status: "EXPIRED",
+          },
+        },
       },
     });
   });

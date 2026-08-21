@@ -7,6 +7,7 @@ import {
   lockConsulteeBooking,
   unlockConsulteeBooking,
   BookingLockUnavailableError,
+  LockContentionError,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
@@ -118,27 +119,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Anti-scalper cap (booking-journey audit B1): every PENDING request
-    // holds a tentative slot that blocks the consultant's calendar, and the
-    // rate limiter alone (10/hour) allowed a bot farm to pin a popular
-    // consultant's entire inventory for days. Cap ACTIVE pending requests
-    // per user; the 48h expiry sweep keeps the count honest over time.
-    const activeRequests = await countActiveConsultationRequests(
-      prisma,
-      consulteeProfile.id,
-    );
-    if (activeRequests >= MAX_ACTIVE_REQUESTS_PER_USER) {
-      return NextResponse.json(
-        {
-          error:
-            `You already have ${activeRequests} requests awaiting approval ` +
-            `(limit ${MAX_ACTIVE_REQUESTS_PER_USER}). Wait for a consultant ` +
-            `to respond, or withdraw an existing request from your dashboard.`,
-        },
-        { status: 429 },
-      );
-    }
-
     // Verify the consultation plan exists and belongs to the consultant
     const consultationPlan = await prisma.consultationPlan.findFirst({
       where: {
@@ -182,6 +162,27 @@ export async function POST(req: NextRequest) {
 
     try {
       consulteeLock = await lockConsulteeBooking(session.user.id);
+
+      // Anti-scalper cap (booking-journey audit B1): every PENDING request
+      // holds a tentative slot that blocks the consultant's calendar. The
+      // count runs INSIDE the consultee lock — outside it, two concurrent
+      // submits both read n<3 and both insert, landing at 4+ active holds
+      // (CodeRabbit triage on the TOCTOU).
+      const activeRequests = await countActiveConsultationRequests(
+        prisma,
+        consulteeProfile.id,
+      );
+      if (activeRequests >= MAX_ACTIVE_REQUESTS_PER_USER) {
+        return NextResponse.json(
+          {
+            error:
+              `You already have ${activeRequests} requests awaiting approval ` +
+              `(limit ${MAX_ACTIVE_REQUESTS_PER_USER}). Wait for a consultant ` +
+              `to respond, or withdraw an existing request from your dashboard.`,
+          },
+          { status: 429 },
+        );
+      }
 
       try {
         // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
@@ -416,6 +417,30 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (error) {
+    // Consultee-lock failures surface here (the inner catch only wraps the
+    // slot-atom section). Map them to the SAME structured responses the slot
+    // arm uses — a raw 500 for "someone else is booking as you" reads as our
+    // fault and hides the retry (CodeRabbit triage).
+    if (error instanceof BookingLockUnavailableError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.httpStatus },
+      );
+    }
+    if (
+      error instanceof LockContentionError ||
+      error instanceof SlotLockError
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Another booking request is in progress for your account. Please try again in a moment.",
+          retryAfter: 30,
+        },
+        { status: 409 },
+      );
+    }
+
     console.error("Error creating approval request:", error);
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
     return NextResponse.json(

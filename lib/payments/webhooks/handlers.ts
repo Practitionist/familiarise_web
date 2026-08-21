@@ -477,12 +477,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       select: { id: true },
     });
     if (!loser) throw err;
+    // Description stays HONEST at each step (CodeRabbit triage): "refund
+    // pending" while the gateway call is in flight — if it fails, the record
+    // must not claim money the buyer has not received. The success branch
+    // below rewrites it to "Auto-refunded".
     await prisma.payment.update({
       where: { id: loser.id },
       data: {
         paymentStatus: PaymentStatus.SUCCEEDED,
         description:
-          "Auto-refunded: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
+          "Refund pending: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
       },
     });
     void recordSystemError({
@@ -498,10 +502,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason: "legacy capture overlapped a confirmed booking",
         initiatedByUserId: null,
       });
+      await prisma.payment.update({
+        where: { id: loser.id },
+        data: {
+          description:
+            "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
+        },
+      });
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
-        "Failed to auto-refund GiST-overlap legacy capture (Phase 2):",
+        "Failed to auto-refund GiST-overlap legacy capture; payment keeps its Refund-pending marker for manual recovery:",
         refundError,
       );
     }
