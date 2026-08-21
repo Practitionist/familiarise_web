@@ -162,8 +162,24 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
         continue;
       }
 
-      // No matching refund found - check if very old. The listing above
-      // SUCCEEDED, so absence here means the refund genuinely never landed.
+      // No matching refund found. Ambiguity first: multiple amount-matching
+      // candidates without reservation ids must NOT be aged into a failure
+      // (a wrong FAIL restores balance and invites a second gateway refund),
+      // and must not be guessed between either.
+      if (!exactMatch && fallbackMatch === undefined && candidates.length > 1) {
+        console.warn(
+          `⚠️ Refund ${refund.id}: ${candidates.length} amount-matching gateway refunds without reservation ids; leaving PENDING for manual review`,
+        );
+        reportSentryMessage(
+          `Ambiguous refund reconciliation: ${candidates.length} candidates for placeholder ${refund.id}`,
+          { subsystem: "payments", tags: { feature: "refund-reconcile" } },
+        );
+        skippedCount++;
+        continue;
+      }
+
+      // The listing above SUCCEEDED, so absence here means the refund
+      // genuinely never landed — but only give up after the 24h window.
       const refundAge = Date.now() - refund.createdAt.getTime();
       const isVeryOld = refundAge > PLACEHOLDER_FAIL_AFTER_MS;
 
@@ -185,16 +201,6 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
           `❌ Marked refund ${refund.id} as FAILED - no matching gateway refund found`,
         );
         failedCount++;
-      } else if (!exactMatch && candidates.length > 1) {
-        // Ambiguous legacy row — do NOT guess and do NOT fail; page instead.
-        console.warn(
-          `⚠️ Refund ${refund.id}: ${candidates.length} amount-matching gateway refunds without reservation ids; leaving PENDING for manual review`,
-        );
-        reportSentryMessage(
-          `Ambiguous refund reconciliation: ${candidates.length} candidates for placeholder ${refund.id}`,
-          { subsystem: "payments", tags: { feature: "refund-reconcile" } },
-        );
-        skippedCount++;
       } else {
         console.log(
           `⏳ Skipping refund ${refund.id} - no match found but still within grace period`,

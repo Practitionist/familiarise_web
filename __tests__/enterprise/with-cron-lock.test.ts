@@ -28,6 +28,9 @@ jest.mock("../../lib/redis", () => ({
   releaseLock: jest.fn().mockResolvedValue(undefined),
   isMockRedis: jest.fn(),
   checkRedisHealth: jest.fn(),
+  // Breaker state probe — the wrapper consults this to tell a genuinely-held
+  // lock apart from an open circuit (which must page, not skip).
+  isRedisCircuitOpen: jest.fn().mockReturnValue(false),
 }));
 
 // #697 — the trail is reached through `await import("@/lib/prisma")` inside the
