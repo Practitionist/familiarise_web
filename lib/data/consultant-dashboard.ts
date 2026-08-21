@@ -364,6 +364,12 @@ export async function getConsultantDashboard(
   const soonestSlots = await prisma.slotOfAppointment.findMany({
     where: {
       deletedAt: null,
+      // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
+      // APPROVED parent; without this guard it seeded "Today's Appointments"
+      // with a session that no longer exists. Tentative holds belong to the
+      // Requests tab, not the home calendar.
+      completionStatus: "SCHEDULED",
+      isTentative: false,
       endsAt: { gte: startOfToday },
       appointment: consultantAppointmentScope(consultantProfileId),
     },

@@ -4,6 +4,8 @@ import { AppointmentStatus } from "@prisma/client";
 import {
   lockSlotBooking,
   unlockSlotBooking,
+  lockConsulteeBooking,
+  unlockConsulteeBooking,
   BookingLockUnavailableError,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
@@ -16,6 +18,10 @@ import { scopedHref } from "@/lib/novu/resolve-href";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
+import {
+  MAX_ACTIVE_REQUESTS_PER_USER,
+  countActiveConsultationRequests,
+} from "@/lib/booking/request-caps";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -112,6 +118,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Anti-scalper cap (booking-journey audit B1): every PENDING request
+    // holds a tentative slot that blocks the consultant's calendar, and the
+    // rate limiter alone (10/hour) allowed a bot farm to pin a popular
+    // consultant's entire inventory for days. Cap ACTIVE pending requests
+    // per user; the 48h expiry sweep keeps the count honest over time.
+    const activeRequests = await countActiveConsultationRequests(
+      prisma,
+      consulteeProfile.id,
+    );
+    if (activeRequests >= MAX_ACTIVE_REQUESTS_PER_USER) {
+      return NextResponse.json(
+        {
+          error:
+            `You already have ${activeRequests} requests awaiting approval ` +
+            `(limit ${MAX_ACTIVE_REQUESTS_PER_USER}). Wait for a consultant ` +
+            `to respond, or withdraw an existing request from your dashboard.`,
+        },
+        { status: 429 },
+      );
+    }
+
     // Verify the consultation plan exists and belongs to the consultant
     const consultationPlan = await prisma.consultationPlan.findFirst({
       where: {
@@ -139,14 +166,28 @@ export async function POST(req: NextRequest) {
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
       `Availability slot: ${slotOfAvailabilityWeeklyId ? `Weekly ID: ${slotOfAvailabilityWeeklyId}` : `Custom ID: ${slotOfAvailabilityCustomId}`}`;
 
-    // DISTRIBUTED LOCK: Prevent double-booking at slot level
+    // DISTRIBUTED LOCKS: serialize on the CONSULTEE first, then the slot
+    // atoms. Order matters: direct checkout takes consultee → slot atoms
+    // (lib/payments/operations/checkout.ts), so this route must use the same
+    // order — the reverse would let a checkout holding the consultee lock
+    // wait on atoms this route holds while it waits on the consultee lock
+    // (classic ABBA). The consultee arm is the piece the audit flagged (B8a):
+    // without it the same user could race this route against their own
+    // checkout on a DIFFERENT consultant and double-book themselves — the
+    // GiST guard is consultant-keyed and cannot see it.
+    let consulteeLock: Awaited<
+      ReturnType<typeof lockConsulteeBooking>
+    > | null = null;
     let lock;
 
     try {
-      // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
-      // per 30-min atom, so overlapping requests with different starts collide)
-      // Use default 60s TTL (15s was too short for slow database operations)
-      lock = await lockSlotBooking(consultantProfileId, startsAt, endsAt);
+      consulteeLock = await lockConsulteeBooking(session.user.id);
+
+      try {
+        // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
+        // per 30-min atom, so overlapping requests with different starts collide)
+        // Use default 60s TTL (15s was too short for slow database operations)
+        lock = await lockSlotBooking(consultantProfileId, startsAt, endsAt);
 
       console.log(
         JSON.stringify({
@@ -366,6 +407,12 @@ export async function POST(req: NextRequest) {
             timestamp: new Date().toISOString(),
           }),
         );
+      }
+    }
+    } finally {
+      // Release the consultee arm last (reverse acquisition order).
+      if (consulteeLock) {
+        await unlockConsulteeBooking(consulteeLock);
       }
     }
   } catch (error) {

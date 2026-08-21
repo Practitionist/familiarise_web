@@ -12,7 +12,9 @@
  * - jobs/expire-stale-requests.ts (GitHub Actions)
  * - app/api/cleanup/expire-stale-requests/route.ts (API endpoint)
  *
- * Schedule: Daily
+ * Schedule: Hourly (booking-journey audit B1 — a PENDING consultation holds
+ * a tentative slot, so the old daily cadence plus a 30-day threshold let a
+ * single account pin a consultant's calendar for a month).
  */
 
 import prisma from "../../lib/prisma";
@@ -24,7 +26,14 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 // REQUEST_ALLOWED_FROM.EXPIRED in lib/booking/transitions.ts (#836) —
 // each cohort has its own cutoff, so they are not merged into one sweep.
 
-// Expire requests in PENDING state for more than 30 days
+// Expire PENDING consultations after 48 hours. A PENDING consultation is not
+// just paperwork — its request-for-approval tentative slots block the
+// consultant's calendar, so the threshold is measured in hours, not days.
+// Subscriptions hold no slots at request time (lazy allocation), so they
+// keep the generous window below.
+const PENDING_CONSULTATION_EXPIRATION_HOURS = 48;
+
+// Expire requests in PENDING state for more than 30 days (subscriptions).
 const PENDING_EXPIRATION_DAYS = 30;
 
 // Also expire APPROVED_PENDING_PAYMENT after 7 days
@@ -35,76 +44,87 @@ export interface ExpireStaleRequestsResult {
   consultationsExpired: number;
   subscriptionsExpired: number;
   paymentPendingExpired: number;
+  /** Tentative slots freed by the consultation expiry (B1). */
+  consultationSlotsReleased: number;
   errors: string[];
   timestamp: string;
 }
 
 /**
- * Expire stale PENDING consultations
+ * Expire stale PENDING consultations and release the tentative slots they
+ * pinned. The slot release happens HERE rather than waiting for the
+ * tentative-slot sweeper: that sweep's parent guard skips PENDING
+ * consultations by design (a consultant may legitimately be reviewing), so
+ * before B1 a slot pinned by a stale request waited for the status flip and
+ * then another sweeper cycle — 30+ days in the worst case.
  */
 async function expirePendingConsultations(): Promise<{
   expired: number;
+  slotsReleased: number;
   errors: string[];
 }> {
   const errors: string[] = [];
   const expirationDate = new Date(
-    Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
   );
 
   try {
-    // Find stale PENDING consultations
+    // Find stale PENDING consultations (with their appointment ids so the
+    // slot release below can target exactly the expired rows).
     const staleConsultations = await prisma.consultation.findMany({
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
-      include: {
-        requestedBy: {
-          include: { user: { select: { email: true, name: true } } },
-        },
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: { user: { select: { email: true, name: true } } },
-            },
-          },
-        },
-      },
+      select: { id: true, appointment: { select: { id: true } } },
     });
 
     console.log(
-      `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_EXPIRATION_DAYS} days`,
+      `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
     );
 
-    for (const consultation of staleConsultations) {
-      console.log(`\nExpiring consultation ${consultation.id}`);
-      console.log(
-        `   Requested by: ${consultation.requestedBy.user.name || "Unknown"}`,
-      );
-      console.log(
-        `   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`,
-      );
-      console.log(`   Requested at: ${consultation.requestedAt.toISOString()}`);
+    if (staleConsultations.length === 0) {
+      return { expired: 0, slotsReleased: 0, errors };
     }
+
+    const expiredIds = staleConsultations.map((c) => c.id);
+    const expiredAppointmentIds = staleConsultations
+      .map((c) => c.appointment?.id)
+      .filter((id): id is string => !!id);
 
     // Bulk update to EXPIRED
     const result = await prisma.consultation.updateMany({
       where: {
+        id: { in: expiredIds },
         status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
       },
       data: {
         status: AppointmentStatus.EXPIRED,
       },
     });
 
+    // Release the tentative holds the expired requests pinned. Scoped to
+    // isTentative so an already-confirmed slot (impossible for a PENDING
+    // request, but cheap to assert) is never touched.
+    let slotsReleased = 0;
+    if (expiredAppointmentIds.length > 0) {
+      const slotResult = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointmentId: { in: expiredAppointmentIds },
+          isTentative: true,
+        },
+      });
+      slotsReleased = slotResult.count;
+    }
+
     console.log(`✅ Expired ${result.count} PENDING consultations`);
-    return { expired: result.count, errors };
+    console.log(`✅ Released ${slotsReleased} tentative slots from them`);
+    return { expired: result.count, slotsReleased, errors };
   } catch (error) {
     const msg = `Failed to expire consultations: ${error}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
-    return { expired: 0, errors };
+    return { expired: 0, slotsReleased: 0, errors };
   }
 }
 
@@ -252,7 +272,8 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
 
   console.log("🕐 Starting stale request expiration...");
   console.log(
-    `   PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
+    `   Consultation PENDING expiration threshold: ${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
+    `   Subscription PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
   );
   console.log(
     `   APPROVED_PENDING_PAYMENT expiration: ${PAYMENT_PENDING_EXPIRATION_DAYS} days`,
@@ -277,7 +298,10 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // Summary
   console.log("\n📊 Stale Request Expiration Summary:");
   console.log(
-    `   Consultations expired (PENDING): ${consultationResult.expired}`,
+    `   Consultations expired (PENDING >${PENDING_CONSULTATION_EXPIRATION_HOURS}h): ${consultationResult.expired}`,
+  );
+  console.log(
+    `   Tentative slots released with them: ${consultationResult.slotsReleased}`,
   );
   console.log(
     `   Subscriptions expired (PENDING): ${subscriptionResult.expired}`,
@@ -294,6 +318,7 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
     consultationsExpired: consultationResult.expired,
     subscriptionsExpired: subscriptionResult.expired,
     paymentPendingExpired: totalPaymentPending,
+    consultationSlotsReleased: consultationResult.slotsReleased,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

@@ -2,8 +2,10 @@ name: Expire Stale Requests
 
 on:
   schedule:
-    # Daily 01:20 UTC. #709 — off generate-subscription-invoices (01:00).
-    - cron: "20 1 * * *"
+    # Hourly at :40 (booking-journey audit B1 — a PENDING consultation pins a
+    # tentative slot, so expiry runs hourly against the 48h threshold instead
+    # of daily against 30 days). Off the :00/:20/:30 slots other crons use.
+    - cron: "40 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:

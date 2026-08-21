@@ -131,10 +131,13 @@ export default function ConsultationPricingToggle({
     }
 
     if (!session?.user?.id) {
-      toast({
-        title: "Please sign in to request approval",
-        variant: "destructive",
-      });
+      // B9 (booking-journey audit) — redirect to sign-in with a callback URL
+      // instead of dead-ending in a toast. The Buy path already does this
+      // implicitly: /checkout/* is middleware-protected and bounces here with
+      // callbackUrl. The request-for-approval path runs client-side, so it
+      // must build the same redirect itself or guests hit a wall.
+      const callbackUrl = `${window.location.pathname}${window.location.search}`;
+      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`;
       return;
     }
 
