@@ -147,6 +147,19 @@ describe("checkSlotAvailability", () => {
     expect(gtClause.toISOString()).toBe("2025-06-01T10:00:00.000Z");
   });
 
+  // Defense-in-depth: the conflict scan never trusts a tombstoned slot as a
+  // booking. (Deliberately NO completionStatus filter — RESCHEDULED rows are
+  // a pending reschedule's live hold and must still block.)
+  it("excludes deletedAt slot tombstones from the conflict scan", async () => {
+    await service.checkSlotAvailability(futureSlots(1), "user-1");
+    const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
+    const slotFilter = where.AND.find(
+      (clause: any) => clause.slotsOfAppointment,
+    ).slotsOfAppointment.some.AND;
+    expect(slotFilter).toContainEqual({ deletedAt: null });
+    expect(JSON.stringify(slotFilter)).not.toContain("completionStatus");
+  });
+
   it("should skip expired payment conflicts (consultation)", async () => {
     const slots = futureSlots(1);
     mockPrisma.appointment.findMany.mockResolvedValue([

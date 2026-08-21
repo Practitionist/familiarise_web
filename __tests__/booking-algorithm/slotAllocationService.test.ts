@@ -123,6 +123,11 @@ function makeMockTx() {
         slotsOfAppointment: [],
       }),
       delete: jest.fn(),
+      // B-P1-05 — the payment guard rides in the delete's WHERE clause, so
+      // deleteExistingAppointments deletes appointments via deleteMany.
+      // count: 1 = "deleted" (no payment appeared); tests override to 0 for
+      // the payment-appeared race.
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     slotOfAppointment: {
       update: jest.fn(),
@@ -529,8 +534,9 @@ describe("Manual allocation", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
-      where: { id: "old-apt-1" },
+    // B-P1-05 — the delete carries its own payment guard in the WHERE clause.
+    expect(mockTx.appointment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "old-apt-1", payment: { none: {} } },
     });
   });
 
@@ -1103,6 +1109,136 @@ describe("Auto allocation", () => {
     expect(result.error).toContain("consecutive slots available");
   });
 
+  // ── Per-day cap parity (#1189 B-P2 adjacent): auto-allocate may stack up to
+  // the validator's per-day cap on one day. A class with more sessions per
+  // week than available days was UNALLOCATABLE by auto (one-placement-per-day
+  // cursor found 1/day) while manual + validatePerDaySessionCap allow 2/day.
+  it("stacks two class sessions on one day when available days < sessionsPerWeek", async () => {
+    mockTx.class.findUnique.mockResolvedValue(
+      makeClassEvent({
+        classPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInMonths: 1,
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 1,
+          totalSessions: 8, // authoritative plan count → 8 × 2 slots = 16
+          consultantProfile: makeConsultantProfile({
+            // Only TWO available days per week for a THREE-per-week class.
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11),
+              makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 11),
+            ],
+          }),
+        },
+        schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-27T00:00:00Z"),
+        appointments: [],
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]); // no existing bookings
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "auto",
+    });
+
+    // 8 sessions × 2 slots = 16 slots demanded; only 6 allocatable days exist
+    // in the window, so the demand is satisfiable ONLY by placing two sessions
+    // on some days (the validator's ≤2/day cap). The old one-per-day cursor
+    // found at most 6 sessions and failed with "Could only find 12 of 16".
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(8);
+
+    const sessionStarts = mockTx.appointment.create.mock.calls.map(
+      (call: any[]) => new Date(call[0].data.slotsOfAppointment.create[0].startsAt),
+    );
+    // Two sessions stacked on the first Monday (09:00 and 10:00) — the
+    // per-day-cap behavior the validator already allowed.
+    const jan6 = sessionStarts.filter(
+      (d: Date) => d.toISOString().startsWith("2025-01-06"),
+    );
+    expect(jan6.map((d: Date) => d.toISOString()).sort()).toEqual([
+      "2025-01-06T09:00:00.000Z",
+      "2025-01-06T10:00:00.000Z",
+    ]);
+    // Every placement stays inside the scheduling period.
+    for (const d of sessionStarts) {
+      expect(d.getTime()).toBeLessThan(
+        new Date("2025-01-27T00:00:00Z").getTime(),
+      );
+    }
+  });
+
+  it("still caps subscriptions at one session per day", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInMonths: 1,
+          sessionsPerWeek: 3,
+          sessionDurationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 12),
+            ],
+          }),
+        },
+        schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-13T00:00:00Z"),
+        appointments: [],
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "auto",
+    });
+
+    // 2 weeks × 3 sessions × 2 slots = 12 slots demanded, but a subscription
+    // holds at most ONE session per day (MAX_SUBSCRIPTION_SESSIONS_PER_DAY)
+    // and only one Monday exists in the window → auto must refuse rather
+    // than stack same-day sessions the validator would reject.
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Could only find 2 of 12");
+  });
+
+  // ── Bounded occupancy reads (#908 family): selection only needs FUTURE
+  // occupancy — buildConsecutiveBlock rejects any candidate before `now` — so
+  // the reads are bounded to live intervals instead of the consultant's whole
+  // history, and tombstoned slots never block.
+  it("bounds occupancy reads to live intervals and excludes slot tombstones", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+    expect(result.success).toBe(true);
+
+    const findManyCalls = mockTx.appointment.findMany.mock.calls;
+    // Call #1: reschedule detection. Calls #2/#3: findAvailableSlots'
+    // consultant and consultee occupancy reads.
+    expect(findManyCalls.length).toBeGreaterThanOrEqual(3);
+
+    for (const index of [1, 2]) {
+      const where = findManyCalls[index][0].where;
+      const boundedArm = where.AND.find(
+        (clause: any) =>
+          clause.slotsOfAppointment?.some?.endsAt !== undefined,
+      )?.slotsOfAppointment.some;
+      expect(boundedArm).toBeDefined();
+      // Live intervals only — past slots can never collide with a candidate.
+      expect(boundedArm.endsAt).toHaveProperty("gt");
+      // Tombstoned slots are not bookings.
+      expect(boundedArm.deletedAt).toBeNull();
+    }
+  });
+
   it("should validate found slots before creating appointments", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockValidateFn.mockResolvedValue({
@@ -1339,7 +1475,7 @@ describe("fetchEventData - config extraction", () => {
     );
   });
 
-  it("should extract class config with sessionsPerWeek and classContents", async () => {
+  it("should extract class config from the PLAN session duration, not the classContents average", async () => {
     mockTx.class.findUnique.mockResolvedValue(
       makeClassEvent({
         classPlan: {
@@ -1348,7 +1484,11 @@ describe("fetchEventData - config extraction", () => {
           sessionsPerWeek: 2,
           sessionDurationInHours: 1.5,
           consultantProfile: makeConsultantProfile(),
-          classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 2 }],
+          // Curriculum items deliberately disagree with the plan (average
+          // 1.0h): they describe content coverage, not session length. The
+          // allocator must follow the plan — crud-with-plan writes slots at
+          // the plan duration and /validate validates against it.
+          classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 1 }],
         },
         // 1 week with sessionsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
         schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
@@ -1359,7 +1499,9 @@ describe("fetchEventData - config extraction", () => {
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
-      // classContents average: (1+2)/2 = 1.5 hours → 3 slots per call, 2 calls = 6 slots
+      // Plan duration 1.5 hours → 3 slots per call, 2 calls = 6 slots.
+      // Under the old contents-average derivation (1.0h → 2 slots/call) this
+      // selection would have been rejected as a non-multiple of 2.
       slots: [
         "2025-01-06T10:00:00Z",
         "2025-01-06T10:30:00Z",
@@ -1703,11 +1845,63 @@ describe("deleteExistingAppointments", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
-      where: { id: "old-1" },
+    // B-P1-05 — the delete carries its own payment guard: a Payment that
+    // commits between the earlier read and this write must not be
+    // cascade-destroyed (Payment.appointment is onDelete: Cascade).
+    expect(mockTx.appointment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "old-1", payment: { none: {} } },
     });
-    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
-      where: { id: "old-2" },
+    expect(mockTx.appointment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "old-2", payment: { none: {} } },
+    });
+  });
+
+  // ── B-P1-05: the delete refuses when a payment appeared mid-transaction ────
+  it("B-P1-05: full-delete keeps the appointment and strips only its slots when a payment appeared", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    // Both appointments read as payment-less. The guarded delete of "old-2"
+    // then matches ZERO rows — a checkout's Payment committed between the
+    // read and the delete (the race). "old-1" deletes normally.
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "old-1",
+        slotsOfAppointment: [
+          {
+            id: "s1",
+            isTentative: false,
+            user: [{ id: "consultant-1" }],
+            startsAt: new Date("2025-01-06T10:00:00Z"),
+            endsAt: new Date("2025-01-06T10:30:00Z"),
+            meetingSession: null,
+          },
+        ],
+        _count: { payment: 0 },
+      },
+      { id: "old-2", slotsOfAppointment: [], _count: { payment: 0 } },
+    ]);
+    mockTx.appointment.deleteMany.mockImplementation(
+      async ({ where }: any) =>
+        where.id === "old-2" ? { count: 0 } : { count: 1 },
+    );
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    // The raced appointment was KEPT (no unconditional delete) and, being a
+    // consultation's 1:1 appointment holding the @unique event FK, the new
+    // slots were attached to it via update (REUSE) instead of create.
+    expect(mockTx.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "old-2" } }),
+    );
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    // Its sessionless slots were stripped so they no longer block availability.
+    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+      where: { appointmentId: "old-2", meetingSession: { is: null } },
     });
   });
 
@@ -1942,8 +2136,11 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockTx.appointment.delete).toHaveBeenCalledWith({
-      where: { id: "no-pay-1" },
+    // B-P1-05 — hard delete survives, but as a payment-guarded deleteMany:
+    // the WHERE re-checks at write time so a Payment committing mid-txn can
+    // never be cascade-destroyed.
+    expect(mockTx.appointment.deleteMany).toHaveBeenCalledWith({
+      where: { id: "no-pay-1", payment: { none: {} } },
     });
   });
 
@@ -2036,6 +2233,10 @@ describe("deleteExistingAppointments", () => {
       id: "paid-webinar-apt",
       slotsOfAppointment: [{ id: "reused-ws-1" }, { id: "reused-ws-2" }],
     });
+    // B-P1-05 — the onlyTentative branch now deletes via a payment-guarded
+    // deleteMany; this appointment carries payments, so the DB would answer
+    // count 0 (refused) and the appointment is kept for REUSE.
+    mockTx.appointment.deleteMany.mockResolvedValue({ count: 0 });
 
     const result = await SlotAllocationService.allocate({
       eventType: "webinar",

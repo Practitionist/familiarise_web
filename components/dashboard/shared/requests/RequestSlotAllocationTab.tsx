@@ -1321,6 +1321,17 @@ export function RequestSlotAllocationTab({
               : undefined
           }
           confirming={respondInFlight}
+          rescheduleNeedsAllocator={
+            // A reschedule without an answerable consultee proposal cannot
+            // confirm its stored times (they are the times being moved away
+            // from) — the dialog shows allocator guidance instead of a
+            // confirm button that the server would always refuse. An
+            // ANSWERABLE proposal still confirms here: its times are the
+            // proposed replacements, accepted via respond (#1163).
+            !!selectedRequestForDialog &&
+            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0 &&
+            !answerableProposal(selectedRequestForDialog)
+          }
           onConfirm={handleRequestedAllocation}
           onCancel={() => {
             setRequestedSlotsDialogOpen(false);

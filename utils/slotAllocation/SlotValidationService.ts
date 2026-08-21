@@ -17,6 +17,10 @@ import {
 import { SlotCalculationService } from "./SlotCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import {
+  MAX_CLASS_SESSIONS_PER_DAY,
+  MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+} from "./sessionCaps";
 import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 // AE-5/RV-6 — every slot is uniformly 30 minutes. The old slotDurationMinutes
@@ -330,6 +334,10 @@ export class SlotValidationService {
                     { startsAt: { lt: new Date(latestEnd) } },
                     { endsAt: { gt: new Date(earliestStart) } },
                     { user: { some: { id: { in: participantIds } } } },
+                    // Defense-in-depth: a tombstoned slot is not a booking.
+                    // No completionStatus filter here — RESCHEDULED rows are
+                    // a pending reschedule's live hold and must still block.
+                    { deletedAt: null },
                   ],
                 },
               },
@@ -800,7 +808,8 @@ export class SlotValidationService {
     // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
     // SubscriptionValidationService enforces the weekly limit; the per-day cap
     // previously lived only in allocation selection + the client guard.
-    const MAX_SUBSCRIPTION_SESSIONS_PER_DAY = 1;
+    // Constant shared with the allocator (utils/slotAllocation/sessionCaps.ts)
+    // so selection and validation can never disagree.
     const subscriptionAppointments =
       await this.prismaClient.appointment.findMany({
         where: { subscriptionId },
@@ -817,7 +826,6 @@ export class SlotValidationService {
       MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
       config.schedulingTimezone,
     );
-
     return {
       isValid: result.isValid && perDayErrors.length === 0,
       errors: [...errors, ...result.errors, ...perDayErrors],
@@ -1048,8 +1056,8 @@ export class SlotValidationService {
 
     // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
     // at allocation-selection time + the client guard, so a hand-crafted manual
-    // allocate could stack same-day sessions.
-    const MAX_CLASS_SESSIONS_PER_DAY = 2;
+    // allocate could stack same-day sessions. Constant shared with the
+    // allocator (utils/slotAllocation/sessionCaps.ts).
     errors.push(
       ...this.validatePerDaySessionCap(
         classAppointments,
