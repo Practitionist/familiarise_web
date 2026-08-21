@@ -816,7 +816,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     const dashboardUrl = notificationHref(orgId, "appointments");
 
     // Notify consultee of successful payment
-    void notifyPaymentSuccess(userId, {
+    void Promise.resolve(notifyPaymentSuccess(userId, {
       ...scope,
       amount,
       currency,
@@ -824,7 +824,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       appointmentType: metadata.appointmentType,
       planTitle: metadata.planId || planTitle,
       dashboardUrl,
-    }).catch(() => {});
+    })).catch(() => {});
 
     // Notify both consultant and consultee of the booked appointment
     const notifUserIds = [userId];
@@ -839,7 +839,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       orderBy: { startsAt: "asc" },
       select: { startsAt: true },
     });
-    void notifyAppointmentBooked(notifUserIds, {
+    void Promise.resolve(notifyAppointmentBooked(notifUserIds, {
       ...scope,
       appointmentId,
       dateTime: firstSlot?.startsAt.toISOString(),
@@ -848,7 +848,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       consulteeName: userName || "User",
       planTitle: metadata.planId || planTitle,
       dashboardUrl,
-    }).catch(() => {});
+    })).catch(() => {});
   } catch (novuError) {
     reportSentryError(novuError, { subsystem: "payments", level: "warning" });
     console.error(
@@ -1127,14 +1127,14 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       const appointmentType =
         payment.appointment?.appointmentType || "CONSULTATION";
 
-      void notifyPaymentFailed(payment.userId, {
+      void Promise.resolve(notifyPaymentFailed(payment.userId, {
         amount: payment.amount,
         currency: payment.currency,
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}/dashboard`,
-      }).catch(() => {});
+      })).catch(() => {});
     } catch (novuError) {
       reportSentryError(novuError, { subsystem: "payments", level: "warning" });
       console.error(

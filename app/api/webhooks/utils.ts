@@ -1125,7 +1125,7 @@ export async function handleRefundCreated(
     );
 
     // --- Novu notification (fire-and-forget) ---
-    void notifyRefundProcessed(payment.userId, {
+    void Promise.resolve(notifyRefundProcessed(payment.userId, {
       // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
       // inherits the org-ness of the payment it reverses. dashboardUrl stays a
       // router bounce deliberately: this goes to the PAYER, and an org billing
@@ -1134,7 +1134,7 @@ export async function handleRefundCreated(
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,
-    }).catch(() => {});
+    })).catch(() => {});
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
@@ -1310,14 +1310,14 @@ export async function handleDisputeCreated(
         }
 
         // --- Novu notification (fire-and-forget) ---
-        void notifyDisputeCreated([payment.userId], {
+        void Promise.resolve(notifyDisputeCreated([payment.userId], {
           disputeId,
           amount,
           currency,
           reason,
           status: createdStatus ?? "NEEDS_RESPONSE",
           dashboardUrl: `${getAppUrl()}/dashboard`,
-        }).catch(() => {});
+        })).catch(() => {});
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
@@ -1601,14 +1601,14 @@ export async function handleDisputeUpdated(
         });
 
         if (disputePayment) {
-          void notifyDisputeResolved([disputePayment.userId], {
+          void Promise.resolve(notifyDisputeResolved([disputePayment.userId], {
             disputeId,
             amount: dispute.amountPaise,
             currency: dispute.currency,
             reason: dispute.reason || undefined,
             status: mappedStatus,
             dashboardUrl: `${getAppUrl()}/dashboard`,
-          }).catch(() => {});
+          })).catch(() => {});
         }
       }
     },
