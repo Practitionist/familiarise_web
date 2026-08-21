@@ -1015,6 +1015,7 @@ async function processStripePayout(
     id: string;
     amount: number;
     currency: string;
+    idempotencyKey: string | null;
   },
   account: {
     stripeAccountId: string | null;
@@ -1041,7 +1042,7 @@ async function processStripePayout(
     currency: payout.currency.toLowerCase(),
     destinationAccountId: account.stripeAccountId,
     description: `Payout ${payout.id}`,
-    idempotencyKey: payout.idempotencyKey,
+    idempotencyKey: payout.idempotencyKey ?? undefined,
     metadata: {
       payoutId: payout.id,
       source: "familiarise_platform",

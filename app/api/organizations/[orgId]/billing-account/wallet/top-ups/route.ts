@@ -147,8 +147,20 @@ export async function POST(
   if (clientIdempotencyKey) {
     const existing = await prisma.walletTopUp.findUnique({
       where: { providerOrderId: clientIdempotencyKey },
+      select: { providerOrderId: true, billingAccount: { select: { ownerOrgId: true } } },
     });
     if (existing) {
+      // Cross-tenant guard: providerOrderId is globally unique, so without
+      // this check org B could probe the existence of org A's pending
+      // top-up ids (reused:true vs 201) — or pre-claim a predictable key and
+      // block the victim's funding POST entirely. A collision with another
+      // org's key is a conflict, not a reuse.
+      if (existing.billingAccount.ownerOrgId !== orgId) {
+        return NextResponse.json(
+          { error: "A top-up with this idempotency key already exists" },
+          { status: 409 },
+        );
+      }
       // We can't retrieve the original Razorpay order id here without
       // a dedicated column, so a "resume" path requires a fresh order.
       // To stay strictly idempotent, surface the existing pending entry

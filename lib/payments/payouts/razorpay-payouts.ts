@@ -121,7 +121,11 @@ export type RazorpayPayoutStatus =
   | "processed"
   | "reversed"
   | "cancelled"
-  | "rejected";
+  | "rejected"
+  // Terminal failure state returned by the Payouts Entity; the webhook
+  // mappers already handle payout.failed events, so the fetch-side type
+  // must model it too or a poller switch on remote.status cannot compile.
+  | "failed";
 
 export interface PayoutWebhookEvent {
   entity: string;

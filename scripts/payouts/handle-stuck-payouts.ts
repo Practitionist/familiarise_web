@@ -19,7 +19,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PayoutStatus, PaymentGateway } from "@prisma/client";
+import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 
