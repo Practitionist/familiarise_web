@@ -56,6 +56,33 @@ export interface AppointmentSlot {
   endsAt: Date;
 }
 
+/**
+ * Whether a stored slot row is shape-valid, including the legacy
+ * "ends at midnight" overnight form.
+ *
+ * end > start is always valid. end <= start is only legitimate as the
+ * legacy same-day-midnight storage of an overnight row (10:00 → 00:00
+ * meaning 10:00 → 24:00): the end must be exactly UTC midnight AND fewer
+ * than 24h before the start. Every earlier version of this check admitted
+ * any end-at-midnight row no matter how far back it sat, so a corrupt
+ * multi-day-negative row (e.g. Aug 25 10:00 → Aug 21 00:00) passed as
+ * "legitimate overnight" and was painted onto the grid instead of being
+ * dropped as the corruption it is.
+ */
+export function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
+  if (endTime > startTime) return true;
+
+  const endsAtMidnightUtc =
+    endTime.getUTCHours() === 0 &&
+    endTime.getUTCMinutes() === 0 &&
+    endTime.getUTCSeconds() === 0 &&
+    endTime.getUTCMilliseconds() === 0;
+  if (!endsAtMidnightUtc) return false;
+
+  const gapMs = startTime.getTime() - endTime.getTime();
+  return gapMs > 0 && gapMs < 24 * 60 * 60 * 1000;
+}
+
 // #907 — the availability pipeline checks each 30-min window against the booked
 // slots; scanning the full appointment array per window is O(windows × appts)
 // and dominated cold wall-clock for wide ranges. Bucket booked slots by 30-min

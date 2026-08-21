@@ -147,6 +147,41 @@ describe("checkSlotAvailability", () => {
     expect(gtClause.toISOString()).toBe("2025-06-01T10:00:00.000Z");
   });
 
+  // Defense-in-depth: the conflict scan never trusts a tombstoned slot as a
+  // booking. (Deliberately NO completionStatus filter here — RESCHEDULED rows
+  // are a pending reschedule's live hold and must still block.)
+  it("excludes deletedAt slot tombstones from the conflict scan", async () => {
+    await service.checkSlotAvailability(futureSlots(1), "user-1");
+    const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
+    const slotFilter = where.AND.find(
+      (clause: any) => clause.slotsOfAppointment,
+    ).slotsOfAppointment.some.AND;
+    expect(slotFilter).toContainEqual({ deletedAt: null });
+    expect(JSON.stringify(slotFilter)).not.toContain("completionStatus");
+  });
+
+  // Behavior guard, stated honestly for a mocked Prisma: the DB applies the
+  // include's where, so the strongest unit-level guarantee is that the
+  // include mirrors the parent predicate EXACTLY — otherwise a qualifying
+  // appointment's tombstoned (or non-participating) child reaches the JS
+  // matcher and produces a [CONFLICT] the parent filter just excluded
+  // (CodeRabbit triage). End-to-end tombstone behavior is covered by the
+  // grid-allocator-parity suite against a real database.
+  it("mirrors the parent slot predicate into the conflict query's include", async () => {
+    await service.checkSlotAvailability(futureSlots(2), "user-1");
+    const { where, include } = mockPrisma.appointment.findMany.mock.calls[0][0];
+    const parentFilter = where.AND.find(
+      (clause: any) => clause.slotsOfAppointment,
+    ).slotsOfAppointment.some.AND;
+    const includeFilter = include.slotsOfAppointment.where.AND;
+    // Same four conditions, same order: envelope ×2, participants, tombstone.
+    expect(includeFilter).toEqual(parentFilter);
+    expect(includeFilter).toContainEqual({ deletedAt: null });
+    expect(includeFilter).toContainEqual({
+      user: { some: { id: { in: ["user-1"] } } },
+    });
+  });
+
   it("should skip expired payment conflicts (consultation)", async () => {
     const slots = futureSlots(1);
     mockPrisma.appointment.findMany.mockResolvedValue([
