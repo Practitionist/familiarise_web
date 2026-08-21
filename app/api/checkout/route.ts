@@ -10,6 +10,9 @@ import { getSession } from "@/lib/auth-server";
 import {
   EventCheckoutLockUnavailableError,
   BookingLockUnavailableError,
+  EventCheckoutBusyError,
+  ConsulteeBookingBusyError,
+  EventFullError,
 } from "@/utils/appointmentlock";
 import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -137,6 +140,38 @@ export async function POST(req: NextRequest) {
           error:
             "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
           errorType: error.code,
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // B4 — SOLD OUT answered by the optimistic pre-check before the mutex.
+    // Terminal until someone cancels: no retryAfter, plain copy.
+    if (error instanceof EventFullError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          errorType: error.code,
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // B4/B8c — typed lock contention: another buyer holds the event mutex, or
+    // this same account is mid-checkout on another device. Structured 409 +
+    // retryAfter so the client can auto-retry once instead of dead-ending.
+    if (
+      error instanceof EventCheckoutBusyError ||
+      error instanceof ConsulteeBookingBusyError
+    ) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          errorType: error.code,
+          retryAfter: error.retryAfterSeconds,
+          yourCardWasNotCharged: true,
           timestamp: new Date().toISOString(),
         },
         { status: error.httpStatus },

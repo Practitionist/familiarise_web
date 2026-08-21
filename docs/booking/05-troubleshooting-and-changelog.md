@@ -125,6 +125,7 @@ Booking algorithm Pre-MVP wave (`fix/booking-algorithm`, tracker #1072).
 | --- | -------- | ----------- | -------------- |
 | Allocation audit wave (PR #1191) | Critical | Class session duration unified on the plan field (the avg-of-contents derivation disagreed with /validate and slot creation); auto-allocate honors the validator's per-day caps (class 2/day — dense classes no longer unallocatable); payment-guarded appointment deletes (`deleteMany where payment: { none }`, closing a Payment-cascade race); occupancy reads bounded to live intervals; `deletedAt` excluded from every occupancy path. | `SlotAllocationService.ts`, `sessionCaps.ts` — PR #1191 |
 | Journey hardening wave (PR 2a) | Critical | See the entries marked **B1–B9** below — from the full booking-journey + flash-sale audit. |
+| Flash-sale checkout behavior (PR 2b) | High | Webinar/class checkout runs an optimistic capacity pre-check BEFORE the event mutex (sold-out buyers fail fast with `EVENT_SOLD_OUT`, no mutex queueing); checkout lock waiters are bounded to ~7s (`CHECKOUT_WAIT_RETRY_CONFIG`) so losers get structured `EVENT_CHECKOUT_BUSY` / `CONSULTEE_BOOKING_BUSY` 409s with `retryAfter` instead of raw 504s; all four client submit paths auto-retry a BUSY 409 exactly once (idempotency-key dedupe-safe). Serializable recount remains authoritative. | `checkout.ts`, `appointmentlock.ts`, checkout route, 4 submit paths |
 
 ### Booking-journey audit fixes (PR 2a)
 

@@ -39,7 +39,10 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+import { mintClientIdempotencyKey,
+  busyRetryToast,
+  fetchCheckoutWithBusyRetry,
+} from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -273,7 +276,11 @@ export default function SubscriptionCheckoutPage({
         });
 
         // Make API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(checkoutData, isMockPayment);
+        // B5 — structured BUSY 409s auto-retry once (idempotency key dedupe-safe).
+        const response = await fetchCheckoutWithBusyRetry(
+          () => makeCheckoutRequest(checkoutData, isMockPayment),
+          (waitSeconds) => toast(busyRetryToast(waitSeconds)),
+        );
 
         if (!response.ok) {
           const errorData = await response.json();
