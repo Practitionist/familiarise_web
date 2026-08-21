@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { throwSupportError } from "@/lib/support/error-copy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
@@ -122,10 +123,7 @@ export function AppointmentDetailClient({
     queryKey: ["appointment-detail", appointmentId] as const,
     queryFn: async (): Promise<TAppointmentDetail> => {
       const res = await fetch(`/api/appointments/${appointmentId}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to fetch appointment");
-      }
+      if (!res.ok) await throwSupportError(res, "appointment detail load");
       const { data } = await res.json();
       return data;
     },

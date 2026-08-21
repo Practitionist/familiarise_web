@@ -12,6 +12,7 @@ import { Star } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 interface Feedback {
   rating: number;
@@ -27,7 +28,7 @@ export function AppointmentCsatCard({ appointmentId }: { appointmentId: string }
     queryKey,
     queryFn: async (): Promise<Feedback | null> => {
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`);
-      if (!res.ok) throw new Error("Failed to load feedback");
+      if (!res.ok) await throwSupportError(res, "feedback load");
       const { data } = await res.json();
       return data;
     },
@@ -51,10 +52,7 @@ export function AppointmentCsatCard({ appointmentId }: { appointmentId: string }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rating, comment: comment.trim() || undefined }),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Failed to save");
-      }
+      if (!res.ok) await throwSupportError(res, "feedback save");
       return res.json();
     },
     onSuccess: () => {

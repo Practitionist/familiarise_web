@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { throwSupportError } from "@/lib/support/error-copy";
 import { SupportPriority } from "@prisma/client";
 import {
   ISSUE_TYPE_LABELS,
@@ -65,10 +66,7 @@ export function CreateTicketDialog({
           priority,
         }),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Failed to create request");
-      }
+      if (!res.ok) await throwSupportError(res, "request create");
       return res.json();
     },
     onSuccess: () => {

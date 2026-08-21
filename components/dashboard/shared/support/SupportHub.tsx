@@ -37,6 +37,7 @@ import { Plus } from "lucide-react";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { PlatformSupportSheet } from "@/components/support/PlatformSupportSheet";
 import { CreateTicketDialog } from "./CreateTicketDialog";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 // ---------------------------------------------------------------------------
 // Types + small helpers
@@ -157,7 +158,7 @@ function SessionsTab({
     queryKey: ["user-support-threads"],
     queryFn: async (): Promise<ThreadRow[]> => {
       const res = await fetch("/api/user/support-threads");
-      if (!res.ok) throw new Error("Failed to load conversations");
+      if (!res.ok) await throwSupportError(res, "conversations load");
       const { data } = await res.json();
       return data;
     },
@@ -383,7 +384,7 @@ function PlatformTab({
     queryKey: ["user-support-tickets"],
     queryFn: async (): Promise<TicketRow[]> => {
       const res = await fetch("/api/user/support-tickets");
-      if (!res.ok) throw new Error("Failed to load requests");
+      if (!res.ok) await throwSupportError(res, "requests load");
       return res.json();
     },
   });

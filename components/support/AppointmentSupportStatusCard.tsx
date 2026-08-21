@@ -14,6 +14,7 @@ import { Bot, Headset, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 interface ThreadMessage {
   id: string;
@@ -57,7 +58,7 @@ export function AppointmentSupportStatusCard({
     queryKey: ["support-thread", appointmentId],
     queryFn: async (): Promise<{ thread: ThreadSummary | null }> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`);
-      if (!res.ok) throw new Error("Failed to load support");
+      if (!res.ok) await throwSupportError(res, "support status card");
       const json = await res.json();
       return { thread: json.data };
     },

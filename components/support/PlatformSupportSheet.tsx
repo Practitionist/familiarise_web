@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -83,7 +84,7 @@ export function PlatformSupportSheet({
     enabled: open,
     queryFn: async (): Promise<PlatformFlow[]> => {
       const res = await fetch("/api/support/platform");
-      if (!res.ok) throw new Error("Failed to load support topics");
+      if (!res.ok) await throwSupportError(res, "support topics load");
       const { data } = await res.json();
       return data.flows;
     },
@@ -101,10 +102,7 @@ export function PlatformSupportSheet({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, orgId }),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Something went wrong");
-      }
+      if (!res.ok) await throwSupportError(res, "support intake turn");
       const { data } = await res.json();
       return data;
     },

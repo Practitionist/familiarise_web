@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -128,7 +129,7 @@ export function SupportThreadSheet({
       intents: { category: string; title: string }[];
     }> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`);
-      if (!res.ok) throw new Error("Failed to load support");
+      if (!res.ok) await throwSupportError(res, "thread load");
       const json = await res.json();
       return { thread: json.data, intents: json.intents ?? [] };
     },
@@ -155,10 +156,7 @@ export function SupportThreadSheet({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Something went wrong");
-      }
+      if (!res.ok) await throwSupportError(res, "support turn");
       const { data } = await res.json();
       return data;
     },

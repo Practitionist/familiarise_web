@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { throwSupportError } from "@/lib/support/error-copy";
 
 interface ThreadListRow {
   id: string;
@@ -105,7 +106,7 @@ export function SupportThreadsPage() {
       const params = new URLSearchParams({ limit: "30" });
       if (status) params.set("status", status);
       const res = await fetch(`/api/staff/support-threads?${params}`);
-      if (!res.ok) throw new Error("Failed to load conversations");
+      if (!res.ok) await throwSupportError(res, "conversations list");
       return res.json();
     },
   });
@@ -115,7 +116,7 @@ export function SupportThreadsPage() {
     enabled: !!selectedId,
     queryFn: async (): Promise<ThreadDetail> => {
       const res = await fetch(`/api/staff/support-threads/${selectedId}`);
-      if (!res.ok) throw new Error("Failed to load conversation");
+      if (!res.ok) await throwSupportError(res, "conversation load");
       const { data } = await res.json();
       return data;
     },
@@ -133,10 +134,7 @@ export function SupportThreadsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: input.message }),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Failed to send reply");
-      }
+      if (!res.ok) await throwSupportError(res, "reply send");
       return res.json();
     },
     onSuccess: () => {
@@ -158,10 +156,7 @@ export function SupportThreadsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: input.status }),
       });
-      if (!res.ok) {
-        const b = await res.json().catch(() => null);
-        throw new Error(b?.error ?? "Failed to update");
-      }
+      if (!res.ok) await throwSupportError(res, "status update");
       return res.json();
     },
     onSuccess: () => {
