@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
@@ -91,6 +92,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // reschedule times.
         respondedBy: response.user?.name ?? "Support",
         dashboardUrl: "/dashboard",
+        // ADR 23 — inherit the ticket's org-ness (attribution only).
+        ...notificationScope(ticket.organizationId),
       });
     }
 

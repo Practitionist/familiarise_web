@@ -11,6 +11,7 @@ import {
   Landmark,
   ListChecks,
   Megaphone,
+  MessagesSquare,
   Play,
   Receipt,
   RefreshCw,
@@ -91,6 +92,13 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Ticket,
           path: "tickets",
           surface: "tickets.manage",
+        },
+        {
+          // #support-hub — the per-appointment conversation inbox.
+          name: "Conversations",
+          icon: MessagesSquare,
+          path: "threads",
+          surface: "threads.manage",
         },
         {
           name: "User Feedback",

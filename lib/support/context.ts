@@ -9,7 +9,8 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
-import type { SupportContext } from "./types";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import type { SupportContext, SupportStage } from "./types";
 
 /**
  * Assemble the context for (appointment, user). Returns null if the appointment
@@ -31,7 +32,7 @@ export async function buildSupportContext(
         where: { completionStatus: "SCHEDULED" },
         orderBy: { startsAt: "asc" },
         take: 1,
-        select: { startsAt: true },
+        select: { startsAt: true, endsAt: true },
       },
       payment: {
         where: { paymentStatus: "SUCCEEDED", amount: { gt: 0 } },
@@ -65,6 +66,19 @@ export async function buildSupportContext(
     !!me?.consultantProfileId && me.consultantProfileId === planConsultantId;
 
   const startsAt = appt.slotsOfAppointment[0]?.startsAt ?? null;
+  const endsAt = appt.slotsOfAppointment[0]?.endsAt ?? null;
+
+  // Session stage from the slot window. A past slot (or no scheduled slot at
+  // all — e.g. cancelled/completed tombstones filtered out above) reads as
+  // COMPLETED; a slot whose window contains now is LIVE.
+  const now = Date.now();
+  const stage: SupportStage = startsAt
+    ? endsAt && now >= endsAt.getTime()
+      ? "COMPLETED"
+      : now >= startsAt.getTime()
+        ? "LIVE"
+        : "UPCOMING"
+    : "COMPLETED";
 
   // Recordings hang off the slot's meeting session, not the appointment directly
   // (Recording → MeetingSession → SlotOfAppointment → Appointment).
@@ -86,6 +100,23 @@ export async function buildSupportContext(
     );
   }
 
+  // Org-operator party: an ACTIVE membership with operations.read on this
+  // appointment's org. This is the ONLY org-side elevation in support — it
+  // lets an operator open their own org-party thread (dispute intents); it
+  // never grants access to anyone else's transcript (ADR 20).
+  let isOrgOperator = false;
+  if (appt.organizationId) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId,
+        organizationId: appt.organizationId,
+        status: "ACTIVE",
+      },
+      select: { role: true },
+    });
+    isOrgOperator = !!membership && hasOrgPermission(membership.role, "operations.read");
+  }
+
   return {
     threadId,
     appointmentId: appt.id,
@@ -94,7 +125,10 @@ export async function buildSupportContext(
     appointmentType: appt.appointmentType,
     isOrgContext: appt.organizationId !== null,
     isProvider,
+    isOrgOperator,
+    stage,
     startsAt,
+    endsAt,
     refundPctIfCancelledNow,
     paymentId: appt.payment[0]?.id ?? null,
     // moneyResultExtensions has already converted the BigInt column → number paise.

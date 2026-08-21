@@ -19,6 +19,7 @@ import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
 import { decideEscalation } from "./escalation";
+import { priorityForReason } from "./priority";
 import type { SupportAction, SupportContext } from "./types";
 
 export interface RunTurnInput {
@@ -28,7 +29,20 @@ export interface RunTurnInput {
   chosenOptionId?: string;
   /** Free text the user typed. */
   userMessage?: string;
+  /**
+   * #support-hub — caller reached this appointment only via the org-operator
+   * party branch. Their conversation is their own, but restricted to the
+   * org-party intents; the route enforces this with a 403, this clamps
+   * defensively so the invariant holds even if a future caller forgets.
+   */
+  isOrgParty?: boolean;
 }
+
+/** The only intents an org party may raise on a member's session. */
+const ORG_PARTY_CATEGORIES = new Set<SupportThreadCategory>([
+  "ORG_ADMIN_DISPUTE",
+  "SPONSORSHIP_BILLING",
+]);
 
 export interface RunTurnResult {
   threadId: string;
@@ -42,6 +56,8 @@ export interface RunTurnResult {
   escalated: boolean;
   resolved: boolean;
   supportTicketId: string | null;
+  /** Machine-readable escalation reason (terminal node / policy), if any. */
+  reason?: string;
 }
 
 /** Advance a per-appointment support thread by one turn. The caller must have
@@ -79,6 +95,12 @@ export async function runSupportTurn(
   let currentNodeId = thread.currentNodeId;
   if (input.category && input.category !== category) {
     category = input.category;
+    currentNodeId = null;
+  }
+  // Defensive clamp (route already 403s): an org party stays on org-party
+  // intents no matter what reaches the service.
+  if (input.isOrgParty && !ORG_PARTY_CATEGORIES.has(category)) {
+    category = "ORG_ADMIN_DISPUTE";
     currentNodeId = null;
   }
 
@@ -122,6 +144,7 @@ export async function runSupportTurn(
 
   // Ordinary self-serve turn — persist + advance the cursor.
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
+  const wroteMessages = !!input.userMessage || turn.messages.length > 0;
   await prisma.$transaction(async (tx) => {
     if (input.userMessage) {
       await tx.supportMessage.create({
@@ -145,6 +168,9 @@ export async function runSupportTurn(
         currentNodeId: turn.nextNodeId,
         status,
         resolvedAt: turn.resolved ? new Date() : null,
+        // Keep the hub's "latest activity first" clock honest — updatedAt
+        // alone won't move on message inserts.
+        ...(wroteMessages ? { lastMessageAt: new Date() } : {}),
       },
     });
   });
@@ -159,6 +185,7 @@ export async function runSupportTurn(
     escalated: false,
     resolved: turn.resolved,
     supportTicketId: thread.supportTicketId,
+    reason: turn.reason,
   };
 }
 
@@ -169,9 +196,15 @@ async function persistHumanTurn(
   userMessage: string | undefined,
 ): Promise<RunTurnResult> {
   if (userMessage) {
-    await prisma.supportMessage.create({
-      data: { threadId, sender: "USER", body: userMessage },
-    });
+    await prisma.$transaction([
+      prisma.supportMessage.create({
+        data: { threadId, sender: "USER", body: userMessage },
+      }),
+      prisma.appointmentSupportThread.update({
+        where: { id: threadId },
+        data: { lastMessageAt: new Date() },
+      }),
+    ]);
   }
   return {
     threadId,
@@ -199,11 +232,15 @@ async function escalate(
     actions: SupportAction[];
     resolved: boolean;
     escalate: boolean;
+    reason?: string;
   },
   userMessage: string | undefined,
   reason: string,
 ): Promise<RunTurnResult> {
-  const priority = reason === "high_value_refund" ? "HIGH" : "MEDIUM";
+  // Terminal-node reasons win (they're the specific why); policy reasons
+  // (high_value_refund, no_flow) fill in. Priority comes from the shared map.
+  const effectiveReason = turn.reason ?? reason;
+  const priority = priorityForReason(effectiveReason);
 
   const ticketId = await prisma.$transaction(async (tx) => {
     if (userMessage) {
@@ -228,10 +265,12 @@ async function escalate(
         data: {
           userId: ctx.userId,
           title: `Support for appointment ${ctx.appointmentId}`,
-          description: `Escalated from per-appointment support (${category}, reason: ${reason}).`,
+          description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
           priority,
           category,
           paymentId: ctx.paymentId,
+          // Org attribution for the ops queue's org filter (null = B2C).
+          organizationId: ctx.organizationId,
         },
         select: { id: true },
       });
@@ -246,6 +285,7 @@ async function escalate(
         status: "ESCALATED",
         activeChannel: "HUMAN",
         supportTicketId: linkedTicketId,
+        lastMessageAt: new Date(),
       },
     });
     return linkedTicketId;
@@ -261,5 +301,6 @@ async function escalate(
     escalated: true,
     resolved: false,
     supportTicketId: ticketId,
+    reason: effectiveReason,
   };
 }

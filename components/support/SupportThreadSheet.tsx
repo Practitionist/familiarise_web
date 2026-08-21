@@ -56,12 +56,19 @@ interface TurnResult {
 }
 
 /** The entry intents. SPONSORSHIP_BILLING is offered only in an org context; the
- *  server is the source of truth (an unavailable intent falls back to a human). */
+ *  server is the source of truth (an unavailable intent falls back to a human).
+ *  #support-hub: the GET now returns the server-gated intent list (stage /
+ *  provider / org-operator aware) — this static list is only the fallback. */
 const INTENTS: { category: string; label: string; orgOnly?: boolean }[] = [
   { category: "CANCEL_REFUND", label: "Cancel & refund" },
   { category: "RESCHEDULE", label: "Reschedule" },
   { category: "NO_SHOW", label: "The other party didn't show" },
+  { category: "PAYMENT_STATUS", label: "Payment or refund status" },
+  { category: "RECORDING_ACCESS", label: "Recording access" },
+  { category: "QUALITY_COMPLAINT", label: "Session quality" },
+  { category: "TECHNICAL", label: "Technical trouble" },
   { category: "SPONSORSHIP_BILLING", label: "Sponsorship & billing", orgOnly: true },
+  { category: "ORG_ADMIN_DISPUTE", label: "Raise a concern" },
   { category: "OTHER", label: "Something else" },
 ];
 
@@ -72,33 +79,62 @@ function describeAction(a: SupportAction): string | null {
       ? `You're eligible for a ${pct}% refund if you cancel now.`
       : "Cancelling now is outside the refund window — no refund would apply.";
   }
+  if (a.kind === "SHOW_INVOICES") {
+    return "Invoices and GST receipts live on your Payments page.";
+  }
   return null;
 }
 
 export function SupportThreadSheet({
   appointmentId,
   isOrgContext = false,
+  open: controlledOpen,
+  onOpenChange,
+  trigger,
 }: {
   appointmentId: string;
   isOrgContext?: boolean;
+  /** Controlled open state — when set, the sheet renders no default trigger. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Custom trigger node (ignored when `open` is controlled). */
+  trigger?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (v: boolean) => {
+    onOpenChange?.(v);
+    if (controlledOpen === undefined) setInternalOpen(v);
+  };
   const [text, setText] = useState("");
   const [lastActions, setLastActions] = useState<SupportAction[]>([]);
   const { toast } = useToast();
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
 
-  const { data: thread } = useQuery({
+  const { data } = useQuery({
     queryKey,
     enabled: open,
-    queryFn: async (): Promise<SupportThread | null> => {
+    queryFn: async (): Promise<{
+      thread: SupportThread | null;
+      intents: { category: string; title: string }[];
+    }> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`);
       if (!res.ok) throw new Error("Failed to load support");
-      const { data } = await res.json();
-      return data;
+      const json = await res.json();
+      return { thread: json.data, intents: json.intents ?? [] };
     },
   });
+  const thread = data?.thread ?? null;
+
+  // Server-gated intents win; fall back to the static list filtered by org.
+  const availableIntents =
+    data?.intents && data.intents.length > 0
+      ? data.intents.map((i) => ({ category: i.category, label: i.title }))
+      : INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => ({
+          category: i.category,
+          label: i.label,
+        }));
 
   const turn = useMutation({
     mutationFn: async (body: {
@@ -142,10 +178,12 @@ export function SupportThreadSheet({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
-        <Button variant="outline" size="sm">
-          <LifeBuoy className="mr-1.5 h-4 w-4" />
-          Get help
-        </Button>
+        {trigger ?? (
+          <Button variant="outline" size="sm">
+            <LifeBuoy className="mr-1.5 h-4 w-4" />
+            Get help
+          </Button>
+        )}
       </SheetTrigger>
       <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md">
         <SheetHeader>
@@ -215,7 +253,7 @@ export function SupportThreadSheet({
         <div className="space-y-3 border-t border-border pt-3">
           {!started ? (
             <div className="flex flex-wrap gap-2">
-              {INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => (
+              {availableIntents.map((i) => (
                 <Button
                   key={i.category}
                   variant="outline"

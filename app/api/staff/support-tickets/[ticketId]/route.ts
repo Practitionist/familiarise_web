@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -55,6 +56,23 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         },
         attachments: {
           orderBy: { uploadedAt: "desc" },
+        },
+        // #support-hub — the escalated-from thread, transcript included: staff
+        // are the HUMAN channel's counterparty, so the conversation is theirs
+        // to read (unlike the org triage surface, which is metadata-only).
+        appointmentSupportThread: {
+          select: {
+            id: true,
+            category: true,
+            status: true,
+            activeChannel: true,
+            createdAt: true,
+            lastMessageAt: true,
+            messages: {
+              orderBy: { createdAt: "asc" },
+              select: { id: true, sender: true, body: true, createdAt: true },
+            },
+          },
         },
       },
     });
@@ -255,12 +273,39 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       },
     });
 
+    // #support-hub — mirror terminal statuses to the linked per-appointment
+    // thread so the user's conversation never disagrees with the queue.
+    // ON_HOLD has no thread equivalent (the thread stays ESCALATED); CAS on
+    // both sides: a thread already CLOSED stays closed.
+    if (
+      validatedData.status &&
+      validatedData.status !== "ON_HOLD" &&
+      validatedData.status !== "OPEN"
+    ) {
+      await prisma.appointmentSupportThread.updateMany({
+        where: {
+          supportTicketId: ticketId,
+          status: { notIn: validatedData.status === "CLOSED" ? ["CLOSED"] : [] },
+        },
+        data: {
+          status: validatedData.status,
+          ...(validatedData.status === "RESOLVED"
+            ? { resolvedAt: new Date() }
+            : validatedData.status === "IN_PROGRESS"
+              ? { resolvedAt: null }
+              : {}),
+        },
+      });
+    }
+
     // Notify the ticket owner about the update
     void notifySupportTicketUpdate(updatedTicket.user.id, {
       ticketId: updatedTicket.id,
       ticketTitle: updatedTicket.title || "Support Ticket",
       status: updatedTicket.status,
       dashboardUrl: "/dashboard",
+      // ADR 23 — inherit the ticket's org-ness (attribution only).
+      ...notificationScope(updatedTicket.organizationId),
     });
 
     return NextResponse.json(updatedTicket);

@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Library,
+  LifeBuoy,
   type LucideIcon,
 } from "lucide-react";
 
@@ -420,6 +421,16 @@ export default function OrgDashboardShell({
         path: "recordings",
         show: can("operations.read"),
       },
+      {
+        // #support-hub — org TRIAGE over members' support conversations:
+        // metadata only (status/category/who), never transcripts (ADR 20 —
+        // a member's support chat is content). Also carries the org CSAT
+        // aggregate and the org-party dispute entry point.
+        name: "Support",
+        icon: LifeBuoy,
+        path: "support",
+        show: can("operations.read"),
+      },
     ];
 
     // Insights — analytics + compliance + audit trail. SUPPORT
@@ -617,6 +628,7 @@ export default function OrgDashboardShell({
     "purchase-orders": "Purchase Orders",
     documents: "Documents",
     recordings: "Recordings",
+    support: "Support",
     billing: "Billing",
     payouts: "Payouts",
     reimbursements: "Reimbursements",

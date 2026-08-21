@@ -191,6 +191,18 @@ model SupportTicket {
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
 
+  // #support-hub — org attribution for tickets raised in an org context
+  // (operator platform-intake, escalated org-appointment threads). Null for
+  // pure B2C. Lets ops filter the queue by customer org without joining
+  // through the thread. Additive under the #705 freeze.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every visible message write. `updatedAt` only moves when THIS row changes,
+  // so replies would leave it stale; the hub and the ops inbox sort by this.
+  lastMessageAt DateTime?
+
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
   subscriptionId String?
@@ -210,6 +222,8 @@ model SupportTicket {
   @@index([paymentId])
   @@index([createdAt])
   @@index([assignedToId, status])
+  // #support-hub — org-filtered ops queue views.
+  @@index([organizationId, status])
 }
 
 model SupportResponse {
@@ -278,6 +292,10 @@ model AppointmentSupportThread {
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
   resolvedAt DateTime?
+
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every message write (same rationale as SupportTicket.lastMessageAt).
+  lastMessageAt DateTime?
 
   // One support conversation per (appointment, user) — reused across intents,
   // like a per-order support chat. Also the concurrency guard for find-or-create.
@@ -792,6 +810,9 @@ model Organization {
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
   appointmentSupportThreads AppointmentSupportThread[]
   appointmentFeedback       AppointmentFeedback[]
+  // #support-hub — tickets attributed to this org (operator intake + escalated
+  // org-appointment threads). Powers the org-filtered ops queue.
+  supportTickets SupportTicket[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload

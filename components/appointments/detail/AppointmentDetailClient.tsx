@@ -40,6 +40,7 @@ import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
 
 const PARTICIPANTS_PREVIEW = 5;
@@ -295,6 +296,14 @@ export function AppointmentDetailClient({
               isOrgContext={!!orgName}
             />
           </div>
+
+          {/* #support-hub — the live support conversation for THIS appointment:
+              status + latest exchange inline; nothing renders until a thread
+              exists. */}
+          <AppointmentSupportStatusCard
+            appointmentId={appointmentId}
+            isOrgContext={!!orgName}
+          />
 
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">

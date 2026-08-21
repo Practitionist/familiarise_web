@@ -58,6 +58,27 @@ export const CONTEXTUAL_ISSUE_TYPES = {
 export const ALL_ISSUE_TYPES = Object.values(SupportIssueType);
 
 /**
+ * #support-hub — issue types the PLATFORM-level form may offer. Session-scoped
+ * types ("consultant didn't show up", cancellation help…) are deliberately
+ * absent: they describe what happened IN a session, so they are raised on the
+ * appointment's "Get help" flowchart thread, which routes them with full
+ * context. The server enforces the same line (422 on session-scoped types).
+ */
+export const PLATFORM_ISSUE_TYPE_CATEGORIES = {
+  "Payment Issues": [
+    SupportIssueType.PAYMENT_FAILED,
+    SupportIssueType.CHARGED_TWICE,
+    SupportIssueType.REFUND_REQUEST,
+    SupportIssueType.BILLING_QUESTION,
+  ],
+  "Account & Access": [
+    SupportIssueType.ACCOUNT_ISSUE,
+    SupportIssueType.TECHNICAL_ISSUES,
+  ],
+  General: [SupportIssueType.GENERAL_INQUIRY, SupportIssueType.OTHER],
+} as const;
+
+/**
  * Get filtered issue types based on context
  * @param appointmentStatus - COMPLETED or UPCOMING
  * @param isPayment - Whether this is a payment-related issue

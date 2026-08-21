@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
-import { notifySupportTicketCreated } from "@/lib/novu";
+import {
+  createSupportTicket,
+  findOpenTicketForPayment,
+  isSessionScopedIssueType,
+} from "@/lib/support/create-ticket";
 import { CreateSupportTicketSchema } from "@/schemas/support";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
@@ -92,6 +96,22 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
+    // #support-hub — session-scoped issue types don't belong on the platform
+    // queue. "Consultant didn't show up", cancellation help, etc. are
+    // appointment-specific: the user picks the session and the per-appointment
+    // flowchart thread routes it with full context. 422 (well-formed but
+    // semantically misrouted) with guidance instead of a silent accept.
+    if (isSessionScopedIssueType(validatedData.issueType)) {
+      return NextResponse.json(
+        {
+          error:
+            "This issue is about a specific session — open the appointment and use 'Get help' so our team gets the session context.",
+          code: "SESSION_SCOPED_ISSUE",
+        },
+        { status: 422 },
+      );
+    }
+
     // Resolve appointmentId to consultationId/subscriptionId if provided
     let resolvedConsultationId = validatedData.consultationId;
     let resolvedSubscriptionId = validatedData.subscriptionId;
@@ -170,64 +190,28 @@ export async function POST(req: NextRequest) {
     }
 
     // Dedup: a payment-linked ticket reuses any still-open ticket the user
-    // already filed for the same payment. Kept a runtime check (not a schema
-    // unique) — a payment can legitimately spawn a second ticket once the
-    // first is RESOLVED/CLOSED, so uniqueness is scoped to open state.
+    // already filed for the same payment (shared factory helper).
     if (validatedData.paymentId) {
-      const existing = await prisma.supportTicket.findFirst({
-        where: {
-          paymentId: validatedData.paymentId,
-          userId: session.user.id,
-          status: { notIn: ["RESOLVED", "CLOSED"] },
-        },
-        // Match the user-facing GET shape: hide internal staff notes
-        include: {
-          responses: {
-            where: { isInternal: false },
-            orderBy: { createdAt: "asc" },
-            include: {
-              user: { select: { name: true, role: true } },
-            },
-          },
-          attachments: { orderBy: { uploadedAt: "desc" } },
-        },
-      });
+      const existing = await findOpenTicketForPayment(
+        session.user.id,
+        validatedData.paymentId,
+      );
       if (existing) {
         return NextResponse.json(existing, { status: 200 });
       }
     }
 
-    const ticket = await prisma.supportTicket.create({
-      data: {
-        title: validatedData.title,
-        description: validatedData.description,
-        priority: validatedData.priority || "MEDIUM",
-        category: validatedData.category,
-        issueType: validatedData.issueType,
-        consultationId: resolvedConsultationId,
-        subscriptionId: resolvedSubscriptionId,
-        paymentId: validatedData.paymentId,
-        user: { connect: { id: session.user.id } },
-      },
-      include: {
-        responses: true,
-        attachments: true,
-      },
+    const ticket = await createSupportTicket({
+      userId: session.user.id,
+      title: validatedData.title,
+      description: validatedData.description,
+      priority: validatedData.priority || "MEDIUM",
+      category: validatedData.category,
+      issueType: validatedData.issueType,
+      consultationId: resolvedConsultationId,
+      subscriptionId: resolvedSubscriptionId,
+      paymentId: validatedData.paymentId,
     });
-
-    // Notify staff/admin users about the new support ticket
-    const staffUsers = await prisma.user.findMany({
-      where: { role: { in: ["STAFF", "ADMIN"] } },
-      select: { id: true },
-    });
-    void notifySupportTicketCreated(
-      staffUsers.map((u) => u.id),
-      {
-        ticketId: ticket.id,
-        ticketTitle: ticket.title || "Support Ticket",
-        dashboardUrl: "/dashboard/admin/tickets",
-      },
-    );
 
     return NextResponse.json(ticket, { status: 201 });
   } catch (error) {
