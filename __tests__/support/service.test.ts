@@ -164,6 +164,38 @@ describe("runSupportTurn", () => {
     expect(mockPrisma.supportTicket.create).toHaveBeenCalledTimes(1);
   });
 
+  it("restarts at the entry when the persisted cursor no longer exists (flow-version drift)", async () => {
+    // Pre-hub threads carry cursors from older registry revisions; a ghost
+    // cursor used to make every choice mismatch and re-present forever.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "ghost-node" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "cancel" });
+    expect(r?.currentNodeId).toBe("start"); // presented the CURRENT entry…
+    expect(r?.escalated).toBe(false); // …not failed safe to a human
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist a duplicate bubble when a press re-presents the same node", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "bogus" });
+    expect(r?.currentNodeId).toBe("start");
+    // The caller still receives the prompt (UI converges), but nothing new is
+    // written — one press can never append two identical bubbles.
+    expect(mockPrisma.supportMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("clicking the active intent chip restarts the flow at its entry", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "confirm" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    expect(r?.currentNodeId).toBe("start");
+    expect(r?.status).toBe("IN_PROGRESS");
+  });
+
   it("clamps an org party to the org-party intents (defensive, route 403s first)", async () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ category: "OTHER", currentNodeId: null }),

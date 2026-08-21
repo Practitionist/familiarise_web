@@ -93,7 +93,11 @@ export async function runSupportTurn(
   // Switching intent restarts the flow at its entry node.
   let category = thread.category;
   let currentNodeId = thread.currentNodeId;
-  if (input.category && input.category !== category) {
+  // Clicking an intent chip always (re)starts that intent's flow — a same-
+  // category re-click must not resume a stale cursor, or the turn looks
+  // ignored (the pre-#support-hub flows left threads whose option ids no
+  // longer exist in the registry).
+  if (input.category) {
     category = input.category;
     currentNodeId = null;
   }
@@ -123,6 +127,14 @@ export async function runSupportTurn(
     }, input.userMessage, "no_flow");
   }
 
+  // Flow-version drift: a persisted cursor from an older registry revision
+  // (renamed/removed node) would make every choice mismatch and re-present
+  // forever. Restart at the entry instead — the walker then presents the
+  // CURRENT flow's first prompt and the thread is self-healing.
+  if (currentNodeId && !flow.nodes[currentNodeId]) {
+    currentNodeId = null;
+  }
+
   const resolver = new FlowchartResolver(flow);
   const turn = await resolver.resolveTurn(ctx, currentNodeId, {
     chosenOptionId: input.chosenOptionId,
@@ -143,23 +155,33 @@ export async function runSupportTurn(
   }
 
   // Ordinary self-serve turn — persist + advance the cursor.
+  //
+  // A re-present (unrecognized choice / double-submit: cursor didn't move) is
+  // NOT persisted again when the current tail already IS that prompt — one
+  // press must never append two identical bubbles. The caller still gets the
+  // messages so the UI converges on the server state.
+  const isRepresent =
+    !!currentNodeId && turn.nextNodeId === currentNodeId;
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
-  const wroteMessages = !!input.userMessage || turn.messages.length > 0;
+  const wroteMessages =
+    (!!input.userMessage || turn.messages.length > 0) && !isRepresent;
   await prisma.$transaction(async (tx) => {
     if (input.userMessage) {
       await tx.supportMessage.create({
         data: { threadId: thread.id, sender: "USER", body: input.userMessage },
       });
     }
-    for (const m of turn.messages) {
-      await tx.supportMessage.create({
-        data: {
-          threadId: thread.id,
-          sender: m.sender,
-          body: m.body,
-          metadata: (m.metadata as object) ?? undefined,
-        },
-      });
+    if (!isRepresent) {
+      for (const m of turn.messages) {
+        await tx.supportMessage.create({
+          data: {
+            threadId: thread.id,
+            sender: m.sender,
+            body: m.body,
+            metadata: (m.metadata as object) ?? undefined,
+          },
+        });
+      }
     }
     await tx.appointmentSupportThread.update({
       where: { id: thread.id },

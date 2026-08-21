@@ -81,6 +81,33 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
     }
 
+    // #support-hub — mirror public replies into the linked per-appointment
+    // thread as AGENT messages. The thread is what the USER sees ("Get help"
+    // on their session); without this, replies sent from the ticket queue
+    // were invisible on the conversation surface. Internal notes stay
+    // ticket-only. The Conversations-inbox reply path mirrors the other way
+    // (thread → ticket); together the two histories never diverge.
+    if (!validatedData.isInternal) {
+      const linkedThread = await prisma.appointmentSupportThread.findUnique({
+        where: { supportTicketId: ticketId },
+        select: { id: true },
+      });
+      if (linkedThread) {
+        const now = new Date();
+        await prisma.supportMessage.create({
+          data: {
+            threadId: linkedThread.id,
+            sender: "AGENT",
+            body: validatedData.message,
+          },
+        });
+        await prisma.appointmentSupportThread.update({
+          where: { id: linkedThread.id },
+          data: { lastMessageAt: now },
+        });
+      }
+    }
+
     // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {
       void notifySupportTicketResponse(ticket.userId, {

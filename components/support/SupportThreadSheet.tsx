@@ -117,7 +117,10 @@ export function SupportThreadSheet({
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
 
-  const { data } = useQuery({
+  const {
+    data,
+    isFetching,
+  } = useQuery({
     queryKey,
     enabled: open,
     queryFn: async (): Promise<{
@@ -179,6 +182,10 @@ export function SupportThreadSheet({
   const lastBot = [...messages].reverse().find((m) => m.sender === "BOT");
   const options = !isHuman && !isResolved ? (lastBot?.metadata?.options ?? []) : [];
   const started = !!thread;
+  // A press must stay dead until the server state has round-tripped: the
+  // double-bubble bug was a second POST landing in the refetch window after
+  // isPending flipped false but before the refetch swapped the options.
+  const turnPending = turn.isPending || (turn.isSuccess && isFetching);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -273,7 +280,7 @@ export function SupportThreadSheet({
                   key={i.category}
                   variant="outline"
                   size="sm"
-                  disabled={turn.isPending}
+                  disabled={turnPending}
                   onClick={() => turn.mutate({ category: i.category })}
                 >
                   {i.label}
@@ -288,7 +295,7 @@ export function SupportThreadSheet({
                     key={o.id}
                     variant="outline"
                     size="sm"
-                    disabled={turn.isPending}
+                    disabled={turnPending}
                     onClick={() => turn.mutate({ chosenOptionId: o.id })}
                   >
                     {o.label}
@@ -310,12 +317,12 @@ export function SupportThreadSheet({
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder={isHuman ? "Message support…" : "Type a message…"}
-              disabled={turn.isPending}
+              disabled={turnPending}
             />
             <Button
               type="submit"
               size="icon"
-              disabled={turn.isPending || !text.trim()}
+              disabled={turnPending || !text.trim()}
               aria-label="Send"
             >
               <Send className="h-4 w-4" />
