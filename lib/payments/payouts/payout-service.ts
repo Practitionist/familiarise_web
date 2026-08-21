@@ -420,28 +420,31 @@ export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
-  const payout = await prisma.consultantPayout.findUnique({
-    where: { id: payoutId },
-  });
-
-  if (!payout) {
-    throw new Error(`Payout ${payoutId} not found`);
-  }
-
-  if (payout.status !== PayoutStatus.PENDING) {
-    throw new Error(
-      `Payout ${payoutId} cannot be approved (current status: ${payout.status}). Only PENDING payouts can be approved.`,
-    );
-  }
-
-  await prisma.consultantPayout.update({
-    where: { id: payoutId },
+  // CAS claim, not check-then-act: a concurrent reject could otherwise
+  // commit CANCELLED (releasing the earnings) between this function's read
+  // and write, and the unconditional update would overwrite CANCELLED →
+  // APPROVED — an approved payout with no backing earnings, which the cron
+  // then pays while the freed earnings re-batch (double pay).
+  const claimed = await prisma.consultantPayout.updateMany({
+    where: { id: payoutId, status: PayoutStatus.PENDING },
     data: {
       status: PayoutStatus.APPROVED,
       approvedAt: new Date(),
       approvedBy: adminUserId,
     },
   });
+  if (claimed.count === 0) {
+    const current = await prisma.consultantPayout.findUnique({
+      where: { id: payoutId },
+      select: { status: true },
+    });
+    if (!current) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+    throw new Error(
+      `Payout ${payoutId} cannot be approved (current status: ${current.status}). Only PENDING payouts can be approved.`,
+    );
+  }
 }
 
 /**
@@ -455,38 +458,41 @@ export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
-  const payout = await prisma.consultantPayout.findUnique({
-    where: { id: payoutId },
-    include: { earnings: true },
-  });
+  await prisma.$transaction(async (tx) => {
+    // Claim the payout CAS-FIRST inside the same tx as the earnings release:
+    // an approve racing us either sees CANCELLED (loses) or we lose the
+    // claim and never touch the earnings. The old shape (read → validate →
+    // unconditional cancel + release) let approve∥reject interleave into an
+    // APPROVED payout whose earnings had already been released.
+    const claimed = await tx.consultantPayout.updateMany({
+      where: { id: payoutId, status: PayoutStatus.PENDING },
+      data: {
+        status: PayoutStatus.CANCELLED,
+        failureReason: reason,
+      },
+    });
+    if (claimed.count === 0) {
+      const current = await tx.consultantPayout.findUnique({
+        where: { id: payoutId },
+        select: { status: true },
+      });
+      if (!current) {
+        throw new Error("Payout not found");
+      }
+      throw new Error(
+        `Payout ${payoutId} cannot be rejected (current status: ${current.status}). Only PENDING payouts can be rejected.`,
+      );
+    }
 
-  if (!payout) {
-    throw new Error("Payout not found");
-  }
-
-  if (payout.status !== PayoutStatus.PENDING) {
-    throw new Error(
-      `Payout ${payoutId} cannot be rejected (current status: ${payout.status}). Only PENDING payouts can be rejected.`,
-    );
-  }
-
-  // Unlink earnings and set them back to READY. #837 — a rejectable payout is
-  // PENDING, so its earnings are BATCHED (never PAID); release only those.
-  await prisma.consultantEarnings.updateMany({
-    where: { payoutId, status: EarningStatus.BATCHED },
-    data: {
-      payoutId: null,
-      status: EarningStatus.READY,
-    },
-  });
-
-  // Cancel the payout
-  await prisma.consultantPayout.update({
-    where: { id: payoutId },
-    data: {
-      status: PayoutStatus.CANCELLED,
-      failureReason: reason,
-    },
+    // Unlink earnings and set them back to READY. #837 — a rejectable payout is
+    // PENDING, so its earnings are BATCHED (never PAID); release only those.
+    await tx.consultantEarnings.updateMany({
+      where: { payoutId, status: EarningStatus.BATCHED },
+      data: {
+        payoutId: null,
+        status: EarningStatus.READY,
+      },
+    });
   });
 }
 
@@ -994,12 +1000,18 @@ async function processStripePayout(
 
   const stripeConnect = getStripeConnectService();
 
-  // Create a transfer from platform to connected account
+  // Create a transfer from platform to connected account.
+  // Idempotency is mandatory on money-out: a timeout after Stripe accepted
+  // the transfer used to surface as a generic failure, and re-batching under
+  // a fresh row minted a SECOND transfer. The row's unique idempotencyKey
+  // (same deterministic key RazorpayX receives) makes the retry return the
+  // original transfer instead.
   const transfer = await stripeConnect.createTransfer({
     amount: payout.amount,
     currency: payout.currency.toLowerCase(),
     destinationAccountId: account.stripeAccountId,
     description: `Payout ${payout.id}`,
+    idempotencyKey: payout.idempotencyKey,
     metadata: {
       payoutId: payout.id,
       source: "familiarise_platform",
