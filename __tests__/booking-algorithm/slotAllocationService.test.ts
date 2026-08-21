@@ -1226,7 +1226,7 @@ describe("Auto allocation", () => {
     expect(findManyCalls.length).toBeGreaterThanOrEqual(3);
 
     for (const index of [1, 2]) {
-      const where = findManyCalls[index][0].where;
+      const { where, include } = findManyCalls[index][0];
       const boundedArm = where.AND.find(
         (clause: any) =>
           clause.slotsOfAppointment?.some?.endsAt !== undefined,
@@ -1236,6 +1236,14 @@ describe("Auto allocation", () => {
       expect(boundedArm.endsAt).toHaveProperty("gt");
       // Tombstoned slots are not bookings.
       expect(boundedArm.deletedAt).toBeNull();
+      // The include mirrors the tombstone exclusion: bookedSlots is built
+      // from the RETURNED children, so an unfiltered include would let a
+      // deleted child of a qualifying appointment block selection
+      // (CodeRabbit triage). Past children are deliberately admitted —
+      // candidates before `now` are rejected anyway.
+      expect(include.slotsOfAppointment).toMatchObject({
+        where: { deletedAt: null },
+      });
     }
   });
 

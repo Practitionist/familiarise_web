@@ -346,6 +346,20 @@ export class SlotValidationService {
         },
         include: {
           slotsOfAppointment: {
+            // The include carries the SAME predicate as the `some` filter
+            // above: the JS matcher below treats every returned child as a
+            // candidate conflict, so an unfiltered collection would let a
+            // tombstoned (or non-participating) slot of a qualifying
+            // appointment produce a [CONFLICT] the parent-level filter just
+            // excluded. CodeRabbit triage on the allocation-audit PR.
+            where: {
+              AND: [
+                { startsAt: { lt: new Date(latestEnd) } },
+                { endsAt: { gt: new Date(earliestStart) } },
+                { user: { some: { id: { in: participantIds } } } },
+                { deletedAt: null },
+              ],
+            },
             select: { startsAt: true, endsAt: true },
           },
           consultation: {

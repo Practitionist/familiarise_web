@@ -2035,7 +2035,10 @@ export class SlotAllocationService {
         AND: appointmentFilter,
       },
       include: {
-        slotsOfAppointment: true,
+        // Tombstoned children of a qualifying appointment must not enter
+        // bookedSlots — the parent-level filter above only qualifies the
+        // appointment, not every row this include returns.
+        slotsOfAppointment: { where: { deletedAt: null } },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
         // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
         consultation: { select: { status: true } },
@@ -2086,7 +2089,8 @@ export class SlotAllocationService {
           ],
         },
         include: {
-          slotsOfAppointment: true,
+          // Same tombstone exclusion as the consultant query above.
+          slotsOfAppointment: { where: { deletedAt: null } },
           consultation: { select: { status: true } },
           subscription: { select: { status: true } },
           payment: { select: { expiresAt: true } },

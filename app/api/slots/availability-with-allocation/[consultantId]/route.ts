@@ -333,7 +333,12 @@ export async function GET(
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
           include: {
-            slotsOfAppointment: true,
+            // Tombstone exclusion rides the include (not just the window
+            // filter): a deleted slot of a qualifying appointment must not
+            // paint busy. Deliberately NOT window-bounded — a booking that
+            // started last week overlapping an in-window cell must still
+            // paint that cell, so out-of-window children are load-bearing.
+            slotsOfAppointment: { where: { deletedAt: null } },
             consultation: {
               select: {
                 status: true,
@@ -366,7 +371,11 @@ export async function GET(
       const [appointments] = await Promise.all([
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
-          include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
+          // Same tombstone exclusion as the detail branch above.
+          include: {
+            slotsOfAppointment: { where: { deletedAt: null } },
+            ...LIVE_OCCUPANCY_SELECT,
+          },
         }),
         consulteeOccupancy,
       ]);
