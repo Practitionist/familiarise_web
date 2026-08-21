@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "lib/prisma";
+import prisma from "@/lib/prisma";
 import {
   createSupportTicket,
   findOpenTicketForPayment,
@@ -10,15 +10,15 @@ import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
-import * as Sentry from "@sentry/nextjs";
+import { supportError } from "@/lib/api/support-http";
+
+const TICKETS_ROUTE = "user.support-tickets";
+
 export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "You must be logged in to access your support tickets" },
-        { status: 401 },
-      );
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
 
     const tickets = await prisma.supportTicket.findMany({
@@ -54,17 +54,13 @@ export async function GET() {
     });
 
     return NextResponse.json(tickets);
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
-    console.error("Error fetching support tickets:", error);
-    return NextResponse.json(
-      {
-        error:
-          "An unexpected error occurred while fetching your support tickets",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: TICKETS_ROUTE, action: "list" },
+    });
   }
 }
 
@@ -72,10 +68,7 @@ export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "You must be logged in to create a support ticket" },
-        { status: 401 },
-      );
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
 
     // Rate limit: 5 support tickets per hour per user
@@ -89,10 +82,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const result = CreateSupportTicketSchema.safeParse(body);
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: result.error.flatten(),
+        context: { route: TICKETS_ROUTE, action: "create" },
+      });
     }
     const validatedData = result.data;
 
@@ -132,10 +127,12 @@ export async function POST(req: NextRequest) {
       });
 
       if (!appointment) {
-        return NextResponse.json(
-          { error: "Invalid appointment ID or unauthorized" },
-          { status: 400 },
-        );
+        return supportError({
+          status: 400,
+          code: "INVALID_ID",
+          message: "Invalid appointment ID or unauthorized",
+          context: { route: TICKETS_ROUTE, action: "create", appointmentId: validatedData.appointmentId },
+        });
       }
 
       // Resolve to actual consultation/subscription IDs
@@ -183,10 +180,12 @@ export async function POST(req: NextRequest) {
 
     const invalidEntity = validations.find((v) => !v.valid);
     if (invalidEntity) {
-      return NextResponse.json(
-        { error: `Invalid ${invalidEntity.type} ID` },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "INVALID_ID",
+        message: `Invalid ${invalidEntity.type} ID`,
+        context: { route: TICKETS_ROUTE, action: "create", entity: invalidEntity.type },
+      });
     }
 
     // Dedup: a payment-linked ticket reuses any still-open ticket the user
@@ -214,16 +213,12 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(ticket, { status: 201 });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
-    console.error("Error creating support ticket:", error);
-    return NextResponse.json(
-      {
-        error:
-          "An unexpected error occurred while creating your support ticket",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: TICKETS_ROUTE, action: "create" },
+    });
   }
 }

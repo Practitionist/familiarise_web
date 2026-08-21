@@ -7,11 +7,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import { supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
+
+const USER_THREADS_ROUTE = "user.support-threads";
 
 const querySchema = z.object({
   /** Cap the list; the hub buckets client-side. */
@@ -22,7 +24,7 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
     const parsed = querySchema.safeParse(
       Object.fromEntries(req.nextUrl.searchParams),
@@ -103,11 +105,12 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({ data });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to load your support threads" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: USER_THREADS_ROUTE, action: "list" },
+    });
   }
 }

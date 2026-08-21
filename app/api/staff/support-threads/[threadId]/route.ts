@@ -11,13 +11,16 @@
  *         mirrored to the linked ticket when present.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { SupportThreadIdParams } from "@/schemas/support";
+import { parseRouteParams, supportError } from "@/lib/api/support-http";
+
+const THREAD_ROUTE = "staff.support-thread";
 
 interface RouteParams {
   params: Promise<{ threadId: string }>;
@@ -62,38 +65,54 @@ async function loadThread(threadId: string) {
 }
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
+  const id = await parseRouteParams(SupportThreadIdParams, params, {
+    route: THREAD_ROUTE,
+  });
+  if (!id.ok) return id.response;
+  const { threadId } = id.data;
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
-    const { threadId } = await params;
     const thread = await loadThread(threadId);
     if (!thread) {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+      return supportError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "Thread not found",
+        context: { route: THREAD_ROUTE, action: "get", threadId },
+      });
     }
     return NextResponse.json({ data: thread });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to load support thread" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: THREAD_ROUTE, action: "get", threadId },
+    });
   }
 }
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
+  const id = await parseRouteParams(SupportThreadIdParams, params, {
+    route: THREAD_ROUTE,
+  });
+  if (!id.ok) return id.response;
+  const { threadId } = id.data;
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
     const session = auth.session;
 
-    const { threadId } = await params;
     const parsed = replySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid reply" },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: parsed.error.flatten(),
+        context: { route: THREAD_ROUTE, action: "reply", threadId },
+      });
     }
     const { message } = parsed.data;
 
@@ -102,7 +121,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       include: { supportTicket: { select: { id: true, title: true, status: true, assignedToId: true } } },
     });
     if (!thread) {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+      return supportError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "Thread not found",
+        context: { route: THREAD_ROUTE, action: "reply", threadId },
+      });
     }
 
     const now = new Date();
@@ -154,27 +178,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     return NextResponse.json({ data: result }, { status: 201 });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to post reply" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: THREAD_ROUTE, action: "reply", threadId },
+    });
   }
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
+  const id = await parseRouteParams(SupportThreadIdParams, params, {
+    route: THREAD_ROUTE,
+  });
+  if (!id.ok) return id.response;
+  const { threadId } = id.data;
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
-    const { threadId } = await params;
     const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.issues[0]?.message ?? "Invalid status" },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: parsed.error.flatten(),
+        context: { route: THREAD_ROUTE, action: "status", threadId },
+      });
     }
     const { status } = parsed.data;
 
@@ -183,7 +214,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       select: { id: true, supportTicketId: true, status: true },
     });
     if (!thread) {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+      return supportError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "Thread not found",
+        context: { route: THREAD_ROUTE, action: "status", threadId },
+      });
     }
 
     const now = new Date();
@@ -196,10 +232,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       },
     });
     if (updated.count === 0) {
-      return NextResponse.json(
-        { error: "Thread is closed and can no longer change status" },
-        { status: 409 },
-      );
+      return supportError({
+        status: 409,
+        code: "CONFLICT",
+        message: "Thread is closed and can no longer change status",
+        context: { route: THREAD_ROUTE, action: "status", threadId, attemptedStatus: status },
+      });
     }
 
     // Mirror to the linked ticket so the queue never disagrees with the thread.
@@ -211,11 +249,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     return NextResponse.json({ data: { id: thread.id, status } });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to update support thread" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: THREAD_ROUTE, action: "status", threadId },
+    });
   }
 }

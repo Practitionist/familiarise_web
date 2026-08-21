@@ -9,16 +9,35 @@
  * GET /api/staff/support-threads        — filterable list + status counts
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-import {
-  SupportThreadStatus,
-  SupportChannel,
-  SupportThreadCategory,
-  Prisma,
-} from "@prisma/client";
+import { supportError } from "@/lib/api/support-http";
+import type { Prisma } from "@prisma/client";
+
+const STAFF_THREADS_ROUTE = "staff.support-threads";
+
+const QuerySchema = z.object({
+  status: z
+    .enum(["OPEN", "IN_PROGRESS", "ESCALATED", "RESOLVED", "CLOSED"])
+    .optional(),
+  channel: z.enum(["AI", "HUMAN"]).optional(),
+  category: z
+    .enum([
+      "CANCEL_REFUND",
+      "RESCHEDULE",
+      "NO_SHOW",
+      "TECHNICAL",
+      "PAYMENT_STATUS",
+      "RECORDING_ACCESS",
+      "QUALITY_COMPLAINT",
+      "SPONSORSHIP_BILLING",
+      "ORG_ADMIN_DISPUTE",
+      "OTHER",
+    ])
+    .optional(),
+});
 
 export async function GET(req: NextRequest) {
   try {
@@ -26,18 +45,28 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status") as SupportThreadStatus | null;
-    const channel = searchParams.get("channel") as SupportChannel | null;
-    const category = searchParams.get("category") as SupportThreadCategory | null;
+    const query = QuerySchema.safeParse({
+      status: searchParams.get("status") ?? undefined,
+      channel: searchParams.get("channel") ?? undefined,
+      category: searchParams.get("category") ?? undefined,
+    });
+    if (!query.success) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: query.error.flatten(),
+        context: { route: STAFF_THREADS_ROUTE },
+      });
+    }
     const search = searchParams.get("search");
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20")));
     const offset = (page - 1) * limit;
 
     const where: Prisma.AppointmentSupportThreadWhereInput = {};
-    if (status) where.status = status;
-    if (channel) where.activeChannel = channel;
-    if (category) where.category = category;
+    if (query.data.status) where.status = query.data.status;
+    if (query.data.channel) where.activeChannel = query.data.channel;
+    if (query.data.category) where.category = query.data.category;
     if (search) {
       where.OR = [
         { id: { contains: search, mode: "insensitive" } },
@@ -106,11 +135,12 @@ export async function GET(req: NextRequest) {
         counts.map((c) => [c.status, c._count._all]),
       ) as Record<string, number>,
     });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to load support threads" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: STAFF_THREADS_ROUTE, action: "list" },
+    });
   }
 }
