@@ -73,7 +73,8 @@ const mockPage = reportSentryMessage as jest.Mock;
 const HOUR = 60 * 60 * 1000;
 
 function placeholderRow(overrides: Record<string, unknown> = {}) {
-  const createdAt = new Date(Date.now() - (overrides.ageHours ?? 2) * HOUR);
+  const ageHours = typeof overrides.ageHours === "number" ? overrides.ageHours : 2;
+  const createdAt = new Date(Date.now() - ageHours * HOUR);
   return {
     id: "res_1",
     refundId: "pending_uuid-1",
