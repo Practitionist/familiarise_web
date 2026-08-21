@@ -46,7 +46,10 @@ const turnSchema = z
     /** Org attribution for operator flows — validated against membership. */
     orgId: z.string().max(64).optional(),
   })
-  .refine((v) => !!v.chosenOptionId !== !!v.userMessage, {
+  // Only BOTH is invalid. An entry turn (nodeId null/omitted) legitimately
+  // carries neither — startFlow sends {flowId} alone, and the XOR refinement
+  // this replaced 400'd exactly that, breaking every intake's first click.
+  .refine((v) => !(v.chosenOptionId && v.userMessage), {
     message: "Send either a chosen option or a message, not both",
   });
 
