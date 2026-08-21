@@ -3,6 +3,7 @@ import redis, {
   releaseLock,
   isMockRedis,
   checkRedisHealth,
+  isRedisCircuitOpen,
 } from "@/lib/redis";
 import {
   CronLockHeldError,
@@ -136,7 +137,18 @@ export async function withCronLock<T>(
   }
 
   const token = await acquireLock(key, opts.ttlMs ?? DEFAULT_TTL_MS);
-  if (!token) throw new CronLockHeldError(jobName);
+  if (!token) {
+    // acquireLock returns null for BOTH "held" and "circuit open" — the
+    // breaker's fallback short-circuits to null without touching Redis. The
+    // health check above ran BEFORE the acquire, so a breaker that tripped
+    // in between (or was already open from unrelated Redis ops on this warm
+    // instance) used to be misreported as a clean "held" skip: exit 0, no
+    // page, money job silently frozen for the breaker's reset window.
+    if (opts.failMode === "closed" && isRedisCircuitOpen()) {
+      throw new CronLockUnavailableError(jobName);
+    }
+    throw new CronLockHeldError(jobName);
+  }
 
   const startedAtMs = Date.now();
   await touchHeartbeat(jobName);

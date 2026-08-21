@@ -360,7 +360,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           },
         });
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 
@@ -612,7 +612,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           gatewayRefundId: gateway.refundId || undefined,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 

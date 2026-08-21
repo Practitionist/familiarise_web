@@ -1136,7 +1136,7 @@ export async function handleRefundCreated(
       dashboardUrl: `${getAppUrl()}/dashboard`,
     }).catch(() => {});
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 }
@@ -1317,9 +1317,9 @@ export async function handleDisputeCreated(
           reason,
           status: createdStatus ?? "NEEDS_RESPONSE",
           dashboardUrl: `${getAppUrl()}/dashboard`,
-        });
+        }).catch(() => {});
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 }
@@ -1608,11 +1608,11 @@ export async function handleDisputeUpdated(
             reason: dispute.reason || undefined,
             status: mappedStatus,
             dashboardUrl: `${getAppUrl()}/dashboard`,
-          });
+          }).catch(() => {});
         }
       }
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
   );
 }
 

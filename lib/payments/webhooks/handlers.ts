@@ -454,7 +454,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 
@@ -542,7 +542,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       await withSerializableRetry(() =>
         prisma.$transaction(
           (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
         ),
       );
     } catch (refundError) {
@@ -824,7 +824,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       appointmentType: metadata.appointmentType,
       planTitle: metadata.planId || planTitle,
       dashboardUrl,
-    });
+    }).catch(() => {});
 
     // Notify both consultant and consultee of the booked appointment
     const notifUserIds = [userId];
@@ -848,7 +848,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       consulteeName: userName || "User",
       planTitle: metadata.planId || planTitle,
       dashboardUrl,
-    });
+    }).catch(() => {});
   } catch (novuError) {
     reportSentryError(novuError, { subsystem: "payments", level: "warning" });
     console.error(
@@ -1134,7 +1134,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}/dashboard`,
-      });
+      }).catch(() => {});
     } catch (novuError) {
       reportSentryError(novuError, { subsystem: "payments", level: "warning" });
       console.error(
