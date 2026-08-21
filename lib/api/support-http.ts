@@ -102,7 +102,9 @@ export async function parseRouteParams<S extends z.ZodTypeAny>(
   raw: unknown,
   context: Record<string, unknown>,
 ): Promise<{ ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }> {
-  const parsed = schema.safeParse(raw);
+  // Route handlers hand us the `params` PROMISE — awaiting a plain value is a
+  // no-op, so both call styles work.
+  const parsed = schema.safeParse(await raw);
   if (!parsed.success) {
     return {
       ok: false,
