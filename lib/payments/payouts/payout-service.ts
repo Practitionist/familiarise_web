@@ -213,7 +213,12 @@ export async function checkPayoutEligibility(
  * and leave orphaned payout records with no linked earnings.
  */
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
-const PAYOUT_BATCH_LOCK_TTL = 120_000; // 2 minutes — generous for large batches
+// Must outlive the create-payout-batch workflow budget (15 min per
+// create-payout-batch.yml); at 2 minutes an overlapping run could enter
+// while the first was still linking. The per-consultant count guard is the
+// real correctness backstop; the lock keeps the duplicate fan-out off the
+// gateway entirely.
+const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -506,7 +511,14 @@ export async function rejectPayout(
  * before gateway calls to prevent double-processing.
  */
 const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
-const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
+// Must outlive the job's own budget: the GH workflow allows 30 minutes
+// (process-payouts.yml) and with-cron-lock documents the payout family at up
+// to 30 min. At 5 minutes a slow batch of gateway round-trips let the lock
+// expire mid-run and a second trigger (workflow retry, admin button, HTTP
+// shim) enter concurrently — per-payout CAS + idempotency keys kept the money
+// safe, but the duplicate fan-out and racing balance preflight this lock
+// exists to prevent were back. Aligned with LONG_JOB_TTL_MS.
+const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
