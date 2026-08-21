@@ -104,6 +104,13 @@ export class RefundValidationError extends Error {
   }
 }
 
+/** True when the error is a Prisma unique-constraint violation (P2002). */
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
+  );
+}
+
 /**
  * Report a modelled refund-validation outcome (already-refunded, race-loss,
  * blocked-by-dispute, etc.) for visibility only. Never changes control flow —
@@ -412,15 +419,32 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // refund, so the refund webhook / cascadedAt backstop cron complete it by
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
-    await prisma.refund.update({
-      where: { id: reserved.id },
-      data: {
-        refundId: gateway.refundId || reserved.refundId,
-        status: RefundStatus.FAILED,
-        failureReason: "Gateway declined the refund",
-        failedAt: new Date(),
-      },
-    });
+    try {
+      await prisma.refund.update({
+        where: { id: reserved.id },
+        data: {
+          refundId: gateway.refundId || reserved.refundId,
+          status: RefundStatus.FAILED,
+          failureReason: "Gateway declined the refund",
+          failedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      // A gateway event beat us to the real refund id. Keep the placeholder
+      // (it still records the decline via the reconciler) and never surface a
+      // raw P2002 for a refund whose money state is already correct.
+      await prisma.refund
+        .update({
+          where: { id: reserved.id },
+          data: {
+            status: RefundStatus.FAILED,
+            failureReason: "Gateway declined the refund",
+            failedAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
+    }
     const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
       "GATEWAY_REFUND_DECLINED",
@@ -436,18 +460,69 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     throw declineErr;
   }
 
-  await prisma.refund.update({
-    where: { id: reserved.id },
-    data: {
-      // Falsy gateway id keeps the pending_ placeholder (mirrors the FAILED
-      // branch) so the reconcile cron still matches the row — and the
-      // non-nullable unique column never gets "".
-      refundId: gateway.refundId || reserved.refundId,
-      // Merge, not replace: Phase 1's audit keys (initiatedByUserId, source)
-      // must survive gateway-id binding — the Razorpay path always returns
-      // notes, so a bare assign wiped them (release #1014 review).
-      ...(gateway.metadata
-        ? {
+  // The bind races the gateway's own `refund.created` webhook: Razorpay emits
+  // it roughly concurrently with the REST response, and if the webhook's row
+  // (keyed on the real gateway id, unique) commits first, our bind dies with
+  // P2002 *after* money already moved. Adopt the webhook's row instead of
+  // surfacing the raw error — the placeholder is retired and every downstream
+  // step (settle cascade, result mapping) targets the surviving row.
+  let boundRefundRowId = reserved.id;
+  if (gateway.refundId && gateway.refundId !== reserved.refundId) {
+    try {
+      await prisma.refund.update({
+        where: { id: reserved.id },
+        data: {
+          refundId: gateway.refundId,
+          // Merge, not replace: Phase 1's audit keys (initiatedByUserId,
+          // source) must survive gateway-id binding — the Razorpay path always
+          // returns notes, so a bare assign wiped them (release #1014 review).
+          ...(gateway.metadata
+            ? {
+                metadata: {
+                  ...(reserved.metadata &&
+                  typeof reserved.metadata === "object" &&
+                  !Array.isArray(reserved.metadata)
+                    ? reserved.metadata
+                    : {}),
+                  ...(gateway.metadata as Record<string, unknown>),
+                } as Prisma.InputJsonValue,
+              }
+            : {}),
+        },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      const winner = await prisma.refund.findUnique({
+        where: { refundId: gateway.refundId },
+        select: { id: true, paymentId: true },
+      });
+      if (!winner || winner.paymentId !== payment.id) {
+        // Collision with a row from a different payment would be a genuine
+        // integrity fault — rethrow rather than silently adopt it.
+        throw err;
+      }
+      // Retire our placeholder: it is a pure reservation (cascadedAt null, no
+      // legs reference it), and leaving it PENDING would double-count against
+      // the refundable balance until the reconciler failed it at 24h.
+      await prisma.refund.delete({ where: { id: reserved.id } });
+      boundRefundRowId = winner.id;
+      reportSentryMessage(
+        `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
+        {
+          subsystem: "payments",
+          tags: { feature: "refund" },
+          extra: { placeholderRowId: reserved.id, gatewayRefundId: gateway.refundId },
+        },
+      );
+    }
+  } else {
+    // No real gateway id (falsy keeps the pending_ placeholder, mirroring the
+    // FAILED branch) — just merge metadata onto the reservation row.
+    if (gateway.metadata) {
+      await prisma.refund
+        .update({
+          where: { id: reserved.id },
+          data: {
             metadata: {
               ...(reserved.metadata &&
               typeof reserved.metadata === "object" &&
@@ -456,16 +531,17 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                 : {}),
               ...(gateway.metadata as Record<string, unknown>),
             } as Prisma.InputJsonValue,
-          }
-        : {}),
-    },
-  });
+          },
+        })
+        .catch(() => undefined);
+    }
+  }
 
   if (gateway.status !== "SUCCEEDED") {
     // Money not settled yet — no cascade, row stays PENDING under its real
     // gateway id so the webhook reconciles instead of duplicating.
     return {
-      refundId: reserved.id,
+      refundId: boundRefundRowId,
       amountRefundedPaise: requested,
       legsReversed: 0,
       consultantEarningsReversed: 0,
@@ -479,57 +555,65 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // PHASE 3b — settle: cascade + SUCCEEDED atomically. A throw here rolls
   // back the cascade AND the cascadedAt claim, leaving the row PENDING under
   // its gateway id for the webhook redelivery / backstop cron to re-drive.
-  const settled = await prisma.$transaction(
-    async (tx) => {
-      const cascade = await applyRefundCascade(tx, {
-        paymentId: input.paymentId,
-        refundId: reserved.id,
-        amountPaise: requested,
-        reason: input.reason,
-        initiatedByUserId: input.initiatedByUserId ?? null,
-      });
+  //
+  // Wrapped in withSerializableRetry (as the Phase 1 comment above already
+  // promised): this tx writes earnings/legs concurrently with dispute
+  // handling and other cascades, so P2034 is an expected outcome — unwrapped,
+  // a transient abort surfaced to the caller as a raw error AFTER the gateway
+  // refund had already landed, stranding the row in webhook-only recovery.
+  const settled = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const cascade = await applyRefundCascade(tx, {
+          paymentId: input.paymentId,
+          refundId: boundRefundRowId,
+          amountPaise: requested,
+          reason: input.reason,
+          initiatedByUserId: input.initiatedByUserId ?? null,
+        });
 
-      await tx.refund.update({
-        where: { id: reserved.id },
-        data: { status: RefundStatus.SUCCEEDED },
-      });
+        await tx.refund.update({
+          where: { id: boundRefundRowId },
+          data: { status: RefundStatus.SUCCEEDED },
+        });
 
-      // Restore referral credits. This closes the #B20 gap: credit restoration
-      // used to live ONLY in the gateway-refund webhook, so a refund initiated
-      // through the app (or through the reversal engine) settled without ever
-      // giving the buyer their credits back.
-      //
-      // It must run AFTER the SUCCEEDED update above, because
-      // reverseCreditsForPayment derives its restoration target from the
-      // cumulative SUCCEEDED refund total for the payment — called before, this
-      // refund would be missing from that sum and credits would be
-      // under-restored. It is re-entrant, so the webhook calling it again for
-      // the same refund is a no-op.
-      // `payment.amount` is the denominator, matching what the webhook passes
-      // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
-      // amount charged), and the two paths must agree or a payment refunded
-      // partly through each would restore the wrong total.
-      const restoredCredits = await reverseCreditsForPayment(
-        input.paymentId,
-        tx,
-        requested,
-        payment.amount,
-      );
-      if (restoredCredits > 0) {
-        console.log(
-          `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+        // Restore referral credits. This closes the #B20 gap: credit restoration
+        // used to live ONLY in the gateway-refund webhook, so a refund initiated
+        // through the app (or through the reversal engine) settled without ever
+        // giving the buyer their credits back.
+        //
+        // It must run AFTER the SUCCEEDED update above, because
+        // reverseCreditsForPayment derives its restoration target from the
+        // cumulative SUCCEEDED refund total for the payment — called before, this
+        // refund would be missing from that sum and credits would be
+        // under-restored. It is re-entrant, so the webhook calling it again for
+        // the same refund is a no-op.
+        // `payment.amount` is the denominator, matching what the webhook passes
+        // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
+        // amount charged), and the two paths must agree or a payment refunded
+        // partly through each would restore the wrong total.
+        const restoredCredits = await reverseCreditsForPayment(
+          input.paymentId,
+          tx,
+          requested,
+          payment.amount,
         );
-      }
+        if (restoredCredits > 0) {
+          console.log(
+            `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+          );
+        }
 
-      return {
-        refundId: reserved.id,
-        amountRefundedPaise: requested,
-        ...cascade,
-        status: "SUCCEEDED" as const,
-        gatewayRefundId: gateway.refundId || undefined,
-      };
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        return {
+          refundId: boundRefundRowId,
+          amountRefundedPaise: requested,
+          ...cascade,
+          status: "SUCCEEDED" as const,
+          gatewayRefundId: gateway.refundId || undefined,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
 
   // #715/#716 — the parent booking was fully refunded and carried a CHARGED
