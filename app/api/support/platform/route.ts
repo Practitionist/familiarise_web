@@ -18,10 +18,10 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import { supportError } from "@/lib/api/support-http";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -71,7 +71,7 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
     const ctx = await buildPlatformContext(session.user.id);
     const flows = platformFlowsForContext(ctx).map((f) => ({
@@ -80,21 +80,27 @@ export async function GET() {
       description: f.description,
     }));
     return NextResponse.json({ data: { flows } });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to load support intents" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: "support.platform", action: "catalog" },
+    });
   }
 }
 
 export async function POST(req: NextRequest) {
+  // Hoisted so the catch block can tag the Sentry event even when the throw
+  // happened before/during parsing.
+  let userId: string | null = null;
+  let flowId: string | null = null;
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
+    userId = session.user.id;
 
     // Escalation creates a ticket — same spam budget as the legacy form.
     const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
@@ -105,22 +111,28 @@ export async function POST(req: NextRequest) {
 
     const body = turnSchema.safeParse(await req.json().catch(() => ({})));
     if (!body.success) {
-      return NextResponse.json(
-        { error: body.error.issues[0]?.message ?? "Invalid turn" },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: body.error.flatten(),
+        context: { route: "support.platform", action: "turn" },
+      });
     }
     const input = body.data;
+    flowId = input.flowId;
 
     const ctx = await buildPlatformContext(session.user.id);
     const flow = platformFlowForId(ctx, input.flowId);
     // An unavailable flow (e.g. operator-only, or stale catalog) 404s rather
     // than silently escalating — the client should refetch the catalog.
     if (!flow) {
-      return NextResponse.json(
-        { error: "Unknown support flow" },
-        { status: 404 },
-      );
+      return supportError({
+        status: 404,
+        code: "NOT_FOUND",
+        message: "That support topic isn't available — refresh and pick again.",
+        detail: { flowId: input.flowId },
+        context: { route: "support.platform", action: "turn" },
+      });
     }
 
     const turn = walkFlow(
@@ -195,11 +207,17 @@ export async function POST(req: NextRequest) {
         supportTicketId: ticket.id,
       },
     });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json(
-      { error: "Failed to advance support intake" },
-      { status: 500 },
-    );
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: {
+        route: "support.platform",
+        action: "turn",
+        userId,
+        flowId,
+      },
+    });
   }
 }

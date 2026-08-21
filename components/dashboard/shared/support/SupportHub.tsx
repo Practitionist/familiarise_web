@@ -149,10 +149,8 @@ function bucketize<T extends { status: string }>(
 // ---------------------------------------------------------------------------
 
 function SessionsTab({
-  profileId,
   appointmentsHrefBase,
 }: {
-  profileId?: string;
   appointmentsHrefBase?: string;
 }) {
   const threads = useQuery({
@@ -363,8 +361,6 @@ function SessionsTab({
             )}
           </div>
         )}
-        {/* profileId kept for parity with the requests page deep-link */}
-        {profileId ? null : null}
       </section>
     </div>
   );
@@ -523,14 +519,14 @@ function PlatformTab({
 // ---------------------------------------------------------------------------
 
 export function SupportHub({
-  profileId,
   orgId,
   feedbackHref,
   helpHref,
   appointmentsHrefBase,
 }: {
-  /** Profile id of the mounting dashboard (consultee/consultant) — passed
-   *  through for parity with the standalone request pages. */
+  /** Profile id of the mounting dashboard (consultee/consultant). Kept in the
+   *  public signature for parity with the standalone request pages; the hub
+   *  itself doesn't consume it. */
   profileId?: string;
   /** Active org id in operator trees — attributes platform tickets. */
   orgId?: string;
@@ -569,10 +565,7 @@ export function SupportHub({
       </div>
 
       {tab === "sessions" ? (
-        <SessionsTab
-          profileId={profileId}
-          appointmentsHrefBase={appointmentsHrefBase}
-        />
+        <SessionsTab appointmentsHrefBase={appointmentsHrefBase} />
       ) : (
         <PlatformTab orgId={orgId} feedbackHref={feedbackHref} helpHref={helpHref} />
       )}
