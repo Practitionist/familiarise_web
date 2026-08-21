@@ -15,6 +15,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 
 export type SupportErrorCode =
@@ -56,6 +57,8 @@ export function supportError(opts: {
   const extra = { ...opts.context, detail: opts.detail };
 
   if (opts.cause !== undefined) {
+    // Devs first: local runs often have no DSN, so the SDK would swallow it.
+    console.error("[support]", opts.context?.route ?? "", opts.cause);
     // An exception happened — capture IT (stack intact), not a re-wrap.
     Sentry.captureException(opts.cause, {
       tags,
@@ -86,4 +89,30 @@ export function supportError(opts: {
     },
     { status: opts.status },
   );
+}
+
+/**
+ * Parse route params against a schema (e.g. `AppointmentIdParams`), answering
+ * with the INVALID_ID envelope on failure. Ids are opaque — the DB lookup is
+ * the real validator; this only stops garbage from reaching Prisma. The
+ * discriminated union keeps the success path narrow without instanceof.
+ */
+export async function parseRouteParams<S extends z.ZodTypeAny>(
+  schema: S,
+  raw: unknown,
+  context: Record<string, unknown>,
+): Promise<{ ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }> {
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: supportError({
+        status: 400,
+        code: "INVALID_ID",
+        detail: parsed.error.flatten(),
+        context,
+      }),
+    };
+  }
+  return { ok: true, data: parsed.data };
 }

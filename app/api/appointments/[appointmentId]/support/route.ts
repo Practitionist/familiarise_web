@@ -9,19 +9,20 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
-import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import prisma from "@/lib/prisma";
-import {
-  readAppointmentDetail,
-  canAccessAppointment,
-} from "@/lib/data/appointment-detail";
 import { runSupportTurn } from "@/lib/support/service";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
+import { AppointmentIdParams } from "@/schemas/support";
+import {
+  parseRouteParams,
+  supportError,
+} from "@/lib/api/support-http";
+import {
+  authorizeAppointment,
+  appointmentAuthzError,
+} from "@/lib/api/appointment-access";
 
 /** The intents an org operator may raise on a member's session. */
 const ORG_PARTY_CATEGORIES = new Set(["ORG_ADMIN_DISPUTE", "SPONSORSHIP_BILLING"]);
@@ -49,53 +50,21 @@ const turnSchema = z
     message: "A turn needs a category, a chosen option, or a message",
   });
 
-async function authorize(appointmentId: string) {
-  const session = await getSession();
-  if (!session?.user?.id) return { error: "Unauthorized", status: 401 } as const;
-  const detail = await readAppointmentDetail(appointmentId);
-  if (!detail) return { error: "Appointment not found", status: 404 } as const;
-  if (canAccessAppointment(session.user.id, detail)) {
-    return { userId: session.user.id, isOrgParty: false } as const;
-  }
-  if (isPrivileged(session.user.role)) {
-    return { userId: session.user.id, isOrgParty: false } as const;
-  }
-  // #support-hub — org-party branch. Grants the operator their OWN thread on
-  // this appointment (org-party intents only); never widens read access to
-  // another user's conversation.
-  const orgId = detail.appointment.organizationId ?? null;
-  if (orgId) {
-    const membership = await prisma.membership.findFirst({
-      where: {
-        userId: session.user.id,
-        organizationId: orgId,
-        status: "ACTIVE",
-      },
-      select: { role: true },
-    });
-    if (membership && hasOrgPermission(membership.role, "operations.read")) {
-      return { userId: session.user.id, isOrgParty: true } as const;
-    }
-  }
-  return { error: "Forbidden", status: 403 } as const;
-}
+const SUPPORT_ROUTE = "appointments.support";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  const id = await parseRouteParams(AppointmentIdParams, params, {
+    route: SUPPORT_ROUTE,
+  });
+  if (!id.ok) return id.response;
+  const { appointmentId } = id.data;
   try {
-    const parsed = z
-      .object({ appointmentId: z.string().uuid() })
-      .safeParse(await params);
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid appointment id" }, { status: 400 });
-    }
-    const { appointmentId } = parsed.data;
-    const auth = await authorize(appointmentId);
-    if ("error" in auth) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    // orgParty: true — an operator may open their OWN thread (ADR 20).
+    const auth = await authorizeAppointment(appointmentId, true);
+    if ("code" in auth) return appointmentAuthzError(auth, { route: SUPPORT_ROUTE, appointmentId });
 
     const thread = await prisma.appointmentSupportThread.findUnique({
       where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
@@ -124,9 +93,13 @@ export async function GET(
     }
 
     return NextResponse.json({ data: thread, intents });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json({ error: "Failed to load support thread" }, { status: 500 });
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: "appointments.support", action: "get", appointmentId },
+    });
   }
 }
 
@@ -134,25 +107,24 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
+  const id = await parseRouteParams(AppointmentIdParams, params, {
+    route: SUPPORT_ROUTE,
+  });
+  if (!id.ok) return id.response;
+  const { appointmentId } = id.data;
   try {
-    const parsed = z
-      .object({ appointmentId: z.string().uuid() })
-      .safeParse(await params);
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid appointment id" }, { status: 400 });
-    }
-    const { appointmentId } = parsed.data;
-    const auth = await authorize(appointmentId);
-    if ("error" in auth) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    // orgParty: true — an operator may open their OWN thread (ADR 20).
+    const auth = await authorizeAppointment(appointmentId, true);
+    if ("code" in auth) return appointmentAuthzError(auth, { route: SUPPORT_ROUTE, appointmentId });
 
     const body = turnSchema.safeParse(await req.json().catch(() => ({})));
     if (!body.success) {
-      return NextResponse.json(
-        { error: body.error.issues[0]?.message ?? "Invalid turn" },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: body.error.flatten(),
+        context: { route: "appointments.support", action: "turn", appointmentId },
+      });
     }
     // Org parties raise only the org-party intents on someone else's session.
     if (
@@ -160,10 +132,16 @@ export async function POST(
       body.data.category &&
       !ORG_PARTY_CATEGORIES.has(body.data.category)
     ) {
-      return NextResponse.json(
-        { error: "This intent isn't available for organization operators here" },
-        { status: 403 },
-      );
+      return supportError({
+        status: 403,
+        code: "FORBIDDEN",
+        context: {
+          route: "appointments.support",
+          action: "turn",
+          appointmentId,
+          attemptedCategory: body.data.category,
+        },
+      });
     }
 
     const result = await runSupportTurn(appointmentId, auth.userId, {
@@ -171,11 +149,19 @@ export async function POST(
       isOrgParty: auth.isOrgParty,
     });
     if (!result) {
-      return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
+      return supportError({
+        status: 404,
+        code: "NOT_FOUND",
+        context: { route: "appointments.support", action: "turn", appointmentId },
+      });
     }
     return NextResponse.json({ data: result });
-  } catch (error) {
-    Sentry.captureException(error);
-    return NextResponse.json({ error: "Failed to advance support thread" }, { status: 500 });
+  } catch (cause) {
+    return supportError({
+      status: 500,
+      code: "INTERNAL",
+      cause,
+      context: { route: "appointments.support", action: "turn", appointmentId },
+    });
   }
 }
