@@ -6,6 +6,9 @@ import {
   transitionRescheduleRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 
 /**
  * The initiator takes their own reschedule back, and the booking returns to
@@ -143,6 +146,77 @@ export async function withdrawRescheduleRequest(args: {
         },
       },
     );
+  }
+
+  // PR 2e — the initiator withdrew their own proposal; both parties learn
+  // the booking stays at its original times. Fire-and-forget.
+  try {
+    const detail = await prisma.rescheduleRequest.findUnique({
+      where: { id: rescheduleRequestId },
+      select: {
+        initiatedById: true,
+        appointment: {
+          select: {
+            organizationId: true,
+            appointmentType: true,
+            consultation: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const appt = detail?.appointment;
+    const side = appt?.consultation ?? appt?.subscription;
+    if (detail && side && appt) {
+      const isConsultation = "consultationPlan" in side;
+      const planTitle = isConsultation
+        ? side.consultationPlan.title
+        : side.subscriptionPlan.title;
+      const consultantUser = isConsultation
+        ? side.consultationPlan.consultantProfile.user
+        : side.subscriptionPlan.consultantProfile.user;
+      const consulteeUser = side.requestedBy.user;
+      void notifyAppointmentRescheduled(
+        [detail.initiatedById, consultantUser.id, consulteeUser.id].filter(
+          (id, i, arr) => arr.indexOf(id) === i,
+        ),
+        {
+          ...notificationScope(appt.organizationId),
+          appointmentType: appt.appointmentType,
+          consultantName: consultantUser.name || "Consultant",
+          consulteeName: consulteeUser.name || "Consultee",
+          planTitle,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          outcome: "WITHDRAWN",
+        },
+      );
+    }
+  } catch (notifyErr) {
+    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+      subsystem: "bookings",
+      op: "reschedule-withdraw-notify",
+      expected: true,
+    });
   }
 
   return { withdrawn: true };

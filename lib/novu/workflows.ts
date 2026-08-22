@@ -212,6 +212,14 @@ export type RescheduleOutcomeFields =
       outcome: "RELEASED";
       oldDateTime?: string;
       newDateTime?: never;
+    }
+  | {
+      /** PR 2e — the proposal was declined or withdrawn; the booking stays
+       *  at its original times (or is in the consultant's queue if slots
+       *  were released). No destination time exists. */
+      outcome: "DECLINED" | "WITHDRAWN";
+      oldDateTime?: string;
+      newDateTime?: never;
     };
 
 // `dateTime` from AppointmentPayload is deliberately unused here: a reschedule

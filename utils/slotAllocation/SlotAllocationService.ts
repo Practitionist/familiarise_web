@@ -2003,15 +2003,31 @@ export class SlotAllocationService {
    * forfeited the entire 09:00-17:00 window and the loop advanced to the next
    * row, so auto-allocate yielded at most one placement per row per week even
    * with seven hours free. Walking the row restores the other fifteen starts.
+   *
+   * #1194 — the walk is bounded by the ROW'S OWN END (passed by the caller),
+   * not just by isWithinAvailability (which adjacent rows keep answering true)
+   * nor by the old hard MAX_CANDIDATE_STARTS_PER_ROW=48 ceiling (which
+   * silently truncated legitimate long rows). Callers that cannot supply a
+   * row end still get the 48-step safety net.
    */
   private static candidateStartsInRow(
     rowStart: Date,
     consultant: ConsultantAllocationData,
+    /** Epoch ms of this row's own end; the walk stops here (#1194). */
+    rowEndMs?: number,
   ): Date[] {
     const starts: Date[] = [];
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
       const candidate = new Date(rowStart.getTime() + step * SLOT_DURATION_MS);
+      // Stop at the row's own end before checking availability — adjacent
+      // rows would otherwise let the walk escape past its owner.
+      if (
+        rowEndMs !== undefined &&
+        candidate.getTime() + SLOT_DURATION_MS > rowEndMs
+      ) {
+        break;
+      }
       if (!this.isWithinAvailability(candidate, consultant)) break;
       starts.push(candidate);
     }
@@ -2075,6 +2091,8 @@ export class SlotAllocationService {
       endDate: Date;
       schedulingTimezone?: string;
     },
+    /** Epoch ms of this row's own end (#1194). */
+    rowEndMs?: number,
     preference?: AllocationPreference,
   ): { block: Date[]; score: number } | null {
     const { now, startDate, endDate, schedulingTimezone } = bounds;
@@ -2088,6 +2106,7 @@ export class SlotAllocationService {
     for (const candidateStart of this.candidateStartsInRow(
       rowStart,
       consultant,
+      rowEndMs,
     )) {
       // The whole session must fit, not just its first slot: the validator
       // rejects any slot whose end passes endDate, so testing the start alone
@@ -2162,28 +2181,41 @@ export class SlotAllocationService {
     let bestBlock: Date[] | null = null;
     let bestScore = -1;
 
-    /** Row starts to walk, in the order the search has always used them. */
-    const rowStarts: Date[] = [];
+    /** Row {start, endMs} pairs, in the order the search has always used them. */
+    const rowStarts: { start: Date; endMs: number }[] = [];
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
       for (let week = 0; week < maxWeeksToSearch; week++) {
         for (const slot of sortedWeekly) {
-          const rowStart = this.getNextOccurrenceWeekly(
+          const start = this.getNextOccurrenceWeekly(
             slot.startDay,
             slot.startTimeUtc,
             slot.utcOffsetMinutes,
           );
-          if (week > 0) rowStart.setUTCDate(rowStart.getUTCDate() + week * 7);
-          rowStarts.push(rowStart);
+          if (week > 0) start.setUTCDate(start.getUTCDate() + week * 7);
+          const durationMin =
+            slot.startDay === slot.endDay
+              ? slot.endTimeUtc - slot.startTimeUtc
+              : 1440 - slot.startTimeUtc + slot.endTimeUtc;
+          rowStarts.push({
+            start,
+            endMs: start.getTime() + durationMin * 60_000,
+          });
         }
       }
     } else {
-      for (const slot of sortedCustom) rowStarts.push(new Date(slot.startsAt));
+      for (const slot of sortedCustom) {
+        rowStarts.push({
+          start: new Date(slot.startsAt),
+          endMs: new Date(slot.endsAt).getTime(),
+        });
+      }
     }
 
-    for (const rowStart of rowStarts) {
+    for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {
       for (const candidateStart of this.candidateStartsInRow(
         rowStart,
         consultant,
+        rowEndMs,
       )) {
         if (candidateStart < now) continue;
 
@@ -2501,22 +2533,42 @@ export class SlotAllocationService {
         ? MAX_CLASS_SESSIONS_PER_DAY
         : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
-    /** Availability rows that touch this UTC day, in their sorted order. */
-    const rowStartsForDay = (currentDay: Date): Date[] =>
+    /**
+     * Availability rows that touch this UTC day, as {start, endMs} pairs.
+     * #1194 — the end lets candidateStartsInRow bound its walk to the row's
+     * own time range instead of a blind 48-step cap that adjacent rows can
+     * trick into walking past.
+     */
+    const rowStartsForDay = (
+      currentDay: Date,
+    ): { start: Date; endMs: number }[] =>
       consultant.scheduleType === ScheduleType.WEEKLY
         ? sortedWeekly
-            .map((slot) =>
-              this.matchWeeklySlotToDay(
+            .map((slot) => {
+              const start = this.matchWeeklySlotToDay(
                 slot.startDay,
                 slot.startTimeUtc,
                 currentDay,
                 slot.utcOffsetMinutes,
-              ),
-            )
-            .filter((rowStart): rowStart is Date => rowStart !== null)
+              );
+              if (!start) return null;
+              const durationMin =
+                slot.startDay === slot.endDay
+                  ? slot.endTimeUtc - slot.startTimeUtc
+                  : 1440 - slot.startTimeUtc + slot.endTimeUtc;
+              return {
+                start,
+                endMs: start.getTime() + durationMin * 60_000,
+              };
+            })
+            .filter((r): r is { start: Date; endMs: number } => r !== null)
         : sortedCustom
-            .map((slot) => this.matchCustomSlotToDay(slot.startsAt, currentDay))
-            .filter((rowStart): rowStart is Date => rowStart !== null);
+            .map((slot) => {
+              const start = this.matchCustomSlotToDay(slot.startsAt, currentDay);
+              if (!start) return null;
+              return { start, endMs: new Date(slot.endsAt).getTime() };
+            })
+            .filter((r): r is { start: Date; endMs: number } => r !== null);
 
     /**
      * Place at most `maxPerDay` calls on this day, honouring the
@@ -2534,7 +2586,7 @@ export class SlotAllocationService {
     const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
       let best: { block: Date[]; score: number } | null = null;
 
-      for (const rowStart of rowStartsForDay(currentDay)) {
+      for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(currentDay)) {
         const rowDayKey = SlotCalculationService.dayKey(
           rowStart,
           config.schedulingTimezone,
@@ -2573,6 +2625,7 @@ export class SlotAllocationService {
             endDate,
             schedulingTimezone: config.schedulingTimezone,
           },
+          rowEndMs,
           preference,
         );
         if (!candidate) continue;

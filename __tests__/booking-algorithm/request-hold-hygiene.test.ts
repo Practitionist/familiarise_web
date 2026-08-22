@@ -159,6 +159,12 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
 
     expect(result.consultationsExpired).toBe(0);
     expect(result.consultationSlotsReleased).toBe(0);
-    expect(prisma.slotOfAppointment.deleteMany).not.toHaveBeenCalled();
+    // The stale-rescheduled-slot release (PR 2e) may fire independently —
+    // assert the CONSULTATION-expiry deleteMany was NOT the one that ran.
+    const calls = (prisma.slotOfAppointment.deleteMany as jest.Mock).mock.calls;
+    const consultationDelete = calls.find(
+      (c: any[]) => !c[0]?.where?.completionStatus,
+    );
+    expect(consultationDelete).toBeUndefined();
   });
 });
