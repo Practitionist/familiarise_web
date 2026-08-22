@@ -7,7 +7,7 @@ hold it together.
 
 ## The two scopes, one engine
 
-```
+```text
 lib/support/
 ├── flow-walk.ts          # PURE graph walk — both scopes execute identical transitions
 ├── flows.ts              # 10 appointment flowcharts (code-defined, PR-reviewed)

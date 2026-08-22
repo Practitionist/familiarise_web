@@ -133,7 +133,9 @@ export async function findRecentOpenEscalation(
     where: {
       userId,
       issueType,
-      organizationId: organizationId ?? undefined,
+      // Pass through directly: null must FILTER on organizationId: null (B2C
+      // replays dedupe against B2C tickets only), not omit the constraint.
+      organizationId,
       status: "OPEN",
       createdAt: { gte: dedupeWindow },
     },

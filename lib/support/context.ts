@@ -69,7 +69,22 @@ export async function buildSupportContext(
     !!me?.consultantProfileId && me.consultantProfileId === planConsultantId;
 
   const startsAt = appt.slotsOfAppointment[0]?.startsAt ?? null;
-  const endsAt = appt.slotsOfAppointment[0]?.endsAt ?? null;
+  // For a COMPLETED session the active-slot read above returns nothing — but
+  // the recording-window enforcement still needs a real clock. Fall back to
+  // the most recently ENDED scheduled slot (the delivered session's end).
+  let endsAt: Date | null = appt.slotsOfAppointment[0]?.endsAt ?? null;
+  if (!endsAt) {
+    const lastEnded = await prisma.slotOfAppointment.findFirst({
+      where: {
+        appointmentId,
+        completionStatus: "SCHEDULED",
+        endsAt: { lte: new Date() },
+      },
+      orderBy: { endsAt: "desc" },
+      select: { endsAt: true },
+    });
+    endsAt = lastEnded?.endsAt ?? null;
+  }
 
   // Session stage from the slot window. A past slot (or no scheduled slot at
   // all — e.g. cancelled/completed tombstones filtered out above) reads as
