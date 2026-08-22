@@ -39,7 +39,9 @@ import {
   timingsSaved,
   autoScheduled,
   allocationFailed,
+  allocationFailedWithCode,
   allocatedElsewhere,
+  requestChangedElsewhere,
   isPreservedAllocationMessage,
   schedulingDayBucket,
   schedulingWeekBucket,
@@ -513,14 +515,37 @@ export function useEventSlotAllocation(
     (result: AllocationResult, fallback: string) => {
       const errorMessage = result.error || fallback;
       setAllocationError(errorMessage);
+      const isStaleReschedule =
+        result.httpStatus === 409 &&
+        /reschedule state changed in another session/i.test(errorMessage);
       if (
         result.httpStatus === 409 &&
-        !isPreservedAllocationMessage(errorMessage)
+        !isPreservedAllocationMessage(errorMessage) &&
+        !isStaleReschedule
       ) {
         toast(allocatedElsewhere());
         onConflict?.();
-      } else {
+      } else if (isStaleReschedule) {
+        // #1012 — the tentative count changed in another tab (a reschedule
+        // finished/started there). The dialog must close + refresh because
+        // the page's view of the booking is stale.
+        toast(requestChangedElsewhere());
+        onConflict?.();
+      } else if (
+        result.httpStatus === 409 &&
+        isPreservedAllocationMessage(errorMessage)
+      ) {
+        // Slot conflict — the dialog stays open, the server's own message
+        // renders as itself (#1132).
         toast(allocationFailed(errorMessage));
+      } else {
+        // PR 2c resilience — cause-specific toast from the structured code
+        // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
+        // "The scheduling period has ended", SLOT_SHORTAGE → "Not enough
+        // free slots"). Falls back to the generic copy for unknown codes.
+        toast(
+          allocationFailedWithCode(errorMessage, result.errorCode),
+        );
       }
       onError?.(errorMessage);
     },
