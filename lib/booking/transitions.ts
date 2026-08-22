@@ -39,7 +39,13 @@ export const REQUEST_ALLOWED_FROM: Record<AppointmentStatus, AppointmentStatus[]
   COMPLETED: ["APPROVED", "SCHEDULED"],
   REJECTED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
-  EXPIRED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+  // PR 2c (allocation-resilience money fix) — APPROVED joins EXPIRED's
+  // allowed-from: a PAID subscription whose consultant never allocated any
+  // session was previously immortal (no sweep cohort could touch it), leaving
+  // a buyer paid with nothing scheduled forever. The sweep's cohort is
+  // narrowed to APPROVED-with-zero-live-slots, so a legitimately approved
+  // booking mid-allocation is untouched; only the abandoned shape expires.
+  EXPIRED: ["PENDING", "APPROVED_PENDING_PAYMENT", "APPROVED"],
 };
 
 // Hoisted from cancel/reschedule routes (#838) so the map is the single
