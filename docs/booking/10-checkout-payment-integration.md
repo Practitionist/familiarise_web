@@ -215,6 +215,8 @@ If metadata validation fails, the payment is marked as `SUCCEEDED` with descript
 
 **Legacy Flow + GiST overlap (B8b)**: a legacy-shape capture whose slot chunks overlap an already-confirmed booking trips the `slot_no_confirmed_overlap` exclusion inside the create. The handler catches the violation, stamps the payment `SUCCEEDED` outside the rolled-back transaction, and auto-refunds it — instead of leaving the webhook to be re-delivered into the same constraint forever.
 
+**Legacy creators birth tentative slots (HOIf/#1202)**: the webhook's LEGACY creators (consultation/subscription slot, webinar payer seat, class session) now write `isTentative: true` instead of confirmed rows. Confirmation is owned exclusively by `confirmExistingAppointment`'s event-state guard — so a capture landing on a CANCELLED/DRAFT booking commits only tentative ghosts (swept by the #830 orphan cleanup) and refunds, never confirmed slots on a dead calendar. Capacity recounts are tentative-inclusive, so nothing else changes.
+
 ### Flash-sale behavior (B4/B8c/B5)
 
 Three cooperating changes make a hot event or hot slot survivable:

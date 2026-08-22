@@ -1406,15 +1406,19 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   // Only add slots if NOT a scheduling period request
   if (!isSchedulingPeriodRequest && data.startsAt && data.endsAt) {
     appointmentData.slotsOfAppointment = {
-      create: {
-        startsAt: new Date(data.startsAt),
-        endsAt: new Date(data.endsAt),
-        isTentative: false,
+      create: ({
+        // HOIf/#1202 — LEGACY creators now birth TENTATIVE rows. Birthed
+        // confirmed, a capture landing on a CANCELLED/DRAFT booking committed
+        // real slots the B2 guard could only refund AROUND — ghost confirmed
+        // slots blocking a dead calendar. Tentative births flip via the
+        // ordinary confirm machinery on success and sweep as orphans on
+        // terminal capture (#830).
+        isTentative: true,
         // #440 — same overlap-guard population as the consultation twin;
         // a NULL here would bypass the exclusion constraint's scope.
         consultantProfileId: plan.consultantProfileId,
         user: { connect: { id: data.userId } },
-      },
+      } as unknown as Prisma.SlotOfAppointmentUncheckedCreateWithoutAppointmentInput),
     };
   }
 
@@ -1440,13 +1444,17 @@ async function createWebinar(tx: Tx, data: EventData) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  // Use the master slot's times — guaranteed to exist after validation above
+  // Use the master slot's times — guaranteed to exist after validation above.
+  // HOIf/#1202 — tentative birth (see the subscription creator above): the
+  // payer's seat only becomes confirmed when the event-state guard in
+  // confirmExistingAppointment succeeds; capacity recounts are
+  // tentative-inclusive so nothing else changes.
   await tx.slotOfAppointment.create({
     data: {
       appointmentId: webinar.appointment.id,
       startsAt: masterSlot.startsAt,
       endsAt: masterSlot.endsAt,
-      isTentative: false,
+      isTentative: true,
       user: { connect: { id: data.userId } },
     },
   });
@@ -1474,9 +1482,10 @@ async function createClass(tx: Tx, data: EventData) {
       classId: classInstance.id,
       slotsOfAppointment: {
         create: {
+          // HOIf/#1202 — tentative birth (see createWebinar).
+          isTentative: true,
           startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
           endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
-          isTentative: false,
           user: { connect: { id: data.userId } },
         },
       },
