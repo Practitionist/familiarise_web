@@ -15,40 +15,36 @@
   NODE_OPTIONS = "--max-old-space-size=6144"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Function memory (#1124)
+# Function memory for #1124 — ASSESSED AND REVERTED. Do not re-add without
+# rereading the two measurements below.
 #
-# A brand-new instance of the Next.js server handler stalls its event loop for
-# roughly 24s on its first invocation, BEFORE any application work — the whole
-# of the 20–30s tail on public routes (issue #1124, reproduced 2026-08-22:
-# 11/12 concurrent unique-key requests to a deploy preview landed at
-# 27.8–31.0s TTFB while same-key requests coalesced at 2.7–5.4s). The function
-# boots at AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1024 → ~0.5 vCPU with 675–795 MB RSS
-# at rest, so cold-boot JS evaluation + GC at that CPU share is the leading
-# explanation.
+# The stall: a brand-new instance of the Next.js server handler blocks its
+# event loop ~24s before any application work — the whole of the 20–30s tail
+# on public routes (#1124; reproduced 2026-08-22: 11/12 concurrent unique-key
+# requests to deploy preview 1195 at 27.8–31.0s TTFB while same-key requests
+# coalesced at 2.7–5.4s). Leading hypothesis was cold-boot JS/GC at Lambda's
+# memory-proportional CPU share (1024 MB → ~0.5 vCPU, RSS 675–795 MB at rest).
 #
-# Lambda scales CPU linearly with memory, and Netlify now exposes per-function
-# memory on Credit-based Pro/Enterprise (docs updated 2026-07; unavailable when
-# #1124 was first written up). Doubling to 2048 MB doubles the boot CPU share,
-# which should shrink the stall proportionally IF that reading is right. This
-# is a measured-or-reverted claim: verify on the deploy preview burst test
-# before believing it, and revert if the distribution doesn't move.
+# Netlify now exposes per-function `memory` up to 4096 MB on Credit-based
+# Pro/Enterprise, so the hypothesis became testable. Two preview measurements,
+# same 12-way concurrent unique-key protocol, 2026-08-22:
 #
-# Cost: function billing scales linearly with configured memory (GB-Hours), so
-# this doubles compute cost per invocation. Warm invocations are milliseconds,
-# so in absolute terms this is small; the stall itself was also being billed at
-# ~30s per hit before this change.
+#   1024 MB (control)   11/12 slow at 27.8–31.0 s
+#   2048 MB (treatment) 11/12 slow at 35.9–37.6 s, one platform 500
 #
-# One generated function covers everything. Runtime API v2 consolidated the old
-# SSR handler and ISR/odb handler into a single ___netlify-server-handler
-# (@netlify/plugin-nextjs@5.15.13, confirmed via listSiteFunctions on 2026-08-22:
-# the only function on the site, m=1024). The classic ___netlify-handler /
-# ___netlify-odb-handler names belong to runtime v1 and match NOTHING today — an
-# earlier draft targeted them and Netlify silently ignored the override, which
-# is exactly how a "measured" no-op happens. If the adapter major bumps again,
-# re-enumerate names before trusting this block.
+# No improvement; possibly a regression (a doubled heap is more boot work, not
+# less, if initialization dominates). Doubling CPU share does not touch this
+# stall, so "memory/CPU-starved boot" is now a weakened explanation and the
+# effective levers are the ones that avoid invoking a cold instance at all:
+# ISR cache hits, warm-deploy priming, and netlify/functions keep-warm.
+#
+# GOTCHA that made the first measurement worthless: runtime API v2
+# (@netlify/plugin-nextjs@5.15.13) generates ONE function named
+# ___netlify-server-handler. The classic ___netlify-handler /
+# ___netlify-odb-handler names belong to v1 and match NOTHING — a toml block
+# targeting them is silently ignored (confirmed via searchSiteFunctions:
+# m stayed 1024). Re-enumerate names after any adapter bump.
 # ─────────────────────────────────────────────────────────────────────────────
-[functions."___netlify-server-handler"]
-  memory = 2048
 
 # Skip builds for Dependabot PRs
 [context.deploy-preview]
