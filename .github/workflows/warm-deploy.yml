@@ -24,10 +24,11 @@ name: Warm Deploy
 # This does not keep instances alive (see keep-warm.yml); it only removes the
 # empty-cache window right after a deploy.
 
+# deployment_status supports no trigger-level filter (no `types`/`states`
+# narrowing exists for it) — the workflow fires on every status event and the
+# job-level `if` below is the real gate.
 on:
   deployment_status:
-    states:
-      - success
   workflow_dispatch:
     inputs:
       base_url:
@@ -71,11 +72,25 @@ jobs:
       # The first request against a brand-new instance can legitimately take
       # ~30s (#1124), so max-time must sit well above that or the warm-up would
       # kill the very request doing the warming.
+      #
+      # /api/health is deliberately fail-open: it answers HTTP 200 with
+      # status "degraded" + database "unreachable" when the DB is down, so a
+      # bare curl exit code is NOT a health verdict. Parse the body: warming a
+      # degraded origin is worse than useless — the ISR pages rethrow on DB
+      # failure (#1123), so every page ping would 500, cache nothing, and the
+      # run would still report success. Fail here instead so the red run says
+      # "deploy is up but degraded; nothing was warmed".
       - name: Warm the function instance (health probe)
         run: |
-          curl -sS -o /dev/null -w "health: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
-            --max-time 60 --retry 1 --retry-delay 2 \
-            "${{ steps.url.outputs.base }}/api/health"
+          BODY=$(curl -sS -w "\nhealth: ttfb=%{time_starttransfer}s code=%{http_code}" \
+            --fail --max-time 60 --retry 1 --retry-delay 2 \
+            "${{ steps.url.outputs.base }}/api/health")
+          echo "${BODY##*$'\n'}"
+          STATUS=$(printf '%s' "$BODY" | head -n 1 | jq -r '.status // "unknown"')
+          if [ "$STATUS" != "healthy" ]; then
+            echo "::error::health status is '$STATUS' (not healthy) — origin degraded, skipping page warming"
+            exit 1
+          fi
 
       # Hot public routes in click-order value. Keep this list short and
       # deliberate: every line is a billable invocation, and sequential curls

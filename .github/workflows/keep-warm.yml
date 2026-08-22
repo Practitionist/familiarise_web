@@ -68,11 +68,25 @@ jobs:
           # 11 rounds x 5-minute sleep ≈ 55 minutes of coverage per hourly
           # run; the next run picks up at :10. Pings are sequential and the
           # loop sleeps between rounds, so this never bursts the function.
+          #
+          # /api/health is fail-open: HTTP 200 with status "degraded" when the
+          # DB is unreachable, so the body is parsed too. Degradation is a
+          # WARNING here, not a failure — the ping still warmed the instance,
+          # and the loop keeps running so warmth (and the outage signal)
+          # continue through the incident.
           for round in $(seq 1 11); do
             for host in $HOSTS; do
-              curl -sS -o /dev/null -w "$host/api/health: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
-                --max-time 60 --retry 1 --retry-delay 3 \
-                "$host/api/health" || echo "::warning::keep-warm ping failed for $host"
+              if BODY=$(curl -sS -w "\n$host/api/health: ttfb=%{time_starttransfer}s code=%{http_code}" \
+                --fail --max-time 60 --retry 1 --retry-delay 3 \
+                "$host/api/health"); then
+                echo "${BODY##*$'\n'}"
+                STATUS=$(printf '%s' "$BODY" | head -n 1 | jq -r '.status // "unknown"')
+                if [ "$STATUS" != "healthy" ]; then
+                  echo "::warning::keep-warm: $host reports health status '$STATUS' — prod degraded"
+                fi
+              else
+                echo "::warning::keep-warm ping failed for $host"
+              fi
             done
             if [ "$round" -lt 11 ]; then sleep 300; fi
           done
