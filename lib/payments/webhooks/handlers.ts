@@ -15,7 +15,8 @@ import {
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
-import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
+import { REQUEST_ALLOWED_FROM, EVENT_ALLOWED_FROM, CLASS_EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { recordSystemError } from "@/lib/enterprise/system-events";
@@ -185,9 +186,11 @@ export async function handlePaymentSuccess(
   // rw-antidependency aborts one side with P2034; the retry then sees the
   // winner confirmed and blocks. The SUCCEEDED early-return keeps the retry
   // idempotent.
-  const txResult = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx): Promise<PaymentSuccessTxResult | null> => {
+  let txResult: PaymentSuccessTxResult | null;
+  try {
+    txResult = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx): Promise<PaymentSuccessTxResult | null> => {
         const payment = await tx.payment.findUnique({
           where: { paymentIntent: paymentIntentId },
           include: { user: { include: { consulteeProfile: true } } },
@@ -457,6 +460,64 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
   );
+  } catch (err) {
+    // B8b (booking-journey audit) — a LEGACY-shape capture (no appointmentId
+    // in metadata, so checkout never pre-created the appointment) whose slot
+    // chunks overlap an already-confirmed booking trips the #440 GiST
+    // constraint inside the create. Left unhandled, that exception rolls back
+    // the SUCCEEDED stamp above and the webhook is re-driven into the same
+    // wall forever: gateway truth says captured, our ledger never agrees,
+    // manual refund. Convert it here into the modelled outcome the #827
+    // double-booking path already has — stamp SUCCEEDED outside the rolled-
+    // back tx, then auto-refund below. (The NEW flow never hits this: its
+    // confirm-time recheck returns doubleBookingBlocked in-tx instead.)
+    if (!isExclusionViolation(err)) throw err;
+    const loser = await prisma.payment.findUnique({
+      where: { paymentIntent: paymentIntentId },
+      select: { id: true },
+    });
+    if (!loser) throw err;
+    // Description stays HONEST at each step (CodeRabbit triage): "refund
+    // pending" while the gateway call is in flight — if it fails, the record
+    // must not claim money the buyer has not received. The success branch
+    // below rewrites it to "Auto-refunded".
+    await prisma.payment.update({
+      where: { id: loser.id },
+      data: {
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        description:
+          "Refund pending: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
+      },
+    });
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Legacy-shape capture ${paymentIntentId} overlapped a confirmed booking — auto-refunding`,
+      err: err instanceof Error ? err : new Error(String(err)),
+      context: { paymentIntentId, paymentId: loser.id },
+    }).catch(() => {});
+    try {
+      await refundPayment({
+        paymentId: loser.id,
+        reason: "legacy capture overlapped a confirmed booking",
+        initiatedByUserId: null,
+      });
+      await prisma.payment.update({
+        where: { id: loser.id },
+        data: {
+          description:
+            "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
+        },
+      });
+    } catch (refundError) {
+      reportSentryError(refundError, { subsystem: "payments" });
+      console.error(
+        "Failed to auto-refund GiST-overlap legacy capture; payment keeps its Refund-pending marker for manual recovery:",
+        refundError,
+      );
+    }
+    return;
+  }
 
   // If transaction returned null, the payment was already processed or had a metadata error
   if (!txResult) return;
@@ -839,16 +900,35 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       orderBy: { startsAt: "asc" },
       select: { startsAt: true },
     });
-    void notifyAppointmentBooked(notifUserIds, {
-      ...scope,
-      appointmentId,
-      dateTime: firstSlot?.startsAt.toISOString(),
-      appointmentType: metadata.appointmentType,
-      consultantName: consultantNameForNotif,
-      consulteeName: userName || "User",
-      planTitle: metadata.planId || planTitle,
-      dashboardUrl,
-    });
+    // B9 (booking-journey audit) — APPOINTMENT_BOOKED names a TIME. For a
+    // subscription placeholder (paid, zero slots until the consultant
+    // allocates) there is no time, and the Novu template rendered a blank
+    // date placeholder as the payer's very first booking message.
+    // notifyPaymentSuccess above already told them the purchase worked, so
+    // the booked-with-time ping is deferred to allocation (PR 2c wires that
+    // notification). Template-side rendering stays a Novu dashboard concern
+    // (#1085 precedent).
+    if (!firstSlot?.startsAt) {
+      console.log(
+        JSON.stringify({
+          event: "appointment_booked_notification_skipped_no_slots",
+          appointmentId,
+          paymentId: paymentId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } else {
+      void notifyAppointmentBooked(notifUserIds, {
+        ...scope,
+        appointmentId,
+        dateTime: firstSlot.startsAt.toISOString(),
+        appointmentType: metadata.appointmentType,
+        consultantName: consultantNameForNotif,
+        consulteeName: userName || "User",
+        planTitle: metadata.planId || planTitle,
+        dashboardUrl,
+      });
+    }
   } catch (novuError) {
     reportSentryError(novuError, { subsystem: "payments", level: "warning" });
     console.error(
@@ -1641,7 +1721,43 @@ export async function confirmExistingAppointment(
 
   // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
   // Classes have multiple appointments (one per session), but payment only links to first
+  //
+  // B2 (booking-journey audit) — the status stamp and the slot flips are
+  // GUARDED now. The old code stamped SCHEDULED with a blind update, so a
+  // capture landing after the event was cancelled resurrected it to
+  // SCHEDULED and re-confirmed the payer's slots on a dead event — money
+  // kept, event undead. The guard rides the WHERE (CAS doctrine); a miss
+  // means the event moved underneath us, and the fresh read decides benign
+  // replay (already live/done — flip slots, keep money) vs capture-after-
+  // terminal (CANCELLED/DRAFT — refund via Phase 2, touch nothing).
+  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"];
+
   if (appointment.class && userId) {
+    const classId = appointment.class.id;
+    const restamped = await tx.class.updateMany({
+      where: {
+        id: classId,
+        status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
+      },
+      data: { status: "SCHEDULED" },
+    });
+    if (restamped.count === 0) {
+      const fresh = await tx.class.findUnique({
+        where: { id: classId },
+        select: { status: true },
+      });
+      if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
+          err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+          context: { entityType: "class", entityId: classId },
+        }).catch(() => {});
+        return { capturedAfterTerminal: true };
+      }
+    }
+
     await tx.slotOfAppointment.updateMany({
       where: {
         appointment: { classId: appointment.class.id },
@@ -1662,6 +1778,31 @@ export async function confirmExistingAppointment(
   // FIX Issue #1: For WEBINAR, confirm only the paying user's slot
   // Webinars share one appointment among all participants
   else if (appointment.webinar && userId) {
+    const webinarId = appointment.webinar.id;
+    const restamped = await tx.webinar.updateMany({
+      where: {
+        id: webinarId,
+        status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
+      },
+      data: { status: "SCHEDULED" },
+    });
+    if (restamped.count === 0) {
+      const fresh = await tx.webinar.findUnique({
+        where: { id: webinarId },
+        select: { status: true },
+      });
+      if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
+        void recordSystemError({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Payment captured for webinar ${webinarId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
+          err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+          context: { entityType: "webinar", entityId: webinarId },
+        }).catch(() => {});
+        return { capturedAfterTerminal: true };
+      }
+    }
+
     await tx.slotOfAppointment.updateMany({
       where: {
         appointmentId,
@@ -1707,21 +1848,10 @@ export async function confirmExistingAppointment(
     capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
 
-  // Update webinar status
-  if (appointment.webinar) {
-    await tx.webinar.update({
-      where: { id: appointment.webinar.id },
-      data: { status: "SCHEDULED" },
-    });
-  }
-
-  // Update class status
-  if (appointment.class) {
-    await tx.class.update({
-      where: { id: appointment.class.id },
-      data: { status: "SCHEDULED" },
-    });
-  }
+  // Webinar/class status stamps moved ABOVE, next to their slot flips: the
+  // stamp is now the CAS guard that decides whether those flips may run at
+  // all (B2). A blind re-stamp here would resurrect a cancelled event after
+  // the guard above correctly refused it.
 
   return { capturedAfterTerminal };
 }
