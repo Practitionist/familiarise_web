@@ -7,18 +7,25 @@ import {
   completeOrgWorkspaceOnboardingAction,
 } from "@/actions/forms/onboarding.action";
 import {
+  clearOnboardingDraftAction,
+  loadOnboardingDraftAction,
+  saveOnboardingDraftAction,
+} from "@/actions/onboarding-draft.action";
+import { encodeDraftForSave } from "@/utils/onboarding-draft";
+import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
+import {
   OnboardingFormData,
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { Check, LogOut } from "lucide-react";
+import { Check, History, LogOut, RotateCcw } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // Step 0 stays eager — every user sees Personal Info first.
@@ -62,14 +69,6 @@ const ConsulteeAgreementForm = dynamic(
   () => import("./components/ConsulteeAgreementForm"),
   { ssr: false, loading: () => <StepLoading /> },
 );
-const ConsulteeProfileForm = dynamic(
-  () => import("./components/ConsulteeProfileForm"),
-  { ssr: false, loading: () => <StepLoading /> },
-);
-const ConsulteeReviewForm = dynamic(
-  () => import("./components/ConsulteeReviewForm"),
-  { ssr: false, loading: () => <StepLoading /> },
-);
 const StaffAgreementForm = dynamic(
   () => import("./components/StaffAgreementForm"),
   { ssr: false, loading: () => <StepLoading /> },
@@ -95,7 +94,7 @@ const CreateOrganizationWizard = dynamic(
 // ---------------------------------------------------------------------------
 
 /**
- * Everything a step can need from the shell. The five step forms were written
+ * Everything a step can need from the shell. The step forms were written
  * independently and take different props (`onNext`/`initialData` vs
  * `onSubmit`/`formData`/`onGoToStep`), so each entry adapts this context to its
  * own component instead of a single prop contract being forced on all of them.
@@ -141,6 +140,12 @@ const personalInfoStep: OnboardingStep = {
  * The onboarding flow, per role. Order in the array IS the step order — indices
  * are never written down anywhere, which is what lets ORG_WORKSPACE be a normal
  * two-entry flow instead of a special case bolted onto the step machine.
+ *
+ * CONSULTEE is deliberately two screens (#onboarding-ux): demand-side users
+ * reach marketplace value with one form + consent. Profile enrichment
+ * (career stage, goals, about-me) is deferred to the consultee dashboard's
+ * Settings tab and the lazy `ensureConsulteeProfile` path — the server payload
+ * schema already treats every consultee profile field as optional.
  */
 const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   CONSULTANT: [
@@ -208,33 +213,12 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   CONSULTEE: [
     personalInfoStep,
     {
-      label: "Profile",
-      render: (ctx) => (
-        <ConsulteeProfileForm
-          onNext={ctx.onNext}
-          onBack={ctx.onBack}
-          initialData={ctx.formData}
-        />
-      ),
-    },
-    {
       label: "Agreement",
       render: (ctx) => (
         <ConsulteeAgreementForm
-          onNext={ctx.onNext}
+          onNext={(data) => ctx.onSubmit(data)}
           onBack={ctx.onBack}
           formData={ctx.formData}
-        />
-      ),
-    },
-    {
-      label: "Review",
-      render: (ctx) => (
-        <ConsulteeReviewForm
-          onSubmit={ctx.onSubmit}
-          onBack={ctx.onBack}
-          formData={ctx.formData}
-          onGoToStep={ctx.onGoToStep}
         />
       ),
     },
@@ -293,6 +277,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
             const userId = ctx.userId;
             if (!userId) return;
             await completeOrgWorkspaceOnboardingAction(userId);
+            await clearOnboardingDraftAction();
           }}
         />
       ),
@@ -304,12 +289,26 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   ADMIN: [personalInfoStep],
 };
 
+/** Autosave debounce for wizard drafts. Long enough to batch rapid typing in
+ *  react-hook-form merges, short enough that a tab close loses nothing. */
+const DRAFT_SAVE_DEBOUNCE_MS = 800;
+
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
+  const [draftRestored, setDraftRestored] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
+
+  // Refs gate side effects across renders without re-triggering them:
+  //  - draftReadyRef: autosave must not run until hydration resolved, or an
+  //    empty mount-time state would overwrite the stored draft.
+  //  - draftCompletedRef: once onboarding succeeds (or the user starts over),
+  //    stop saving; the row is being deleted server-side.
+  const draftReadyRef = useRef(false);
+  const draftCompletedRef = useRef(false);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Apply a referral code captured at first touch (signup / r/[code]) now that
   // the user is authenticated — covers OAuth and verified-email signups, which
@@ -334,6 +333,71 @@ const MultiStepForm: React.FC = () => {
       .catch(() => {});
   }, [session?.user?.id]);
 
+  // Hydrate the resumable draft once per session identity. Runs after the
+  // guard layout has confirmed this user still needs onboarding, so any
+  // stored draft belongs to an unfinished run by construction.
+  useEffect(() => {
+    let cancelled = false;
+    async function hydrate() {
+      const result = await loadOnboardingDraftAction();
+      if (cancelled) return;
+      draftReadyRef.current = true;
+      if (!result.success || !result.draft) return;
+      const { payload, currentStep, role } = result.draft;
+      const hasPayload = Object.keys(payload).length > 0;
+      if (!hasPayload && !(role && currentStep > 0)) return;
+      setFormData((prev) => ({ ...payload, ...prev }) as Partial<OnboardingFormData>);
+      // Registry length depends on the restored role; clamp defensively so a
+      // registry change between sessions can never point past the last step.
+      const registry =
+        role && role in ONBOARDING_STEPS ? ONBOARDING_STEPS[role as OnboardingRole] : null;
+      if (registry && currentStep > 0) {
+        setStep(Math.min(currentStep, registry.length - 1));
+      }
+      if (currentStep > 0 || hasPayload) setDraftRestored(true);
+      trackOnboardingEvent("draft_restored", { currentStep, role });
+    }
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Autosave: debounce every step/data transition into a single upsert.
+  useEffect(() => {
+    if (!draftReadyRef.current || draftCompletedRef.current) return;
+    if (!session?.user?.id) return;
+
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      const encoded = encodeDraftForSave({
+        role: formData.role ?? null,
+        currentStep: step,
+        payload: formData as Record<string, unknown>,
+      });
+      if (!encoded) return; // invalid or over-budget payloads are skipped, never fatal
+      void saveOnboardingDraftAction(encoded).then((result) => {
+        if (!result.success) {
+          trackOnboardingEvent("draft_save_failed", { error: result.error });
+        }
+      });
+    }, DRAFT_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    };
+  }, [step, formData, session?.user?.id]);
+
+  const startOver = async () => {
+    draftCompletedRef.current = true;
+    setDraftRestored(false);
+    setFormData({});
+    setStep(0);
+    await clearOnboardingDraftAction().catch(() => {});
+    draftCompletedRef.current = false;
+    draftReadyRef.current = false;
+  };
+
   const handleNext = async (stepData: Partial<OnboardingFormData>) => {
     // Merge new data first so the async role-flip below reads the
     // freshest values (React setState batching would otherwise give us
@@ -349,6 +413,10 @@ const MultiStepForm: React.FC = () => {
       }
     }
     setFormData(merged);
+    trackOnboardingEvent("step_advance", {
+      fromStep: step,
+      role: merged.role ?? null,
+    });
 
     // ORG_WORKSPACE handoff: when the user completes Personal Info we commit
     // their role on the User row so the wizard step's
@@ -389,6 +457,7 @@ const MultiStepForm: React.FC = () => {
   };
 
   const handleBack = () => {
+    trackOnboardingEvent("step_back", { fromStep: step });
     setStep((prevStep) => prevStep - 1);
   };
 
@@ -476,6 +545,7 @@ const MultiStepForm: React.FC = () => {
           return;
         }
 
+        trackOnboardingEvent("submit_error", { error: errorMessage });
         toast({
           title: "Unable to Save Profile",
           description: errorMessage,
@@ -484,11 +554,24 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
+      // Success: stop autosaving and drop the draft — the terminal CAS flip
+      // has happened server-side, and a lingering row would resurrect stale
+      // state for any future re-onboarding surface.
+      draftCompletedRef.current = true;
+      void clearOnboardingDraftAction().catch(() => {});
+
       if (result.verificationWarning) {
         toast({
           title: "Profile Saved — Verification Issue",
           description: result.verificationWarning as string,
           variant: "destructive",
+        });
+      } else if (finalData.role === "CONSULTANT" && result.verificationDeferred) {
+        trackOnboardingEvent("verification_deferred", {});
+        toast({
+          title: "Profile Submitted!",
+          description:
+            "Add your LinkedIn URL and one document from Settings to get verified — your profile is saved and you can explore the dashboard meanwhile.",
         });
       } else if (finalData.role === "CONSULTANT") {
         toast({
@@ -508,6 +591,11 @@ const MultiStepForm: React.FC = () => {
           description: "Your profile has been created successfully.",
         });
       }
+
+      trackOnboardingEvent("submit_success", {
+        role: finalData.role ?? null,
+        verificationDeferred: Boolean(result.verificationDeferred),
+      });
 
       // Check for a pending org invitation token stored by the invite page.
       // This bridges the signup → onboarding → dashboard chain where the
@@ -550,6 +638,7 @@ const MultiStepForm: React.FC = () => {
         router.push("/dashboard");
       }
     } catch (error: unknown) {
+      trackOnboardingEvent("submit_error", { error: "unhandled_exception" });
       console.error("Error during onboarding:", error);
       toast({
         title: "Something Went Wrong",
@@ -638,6 +727,26 @@ const MultiStepForm: React.FC = () => {
       <main
         className={`container mx-auto px-4 py-8 ${activeStep?.wide ? "max-w-[80%]" : "max-w-3xl"}`}
       >
+        {/* Resume banner — shown once when a saved draft was restored */}
+        {draftRestored && (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              <History className="h-4 w-4 shrink-0 text-primary" />
+              <span className="text-foreground">
+                Welcome back — we saved your progress.
+              </span>
+            </div>
+            <button
+              onClick={() => void startOver()}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="Discard saved progress and start from the beginning"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Start over
+            </button>
+          </div>
+        )}
+
         {/* Progress Stepper */}
         <div className="flex items-start justify-between mb-8">
           {steps.map(({ label }, index) => (

@@ -35,17 +35,21 @@ interface Props {
   initialData: Partial<FormData>;
 }
 
+// User-facing copy avoids internal role jargon (#onboarding-ux): "CONSULTEE"
+// means nothing to a new visitor — the picker answers "what do you want to
+// do?" instead. Enum VALUES are unchanged; only labels/descriptions differ.
 const ROLE_INFO: Record<string, { title: string; description: string }> = {
   CONSULTANT: {
-    title: "Consultant",
-    description: "Share your expertise and mentor others",
+    title: "I want to offer my expertise",
+    description:
+      "Create a consultant profile, get verified, and start taking sessions",
   },
   CONSULTEE: {
-    title: "Consultee",
-    description: "Learn from experienced professionals",
+    title: "I want expert guidance",
+    description: "Find experienced professionals and book your first session",
   },
   ORG_WORKSPACE: {
-    title: "Organization Owner",
+    title: "For my organization",
     description: "Create and manage an organization for your school or company",
   },
 };

@@ -94,6 +94,36 @@ export function buildAdminScalarData(data: AdminProfileCreateData) {
 }
 
 // ============================================================================
+// VERIFICATION POLICY (pure)
+// ============================================================================
+
+/** Minimal shape of the verification-related fields on an onboarding body.
+ *  Structural typing keeps this importable from both the server pipeline and
+ *  tests without touching the "server-only" module graph. */
+export interface VerificationSignals {
+  verificationLinkedinUrl?: string;
+  verificationDocuments?: unknown[];
+}
+
+/**
+ * Decide whether a consultant submission carries everything the verification
+ * review needs. Both signals are required for an immediate review; anything
+ * less defers to the dashboard's VerificationSection, which already owns the
+ * post-onboarding submit/resubmit loop (#onboarding-ux).
+ */
+export function shouldSubmitVerification(body: VerificationSignals): {
+  hasDocuments: boolean;
+  hasLinkedin: boolean;
+} {
+  return {
+    hasDocuments:
+      Array.isArray(body.verificationDocuments) &&
+      body.verificationDocuments.length > 0,
+    hasLinkedin: Boolean(body.verificationLinkedinUrl?.trim()),
+  };
+}
+
+// ============================================================================
 // PROFESSIONAL BACKGROUND VALIDATION
 // ============================================================================
 
