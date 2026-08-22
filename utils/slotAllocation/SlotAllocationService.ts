@@ -2373,6 +2373,7 @@ export class SlotAllocationService {
     ) {
       throw new AllocationValidationError(
         "No availability slots configured for consultant",
+        "NO_AVAILABILITY",
       );
     }
 
@@ -2428,6 +2429,7 @@ export class SlotAllocationService {
 
       throw new AllocationValidationError(
         `No ${slotsPerCall} consecutive slots available for ${eventType}`,
+        "SLOT_SHORTAGE",
       );
     }
 
@@ -2662,8 +2664,22 @@ export class SlotAllocationService {
     sweepPeriod(false);
 
     if (selectedSlots.length < totalSlotsNeeded) {
+      // PR 2c resilience (audit gap #6) — a consultant staring at "Could only
+      // find 0 of 12" deserves to know WHY: the scheduling period is over
+      // (add availability or extend the period), vs everything is booked
+      // (wait for cancellations), vs caps are unsatisfiable. The period check
+      // runs first because it's the most actionable answer.
+      if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
+        throw new AllocationValidationError(
+          `The scheduling period ended on ${config.schedulingPeriodEndsAt.toLocaleDateString()}. ` +
+            `Found ${selectedSlots.length} of ${totalSlotsNeeded} required slots. ` +
+            `Extend the period on the plan to allocate more sessions.`,
+          "PERIOD_ENDED",
+        );
+      }
       throw new AllocationValidationError(
         `Could only find ${selectedSlots.length} of ${totalSlotsNeeded} required slots`,
+        "SLOT_SHORTAGE",
       );
     }
 

@@ -114,6 +114,9 @@ export type AllocationErrorCode =
   | "LOCK_CONTENTION" // Redis lock busy — 409
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
+  | "NO_AVAILABILITY" // consultant has no published availability — 400
+  | "PERIOD_ENDED" // scheduling period is in the past — 400
+  | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
