@@ -38,6 +38,15 @@ interface RequestedSlotsDialogProps {
   /** Parent's confirm is in flight — hold both exits so a double click can't
    * fire a second submit. #1163 */
   confirming?: boolean;
+  /**
+   * A reschedule with no answerable consultee proposal cannot confirm its
+   * stored times: those rows still carry the times being moved AWAY from
+   * (the reschedule route never rewrites startsAt), so the server's
+   * requested-slots mode refuses them by design. When set, the confirm
+   * button is replaced with guidance toward the Allocate Slots surface,
+   * which is where replacement times are actually placed.
+   */
+  rescheduleNeedsAllocator?: boolean;
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
 }
@@ -51,6 +60,7 @@ export function RequestedSlotsDialog({
   requestedSlotsWithStatus,
   schedulingPeriod,
   confirming = false,
+  rescheduleNeedsAllocator = false,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
@@ -474,24 +484,41 @@ export function RequestedSlotsDialog({
             Cancel
           </Button>
 
-          <Button
-            variant={hasOutsideSlots ? "destructive" : "default"}
-            onClick={() => onConfirm(hasOutsideSlots)}
-            disabled={loading || confirming || hasConflicts || hasOutsidePeriod}
-            title={
-              hasConflicts
-                ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`
-                : hasOutsidePeriod
-                  ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
-                  : hasOutsideSlots
-                    ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
-                    : "Allocate all requested time slots"
-            }
-          >
-            {hasOutsideSlots
-              ? "Override and Allocate"
-              : "Allocate Requested Times"}
-          </Button>
+          {rescheduleNeedsAllocator ? (
+            // The stored times are what the consultee asked to MOVE AWAY
+            // from — confirming them here would re-book the very times the
+            // reschedule is trying to leave, and the server refuses it.
+            // Point at the surface that places replacement times instead of
+            // letting a guaranteed-failing submit answer as an error toast.
+            <Button
+              variant="outline"
+              disabled
+              title="A reschedule needs new times. Open Allocate Slots to place replacements."
+            >
+              Use Allocate Slots for new times
+            </Button>
+          ) : (
+            <Button
+              variant={hasOutsideSlots ? "destructive" : "default"}
+              onClick={() => onConfirm(hasOutsideSlots)}
+              disabled={
+                loading || confirming || hasConflicts || hasOutsidePeriod
+              }
+              title={
+                hasConflicts
+                  ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`
+                  : hasOutsidePeriod
+                    ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
+                    : hasOutsideSlots
+                      ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
+                      : "Allocate all requested time slots"
+              }
+            >
+              {hasOutsideSlots
+                ? "Override and Allocate"
+                : "Allocate Requested Times"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -4,6 +4,7 @@ import {
   AppointmentSlot,
   CustomSlot,
   dayMap,
+  isValidOvernightSlot,
   makeLocalizer,
   processAvailabilitySlots,
   WeeklySlot,
@@ -32,39 +33,6 @@ type SlotTimingWithOverlap = TSlotTiming & {
   overlappingAppointments?: OverlapAppointmentMeta[];
 };
 
-// Helper function to check if a slot is a legitimate overnight slot
-function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
-  // For normal slots where end > start, they are always valid
-  if (endTime > startTime) {
-    return true;
-  }
-
-  // For slots where end <= start, check if they are legitimate overnight slots
-  if (endTime <= startTime) {
-    // Check if this is a midnight-ending slot (ends at 00:00)
-    const endHours = endTime.getUTCHours();
-    const endMinutes = endTime.getUTCMinutes();
-    const endSeconds = endTime.getUTCSeconds();
-
-    // If it ends at exactly midnight (00:00:00), it's a valid midnight-ending slot
-    if (endHours === 0 && endMinutes === 0 && endSeconds === 0) {
-      return true;
-    }
-
-    // Check if end date is actually the next day (true overnight slot)
-    const startDate = new Date(startTime);
-    const endDate = new Date(endTime);
-    startDate.setUTCHours(0, 0, 0, 0);
-    endDate.setUTCHours(0, 0, 0, 0);
-
-    // If end date is the day after start date, it's a valid overnight slot
-    const dayDifference =
-      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
-    return dayDifference === 1;
-  }
-
-  return false; // Invalid slot
-}
 
 // An org OWNER/MAINTAINER acting for a member consultant (RequestSlotAllocationTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
@@ -283,6 +251,10 @@ export async function GET(
     const slotsInWindow = {
       slotsOfAppointment: {
         some: {
+          // A tombstoned slot is not a booking — never paint it busy.
+          // (No completionStatus filter: RESCHEDULED rows are a pending
+          // reschedule's live hold and must still occupy the grid.)
+          deletedAt: null,
           OR: [
             {
               startsAt: {
@@ -361,7 +333,12 @@ export async function GET(
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
           include: {
-            slotsOfAppointment: true,
+            // Tombstone exclusion rides the include (not just the window
+            // filter): a deleted slot of a qualifying appointment must not
+            // paint busy. Deliberately NOT window-bounded — a booking that
+            // started last week overlapping an in-window cell must still
+            // paint that cell, so out-of-window children are load-bearing.
+            slotsOfAppointment: { where: { deletedAt: null } },
             consultation: {
               select: {
                 status: true,
@@ -394,7 +371,11 @@ export async function GET(
       const [appointments] = await Promise.all([
         prisma.appointment.findMany({
           where: occupiedAppointmentWhere,
-          include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
+          // Same tombstone exclusion as the detail branch above.
+          include: {
+            slotsOfAppointment: { where: { deletedAt: null } },
+            ...LIVE_OCCUPANCY_SELECT,
+          },
         }),
         consulteeOccupancy,
       ]);
