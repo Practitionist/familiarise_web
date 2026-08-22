@@ -176,7 +176,7 @@ async function refundFreeCreditPayment(input: {
           rail: "CREDITS" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 }
@@ -306,7 +306,7 @@ async function refundInternalFundedPayment(input: {
           rail: "INTERNAL" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 }

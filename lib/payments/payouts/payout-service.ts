@@ -213,7 +213,12 @@ export async function checkPayoutEligibility(
  * and leave orphaned payout records with no linked earnings.
  */
 const PAYOUT_BATCH_LOCK_KEY = "lock:payout_batch_creation";
-const PAYOUT_BATCH_LOCK_TTL = 120_000; // 2 minutes — generous for large batches
+// Must outlive the create-payout-batch workflow budget (15 min per
+// create-payout-batch.yml); at 2 minutes an overlapping run could enter
+// while the first was still linking. The per-consultant count guard is the
+// real correctness backstop; the lock keeps the duplicate fan-out off the
+// gateway entirely.
+const PAYOUT_BATCH_LOCK_TTL = 15 * 60_000;
 
 export async function createPayoutBatch(
   consultantProfileIds?: string[],
@@ -420,28 +425,31 @@ export async function approvePayout(
   payoutId: string,
   adminUserId: string,
 ): Promise<void> {
-  const payout = await prisma.consultantPayout.findUnique({
-    where: { id: payoutId },
-  });
-
-  if (!payout) {
-    throw new Error(`Payout ${payoutId} not found`);
-  }
-
-  if (payout.status !== PayoutStatus.PENDING) {
-    throw new Error(
-      `Payout ${payoutId} cannot be approved (current status: ${payout.status}). Only PENDING payouts can be approved.`,
-    );
-  }
-
-  await prisma.consultantPayout.update({
-    where: { id: payoutId },
+  // CAS claim, not check-then-act: a concurrent reject could otherwise
+  // commit CANCELLED (releasing the earnings) between this function's read
+  // and write, and the unconditional update would overwrite CANCELLED →
+  // APPROVED — an approved payout with no backing earnings, which the cron
+  // then pays while the freed earnings re-batch (double pay).
+  const claimed = await prisma.consultantPayout.updateMany({
+    where: { id: payoutId, status: PayoutStatus.PENDING },
     data: {
       status: PayoutStatus.APPROVED,
       approvedAt: new Date(),
       approvedBy: adminUserId,
     },
   });
+  if (claimed.count === 0) {
+    const current = await prisma.consultantPayout.findUnique({
+      where: { id: payoutId },
+      select: { status: true },
+    });
+    if (!current) {
+      throw new Error(`Payout ${payoutId} not found`);
+    }
+    throw new Error(
+      `Payout ${payoutId} cannot be approved (current status: ${current.status}). Only PENDING payouts can be approved.`,
+    );
+  }
 }
 
 /**
@@ -455,38 +463,41 @@ export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
-  const payout = await prisma.consultantPayout.findUnique({
-    where: { id: payoutId },
-    include: { earnings: true },
-  });
+  await prisma.$transaction(async (tx) => {
+    // Claim the payout CAS-FIRST inside the same tx as the earnings release:
+    // an approve racing us either sees CANCELLED (loses) or we lose the
+    // claim and never touch the earnings. The old shape (read → validate →
+    // unconditional cancel + release) let approve∥reject interleave into an
+    // APPROVED payout whose earnings had already been released.
+    const claimed = await tx.consultantPayout.updateMany({
+      where: { id: payoutId, status: PayoutStatus.PENDING },
+      data: {
+        status: PayoutStatus.CANCELLED,
+        failureReason: reason,
+      },
+    });
+    if (claimed.count === 0) {
+      const current = await tx.consultantPayout.findUnique({
+        where: { id: payoutId },
+        select: { status: true },
+      });
+      if (!current) {
+        throw new Error("Payout not found");
+      }
+      throw new Error(
+        `Payout ${payoutId} cannot be rejected (current status: ${current.status}). Only PENDING payouts can be rejected.`,
+      );
+    }
 
-  if (!payout) {
-    throw new Error("Payout not found");
-  }
-
-  if (payout.status !== PayoutStatus.PENDING) {
-    throw new Error(
-      `Payout ${payoutId} cannot be rejected (current status: ${payout.status}). Only PENDING payouts can be rejected.`,
-    );
-  }
-
-  // Unlink earnings and set them back to READY. #837 — a rejectable payout is
-  // PENDING, so its earnings are BATCHED (never PAID); release only those.
-  await prisma.consultantEarnings.updateMany({
-    where: { payoutId, status: EarningStatus.BATCHED },
-    data: {
-      payoutId: null,
-      status: EarningStatus.READY,
-    },
-  });
-
-  // Cancel the payout
-  await prisma.consultantPayout.update({
-    where: { id: payoutId },
-    data: {
-      status: PayoutStatus.CANCELLED,
-      failureReason: reason,
-    },
+    // Unlink earnings and set them back to READY. #837 — a rejectable payout is
+    // PENDING, so its earnings are BATCHED (never PAID); release only those.
+    await tx.consultantEarnings.updateMany({
+      where: { payoutId, status: EarningStatus.BATCHED },
+      data: {
+        payoutId: null,
+        status: EarningStatus.READY,
+      },
+    });
   });
 }
 
@@ -500,7 +511,14 @@ export async function rejectPayout(
  * before gateway calls to prevent double-processing.
  */
 const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
-const PAYOUT_PROCESS_LOCK_TTL = 300_000; // 5 minutes — generous for batch processing
+// Must outlive the job's own budget: the GH workflow allows 30 minutes
+// (process-payouts.yml) and with-cron-lock documents the payout family at up
+// to 30 min. At 5 minutes a slow batch of gateway round-trips let the lock
+// expire mid-run and a second trigger (workflow retry, admin button, HTTP
+// shim) enter concurrently — per-payout CAS + idempotency keys kept the money
+// safe, but the duplicate fan-out and racing balance preflight this lock
+// exists to prevent were back. Aligned with LONG_JOB_TTL_MS.
+const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
@@ -615,6 +633,14 @@ async function processSinglePayout(payout: {
   // Declared outside the try so the catch can tell a gateway-accepted payout
   // (providerPayoutId set) from a pre-gateway failure (#785 task #24).
   let providerPayoutId: string | undefined;
+  // TDS outcome, hoisted for the same reason: the gateway-accepted quarantine
+  // write below must persist these, or the eventual COMPLETED webhook books
+  // its ledger legs from `tdsDeducted ?? 0` — overstating CASH by the withheld
+  // amount, never crediting TDS_PAYABLE, and skipping recordTDSDeduction.
+  let tdsDeductedPaise = 0;
+  let netAmountPaise: number | null = null;
+  let tdsRateAppliedBps: number | null = null;
+  const financialYear = getIndianFinancialYear();
   try {
     // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
     // in #850): only one runner — GH job, admin route, concurrent invocation
@@ -662,7 +688,6 @@ async function processSinglePayout(payout: {
     // Form 26Q filing), so we signal only PAN-on-file presence; a missing PAN takes
     // the 194-O 5% no-PAN rate. The non-resident guard above already rejects
     // Section-195 cases, so RESIDENT is safe here.
-    const financialYear = getIndianFinancialYear();
 
     // #785 — restore the ₹50K FY cumulative threshold dropped when this path
     // moved 194J→194-O. No withholding until cumulative FY payouts cross
@@ -766,6 +791,10 @@ async function processSinglePayout(payout: {
           };
 
     const payoutAmountAfterTDS = payout.amount - tds.tdsAmountPaise;
+    tdsDeductedPaise = tds.tdsAmountPaise;
+    netAmountPaise = payoutAmountAfterTDS;
+    tdsRateAppliedBps =
+      tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null;
 
     if (tds.tdsAmountPaise > 0) {
       console.log(
@@ -840,6 +869,13 @@ async function processSinglePayout(payout: {
           data: {
             providerPayoutId,
             status: PayoutStatus.PROCESSING,
+            // Persist the TDS outcome alongside the quarantine: the COMPLETED
+            // webhook derives its ledger legs and TDS record from these
+            // fields, and zeros there silently mis-book the withholding.
+            tdsDeducted: tdsDeductedPaise,
+            netAmount: netAmountPaise,
+            tdsRateAppliedBps,
+            tdsFinancialYear: financialYear,
             failureReason:
               `Gateway accepted (${providerPayoutId}); post-submit DB write failed, awaiting reconcile: ${errorMessage}`.slice(
                 0,
@@ -979,6 +1015,7 @@ async function processStripePayout(
     id: string;
     amount: number;
     currency: string;
+    idempotencyKey: string | null;
   },
   account: {
     stripeAccountId: string | null;
@@ -994,12 +1031,18 @@ async function processStripePayout(
 
   const stripeConnect = getStripeConnectService();
 
-  // Create a transfer from platform to connected account
+  // Create a transfer from platform to connected account.
+  // Idempotency is mandatory on money-out: a timeout after Stripe accepted
+  // the transfer used to surface as a generic failure, and re-batching under
+  // a fresh row minted a SECOND transfer. The row's unique idempotencyKey
+  // (same deterministic key RazorpayX receives) makes the retry return the
+  // original transfer instead.
   const transfer = await stripeConnect.createTransfer({
     amount: payout.amount,
     currency: payout.currency.toLowerCase(),
     destinationAccountId: account.stripeAccountId,
     description: `Payout ${payout.id}`,
+    idempotencyKey: payout.idempotencyKey ?? undefined,
     metadata: {
       payoutId: payout.id,
       source: "familiarise_platform",
@@ -1056,12 +1099,26 @@ export async function handlePayoutWebhook(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Atomic conditional update: only transition if payout is NOT already terminal.
-    // Uses updateMany with status filter so concurrent duplicates cannot both succeed.
+    // Atomic conditional update. Two guards:
+    //  - Terminal incoming statuses (COMPLETED/FAILED/CANCELLED) may claim any
+    //    non-terminal row, but never COMPLETED/CANCELLED/REVERSED — a late
+    //    `payout.processed` after a bank reversal used to overwrite
+    //    REVERSED → COMPLETED and re-run the TDS delete/recreate.
+    //  - Non-terminal incoming statuses (PENDING/PROCESSING from queued/
+    //    pending webhooks) apply only to PROCESSING rows: the old guard let a
+    //    late `payout.queued` flip FAILED → PENDING after the FAILED handler
+    //    had already released the earnings, leaving a payable-looking row
+    //    with none.
+    const terminalIncoming =
+      payoutStatus === PayoutStatus.COMPLETED ||
+      payoutStatus === PayoutStatus.FAILED ||
+      payoutStatus === PayoutStatus.CANCELLED;
     const { count } = await tx.consultantPayout.updateMany({
       where: {
         id: payout.id,
-        status: { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED] },
+        status: terminalIncoming
+          ? { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED, PayoutStatus.REVERSED] }
+          : { in: [PayoutStatus.PROCESSING] },
       },
       data: {
         status: payoutStatus,

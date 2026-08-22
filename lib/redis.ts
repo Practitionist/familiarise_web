@@ -303,6 +303,20 @@ export async function acquireLock(
 }
 
 /**
+ * True when the module-level circuit breaker is OPEN — Redis operations are
+ * being short-circuited to their fallbacks without touching the server.
+ *
+ * `acquireLock` returns null for BOTH "lock genuinely held" and "breaker
+ * open, acquire never ran", and `checkRedisHealth` deliberately bypasses the
+ * breaker — so a caller that health-checks first can misread an open breaker
+ * as a held lock. `withCronLock` uses this to make a fail-closed money job
+ * PAGE (CronLockUnavailableError) instead of silently skipping.
+ */
+export function isRedisCircuitOpen(): boolean {
+  return circuitBreaker.state === "OPEN";
+}
+
+/**
  * Release a simple lock with circuit breaker protection.
  *
  * Uses atomic Lua script to check-and-delete, preventing release of

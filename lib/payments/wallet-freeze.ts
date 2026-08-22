@@ -72,3 +72,31 @@ export async function freezeWalletSpend(params: {
   });
   return true;
 }
+
+/** Unfreeze wallet spend for one account — the manual ops action the header
+ *  above documents. Until this writer existed, a freeze was unrecoverable
+ *  except by hand-inserting a SystemEvent row via raw SQL: the fail-closed
+ *  read blocked every checkout for the org forever. Admin-gated route at
+ *  app/api/admin/billing-accounts/[billingAccountId]/unfreeze. Idempotent —
+ *  no-op when not frozen. Returns true when it wrote an unfreeze event. */
+export async function unfreezeWalletSpend(params: {
+  billingAccountId: string;
+  organizationId?: string | null;
+  actorUserId: string;
+  reason: string;
+}): Promise<boolean> {
+  if (!(await isWalletFrozen(prisma, params.billingAccountId))) return false;
+  await recordSystemEvent({
+    organizationId: params.organizationId ?? null,
+    category: UNFREEZE_CATEGORY,
+    severity: "INFO",
+    message: `Wallet spend UNFROZEN for billing account ${params.billingAccountId} by ${params.actorUserId}: ${params.reason}`,
+    context: {
+      billingAccountId: params.billingAccountId,
+      reason: params.reason,
+      unfrozenBy: params.actorUserId,
+    },
+    correlationId: freezeKey(params.billingAccountId),
+  });
+  return true;
+}

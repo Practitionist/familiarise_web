@@ -127,7 +127,7 @@ export async function runDunning(): Promise<DunningStats> {
         });
         return true;
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     );
 
     if (!claimed) continue;
@@ -195,7 +195,7 @@ export async function runDunning(): Promise<DunningStats> {
         });
         return claim.count > 0;
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     );
 
     if (!claimed) continue;
@@ -269,7 +269,7 @@ export async function runDunning(): Promise<DunningStats> {
           });
           return true;
         },
-        { isolationLevel: "Serializable" },
+        { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
       );
 
       if (!claimed) continue;
