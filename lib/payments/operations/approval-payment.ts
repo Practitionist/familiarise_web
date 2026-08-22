@@ -31,10 +31,13 @@ export interface CreateApprovalPaymentParams {
   /** Required when appointmentType is TRIAL. */
   trialId?: string;
   /**
-   * Link the intent to an appointment that ALREADY exists. Trials create the
-   * appointment when the consultant accepts (to hold the slot), so the webhook
-   * should confirm it rather than build a new one. Consultations and
-   * subscriptions leave this unset — their appointment is made on capture.
+   * Link the intent to the appointment that ALREADY exists. Every approval
+   * arm creates it before minting — trials hold their slot when the
+   * consultant accepts, consultations/subscriptions create it at request
+   * time (#1181) — so the webhook confirms THAT appointment instead of
+   * building a twin (Consultation.appointment is one-to-one; a capture-time
+   * creation either collides on the unique or strands the request-time row),
+   * and the duplicate-payment guard can see approval payments at all.
    */
   appointmentId?: string;
   /**
@@ -110,17 +113,34 @@ export async function createApprovalPaymentIntent(
   }
 
   try {
-    // FIX Issue #7: Check for existing payment to prevent duplicates
-    const hasExistingPayment = await checkExistingPayment({
+    // FIX Issue #7 / #1181 — duplicate-payment guard, now live for every
+    // approval arm: the walk below reads the payments hanging off the
+    // request's own appointment(s), which only match once the mint threads
+    // appointmentId through (see CreateApprovalPaymentParams).
+    const existingPayment = await findExistingLivePayment({
       consultationId: params.consultationId,
       subscriptionId: params.subscriptionId,
       trialId: params.trialId,
     });
 
-    if (hasExistingPayment) {
-      throw new Error(
-        "A payment link has already been generated for this request",
-      );
+    if (existingPayment) {
+      if (existingPayment.paymentStatus === PaymentStatus.SUCCEEDED) {
+        throw new Error("This request has already been paid");
+      }
+
+      // #1181 — a PENDING payment from a previous mint attempt is reused,
+      // not duplicated. Before the appointment back-link existed this state
+      // was invisible (the retry minted a parallel gateway order); now it
+      // resolves the #1172 deadlock shape where the link was minted but its
+      // persist never landed and re-approval must recover it. The pay-link
+      // reconstructs from the stored intent because Razorpay's client_secret
+      // IS the order id (#1165 pins approval mints to RAZORPAY).
+      return {
+        paymentIntentId: existingPayment.paymentIntent,
+        checkoutUrl: existingPayment.paymentIntent,
+        amount: existingPayment.amount,
+        currency: existingPayment.currency,
+      };
     }
 
     // BUG-D: Validate user has consultee profile (required for webhook to succeed)
@@ -169,8 +189,9 @@ export async function createApprovalPaymentIntent(
         userId: params.userId,
         expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours expiration
         isMockPayment: false,
-        // Null for consultations/subscriptions, whose appointment is created
-        // on capture; trials pass the appointment they already hold.
+        // #1181 — the request-time appointment anchors capture to the NEW
+        // flow (confirm the existing row, never create a twin). Null only
+        // when the caller genuinely had no appointment to offer.
         appointmentId: params.appointmentId ?? null,
         // Every Payment must carry at least one PaymentLeg
         // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
@@ -316,8 +337,10 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
   [key: string]: string;
 } {
   const metadata: Record<string, string> = {
-    // Trials pass a real id (their appointment exists before the intent);
-    // everything else links after capture.
+    // Same shape as direct checkout (buildPaymentMetadata): the real anchor
+    // lives on the Payment row, which is what the capture handler branches
+    // on; the sentinel here only feeds the legacy-create path when there is
+    // genuinely no appointment yet.
     appointmentId: params.appointmentId ?? "pending",
     appointmentType: params.appointmentType,
     userId: params.userId,
@@ -367,27 +390,41 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
 }
 
 /**
- * Check if payment already exists for consultation/subscription
- * Prevents duplicate payment generation
+ * Find the live payment already attached to this request's appointment(s).
+ * Returns null when nothing has been minted (or only EXPIRED/FAILED rows
+ * remain, which a fresh mint may supersede). This is the duplicate-payment
+ * guard's lookup — it can only ever match once callers thread appointmentId,
+ * because it walks payments hanging off the appointment (#1181).
  */
-export async function checkExistingPayment(params: {
+export async function findExistingLivePayment(params: {
   consultationId?: string;
   subscriptionId?: string;
   trialId?: string;
-}): Promise<boolean> {
+}): Promise<{
+  paymentStatus: PaymentStatus;
+  paymentIntent: string;
+  amount: number;
+  currency: Currency;
+} | null> {
   if (params.trialId) {
     // A trial owns its Payment directly (TrialSession.paymentId), so unlike the
     // consultation/subscription arms there is no appointment to walk through —
     // the appointment doesn't exist until the trial is paid and scheduled.
     const trial = await prisma.trialSession.findUnique({
       where: { id: params.trialId },
-      select: { payment: { select: { paymentStatus: true } } },
+      select: {
+        payment: {
+          select: {
+            paymentStatus: true,
+            paymentIntent: true,
+            amount: true,
+            currency: true,
+          },
+        },
+      },
     });
 
-    const status = trial?.payment?.paymentStatus;
-    return (
-      status === PaymentStatus.SUCCEEDED || status === PaymentStatus.PENDING
-    );
+    return trial?.payment ?? null;
   }
 
   if (params.consultationId) {
@@ -409,7 +446,13 @@ export async function checkExistingPayment(params: {
         p.paymentStatus === PaymentStatus.PENDING,
     );
 
-    return !!payment;
+    if (!payment) return null;
+    return {
+      paymentStatus: payment.paymentStatus,
+      paymentIntent: payment.paymentIntent,
+      amount: payment.amount,
+      currency: payment.currency,
+    };
   }
 
   if (params.subscriptionId) {
@@ -425,16 +468,24 @@ export async function checkExistingPayment(params: {
     });
 
     // Check any appointment for payment
-    const hasPayment = subscription?.appointments.some((apt) =>
-      apt.payment?.some(
+    for (const apt of subscription?.appointments ?? []) {
+      const payment = apt.payment?.find(
         (p) =>
           p.paymentStatus === PaymentStatus.SUCCEEDED ||
           p.paymentStatus === PaymentStatus.PENDING,
-      ),
-    );
+      );
+      if (payment) {
+        return {
+          paymentStatus: payment.paymentStatus,
+          paymentIntent: payment.paymentIntent,
+          amount: payment.amount,
+          currency: payment.currency,
+        };
+      }
+    }
 
-    return !!hasPayment;
+    return null;
   }
 
-  return false;
+  return null;
 }
