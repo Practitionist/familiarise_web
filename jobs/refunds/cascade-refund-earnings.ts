@@ -13,6 +13,7 @@ import {
   disconnectDatabase,
   type RefundEarningCascadeResult,
 } from "../../scripts/refunds/cascade-refund-earnings";
+import { cascadeRunFailed } from "../../scripts/refunds/cascade-run-outcome";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -70,7 +71,11 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
-    if (!result.success) {
+    // PM-34 — result.success === false means some SUCCEEDED refunds failed
+    // their cascade; a green exit reads as healthy to the cron monitor and
+    // never pages. Non-zero exitCode (NOT process.exit() — that would kill
+    // the Sentry flush; see lib/observability/job-sentry).
+    if (cascadeRunFailed(result)) {
       process.exitCode = 1;
       return;
     }
