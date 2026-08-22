@@ -16,8 +16,18 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findMany: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
     slotOfAppointment: { deleteMany: jest.fn() },
+    appointment: { findMany: jest.fn().mockResolvedValue([]) },
     $disconnect: jest.fn(),
   },
+}));
+
+// B1's sweep now routes refunds through booking-refund, whose module graph
+// constructs a Stripe client (needs global fetch — absent in this env).
+const refundBookingPayment = jest.fn();
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  __esModule: true,
+  refundBookingPayment: (...a: unknown[]) =>
+    refundBookingPayment(...(a as [never])),
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -97,6 +107,9 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
       { id: "c2", appointment: { id: "apt-2" } },
       { id: "c3", appointment: null }, // slot-less placeholder
     ]);
+    // PR 2c — the sweep now refunds SUCCEEDED payments of expired rows.
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
+    (refundBookingPayment as jest.Mock).mockResolvedValue({ status: "SUCCEEDED" });
     (prisma.consultation.updateMany as jest.Mock).mockResolvedValue({
       count: 3,
     });
