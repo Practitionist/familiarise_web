@@ -37,6 +37,23 @@ export class EventCheckoutLockUnavailableError extends Error {
   }
 }
 
+/**
+ * B4 — the optimistic capacity pre-check answered SOLD OUT before the mutex.
+ * Distinct from EventCheckoutBusyError (someone holds the lock — retryable in
+ * seconds): sold-out is a terminal answer until someone cancels, so no
+ * retryAfter is offered and the copy says so plainly.
+ */
+export class EventFullError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "EVENT_SOLD_OUT" as const;
+  constructor(readonly appointmentType: string) {
+    super(
+      `This ${appointmentType.toLowerCase()} is sold out. Your card was not charged.`,
+    );
+    this.name = "EventFullError";
+  }
+}
+
 // #1169 PR 1 — same fail-closed doctrine as EventCheckoutLockUnavailableError,
 // for every other booking-path lock (slot intervals, auto-allocate, consultee,
 // approvals). Previously these acquired raw and rethrew ANY failure as a
@@ -470,6 +487,56 @@ const INTERVAL_RETRY_CONFIG: LockRetryConfig = {
 };
 
 /**
+ * Booking-flash-sale budget (audit B4/B8c): checkout waiters must fail FAST,
+ * not queue. The worst-case retry chain here is ~6.2s + jitter ≈ 7s —
+ * comfortably inside the ~26s function ceiling, so the loser of a hot-slot or
+ * hot-event race gets a structured 409 instead of an infrastructure timeout.
+ * Holding a checkout lock takes 5-20s (revalidation + gateway call + tx), so
+ * waiting longer rarely helps anyway: by the second retry the winner has
+ * either committed (re-validation answers definitively) or is minutes from
+ * done. Callers that genuinely want to queue can still pass DEFAULT.
+ */
+export const CHECKOUT_WAIT_RETRY_CONFIG: LockRetryConfig = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 5,
+};
+
+/**
+ * Typed contention for the EVENT-checkout mutex (audit B4). The old throw was
+ * a generic Error, which classifyError mislabeled and no client could
+ * distinguish from a fault. 409 + retryAfter: another buyer holds the mutex;
+ * the pre-check has already answered "sold out" separately.
+ */
+export class EventCheckoutBusyError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly retryAfterSeconds = 10;
+  readonly code = "EVENT_CHECKOUT_BUSY";
+  constructor(readonly appointmentType: string) {
+    super(
+      `Another user is currently checking out this ${appointmentType.toLowerCase()}. Please try again in a few seconds.`,
+    );
+    this.name = "EventCheckoutBusyError";
+  }
+}
+
+/**
+ * Typed contention for the CONSULTEE lock (audit B8c): the same account
+ * booking from two devices at once — the loser must get a structured 409 in
+ * time, not a function timeout wearing a 500's clothes.
+ */
+export class ConsulteeBookingBusyError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly retryAfterSeconds = 30;
+  readonly code = "CONSULTEE_BOOKING_BUSY";
+  constructor() {
+    super(
+      "Another booking is already in progress for your account. Please try again in a moment.",
+    );
+    this.name = "ConsulteeBookingBusyError";
+  }
+}
+
+/**
  * The 30-minute atom starts covering [startsAt, endsAt). Starts are floored to
  * the half-hour grid so an unaligned interval still collides with the aligned
  * bookings it overlaps.
@@ -611,6 +678,9 @@ export async function lockEventCheckout(
   appointmentType: string,
   eventOrPlanId: string,
   ttl: number = DEFAULT_LOCK_TTL,
+  // B4 — bounded waiter budget for checkout callers (CHECKOUT_WAIT_RETRY_CONFIG).
+  // Undefined keeps the historical queue-forever behavior for other callers.
+  retryConfig: LockRetryConfig = DEFAULT_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `event-checkout:${appointmentType}:${eventOrPlanId}`;
 
@@ -631,7 +701,7 @@ export async function lockEventCheckout(
   try {
     lock = await withCircuitBreaker<ApprovalLock | "CONTENTION">(async () => {
       try {
-        return await acquireLockWithRetry(key, ttl);
+        return await acquireLockWithRetry(key, ttl, retryConfig);
       } catch (error) {
         if (error instanceof LockContentionError) return "CONTENTION";
         throw error; // Redis I/O error → propagate to the breaker
@@ -654,11 +724,10 @@ export async function lockEventCheckout(
   }
 
   if (lock === "CONTENTION") {
-    // Genuine contention — another buyer holds the lock. Fail OPEN (retry-later),
-    // exactly as before; this is a benign, expected outcome, not an outage.
-    throw new Error(
-      `Another user is currently checking out this ${appointmentType.toLowerCase()}. Please try again in a few seconds.`,
-    );
+    // Genuine contention — another buyer holds the mutex. Fail OPEN
+    // (retry-later): benign, expected, and now TYPED so the route can answer
+    // a structured 409 with retryAfter instead of classifyError guessing.
+    throw new EventCheckoutBusyError(appointmentType);
   }
 
   return lock;
@@ -802,15 +871,18 @@ export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
 export async function lockConsulteeBooking(
   consulteeUserId: string,
   ttl: number = 150000,
+  // B8c — bounded waiter budget for checkout callers; undefined keeps the
+  // long queue for allocation/approval callers that genuinely want to wait.
+  retryConfig: LockRetryConfig = DEFAULT_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `consultee-booking:${consulteeUserId}`;
   try {
-    return await acquireGuarded(key, ttl, "consultee-booking");
+    return await acquireGuarded(key, ttl, "consultee-booking", retryConfig);
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) throw error;
-    throw new Error(
-      "Lock contention: Another booking is in progress for this account. Please try again.",
-    );
+    // Typed contention (B8c): the same account booking from two devices —
+    // the loser gets a structured 409 in time, never a timeout wearing 500.
+    throw new ConsulteeBookingBusyError();
   }
 }
 

@@ -6,7 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
-import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+import {
+  busyRetryToast,
+  fetchCheckoutWithBusyRetry,
+ mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 interface RazorpayPaymentResponse {
   razorpay_payment_id: string;
@@ -120,16 +123,22 @@ export default function RazorpayCheckout({
         return;
       }
 
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...checkoutData,
-          clientIdempotencyKey: idempotencyKey,
-        }),
-      });
+      // B5 — a structured BUSY 409 (event mutex held / same account on
+      // another device) auto-retries ONCE after the server-advised pause
+      // instead of dead-ending; the stable idempotency key keeps the retry
+      // dedupe-safe.
+      const response = await fetchCheckoutWithBusyRetry(
+        () =>
+          fetch("/api/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...checkoutData,
+              clientIdempotencyKey: idempotencyKey,
+            }),
+          }),
+        (waitSeconds) => toast(busyRetryToast(waitSeconds)),
+      );
 
       if (!response.ok) {
         const errorData = await response.json();

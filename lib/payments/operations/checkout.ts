@@ -18,6 +18,9 @@ import {
 } from "@prisma/client";
 import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
+  CHECKOUT_WAIT_RETRY_CONFIG,
+  EventFullError,
+
   lockSlotBooking,
   unlockSlotBooking,
   lockEventCheckout,
@@ -888,6 +891,58 @@ async function getPlanDataForLock(
 }
 
 /**
+ * B4 — OPTIMISTIC capacity read for WEBINAR/CLASS, run BEFORE the event
+ * checkout mutex. Mirrors the in-lock recount's query shape exactly (same
+ * includes, same capacity helpers, same host-exclusion rule) so the two can
+ * only disagree inside the near-capacity race window that Serializable
+ * isolation arbitrates. Advisory-only: a full answer here is terminal for
+ * this request (sold out); a not-full answer proves nothing and the mutex +
+ * recount still decide.
+ */
+async function readEventCapacity(
+  appointmentType: "WEBINAR" | "CLASS",
+  eventId: string,
+): Promise<{ isFull: boolean }> {
+  if (appointmentType === "WEBINAR") {
+    const webinar = await prisma.webinar.findUnique({
+      where: { id: eventId },
+      include: {
+        webinarPlan: { include: { consultantProfile: true } },
+        appointment: {
+          include: {
+            slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          },
+        },
+      },
+    });
+    if (!webinar) return { isFull: false }; // not-found → let the lock path report it
+    const consultantUserId = webinar.webinarPlan.consultantProfile?.userId;
+    return getWebinarCapacity({
+      webinar,
+      plan: webinar.webinarPlan,
+      excludeUserIds: consultantUserId ? [consultantUserId] : [],
+    });
+  }
+
+  const classInstance = await prisma.class.findUnique({
+    where: { id: eventId },
+    include: {
+      classPlan: { include: { consultantProfile: true } },
+      appointments: {
+        include: { slotsOfAppointment: { include: { user: true } } },
+      },
+    },
+  });
+  if (!classInstance) return { isFull: false };
+  const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
+  return getClassCapacity({
+    classInstance,
+    plan: classInstance.classPlan,
+    excludeUserIds: ownerUserId ? [ownerUserId] : [],
+  });
+}
+
+/**
  * Acquire appropriate lock based on checkout type
  * Returns lock or null if no locking needed
  */
@@ -952,10 +1007,23 @@ async function acquireCheckoutLock(
       }),
     );
 
+    // B4 (booking-journey audit) — OPTIMISTIC CAPACITY PRE-CHECK before the
+    // mutex. During a drop, hundreds of buyers serialize behind one
+    // event-checkout key only to discover inside the lock that the event is
+    // full; with a 26s function ceiling most of them died as raw 504s. One
+    // bounded read here answers "already sold out" for the overwhelming
+    // majority WITHOUT touching the mutex — the Serializable recount inside
+    // remains the authoritative gate for the near-capacity race.
+    const preCheck = await readEventCapacity(appointmentType, data.eventId);
+    if (preCheck.isFull) {
+      throw new EventFullError(appointmentType);
+    }
+
     return await lockEventCheckout(
       appointmentType,
       data.eventId,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+      CHECKOUT_WAIT_RETRY_CONFIG, // B4 — fail fast, never queue past the ceiling
     );
   }
 
@@ -975,6 +1043,7 @@ async function acquireCheckoutLock(
       appointmentType,
       data.planId,
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
+      CHECKOUT_WAIT_RETRY_CONFIG,
     );
   }
 
@@ -2151,12 +2220,20 @@ export async function handleCheckout(
     // event-based checkout it is taken AFTER the event lock.
     const isSlotBasedCheckout = !!validatedData.startsAt;
     if (isSlotBasedCheckout) {
-      consulteeLock = await lockConsulteeBooking(userId);
+      consulteeLock = await lockConsulteeBooking(
+        userId,
+        undefined,
+        CHECKOUT_WAIT_RETRY_CONFIG,
+      );
     }
     lock = await acquireCheckoutLock(validatedData, planData);
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
     if (!isSlotBasedCheckout) {
-      consulteeLock = await lockConsulteeBooking(userId);
+      consulteeLock = await lockConsulteeBooking(
+        userId,
+        undefined,
+        CHECKOUT_WAIT_RETRY_CONFIG,
+      );
     }
 
     console.log(
