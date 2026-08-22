@@ -137,7 +137,13 @@ export function buildConsultantOccupancyWhere(
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
       slotsOfAppointment: {
-        some: { user: { some: { id: consultantUserId } } },
+        some: {
+          user: { some: { id: consultantUserId } },
+          // Defense-in-depth: a tombstoned slot is not a booking. No
+          // completionStatus filter — RESCHEDULED rows are a pending
+          // reschedule's live hold and must still occupy the grid.
+          deletedAt: null,
+        },
       },
     },
   ];

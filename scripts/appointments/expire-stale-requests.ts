@@ -12,19 +12,29 @@
  * - jobs/expire-stale-requests.ts (GitHub Actions)
  * - app/api/cleanup/expire-stale-requests/route.ts (API endpoint)
  *
- * Schedule: Daily
+ * Schedule: Hourly (booking-journey audit B1 — a PENDING consultation holds
+ * a tentative slot, so the old daily cadence plus a 30-day threshold let a
+ * single account pin a consultant's calendar for a month).
  */
 
 import prisma from "../../lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
 // REQUEST_ALLOWED_FROM.EXPIRED in lib/booking/transitions.ts (#836) —
 // each cohort has its own cutoff, so they are not merged into one sweep.
 
-// Expire requests in PENDING state for more than 30 days
+// Expire PENDING consultations after 48 hours. A PENDING consultation is not
+// just paperwork — its request-for-approval tentative slots block the
+// consultant's calendar, so the threshold is measured in hours, not days.
+// Subscriptions hold no slots at request time (lazy allocation), so they
+// keep the generous window below.
+const PENDING_CONSULTATION_EXPIRATION_HOURS = 48;
+
+// Expire requests in PENDING state for more than 30 days (subscriptions).
 const PENDING_EXPIRATION_DAYS = 30;
 
 // Also expire APPROVED_PENDING_PAYMENT after 7 days
@@ -35,76 +45,157 @@ export interface ExpireStaleRequestsResult {
   consultationsExpired: number;
   subscriptionsExpired: number;
   paymentPendingExpired: number;
+  /** Tentative slots freed by the consultation expiry (B1). */
+  consultationSlotsReleased: number;
+  /**
+   * PR 2c money fix — SUCCEEDED payments refunded because their booking
+   * expired unallocated/unanswered. Money must never leave without a
+   * session AND silently: every refund routes through the booking front door.
+   */
+  refundsIssued: number;
+  refundFailures: number;
   errors: string[];
   timestamp: string;
 }
 
 /**
- * Expire stale PENDING consultations
+ * Refund every SUCCEEDED payment attached to the given expired engagement's
+ * appointments. Booking-journey audit gap #1: the sweep used to flip PAID
+ * rows to EXPIRED with no money movement and no trace — buyer paid, got
+ * nothing, silence. Every refund goes through the booking front door
+ * (doctrine rule 3); failures are counted + logged, never thrown (a cron
+ * must drain the cohort even when one gateway call fails).
+ */
+async function refundPaymentsForExpired(
+  kind: "consultation" | "subscription",
+  expiredIds: string[],
+): Promise<{ issued: number; failures: number; failureMsgs: string[] }> {
+  if (expiredIds.length === 0)
+    return { issued: 0, failures: 0, failureMsgs: [] };
+  const rel = kind === "consultation" ? "consultationId" : "subscriptionId";
+  const appointments = await prisma.appointment.findMany({
+    where: { [rel]: { in: expiredIds } },
+    select: {
+      id: true,
+      payment: { select: { id: true, paymentStatus: true } },
+    },
+  });
+
+  let issued = 0;
+  let failures = 0;
+  const failureMsgs: string[] = [];
+  for (const appt of appointments) {
+    for (const pay of appt.payment ?? []) {
+      if (pay.paymentStatus !== "SUCCEEDED") continue;
+      try {
+        await refundBookingPayment({
+          paymentId: pay.id,
+          reason: `${kind} expired unallocated/unanswered — automatic full refund`,
+          initiatedByUserId: null,
+        });
+        issued += 1;
+      } catch (err) {
+        failures += 1;
+        const msg = `Refund failed for payment ${pay.id} (${kind} ${rel}): ${err}`;
+        console.error(`❌ ${msg}`);
+        failureMsgs.push(msg);
+      }
+    }
+  }
+  return { issued, failures, failureMsgs };
+}
+
+/**
+ * Expire stale PENDING consultations and release the tentative slots they
+ * pinned. The slot release happens HERE rather than waiting for the
+ * tentative-slot sweeper: that sweep's parent guard skips PENDING
+ * consultations by design (a consultant may legitimately be reviewing), so
+ * before B1 a slot pinned by a stale request waited for the status flip and
+ * then another sweeper cycle — 30+ days in the worst case.
  */
 async function expirePendingConsultations(): Promise<{
   expired: number;
+  slotsReleased: number;
+  issued: number;
+  failures: number;
   errors: string[];
 }> {
   const errors: string[] = [];
   const expirationDate = new Date(
-    Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
   );
 
   try {
-    // Find stale PENDING consultations
+    // Find stale PENDING consultations (with their appointment ids so the
+    // slot release below can target exactly the expired rows).
     const staleConsultations = await prisma.consultation.findMany({
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
       },
-      include: {
-        requestedBy: {
-          include: { user: { select: { email: true, name: true } } },
-        },
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: { user: { select: { email: true, name: true } } },
-            },
-          },
-        },
-      },
+      select: { id: true, appointment: { select: { id: true } } },
     });
 
     console.log(
-      `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_EXPIRATION_DAYS} days`,
+      `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
     );
 
-    for (const consultation of staleConsultations) {
-      console.log(`\nExpiring consultation ${consultation.id}`);
-      console.log(
-        `   Requested by: ${consultation.requestedBy.user.name || "Unknown"}`,
-      );
-      console.log(
-        `   Consultant: ${consultation.consultationPlan.consultantProfile.user.name || "Unknown"}`,
-      );
-      console.log(`   Requested at: ${consultation.requestedAt.toISOString()}`);
+    if (staleConsultations.length === 0) {
+      return { expired: 0, slotsReleased: 0, issued: 0, failures: 0, errors };
     }
+
+    const expiredIds = staleConsultations.map((c) => c.id);
+    const expiredAppointmentIds = staleConsultations
+      .map((c) => c.appointment?.id)
+      .filter((id): id is string => !!id);
 
     // Bulk update to EXPIRED
     const result = await prisma.consultation.updateMany({
       where: {
+        id: { in: expiredIds },
         status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
       },
       data: {
         status: AppointmentStatus.EXPIRED,
       },
     });
 
+    // Release the tentative holds the expired requests pinned. The WHERE
+    // re-checks the consultation's status AT DELETE TIME (CodeRabbit triage):
+    // between the stale read above and this statement a consultant can
+    // approve a request (PENDING → APPROVED), and deleting by appointmentId
+    // alone would strip the hold from a booking that just came back to life.
+    // Scoped to isTentative so an already-confirmed slot is never touched.
+    let slotsReleased = 0;
+    if (expiredAppointmentIds.length > 0) {
+      const slotResult = await prisma.slotOfAppointment.deleteMany({
+        where: {
+          appointmentId: { in: expiredAppointmentIds },
+          isTentative: true,
+          appointment: {
+            consultation: {
+              id: { in: expiredIds },
+              status: AppointmentStatus.EXPIRED,
+            },
+          },
+        },
+      });
+      slotsReleased = slotResult.count;
+    }
+
     console.log(`✅ Expired ${result.count} PENDING consultations`);
-    return { expired: result.count, errors };
+    console.log(`✅ Released ${slotsReleased} tentative slots from them`);
+
+    // PR 2c — a paid row expiring must take its money back with it.
+    const refunds = await refundPaymentsForExpired("consultation", expiredIds);
+    errors.push(...refunds.failureMsgs);
+
+    return { expired: result.count, slotsReleased, ...refunds, errors };
   } catch (error) {
     const msg = `Failed to expire consultations: ${error}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
-    return { expired: 0, errors };
+    return { expired: 0, slotsReleased: 0, issued: 0, failures: 0, errors };
   }
 }
 
@@ -113,6 +204,8 @@ async function expirePendingConsultations(): Promise<{
  */
 async function expirePendingSubscriptions(): Promise<{
   expired: number;
+  issued: number;
+  failures: number;
   errors: string[];
 }> {
   const errors: string[] = [];
@@ -168,12 +261,81 @@ async function expirePendingSubscriptions(): Promise<{
     });
 
     console.log(`✅ Expired ${result.count} PENDING subscriptions`);
-    return { expired: result.count, errors };
+
+    const staleIds = staleSubscriptions.map((r) => r.id);
+    const refunds = await refundPaymentsForExpired("subscription", staleIds);
+    errors.push(...refunds.failureMsgs);
+
+    return { expired: result.count, issued: refunds.issued, failures: refunds.failures, errors };
   } catch (error) {
     const msg = `Failed to expire subscriptions: ${error}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
-    return { expired: 0, errors };
+    return { expired: 0, issued: 0, failures: 0, errors };
+  }
+}
+
+/**
+ * PR 2c money fix — the IMMORTAL cohort (audit gap #3): PAID subscriptions
+ * whose consultant never allocated a single session. APPROVED was not in
+ * EXPIRED's allowed-from and no sweep covered it, so a buyer could stay paid-
+ * with-nothing forever. Cohort narrowed to APPROVED with ZERO live confirmed
+ * slots (a booking mid-allocation is untouched); expiry refunds via the
+ * front door. REQUEST_ALLOWED_FROM.EXPIRED was widened to APPROVED to make
+ * this transition legal (lib/booking/transitions.ts).
+ */
+async function expireApprovedUnallocatedSubscriptions(): Promise<{
+  expired: number;
+  issued: number;
+  failures: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const cutoff = new Date(
+    Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  try {
+    const stale = await prisma.subscription.findMany({
+      where: {
+        status: AppointmentStatus.APPROVED,
+        updatedAt: { lt: cutoff },
+        // Zero live confirmed sessions anywhere on the booking.
+        NOT: {
+          appointments: {
+            some: {
+              slotsOfAppointment: {
+                some: { isTentative: false, deletedAt: null },
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (stale.length === 0) return { expired: 0, issued: 0, failures: 0, errors };
+
+    console.log(
+      `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
+    );
+    const staleIds = stale.map((r) => r.id);
+
+    const result = await prisma.subscription.updateMany({
+      where: { id: { in: staleIds }, status: AppointmentStatus.APPROVED },
+      data: { status: AppointmentStatus.EXPIRED },
+    });
+    console.log(`✅ Expired ${result.count} APPROVED-unallocated subscriptions`);
+
+    const refunds = await refundPaymentsForExpired("subscription", staleIds);
+    errors.push(...refunds.failureMsgs);
+
+    return { expired: result.count, issued: refunds.issued, failures: refunds.failures, errors };
+  } catch (error) {
+    const msg = `Failed to expire APPROVED-unallocated subscriptions: ${error}`;
+    console.error(`❌ ${msg}`);
+    errors.push(msg);
+    return { expired: 0, issued: 0, failures: 0, errors };
   }
 }
 
@@ -252,7 +414,8 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
 
   console.log("🕐 Starting stale request expiration...");
   console.log(
-    `   PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
+    `   Consultation PENDING expiration threshold: ${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
+    `   Subscription PENDING expiration threshold: ${PENDING_EXPIRATION_DAYS} days`,
   );
   console.log(
     `   APPROVED_PENDING_PAYMENT expiration: ${PAYMENT_PENDING_EXPIRATION_DAYS} days`,
@@ -266,6 +429,10 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   const subscriptionResult = await expirePendingSubscriptions();
   allErrors.push(...subscriptionResult.errors);
 
+  // Expire APPROVED-unallocated paid subscriptions (PR 2c money fix)
+  const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
+  allErrors.push(...approvedUnallocated.errors);
+
   // Expire APPROVED_PENDING_PAYMENT requests
   const paymentPendingResult = await expirePaymentPendingRequests();
   allErrors.push(...paymentPendingResult.errors);
@@ -277,10 +444,19 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // Summary
   console.log("\n📊 Stale Request Expiration Summary:");
   console.log(
-    `   Consultations expired (PENDING): ${consultationResult.expired}`,
+    `   Consultations expired (PENDING >${PENDING_CONSULTATION_EXPIRATION_HOURS}h): ${consultationResult.expired}`,
+  );
+  console.log(
+    `   Tentative slots released with them: ${consultationResult.slotsReleased}`,
   );
   console.log(
     `   Subscriptions expired (PENDING): ${subscriptionResult.expired}`,
+  );
+  console.log(
+    `   APPROVED-unallocated expired: ${approvedUnallocated.expired}`,
+  );
+  console.log(
+    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures}`,
   );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
@@ -294,6 +470,15 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
     consultationsExpired: consultationResult.expired,
     subscriptionsExpired: subscriptionResult.expired,
     paymentPendingExpired: totalPaymentPending,
+    consultationSlotsReleased: consultationResult.slotsReleased,
+    refundsIssued:
+      consultationResult.issued +
+      subscriptionResult.issued +
+      approvedUnallocated.issued,
+    refundFailures:
+      consultationResult.failures +
+      subscriptionResult.failures +
+      approvedUnallocated.failures,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

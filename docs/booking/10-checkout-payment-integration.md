@@ -208,10 +208,24 @@ Runs inside a Prisma `$transaction`. If anything fails here, the entire phase ro
 | 4    | Update `paymentStatus` to `SUCCEEDED`                                            |
 | 5    | Find or create appointment (New Flow vs Legacy Flow)                             |
 | 6    | `confirmExistingAppointment()` -- set `isTentative: false`                       |
+|      | — Webinar/class: the status stamp is a CAS guard (`EVENT_ALLOWED_FROM.SCHEDULED`); on a CANCELLED/DRAFT event nothing is confirmed and `capturedAfterTerminal` routes Phase 2 to an auto-refund (B2) |
 | 7    | `confirmApprovalStatus()` -- transition `APPROVED_PENDING_PAYMENT` to `APPROVED` |
-| 8    | Send payment success email                                                       |
 
 If metadata validation fails, the payment is marked as `SUCCEEDED` with description `REQUIRES_MANUAL_RECOVERY` and a P1 critical alert is logged. The appointment is NOT created -- manual intervention required.
+
+**Legacy Flow + GiST overlap (B8b)**: a legacy-shape capture whose slot chunks overlap an already-confirmed booking trips the `slot_no_confirmed_overlap` exclusion inside the create. The handler catches the violation, stamps the payment `SUCCEEDED` outside the rolled-back transaction, and auto-refunds it — instead of leaving the webhook to be re-delivered into the same constraint forever.
+
+**Legacy creators birth tentative slots (HOIf/#1202)**: the webhook's LEGACY creators (consultation/subscription slot, webinar payer seat, class session) now write `isTentative: true` instead of confirmed rows. Confirmation is owned exclusively by `confirmExistingAppointment`'s event-state guard — so a capture landing on a CANCELLED/DRAFT booking commits only tentative ghosts (swept by the #830 orphan cleanup) and refunds, never confirmed slots on a dead calendar. Capacity recounts are tentative-inclusive, so nothing else changes.
+
+### Flash-sale behavior (B4/B8c/B5)
+
+Three cooperating changes make a hot event or hot slot survivable:
+
+1. **Optimistic capacity pre-check (WEBINAR/CLASS)** — before the event mutex is even requested, one bounded read answers "already sold out" via the SAME capacity helpers the authoritative recount uses (`readEventCapacity` in checkout.ts). The overwhelming majority of losers in a drop fail fast with a plain **409 `EVENT_SOLD_OUT`** ("sold out, card not charged") instead of queueing into the function timeout.
+2. **Bounded waiter budgets** — checkout's lock acquisitions (`event-checkout`, `consultee-booking`) pass `CHECKOUT_WAIT_RETRY_CONFIG` (5 retries ≈ 7s worst case), far inside the ~26s function ceiling. The loser of a near-capacity race now gets a structured **409 `EVENT_CHECKOUT_BUSY` / `CONSULTEE_BOOKING_BUSY` with `retryAfter`**, never a raw 504; contention errors are typed classes (`EventCheckoutBusyError`, `ConsulteeBookingBusyError`), not message-sniffed strings.
+3. **Client single auto-retry (B5)** — all four checkout submit paths wrap their request in `fetchCheckoutWithBusyRetry`: on a structured BUSY 409 it shows "your card has not been charged, retrying in Ns…" once, waits the advised pause (capped at 20s), and retries exactly once. The stable `clientIdempotencyKey` rides both attempts and the server CASes on it, so the retry cannot mint a duplicate order.
+
+The Serializable participant recount inside the mutex remains the authoritative capacity gate end to end; everything above only changes where the losers find out and how that feels.
 
 #### Phase 2 -- Post-Transaction (Non-Critical)
 
@@ -221,8 +235,9 @@ Runs outside the transaction. Failures are logged but do not roll back the payme
 | ---- | ---------------------------------------------------------------- | -------------------------------- |
 | 1    | `createEarningsFromPayment()`                                    | `sync-payment-earnings` cron job |
 | 2    | `createInvoiceFromPayment()`                                     | Manual reconciliation            |
+| 3    | `sendPaymentSuccessNotification()` -- payment-success email (M7: runs post-commit so a rollback cannot leave a false confirmation) | N/A                              |
 | 4    | `notifyPaymentSuccess()` via Novu (to consultee)                 | N/A                              |
-| 5    | `notifyAppointmentBooked()` via Novu (to consultant + consultee) | N/A                              |
+| 5    | `notifyAppointmentBooked()` via Novu (to consultant + consultee) — **skipped when the appointment has no slots yet** (subscription placeholder): the template renders a session time, and a blank placeholder was the payer's first booking message. Allocation-time notification lands with PR 2c. | N/A                              |
 
 ### Per-Type Confirmation Differences
 
