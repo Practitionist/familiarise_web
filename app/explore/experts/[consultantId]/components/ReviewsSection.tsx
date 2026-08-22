@@ -15,7 +15,7 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
       : 0;
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
+    <div className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center">

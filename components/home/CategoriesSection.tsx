@@ -1,108 +1,124 @@
 "use client";
 
+import { useRef } from "react";
 import { motion } from "framer-motion";
-import { ChevronRight, LucideIcon } from "lucide-react";
+import { LucideIcon } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { CATEGORIES } from "./data";
 
-function CategoryCard({
+function CategoryTile({
   category,
   index,
 }: {
-  category: { icon: LucideIcon; name: string; count: string; color: string };
+  category: { icon: LucideIcon; name: string; count: string };
   index: number;
 }) {
   const Icon = category.icon;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9 }}
-      whileInView={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4, delay: index * 0.05 }}
-      viewport={{ once: true }}
+    <Link
+      href={`/explore/experts?category=${category.name.toLowerCase()}`}
+      className="group relative flex min-h-[180px] w-[240px] shrink-0 snap-start flex-col justify-between overflow-hidden rounded-2xl border border-border bg-card p-6 transition-all duration-500 hover:border-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-[260px]"
     >
-      <Link href={`/explore/experts?category=${category.name.toLowerCase()}`}>
-        <Card className="group cursor-pointer border border-border bg-card hover:border-foreground/40 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div
-              className={`w-12 h-12 rounded-xl ${category.color} flex items-center justify-center group-hover:scale-110 transition-transform`}
-            >
-              <Icon className="w-6 h-6 text-white" />
-            </div>
-            <div className="min-w-0">
-              <h4 className="font-semibold text-foreground truncate">
-                {category.name}
-              </h4>
-              <p className="text-sm text-muted-foreground truncate">
-                {category.count}
-              </p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-muted-foreground ml-auto group-hover:translate-x-1 transition-transform shrink-0" />
-          </CardContent>
-        </Card>
-      </Link>
-    </motion.div>
+      {/* Invert on hover */}
+      <div
+        aria-hidden
+        className="absolute inset-0 translate-y-full bg-zinc-950 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-y-0"
+      />
+      <div className="relative z-10 flex items-start justify-between">
+        <Icon className="h-6 w-6 text-foreground transition-colors duration-500 group-hover:text-white" />
+        <span className="font-mono text-xs text-muted-foreground transition-colors duration-500 group-hover:text-zinc-500">
+          {String(index + 1).padStart(2, "0")}
+        </span>
+      </div>
+      <div className="relative z-10">
+        <h4 className="text-lg font-semibold tracking-tight text-foreground transition-colors duration-500 group-hover:text-white">
+          {category.name}
+        </h4>
+        <p className="text-sm text-muted-foreground transition-colors duration-500 group-hover:text-zinc-400">
+          {category.count}
+        </p>
+      </div>
+    </Link>
   );
 }
 
 export function CategoriesSection() {
-  return (
-    <section className="py-20 md:py-32 bg-gradient-to-b from-white to-zinc-50 relative overflow-hidden">
-      <div className="absolute inset-0 grid-pattern-dark opacity-30" />
+  const railRef = useRef<HTMLDivElement>(null);
 
-      <div className="container mx-auto px-4 md:px-6 relative z-10">
+  return (
+    <section className="bg-smoke py-20 md:py-28 relative overflow-hidden">
+      <div className="container mx-auto px-4 md:px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
           viewport={{ once: true }}
-          className="text-center mb-12"
+          className="mb-12 flex flex-col gap-4 md:flex-row md:items-end md:justify-between"
         >
-          <Badge
-            variant="secondary"
-            className="mb-4 bg-secondary text-secondary-foreground hover:bg-secondary border-0"
-          >
-            Categories
-          </Badge>
-          <h2 className="text-fluid-4xl font-bold text-foreground mb-4 tracking-tight">
-            Browse by <span className="text-muted-foreground">expertise</span>
-          </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Find experts in your field and start learning from the best
-          </p>
+          <div>
+            <Badge variant="secondary" className="mb-4 rounded-full border-0">
+              Categories
+            </Badge>
+            <h2 className="text-fluid-4xl font-bold tracking-tight text-foreground">
+              Browse by <span className="text-muted-foreground">expertise</span>
+            </h2>
+          </div>
+          {/* Scroll affordance for pointer devices; touch users swipe natively */}
+          <div className="hidden gap-2 md:flex">
+            {[-1, 1].map((dir) => (
+              <button
+                key={dir}
+                type="button"
+                aria-label={dir === -1 ? "Scroll categories left" : "Scroll categories right"}
+                onClick={() =>
+                  railRef.current?.scrollBy({
+                    left: dir * 300,
+                    behavior: "smooth",
+                  })
+                }
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-primary hover:text-primary-foreground"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  style={{ transform: dir === -1 ? "rotate(180deg)" : undefined }}
+                >
+                  <path
+                    d="M3 8h10M9 4l4 4-4 4"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ))}
+          </div>
         </motion.div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {CATEGORIES.map((category, index) => (
-            <CategoryCard
-              key={category.name}
-              category={category}
-              index={index}
-            />
-          ))}
-        </div>
-
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          transition={{ duration: 0.7, delay: 0.15 }}
           viewport={{ once: true }}
-          className="text-center mt-10"
         >
-          <Link href="/explore/experts">
-            <Button
-              variant="outline"
-              size="lg"
-              className="border-border hover:bg-muted"
-            >
-              View All Categories
-              <ChevronRight className="ml-2 w-4 h-4" />
-            </Button>
-          </Link>
+          <div
+            ref={railRef}
+            className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-4 scrollbar-hide mask-fade-x md:-mx-6 md:px-6"
+          >
+            {CATEGORIES.map((category, index) => (
+              <CategoryTile
+                key={category.name}
+                category={category}
+                index={index}
+              />
+            ))}
+          </div>
         </motion.div>
       </div>
     </section>

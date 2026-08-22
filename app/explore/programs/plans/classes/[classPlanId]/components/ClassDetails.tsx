@@ -46,26 +46,33 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-muted">
-      {/* Hero Banner */}
-      <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
-        <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
-          alt="Class cover"
-          fill
-          className="object-cover"
-          priority
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
+    <main className="min-h-screen bg-background">
+      {/* Hero Banner — cinematic cover with a slow Ken Burns drift */}
+      <div className="relative h-[380px] md:h-[460px] w-full overflow-hidden">
+        <motion.div
+          className="absolute inset-0"
+          initial={{ scale: 1.08 }}
+          animate={{ scale: 1 }}
+          transition={{ duration: 2.2, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <Image
+            src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+            alt="Class cover"
+            fill
+            className="object-cover"
+            priority
+          />
+        </motion.div>
+        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/55 to-zinc-950/10" />
 
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
             <Link
               href="/explore/programs"
-              className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
+              className="group inline-flex items-center gap-2 text-sm text-white/80 transition-colors hover:text-white"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 transition-transform duration-300 group-hover:-translate-x-0.5" />
               Back to Programs
             </Link>
           </div>
@@ -74,16 +81,22 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
           <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
-            <Badge className="bg-background text-foreground mb-4">Class</Badge>
-            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-2">
+            <Badge className="mb-4 rounded-full border border-white/20 bg-white/10 text-white backdrop-blur-sm">
+              Class
+            </Badge>
+            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-3 max-w-3xl text-balance">
               {plan.title}
             </h1>
-            <div className="flex items-center gap-4 text-white/80">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-white/80">
               <span className="text-2xl md:text-3xl font-bold text-white">
                 {formatPrice(plan.price)}
               </span>
-              <span className="text-white/60">•</span>
+              <span className="text-white/40">·</span>
               <span>{plan.durationInMonths} months</span>
+              <span className="text-white/40">·</span>
+              <span>{plan.sessionsPerWeek}/week</span>
+              <span className="text-white/40">·</span>
+              <span>{planLevelLabel(plan.level)}</span>
             </div>
           </div>
         </div>
@@ -282,10 +295,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </p>
                   <Link
                     href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                    className="group inline-flex items-center gap-1 text-sm font-medium text-foreground transition-colors hover:text-foreground/70 mt-3"
                   >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
+                    <span className="link-sweep pb-0.5">View Full Profile</span>
+                    <ArrowLeft className="w-4 h-4 rotate-180 transition-transform duration-300 group-hover:translate-x-0.5" />
                   </Link>
                 </CardContent>
               </Card>

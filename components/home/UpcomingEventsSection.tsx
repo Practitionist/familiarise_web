@@ -1,185 +1,89 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { Calendar, ChevronRight, Clock, Star } from "lucide-react";
+import { ArrowRight, Calendar, Clock, Users } from "lucide-react";
 import Link from "next/link";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { RevealGroup, RevealItem, Reveal } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import type { ReviewWithProfiles } from "@/types/review";
 import { UPCOMING_EVENTS } from "./data";
 
-function EventCard({
-  event,
-  index,
-}: {
-  event: (typeof UPCOMING_EVENTS)[0];
-  index: number;
-}) {
+/**
+ * Upcoming events — static curated marketing data rendered on a dark strip
+ * beneath the testimonials marquee. Self-contained: it no longer duplicates
+ * the review cards that TestimonialsSection already owns.
+ */
+export function UpcomingEventsSection() {
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 20 }}
-      whileInView={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.4, delay: index * 0.1 }}
-      viewport={{ once: true }}
-    >
-      <Card className="border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group">
-        <CardContent className="p-5">
-          <div className="flex items-start justify-between mb-3">
+    <section className="relative overflow-hidden bg-zinc-950 py-20 md:py-28">
+      <div className="container mx-auto px-4 md:px-6">
+        <div className="grid gap-12 lg:grid-cols-[1fr_1.4fr] lg:gap-20">
+          {/* Editorial column */}
+          <Reveal className="self-start lg:sticky lg:top-32">
             <Badge
               variant="secondary"
-              className="bg-zinc-800 text-zinc-300 text-xs"
+              className="mb-4 rounded-full border-zinc-800 bg-zinc-800/60 text-zinc-300 hover:bg-zinc-800"
             >
-              {event.type}
+              Live sessions
             </Badge>
-            <span className="text-xs text-zinc-500">
-              {event.attendees} attending
-            </span>
-          </div>
-          <h4 className="font-semibold text-white mb-2 group-hover:text-zinc-200">
-            {event.title}
-          </h4>
-          <p className="text-sm text-zinc-400 mb-3">Hosted by {event.host}</p>
-          <div className="flex items-center gap-4 text-xs text-zinc-500">
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3 h-3" />
-              {event.date}
-            </span>
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {event.time}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
-interface UpcomingEventsSectionProps {
-  reviews: ReviewWithProfiles[];
-}
-
-export function UpcomingEventsSection({ reviews }: UpcomingEventsSectionProps) {
-  const slicedReviews = reviews.slice(0, 3);
-
-  return (
-    <section className="py-20 md:py-32 bg-gradient-to-b from-black via-zinc-950 to-zinc-900 overflow-hidden relative">
-      <div className="absolute inset-0 grid-pattern opacity-20" />
-
-      {/* Glow accents */}
-      <div className="absolute top-1/2 left-0 w-96 h-96 bg-zinc-700/20 rounded-full blur-[150px] -translate-y-1/2" />
-      <div className="absolute top-1/2 right-0 w-96 h-96 bg-zinc-600/15 rounded-full blur-[150px] -translate-y-1/2" />
-
-      <div className="container mx-auto px-4 md:px-6 relative z-10">
-        <div className="grid lg:grid-cols-2 gap-16">
-          {/* Testimonials Column */}
-          <div>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              viewport={{ once: true }}
-              className="mb-8"
-            >
-              <Badge
-                variant="secondary"
-                className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
+            <h2 className="text-fluid-3xl font-bold tracking-tight text-white text-balance">
+              Something is always{" "}
+              <span className="silver-text">happening</span>
+            </h2>
+            <p className="mt-4 max-w-sm leading-relaxed text-zinc-500">
+              Workshops, webinars and cohort classes run every week — join one
+              or bring your whole team.
+            </p>
+            <Link href="/explore/programs" className="inline-block mt-8">
+              <Button
+                variant="outline"
+                className="group rounded-full border-zinc-800 text-zinc-200 hover:bg-zinc-900 hover:text-white hover:border-zinc-600"
               >
-                Reviews
-              </Badge>
-              <h2 className="text-fluid-3xl font-bold text-white mb-4 tracking-tight">
-                What our users say
-              </h2>
-            </motion.div>
+                Browse programs
+                <ArrowRight className="ml-2 h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+              </Button>
+            </Link>
+          </Reveal>
 
-            <div className="space-y-4">
-              {slicedReviews.map((review, i) => (
-                <motion.div
-                  key={review.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.4, delay: i * 0.1 }}
-                  viewport={{ once: true }}
+          {/* Events ledger */}
+          <RevealGroup stagger={0.09} className="flex flex-col border-t border-white/[0.07]">
+            {UPCOMING_EVENTS.map((event) => (
+              <RevealItem key={event.title}>
+                <Link
+                  href="/explore/programs"
+                  className="group flex flex-col gap-4 border-b border-white/[0.07] py-7 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-row sm:items-center sm:gap-8"
                 >
-                  <Card className="border border-zinc-800 bg-zinc-900/50 backdrop-blur-sm">
-                    <CardContent className="p-5">
-                      <div className="flex items-center gap-1 mb-3">
-                        {Array.from({ length: 5 }).map((_, j) => (
-                          <Star
-                            key={j}
-                            className={`w-3 h-3 ${j < review.rating ? "fill-white text-white" : "fill-zinc-700 text-zinc-700"}`}
-                          />
-                        ))}
-                      </div>
-                      <p className="text-zinc-300 text-sm mb-3 line-clamp-2">
-                        &ldquo;{review.reviewDescription || "Great experience!"}
-                        &rdquo;
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <Avatar className="w-6 h-6 border border-zinc-700">
-                          <AvatarImage
-                            src={review.consulteeProfile?.user?.image ?? ""}
-                          />
-                          <AvatarFallback className="bg-zinc-800 text-zinc-300 text-xs">
-                            {review.consulteeProfile?.user?.name?.charAt(0) ??
-                              "U"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <p className="text-xs text-zinc-500">
-                          — {review.consulteeProfile?.user?.name || "Anonymous"}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
-          </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="mb-2 inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-xs text-zinc-400">
+                      {event.type}
+                    </span>
+                    <h4 className="text-lg font-semibold tracking-tight text-white transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1.5">
+                      {event.title}
+                    </h4>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Hosted by {event.host}
+                    </p>
+                  </div>
 
-          {/* Upcoming Events Column */}
-          <div>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              viewport={{ once: true }}
-              className="mb-8"
-            >
-              <Badge
-                variant="secondary"
-                className="mb-4 bg-zinc-800 text-zinc-300 hover:bg-zinc-800 border-zinc-700"
-              >
-                Coming Soon
-              </Badge>
-              <h2 className="text-fluid-3xl font-bold text-white mb-4 tracking-tight">
-                Upcoming events
-              </h2>
-            </motion.div>
-
-            <div className="space-y-4">
-              {UPCOMING_EVENTS.map((event, index) => (
-                <EventCard key={event.title} event={event} index={index} />
-              ))}
-            </div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-              viewport={{ once: true }}
-              className="mt-6"
-            >
-              <Link href="/explore/programs">
-                <Button className="w-full bg-white text-zinc-900 hover:bg-zinc-200 font-medium">
-                  View All Events
-                  <ChevronRight className="ml-2 w-4 h-4" />
-                </Button>
-              </Link>
-            </motion.div>
-          </div>
+                  <div className="flex shrink-0 items-center gap-5 text-sm text-zinc-500">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5" />
+                      {event.date}
+                    </span>
+                    <span className="hidden items-center gap-1.5 md:flex">
+                      <Clock className="h-3.5 w-3.5" />
+                      {event.time}
+                    </span>
+                    <span className="flex items-center gap-1.5 tabular-nums">
+                      <Users className="h-3.5 w-3.5" />
+                      {event.attendees}
+                    </span>
+                    <ArrowRight className="h-4 w-4 -translate-x-1 opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:opacity-100" />
+                  </div>
+                </Link>
+              </RevealItem>
+            ))}
+          </RevealGroup>
         </div>
       </div>
     </section>

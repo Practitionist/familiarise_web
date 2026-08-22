@@ -203,8 +203,8 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
-      <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
+    <div className="card-lift group overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift">
+      <div className="p-6 md:p-8 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info. Uses a stretched overlay <Link>
             (absolute inset-0) instead of wrapping the whole section, so the
             nested org-badge link stays valid HTML (no <a> inside <a>) while
@@ -216,17 +216,16 @@ export const ConsultantCard = memo(function ConsultantCard({
             className="absolute inset-0 z-0"
           />
           {/* Header */}
-          <div className="flex items-start gap-4 mb-6">
-            <div className="relative h-20 w-20 flex-shrink-0">
+          <div className="flex items-start gap-5 mb-6">
+            <div className="relative h-[72px] w-[72px] flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}
-                className="rounded-2xl object-cover ring-2 ring-muted"
+                className="rounded-2xl object-cover ring-1 ring-border"
                 src={consultant.user.image || "/placeholder-user.jpg"}
                 fill
                 // 80×80 slot — without sizes, `fill` fetches a 100vw image (#932 perf).
                 sizes="80px"
               />
-              {/* TODO: Add real presence indicator when online tracking is implemented */}
             </div>
             <div className="flex-1 min-w-0">
               {/* Name and org badge share one row, so neither may wrap: a long
@@ -235,7 +234,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                   too. Both truncate instead, and the badge keeps its `title`
                   so the full name is still reachable on hover. */}
               <div className="flex items-center gap-1.5 min-w-0">
-                <h3 className="truncate text-xl font-bold text-foreground group-hover:text-muted-foreground transition-colors">
+                <h3 className="truncate text-xl font-bold tracking-tight text-foreground group-hover:text-foreground/70 transition-colors">
                   {consultant.user.name}
                 </h3>
                 {consultant.isVerified && (
@@ -379,15 +378,15 @@ export const ConsultantCard = memo(function ConsultantCard({
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
-          <div className="bg-muted rounded-xl p-4">
+          <div className="rounded-2xl border border-border bg-muted/50 p-4">
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
-                <TabsList className="w-full mb-4 bg-card p-1 rounded-lg border border-border">
+                <TabsList className="w-full mb-4 bg-card p-1 rounded-full border border-border">
                   {sortedPlans.map((plan, index) => (
                     <TabsTrigger
                       key={`${consultant.id}-tab-trigger-${plan.id}`}
                       value={plan.id}
-                      className="flex-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-md text-sm font-medium transition-all duration-200"
+                      className="flex-1 rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground text-sm font-medium transition-all duration-200"
                     >
                       {tabLabels[index]}
                     </TabsTrigger>
@@ -417,7 +416,7 @@ export const ConsultantCard = memo(function ConsultantCard({
           <div className="flex flex-col gap-2">
             <Button
               asChild
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
+              className="sheen relative w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-full transition-all"
             >
               <Link href={profileHref}>
                 <span>View Profile</span>
@@ -431,7 +430,7 @@ export const ConsultantCard = memo(function ConsultantCard({
                 <Button
                   asChild
                   variant="outline"
-                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                  className="h-10 border-border hover:bg-muted rounded-full text-sm font-medium"
                 >
                   <Link href={`${profileHref}?action=trial`}>
                     {trialOffer.priceInPaise > 0
@@ -443,7 +442,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               <Button
                 asChild
                 variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
+                className="h-10 border-border hover:bg-muted rounded-full text-sm font-medium"
               >
                 <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>

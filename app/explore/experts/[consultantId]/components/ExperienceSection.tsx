@@ -150,7 +150,7 @@ export function ExperienceSection({
   }
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8 space-y-8">
+    <div className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8 space-y-8">
       {/* Work Experience */}
       {workExperiences.length > 0 && (
         <div>

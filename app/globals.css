@@ -71,6 +71,9 @@
     /* Elevation shadow color — themed below so dark-mode shadows stay visible */
     --shadow-color: 0 0% 0%;
 
+    /* Signature easing — fast start, long glide (UI overhaul motion system) */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
     /* Maintenance banner height — set dynamically by MaintenanceBanner.tsx */
     --maintenance-banner-height: 0px;
 
@@ -1364,6 +1367,168 @@
 [role="listbox"],
 [role="menu"] {
   z-index: 10001 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   UI overhaul — elevated monochrome primitives (fix/ui-overhaul)
+
+   Additive utilities shared by components/motion/* and the redesigned
+   landing/explore/detail surfaces. Everything here degrades gracefully:
+   masks are progressive enhancement, and every animation is silenced under
+   prefers-reduced-motion in the block at the bottom of this section.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  /* Edge-fade masks so carousels and marquees dissolve instead of clipping */
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent,
+      black 6%,
+      black 94%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      90deg,
+      transparent,
+      black 6%,
+      black 94%,
+      transparent
+    );
+  }
+
+  .mask-fade-b {
+    -webkit-mask-image: linear-gradient(180deg, black 70%, transparent 100%);
+    mask-image: linear-gradient(180deg, black 70%, transparent 100%);
+  }
+
+  /* Unified card interaction: one lift grammar across listings and details.
+     Pure transform+shadow so it composites without layout thrash. */
+  .card-lift {
+    transition:
+      transform 0.5s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+      box-shadow 0.5s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)),
+      border-color 0.3s ease;
+    will-change: transform;
+  }
+
+  .card-lift:hover {
+    transform: translateY(-4px);
+  }
+
+  /* Sticky glass bar (detail-page action bars, explore sub-headers).
+     Theme-aware: translucent surface over any backdrop. */
+  .glass-bar {
+    background: hsl(var(--background) / 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom: 1px solid hsl(var(--border) / 0.7);
+  }
+
+  .glass-bar-dark {
+    background: rgba(10, 10, 10, 0.55);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* Hover sheen sweep — a single specular pass across buttons/cards.
+     Applied via ::after on .group:hover using the group-sheen trigger. */
+  .sheen {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-120%) skewX(-18deg);
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 70%
+    );
+    transition: transform 0.9s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    pointer-events: none;
+  }
+
+  .group:hover .sheen::after,
+  .sheen:hover::after {
+    transform: translateX(120%) skewX(-18deg);
+  }
+
+  /* Cursor spotlight — SpotlightGrid.tsx writes --sx/--sy in px; the radial
+     follows the pointer over a hairline grid. */
+  .spotlight-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .spotlight-grid::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(
+      320px circle at var(--sx, 50%) var(--sy, 40%),
+      black 0%,
+      transparent 75%
+    );
+    mask-image: radial-gradient(
+      320px circle at var(--sx, 50%) var(--sy, 40%),
+      black 0%,
+      transparent 75%
+    );
+  }
+
+  .spotlight-grid::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      480px circle at var(--sx, 50%) var(--sy, 40%),
+      rgba(255, 255, 255, 0.07),
+      transparent 65%
+    );
+  }
+
+  /* Underline sweep for inline links — grows from left on hover */
+  .link-sweep {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-size 0.45s var(
+        --ease-out-expo,
+        cubic-bezier(0.16, 1, 0.3, 1)
+      );
+  }
+
+  .link-sweep:hover {
+    background-size: 100% 1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-lift,
+  .card-lift:hover {
+    transform: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .sheen::after {
+    display: none;
+  }
+
+  .link-sweep {
+    transition: none;
+  }
 }
 
 /* ─── Reduced motion ──────────────────────────────────────────────────────

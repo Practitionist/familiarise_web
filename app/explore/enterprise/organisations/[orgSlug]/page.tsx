@@ -219,7 +219,7 @@ function ExpertMiniCard({
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border hover:border-border hover:shadow-md transition-all group"
+      className="card-lift group flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-card hover:border-foreground/25 hover:shadow-lift"
     >
       <div className="relative w-12 h-12 flex-shrink-0">
         <Image
@@ -235,7 +235,7 @@ function ExpertMiniCard({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1">
-          <p className="font-semibold text-sm text-foreground group-hover:text-muted-foreground truncate">
+          <p className="font-semibold text-sm tracking-tight text-foreground group-hover:text-foreground/70 truncate transition-colors">
             {expert.user.name}
           </p>
           {expert.isVerified && (
@@ -295,9 +295,9 @@ export default async function OrgProfilePage({
   >[];
 
   return (
-    <main className="min-h-screen bg-muted">
+    <main className="min-h-screen bg-background">
       {/* Banner — decorative dark cover header */}
-      <div className="relative h-48 md:h-64 bg-gradient-to-br from-zinc-800 to-zinc-900 overflow-hidden">
+      <div className="relative h-56 md:h-72 bg-gradient-to-br from-zinc-800 to-zinc-950 overflow-hidden">
         {org.bannerImage && (
           <Image
             src={org.bannerImage}
@@ -306,24 +306,26 @@ export default async function OrgProfilePage({
             className="object-cover opacity-40"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-900/60" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-950/70" />
+
+        {/* Back link lives inside the banner so the header card owns the fold */}
+        <div className="absolute top-0 left-0 right-0 z-10">
+          <div className="max-w-[1100px] mx-auto px-4 md:px-8 py-5">
+            <Link
+              href="/explore/enterprise/organisations"
+              className="group inline-flex items-center gap-1.5 text-sm text-white/80 transition-colors hover:text-white"
+            >
+              <ArrowLeft className="w-4 h-4 transition-transform duration-300 group-hover:-translate-x-0.5" />
+              All Organisations
+            </Link>
+          </div>
+        </div>
       </div>
 
       <div className="max-w-[1100px] mx-auto px-4 md:px-8">
-        {/* Back link */}
-        <div className="py-4">
-          <Link
-            href="/explore/enterprise/organisations"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            All Organisations
-          </Link>
-        </div>
-
         {/* Org header card */}
-        <div className="bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 -mt-16 relative shadow-sm">
-          <div className="flex flex-col sm:flex-row gap-5 items-start">
+        <div className="rounded-3xl border border-border bg-card p-6 shadow-card md:p-8 mb-10 -mt-20 relative">
+          <div className="flex flex-col sm:flex-row gap-6 items-start">
             {/* Logo */}
             <div className="w-20 h-20 rounded-2xl bg-muted border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
               {org.logo ? (
