@@ -1,0 +1,65 @@
+name: Keep Warm
+
+# Keep at least one warm function instance on PRODUCTION between real traffic.
+#
+# The Next.js server handler stalls its event loop for ~24s on a brand-new
+# instance's first invocation (#1124). A single warm instance does not remove
+# that stall — burst traffic still spawns fresh instances that each pay it —
+# but it removes the stall from the COMMON case: a lone visitor clicking
+# through an otherwise idle site, which is exactly the shape of manual testing
+# and low-traffic days.
+#
+# Every ping is a billable invocation (~12/hour ≈ 8.6k/month at the 5-minute
+# cadence); disable this workflow if that trade stops making sense. Previews
+# are deliberately NOT warmed: each PR has its own isolated cache scope and
+# subdomain, so warming one preview does nothing for another, and idle previews
+# going cold is unavoidable (warm-deploy.yml covers their first minutes).
+#
+# GitHub schedule triggers are best-effort with no SLA and can lag several
+# minutes; treat the interval as "roughly every 5 minutes", not exact.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # The canonical production origins: the Netlify host and the pinned
+      # NEXT_PUBLIC_APP_URL domain. Edge cache scopes are per-host, so both are
+      # pinged; the function instance underneath is shared.
+      #
+      # /api/health guarantees a handler invocation (a page GET can be served
+      # entirely off the CDN cache without touching the function), so instance
+      # warmth does not depend on cache misses. It is also the cheapest route
+      # that proves end-to-end liveness: LIMIT-1 DB probe + status reads, and
+      # doubles as an outage signal — if these pings start failing, prod is
+      # degraded whether or not any user has noticed yet.
+      - name: Ping production
+        env:
+          HOSTS: "https://familiarisenow.com https://familiarise.netlify.app"
+        run: |
+          for host in $HOSTS; do
+            curl -sS -o /dev/null -w "$host/api/health: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+              --max-time 60 --retry 1 --retry-delay 3 \
+              "$host/api/health" || echo "::warning::keep-warm ping failed for $host"
+          done
+
+      # NOTE: hot page caches are deliberately NOT refreshed here. The ISR
+      # windows on / and /explore/experts are 1h/5m; refreshing them every 5
+      # minutes would force continuous background regeneration invocations for
+      # content that changes on the order of days. The durable cache already
+      # persists entries across instances (Netlify Blobs), so cache priming
+      # only matters right after a deploy — that is warm-deploy.yml's job.
+      # This workflow's single job is instance warmth via the health ping.

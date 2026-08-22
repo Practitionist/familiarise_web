@@ -14,6 +14,42 @@
   # The standard build image has 8 GB, so this stays inside the container cap.
   NODE_OPTIONS = "--max-old-space-size=6144"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Function memory (#1124)
+#
+# A brand-new instance of the Next.js server handler stalls its event loop for
+# roughly 24s on its first invocation, BEFORE any application work — the whole
+# of the 20–30s tail on public routes (issue #1124, reproduced 2026-08-22:
+# 11/12 concurrent unique-key requests to a deploy preview landed at
+# 27.8–31.0s TTFB while same-key requests coalesced at 2.7–5.4s). The function
+# boots at AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1024 → ~0.5 vCPU with 675–795 MB RSS
+# at rest, so cold-boot JS evaluation + GC at that CPU share is the leading
+# explanation.
+#
+# Lambda scales CPU linearly with memory, and Netlify now exposes per-function
+# memory on Credit-based Pro/Enterprise (docs updated 2026-07; unavailable when
+# #1124 was first written up). Doubling to 2048 MB doubles the boot CPU share,
+# which should shrink the stall proportionally IF that reading is right. This
+# is a measured-or-reverted claim: verify on the deploy preview burst test
+# before believing it, and revert if the distribution doesn't move.
+#
+# Cost: function billing scales linearly with configured memory (GB-Hours), so
+# this doubles compute cost per invocation. Warm invocations are milliseconds,
+# so in absolute terms this is small; the stall itself was also being billed at
+# ~30s per hit before this change.
+#
+# Both generated functions are covered. ___netlify-handler serves SSR/API/RSC
+# traffic; ___netlify-odb-handler serves ISR regeneration/fallback — the exact
+# path a cache-missed public page takes. The names are what
+# @netlify/plugin-nextjs generates and are stable across deploys of a runtime
+# major.
+# ─────────────────────────────────────────────────────────────────────────────
+[functions."___netlify-handler"]
+  memory = 2048
+
+[functions."___netlify-odb-handler"]
+  memory = 2048
+
 # Skip builds for Dependabot PRs
 [context.deploy-preview]
   ignore = """

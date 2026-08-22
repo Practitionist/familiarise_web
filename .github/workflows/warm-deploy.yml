@@ -1,0 +1,104 @@
+name: Warm Deploy
+
+# Prime the caches and function instances of a freshly finished deploy.
+#
+# A deploy starts every ISR/CDN cache entry empty, and a Netlify function
+# instance that has never served a request stalls its event loop for roughly
+# 24s before executing anything (#1124 — measured 27.8–31.0s TTFB across 11/12
+# concurrent unique-key requests on preview 1195). The FIRST real visitor after
+# each deploy therefore pays full price per hot route. This workflow pays it
+# instead, in a controlled order:
+#
+#   1. /api/health first — guarantees one function invocation, so the instance
+#      that will serve everything else absorbs the cold-boot stall here rather
+#      than on a page render.
+#   2. Hot public pages sequentially afterwards — primes their CDN/durable
+#      entries while the instance from step 1 is still warm. SEQUENTIAL ON
+#      PURPOSE: concurrent pings would spawn one stalled instance EACH, which
+#      is precisely the pathology being mitigated.
+#
+# Fires on Netlify's deployment statuses for production deploys, branch deploys
+# AND pull-request previews — previews are where the cold cost is worst,
+# because their cache scope is isolated and nothing is ever warm.
+#
+# This does not keep instances alive (see keep-warm.yml); it only removes the
+# empty-cache window right after a deploy.
+
+on:
+  deployment_status:
+    states:
+      - success
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deploy origin to warm (defaults to production)"
+        required: false
+        default: "https://familiarisenow.com"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-deploy-${{ github.event.deployment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    # Netlify also reports inactive/other states; only successful deploys with
+    # a resolvable environment URL are worth warming.
+    if: github.event_name == 'workflow_dispatch' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Resolve deploy URL
+        id: url
+        env:
+          EVENT_URL: ${{ github.event.deployment_status.environment_url }}
+          PAYLOAD_WEB_URL: ${{ github.event.deployment.payload.web_url }}
+          DISPATCH_URL: ${{ inputs.base_url }}
+        run: |
+          BASE="${DISPATCH_URL:-${EVENT_URL:-${PAYLOAD_WEB_URL:-}}}"
+          if [ -z "$BASE" ]; then
+            echo "::error::No environment_url on the deployment status; cannot warm."
+            exit 1
+          fi
+          # Strip a trailing slash so the path concatenations below stay clean.
+          BASE="${BASE%/}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Warming $BASE"
+
+      # The first request against a brand-new instance can legitimately take
+      # ~30s (#1124), so max-time must sit well above that or the warm-up would
+      # kill the very request doing the warming.
+      - name: Warm the function instance (health probe)
+        run: |
+          curl -sS -o /dev/null -w "health: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+            --max-time 60 --retry 1 --retry-delay 2 \
+            "${{ steps.url.outputs.base }}/api/health"
+
+      # Hot public routes in click-order value. Keep this list short and
+      # deliberate: every line is a billable invocation, and sequential curls
+      # share the instance warmed above.
+      - name: Warm hot public pages
+        run: |
+          BASE="${{ steps.url.outputs.base }}"
+          for path in "/" "/explore/experts" "/explore/community" "/about"; do
+            curl -sS -o /dev/null -w "$path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+              --max-time 45 "$BASE$path" || true
+            sleep 1
+          done
+
+      # RSC navigation payloads are what an actual <Link> click fetches; priming
+      # them means the first soft navigation hits the CDN instead of the
+      # function. A generic RSC request also re-walks the render path, keeping
+      # the instance hot.
+      - name: Warm RSC navigation payloads
+        run: |
+          BASE="${{ steps.url.outputs.base }}"
+          for path in "/explore/experts" "/about"; do
+            curl -sS -o /dev/null -H "RSC: 1" \
+              -w "rsc $path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+              --max-time 45 "$BASE$path?_rsc=warmup" || true
+            sleep 1
+          done
