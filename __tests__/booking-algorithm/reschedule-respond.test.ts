@@ -476,8 +476,13 @@ describe("lifecycle hygiene wiring", () => {
   });
 
   it("the booked notification carries the session time (#1085)", () => {
-    expect(read("lib/payments/webhooks/handlers.ts")).toContain(
-      "dateTime: firstSlot?.startsAt.toISOString()",
+    const handlers = read("lib/payments/webhooks/handlers.ts");
+    // B9 — the notification is SKIPPED when no slot exists yet (a
+    // subscription placeholder rendered a blank date placeholder), and when
+    // it fires the time is guaranteed present (non-optional chain).
+    expect(handlers).toContain(
+      "appointment_booked_notification_skipped_no_slots",
     );
+    expect(handlers).toContain("dateTime: firstSlot.startsAt.toISOString()");
   });
 });

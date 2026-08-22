@@ -266,6 +266,44 @@ export const allocationFailed = (reason: string): AllocationToast => ({
   description: reason,
 });
 
+/**
+ * PR 2c resilience (audit gap #5) — cause-specific toasts keyed by the
+ * server's structured errorCode. The raw message still renders as the
+ * description, but the title tells the consultant WHY without parsing
+ * internal error strings. Falls back to `allocationFailed` for unknown
+ * codes so nothing silently loses its copy.
+ */
+const ALLOCATION_ERROR_TOASTS: Record<
+  string,
+  { title: string; variant: "destructive" | "default" }
+> = {
+  NO_AVAILABILITY: {
+    title: "No availability published",
+    variant: "destructive",
+  },
+  PERIOD_ENDED: {
+    title: "The scheduling period has ended",
+    variant: "destructive",
+  },
+  SLOT_SHORTAGE: {
+    title: "Not enough free slots",
+    variant: "destructive",
+  },
+};
+
+export const allocationFailedWithCode = (
+  reason: string,
+  errorCode?: string,
+): AllocationToast => {
+  if (errorCode && ALLOCATION_ERROR_TOASTS[errorCode]) {
+    return {
+      ...ALLOCATION_ERROR_TOASTS[errorCode],
+      description: reason,
+    } as AllocationToast;
+  }
+  return allocationFailed(reason);
+};
+
 /** Client-side gate when the event PK is not UUID/CUID (mock/hand-crafted rows). */
 export const invalidEventId = (): AllocationToast => ({
   variant: "destructive",
@@ -286,6 +324,11 @@ export const invalidEventId = (): AllocationToast => ({
 export const preservedMessages: readonly RegExp[] = [
   /slot already booked/i,
   /slot taken during allocation/i,
+  // Audit gap #11 — a #1012 stale-tab reschedule precondition was being
+  // mislabeled "Already allocated" because it wasn't in this list. It means
+  // the tentative count changed (another tab finished/started the
+  // reschedule), NOT that the event was allocated elsewhere.
+  /reschedule state changed in another session/i,
 ];
 
 export const isPreservedAllocationMessage = (message: string): boolean =>

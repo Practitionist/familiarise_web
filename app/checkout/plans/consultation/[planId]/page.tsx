@@ -40,7 +40,10 @@ import { createHandleApiError } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+import { mintClientIdempotencyKey,
+  busyRetryToast,
+  fetchCheckoutWithBusyRetry,
+} from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -317,10 +320,10 @@ export default function ConsultationCheckoutPage({
         });
 
         // Make single API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(
-          checkoutData,
-          gateway,
-          isMockPayment,
+        // B5 — structured BUSY 409s auto-retry once (idempotency key dedupe-safe).
+        const response = await fetchCheckoutWithBusyRetry(
+          () => makeCheckoutRequest(checkoutData, gateway, isMockPayment),
+          (waitSeconds) => toast(busyRetryToast(waitSeconds)),
         );
 
         if (!response.ok) {
