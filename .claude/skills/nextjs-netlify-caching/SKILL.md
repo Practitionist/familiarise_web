@@ -212,13 +212,45 @@ The fix, shipped in #1123, is that degrading is now opt-in per call site (`perRe
 
 So on an ISR route, throwing is strictly better than degrading: the one unlucky visitor gets an error boundary, everyone else keeps the last good copy, and nothing bad is written down.
 
+## The stall was resolved on 2026-08-22 by doubling handler memory — and the function changed names under us
+
+The ~24 s cold-instance event-loop stall described above is **confirmed CPU-proportional cold-boot work and is eliminated at 2048 MB**. Measured as an A/B against two live previews in the same minute, same protocol (N concurrent unique-key RSC requests to `/explore/experts` on a freshly deployed function):
+
+| handler | N | stalled | slow-mode TTFB | fast-mode |
+|---|---|---|---|---|
+| 1024 MB (preview 1195) | 12 | 11/12 | 27.8–31.0 s | 0.75 s |
+| 1024 MB (preview 1148, see hazard below) | 12 | 11/12 | 32.8–35.1 s | 3.1 s |
+| **2048 MB (preview 1148)** | 16 | **0/16** | — | **3.1–4.9 s** |
+| 1024 MB control re-run, same minute | 12 | 12/12 | 31.9–39.6 s (+4 bare platform-500s) | — |
+
+Warm-mode render times were unchanged (~3–5 s), so this is pure tail removal. The fix shipped in PR #1148 as `[functions."___netlify-server-handler"] memory = 2048` in `netlify.toml`. Billing scales linearly with configured memory. Full write-up on issue #1124.
+
+Three facts that each cost an afternoon:
+
+**The generated function is `___netlify-server-handler` at @netlify/plugin-nextjs@5.15.13 (runtime API v2) — one consolidated SSR+ISR handler.** The classic `___netlify-handler` / `___netlify-odb-handler` names belong to runtime v1 and match nothing. Re-enumerate names after any adapter bump (`netlify api searchSiteFunctions --data '{"site_id": …}'`; the record's `m` field is the configured memory).
+
+**A `[functions."name"]` block targeting a nonexistent name is silently inert.** No warning, deploy green, config present in the repo. An earlier draft of the memory bump targeted the v1 names; its preview burst read 32.8–35.1 s and looked like a genuine refutation of the memory hypothesis. Verify the treatment landed (`searchSiteFunctions`, or a distribution shift against a same-minute control) before believing any null result.
+
+**Netlify per-function `memory`/`vcpu` exists since ~2026-07 on Credit-based Pro/Enterprise** (1024–4096 MB, 0.5–2.0 vCPU). This section previously recorded the stall as unmitigable because that lever did not exist when #1124 was written. It also cannot be set for framework-generated functions via in-source `config` exports — `netlify.toml` keyed by generated name works.
+
+Two warmers ship alongside (#1148): `warm-deploy.yml` fires on Netlify `deployment_status: success` and primes `/api/health` → hot pages sequentially → RSC payloads per deploy; `keep-warm.yml` starts hourly at `:10` and loops 5-minute `/api/health` pings inside the job (every minute of the GH cron map is owned by some multi-daily fleet job, so no sub-hourly cron lattice passes check-workflow-hygiene). Both activate only after merging to the default branch: `schedule` and `deployment_status` triggers read the workflow file from the default branch, not from a PR's merge ref — a preview of the PR adding them proves nothing about them.
+
+
 ## Options assessed and rejected — do not re-propose without new information
 
 Partial Prerendering and Cache Components are not merely "a Next 16 feature" — they are unreachable from our pinned version. At `next@15.5.15`, `packages/next/src/server/config.ts` throws `CanaryOnlyError` on a stable build for both `experimental.ppr` and `experimental.cacheComponents`, so even `experimental.ppr = "incremental"` fails at config load rather than degrading. Next's own [ppr-preview](https://nextjs.org/docs/messages/ppr-preview) page confirms a canary release is required. This matters because PPR is the textbook answer to "a static page with one dynamic hole", and on this version that answer simply does not exist — a `Suspense` boundary around a dynamic read does **not** rescue static rendering without PPR. Separately, `use cache` would not help a route whose every segment is auth-gated, and every dashboard route here is auth-gated.
 
 Caching a dynamic route at the CDN with `Netlify-CDN-Cache-Control` is technically sound and was considered for the public pages, but it still invokes the function on every cache miss, so it does not solve the cold start the way prerendering does. It remains the right tool when build-time data access is genuinely unacceptable.
 
+**Raising the handler's memory is measured dead (2026-08-22, PR #1148 branch).** Netlify now exposes per-function `memory` up to 4096 MB on Credit-based Pro/Enterprise (`[functions."NAME"]` in `netlify.toml`; unavailable when #1124 was first written). Same 12-way concurrent unique-key burst protocol on deploy previews: 1024 MB control put 11/12 requests at 27.8–31.0 s; a correctly-applied 2048 MB treatment put 11/12 at 35.9–37.6 s with one platform 500. No improvement, possibly a regression. The "CPU-starved boot" reading of the #1124 stall is therefore weakened — do not re-pull this lever without a new mechanism hypothesis.
+
 Verified clean and not worth re-investigating: `next/image` usage (there are zero raw `<img>` tags), fonts (`next/font/google` with `display: swap`), `staleTimes`, `serverExternalPackages`, the Prisma singleton, and the bundle-analyzer tooling.
+
+## Function-name and config-verification facts (added 2026-08-22)
+
+Runtime API v2 of `@netlify/plugin-nextjs@5.15.13` generates **one** function named `___netlify-server-handler`. The classic v1 names `___netlify-handler` / `___netlify-odb-handler` match nothing on this site; a `[functions."___netlify-handler"]` block in `netlify.toml` is **silently ignored**, and every request keeps serving at 1024 MB while the config reads as if it were doing something — an earlier #1124 attempt lost its entire first measurement to this. Enumerate real names and per-function memory with `netlify api searchSiteFunctions --data '{"site_id": …}'` (response shape: list of deploys → `.functions[].n` name, `.functions[].m` memory MB); note it scopes to the published production deploy, not preview deploys. Re-enumerate names after any adapter bump.
+
+Two more verification gotchas from the same day: GitHub webhook-style triggers (`deployment_status`, `schedule`) read the workflow file **from the default branch only**, so new warm-up workflows stay inert on PR previews until merged to dev — CI green does not mean they ran. And `scripts/ci/check-workflow-hygiene.ts` rejects any two recurring crons sharing a start minute; every minute of the day is owned by some multi-daily workflow in this fleet, which is why keep-warm runs as one hourly start (:10) looping 5-minute pings inside the job rather than as a `*/5` cron.
 
 ## Project constraints that constrain every change here
 
