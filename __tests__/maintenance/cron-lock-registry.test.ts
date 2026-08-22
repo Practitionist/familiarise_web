@@ -192,7 +192,9 @@ describe("cron lock registry (#1169)", () => {
         (r) =>
           !r.lockedIn &&
           !(r.workflow in LOCK_EXEMPT) &&
-          !(r.workflow in HTTP_ONLY),
+          // HTTP_ONLY only exempts a job while it truly runs no app code; a
+          // workflow that later grows an entrypoint re-enters the lock regime.
+          !(r.workflow in HTTP_ONLY && !r.entrypoint),
       )
       .map((r) => `${r.workflow} → ${r.entrypoint} (no withCronLock)`);
 
@@ -207,6 +209,16 @@ describe("cron lock registry (#1169)", () => {
       ...Object.keys(HTTP_ONLY),
     ].filter((wf) => !registry.some((r) => r.workflow === wf));
     expect(stale).toEqual([]);
+  });
+
+  it("keeps HTTP_ONLY limited to workflows that never enter the app", () => {
+    // The exemption's whole justification is "no app code runs". A workflow
+    // that gains a tsx/npm-run entrypoint must leave HTTP_ONLY and take a
+    // real lock (or argue its way into LOCK_EXEMPT with an entrypoint).
+    const grown = registry
+      .filter((r) => r.workflow in HTTP_ONLY && r.entrypoint)
+      .map((r) => `${r.workflow} → ${r.entrypoint}`);
+    expect(grown).toEqual([]);
   });
 
   it("drops an exemption once the job grows a real lock", () => {

@@ -66,6 +66,14 @@ jobs:
           fi
           # Strip a trailing slash so the path concatenations below stay clean.
           BASE="${BASE%/}"
+          # The URL comes from the deployment event payload, i.e. from outside
+          # this repo. It is only ever used through env indirection below, but
+          # validate the shape anyway so nothing resembling shell syntax (or a
+          # control character) ever reaches a run script or GITHUB_OUTPUT.
+          if ! printf '%s' "$BASE" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$'; then
+            echo "::error::environment_url '$BASE' is not a bare https origin; refusing to warm"
+            exit 1
+          fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           echo "Warming $BASE"
 
@@ -81,10 +89,12 @@ jobs:
       # run would still report success. Fail here instead so the red run says
       # "deploy is up but degraded; nothing was warmed".
       - name: Warm the function instance (health probe)
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
         run: |
           BODY=$(curl -sS -w "\nhealth: ttfb=%{time_starttransfer}s code=%{http_code}" \
             --fail --max-time 60 --retry 1 --retry-delay 2 \
-            "${{ steps.url.outputs.base }}/api/health")
+            "$BASE_URL/api/health")
           echo "${BODY##*$'\n'}"
           STATUS=$(printf '%s' "$BODY" | head -n 1 | jq -r '.status // "unknown"')
           if [ "$STATUS" != "healthy" ]; then
@@ -96,9 +106,11 @@ jobs:
       # deliberate: every line is a billable invocation, and sequential curls
       # share the instance warmed above.
       - name: Warm hot public pages
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
         run: |
-          BASE="${{ steps.url.outputs.base }}"
-          for path in "/" "/explore/experts" "/explore/community" "/about"; do
+          BASE="$BASE_URL"
+          for path in "/" "/explore/experts" "/explore/programs" "/explore/community" "/about"; do
             curl -sS -o /dev/null -w "$path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
               --max-time 45 "$BASE$path" || true
             sleep 1
@@ -109,9 +121,11 @@ jobs:
       # function. A generic RSC request also re-walks the render path, keeping
       # the instance hot.
       - name: Warm RSC navigation payloads
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
         run: |
-          BASE="${{ steps.url.outputs.base }}"
-          for path in "/explore/experts" "/about"; do
+          BASE="$BASE_URL"
+          for path in "/explore/experts" "/explore/programs" "/about"; do
             curl -sS -o /dev/null -H "RSC: 1" \
               -w "rsc $path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
               --max-time 45 "$BASE$path?_rsc=warmup" || true

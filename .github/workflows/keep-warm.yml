@@ -71,15 +71,26 @@ jobs:
           HOSTS: "https://familiarisenow.com https://familiarise.netlify.app"
         run: |
           # 11 rounds x 5-minute sleep ≈ 55 minutes of coverage per hourly
-          # run; the next run picks up at :10. Pings are sequential and the
+          # run; the next run picks up next hour. Pings are sequential and the
           # loop sleeps between rounds, so this never bursts the function.
+          #
+          # DEADLINE guard: the happy path fits easily, but if both hosts hit
+          # --max-time on the initial attempt AND the retry every round, the
+          # arithmetic exceeds the 58-minute job timeout (~95 min worst case)
+          # and GitHub would cancel mid-loop. Stop starting new rounds once
+          # 50 minutes have elapsed instead — the next hourly run continues.
           #
           # /api/health is fail-open: HTTP 200 with status "degraded" when the
           # DB is unreachable, so the body is parsed too. Degradation is a
           # WARNING here, not a failure — the ping still warmed the instance,
           # and the loop keeps running so warmth (and the outage signal)
           # continue through the incident.
+          DEADLINE=$((SECONDS + 50 * 60))
           for round in $(seq 1 11); do
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::notice::keep-warm stopping at round $round — 50-minute deadline reached"
+              break
+            fi
             for host in $HOSTS; do
               if BODY=$(curl -sS -w "\n$host/api/health: ttfb=%{time_starttransfer}s code=%{http_code}" \
                 --fail --max-time 60 --retry 1 --retry-delay 3 \
