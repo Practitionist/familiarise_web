@@ -38,16 +38,16 @@
 # so in absolute terms this is small; the stall itself was also being billed at
 # ~30s per hit before this change.
 #
-# Both generated functions are covered. ___netlify-handler serves SSR/API/RSC
-# traffic; ___netlify-odb-handler serves ISR regeneration/fallback — the exact
-# path a cache-missed public page takes. The names are what
-# @netlify/plugin-nextjs generates and are stable across deploys of a runtime
-# major.
+# One generated function covers everything. Runtime API v2 consolidated the old
+# SSR handler and ISR/odb handler into a single ___netlify-server-handler
+# (@netlify/plugin-nextjs@5.15.13, confirmed via listSiteFunctions on 2026-08-22:
+# the only function on the site, m=1024). The classic ___netlify-handler /
+# ___netlify-odb-handler names belong to runtime v1 and match NOTHING today — an
+# earlier draft targeted them and Netlify silently ignored the override, which
+# is exactly how a "measured" no-op happens. If the adapter major bumps again,
+# re-enumerate names before trusting this block.
 # ─────────────────────────────────────────────────────────────────────────────
-[functions."___netlify-handler"]
-  memory = 2048
-
-[functions."___netlify-odb-handler"]
+[functions."___netlify-server-handler"]
   memory = 2048
 
 # Skip builds for Dependabot PRs
