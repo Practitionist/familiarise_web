@@ -37,6 +37,45 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ---
 
+## Scheduling policy
+
+Every scheduled workflow is checked by `scripts/ci/check-workflow-hygiene.ts`
+at build time. The guard used to forbid any two recurring jobs from sharing a
+start-minute (minute-uniqueness); since the #932 pool stampede it instead
+models what actually matters — concurrent load on the Supabase pool.
+
+**Runtime annotations.** A workflow may declare its estimated DB-active
+runtime anywhere in the file with a comment:
+
+```yaml
+    - cron: "32 * * * *"
+    # cron-runtime-minutes: 8
+```
+
+The value covers the job's database-active window (the `tsx` step), not the
+whole workflow — checkout, `npm ci`, and `prisma generate` never touch the
+pool. Jobs without an annotation default to **2 minutes**, which is right for
+the quick sweeps. The heaviest jobs are annotated:
+`reconcile-slot-availability: 8`, `auto-complete-appointments: 6`,
+`cleanup-tentative-slots: 5`, `cleanup-invalid-appointments: 5`.
+
+**The budget.** For each start-minute shared by recurring jobs, the guard sums
+the declared runtimes and fails when the total exceeds
+`POOL_BUDGET_MINUTES = 10`. That constant is derived from the pool guidance in
+`lib/prisma.ts`: pg.Pool opens up to 10 clients per function instance
+(`PG_POOL_MAX` clamps it in serverless), while Supavisor's transaction pooler
+fronts a small server-side pool — concurrent clients piling up is exactly what
+turned #932 into 5–9.6s connects. Once-a-day overlaps stay tolerated: they
+collide once and cost nothing. A single job declaring more than the whole
+budget fails on its own declaration, since no staggering can fit it.
+
+This beats minute-scarcity because uniqueness was only ever a proxy for pool
+contention, and the clock was running out of free minutes as jobs were added.
+Cost lets light jobs share a minute safely and forces the conversation onto
+real numbers whenever a heavy one wants in.
+
+---
+
 ## Per-Job Documentation
 
 ### a. Auto-Complete Appointments
