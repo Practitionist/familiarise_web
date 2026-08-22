@@ -24,6 +24,9 @@ import { reportSentryError } from "@/lib/observability/report";
 import type { EventType } from "@/utils/slotAllocation/types";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
+import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 export type RespondOutcome =
@@ -105,6 +108,97 @@ export async function acceptProposal(args: {
       extra: { rescheduleRequestId: args.rescheduleRequestId },
     });
     throw err;
+  }
+
+  // PR 2c (audit G2) — the answer finally travels back to the initiator:
+  // they proposed, the other party accepted, the booking HAS MOVED. Payload
+  // uses the MOVED arm (old = earliest released slot's original time; new =
+  // the first proposed time). Fire-and-forget; a Novu outage must not fail
+  // the accept.
+  try {
+    const detail = await prisma.rescheduleRequest.findUnique({
+      where: { id: args.rescheduleRequestId },
+      select: {
+        initiatedById: true,
+        appointment: {
+          select: {
+            organizationId: true,
+            appointmentType: true,
+            consultation: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        releasedSlotIds: true,
+        proposedSlots: { orderBy: { startsAt: "asc" }, take: 1, select: { startsAt: true } },
+      },
+    });
+    const appt = detail?.appointment;
+    const side = appt?.consultation ?? appt?.subscription;
+    const released = detail?.releasedSlotIds?.length
+      ? await prisma.slotOfAppointment.findFirst({
+          where: { id: { in: detail.releasedSlotIds } },
+          orderBy: { startsAt: "asc" },
+          select: { startsAt: true },
+        })
+      : null;
+    if (detail && appt && side && released && detail.proposedSlots[0]) {
+      // Normalize the consultation/subscription union once (TS narrows via
+      // the plan-key discriminators).
+      const isConsultation = "consultationPlan" in side;
+      const planTitle = isConsultation
+        ? side.consultationPlan.title
+        : side.subscriptionPlan.title;
+      const consultantUser = isConsultation
+        ? side.consultationPlan.consultantProfile.user
+        : side.subscriptionPlan.consultantProfile.user;
+      const consulteeUser = side.requestedBy.user;
+      const recipient = detail.initiatedById;
+      const other =
+        consulteeUser.id === detail.initiatedById
+          ? consultantUser.id
+          : consulteeUser.id;
+      const userIds = [recipient, other].filter(
+        (id): id is string => !!id && id !== recipient,
+      );
+      void notifyAppointmentRescheduled([recipient, ...userIds], {
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+        outcome: "MOVED",
+        oldDateTime: released.startsAt.toISOString(),
+        newDateTime: detail.proposedSlots[0].startsAt.toISOString(),
+      });
+    }
+  } catch (notifyErr) {
+    await import("@/lib/observability/report").then((m) =>
+      m.reportSentryError(
+        notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+        { subsystem: "bookings", op: "reschedule-accept-notify", expected: true },
+      ),
+    ).catch(() => {});
   }
 
   return { done: true };

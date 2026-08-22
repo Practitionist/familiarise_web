@@ -83,6 +83,9 @@ import {
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
+import { notifyAppointmentBooked } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 
 type AppointmentWithSlots = Appointment & {
   slotsOfAppointment: SlotOfAppointment[];
@@ -110,53 +113,20 @@ export class SlotAllocationService {
    */
   static async allocate(request: AllocationRequest): Promise<AllocationResult> {
     try {
-      switch (request.mode) {
-        case "auto":
-          return await this.autoAllocate(
-            request.eventType,
-            request.eventId,
-            request.idempotencyKey,
-            request.initialAllocation,
-            request.expectedTentativeSlotCount,
-          );
-
-        case "manual":
-          if (!request.slots || request.slots.length === 0) {
-            return {
-              success: false,
-              error: "Slots are required for manual allocation",
-              errorCode: "VALIDATION_ERROR",
-              httpStatus: 400,
-            };
-          }
-          return await this.manualAllocate(
-            request.eventType,
-            request.eventId,
-            request.slots,
-            request.idempotencyKey,
-            request.initialAllocation,
-            request.wideLock,
-            request.expectedTentativeSlotCount,
-          );
-
-        case "requested":
-          return await this.useRequestedSlots(
-            request.eventType,
-            request.eventId,
-            request.initialAllocation,
-            request.idempotencyKey,
-            request.override,
-            request.expectedTentativeSlotCount,
-          );
-
-        default:
-          return {
-            success: false,
-            error: `Invalid allocation mode: ${request.mode}`,
-            errorCode: "INVALID_MODE",
-            httpStatus: 400,
-          };
+      const result = await this.dispatch(request);
+      // PR 2c — the allocation-time notification (audit G1 / B9's promised
+      // completion): APPOINTMENT_BOOKED was deliberately skipped at payment
+      // when no slots existed; THIS is where the times finally exist, so both
+      // parties hear about them from every caller path (routes, auto-confirm,
+      // accept-proposal). Fire-and-forget: a Novu outage must never fail an
+      // allocation.
+      if (result.success) {
+        void this.notifyAllocationPlaced(
+          request.eventType,
+          request.eventId,
+        ).catch(() => {});
       }
+      return result;
     } catch (error) {
       const { errorCode, httpStatus } = this.classifyError(error);
       // Full-coverage policy: every error reaching here is reported, modelled
@@ -184,6 +154,284 @@ export class SlotAllocationService {
         httpStatus,
       };
     }
+  }
+
+  /**
+   * Mode router extracted so allocate() can post-process success uniformly
+   * (PR 2c notification) without each mode knowing about it.
+   */
+  private static async dispatch(
+    request: AllocationRequest,
+  ): Promise<AllocationResult> {
+    switch (request.mode) {
+      case "auto":
+        return await this.autoAllocate(
+          request.eventType,
+          request.eventId,
+          request.idempotencyKey,
+          request.initialAllocation,
+          request.expectedTentativeSlotCount,
+        );
+
+      case "manual":
+        if (!request.slots || request.slots.length === 0) {
+          return {
+            success: false,
+            error: "Slots are required for manual allocation",
+            errorCode: "VALIDATION_ERROR",
+            httpStatus: 400,
+          };
+        }
+        return await this.manualAllocate(
+          request.eventType,
+          request.eventId,
+          request.slots,
+          request.idempotencyKey,
+          request.initialAllocation,
+          request.wideLock,
+          request.expectedTentativeSlotCount,
+        );
+
+      case "requested":
+        return await this.useRequestedSlots(
+          request.eventType,
+          request.eventId,
+          request.initialAllocation,
+          request.idempotencyKey,
+          request.override,
+          request.expectedTentativeSlotCount,
+        );
+
+      default:
+        return {
+          success: false,
+          error: `Invalid allocation mode: ${request.mode}`,
+          errorCode: "INVALID_MODE",
+          httpStatus: 400,
+        };
+    }
+  }
+
+  /**
+   * PR 2c — fire-and-forget APPOINTMENT_BOOKED to both parties once real
+   * times exist. Completes the B9 story: payment skipped this notification
+   * for slot-less bookings on purpose.
+   */
+  private static async notifyAllocationPlaced(
+    eventType: EventType,
+    eventId: string,
+  ): Promise<void> {
+    let context: {
+      userIds: string[];
+      consultantName: string;
+      consulteeName: string;
+      planTitle: string;
+      firstStart: Date | null;
+      organizationId: string | null;
+      appointmentId?: string;
+    } | null = null;
+
+    if (eventType === "consultation") {
+      const row = await prisma.consultation.findUnique({
+        where: { id: eventId },
+        select: {
+          consultationPlan: {
+            select: {
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          appointment: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
+                orderBy: { startsAt: "asc" },
+                take: 1,
+                select: { startsAt: true },
+              },
+            },
+          },
+        },
+      });
+      if (!row?.appointment) return;
+      context = {
+        userIds: [
+          row.consultationPlan.consultantProfile.user.id,
+          row.requestedBy.user.id,
+        ].filter(Boolean),
+        consultantName:
+          row.consultationPlan.consultantProfile.user.name || "Consultant",
+        consulteeName: row.requestedBy.user.name || "Consultee",
+        planTitle: row.consultationPlan.title,
+        firstStart: row.appointment.slotsOfAppointment[0]?.startsAt ?? null,
+        organizationId: row.appointment.organizationId,
+        appointmentId: row.appointment.id,
+      };
+    } else if (eventType === "subscription") {
+      const row = await prisma.subscription.findUnique({
+        where: { id: eventId },
+        select: {
+          subscriptionPlan: {
+            select: {
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          appointments: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
+                orderBy: { startsAt: "asc" },
+                take: 1,
+                select: { startsAt: true },
+              },
+            },
+          },
+        },
+      });
+      if (!row || row.appointments.length === 0) return;
+      context = {
+        userIds: [
+          row.subscriptionPlan.consultantProfile.user.id,
+          row.requestedBy.user.id,
+        ].filter(Boolean),
+        consultantName:
+          row.subscriptionPlan.consultantProfile.user.name || "Consultant",
+        consulteeName: row.requestedBy.user.name || "Consultee",
+        planTitle: row.subscriptionPlan.title,
+        firstStart: row.appointments[0].slotsOfAppointment[0]?.startsAt ?? null,
+        organizationId: row.appointments[0].organizationId,
+        appointmentId: row.appointments[0].id,
+      };
+    } else if (eventType === "webinar") {
+      const row = await prisma.webinar.findUnique({
+            where: { id: eventId },
+            select: {
+              webinarPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { user: { select: { id: true, name: true } } },
+                  },
+                },
+              },
+              appointment: {
+                select: {
+                  id: true,
+                  organizationId: true,
+                  slotsOfAppointment: {
+                    where: { isTentative: false, deletedAt: null },
+                    select: {
+                      startsAt: true,
+                      user: { select: { id: true, name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          });
+      if (!row?.appointment) return;
+      const plan = row.webinarPlan;
+      const hostUser = plan.consultantProfile?.user;
+      if (!hostUser) return;
+      const userMap = new Map<string, string>();
+      let firstStart: Date | null = null;
+      for (const slot of row.appointment.slotsOfAppointment) {
+        if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
+        for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+      }
+      userMap.delete(hostUser.id);
+      context = {
+        userIds: [hostUser.id, ...userMap.keys()],
+        consultantName: hostUser.name || "Consultant",
+        consulteeName:
+          userMap.size === 1
+            ? [...userMap.values()][0]
+            : `${userMap.size} attendees`,
+        planTitle: plan.title,
+        firstStart,
+        organizationId: row.appointment.organizationId,
+        appointmentId: row.appointment.id,
+      };
+    } else {
+      const row = await prisma.class.findUnique({
+            where: { id: eventId },
+            select: {
+              classPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { user: { select: { id: true, name: true } } },
+                  },
+                },
+              },
+              appointments: {
+                select: {
+                  id: true,
+                  organizationId: true,
+                  slotsOfAppointment: {
+                    where: { isTentative: false, deletedAt: null },
+                    select: {
+                      startsAt: true,
+                      user: { select: { id: true, name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          });
+      if (!row) return;
+      const appts = row.appointments.filter(Boolean);
+      if (appts.length === 0) return;
+      const plan = row.classPlan;
+      const hostUser = plan.consultantProfile?.user;
+      if (!hostUser) return;
+      const host = hostUser;
+      const userMap = new Map<string, string>();
+      let firstStart: Date | null = null;
+      for (const a of appts) {
+        for (const slot of a.slotsOfAppointment) {
+          if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
+          for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+        }
+      }
+      userMap.delete(host.id);
+      context = {
+        userIds: [host.id, ...userMap.keys()],
+        consultantName: host.name || "Consultant",
+        consulteeName:
+          userMap.size === 1
+            ? [...userMap.values()][0]
+            : `${userMap.size} attendees`,
+        planTitle: plan.title,
+        firstStart,
+        organizationId: appts[0]!.organizationId,
+        appointmentId: appts[0]!.id,
+      };
+    }
+
+    if (!context || context.userIds.length === 0) return;
+
+    void notifyAppointmentBooked(context.userIds, {
+      ...notificationScope(context.organizationId),
+      appointmentId: context.appointmentId,
+      dateTime: context.firstStart?.toISOString(),
+      appointmentType: eventType,
+      consultantName: context.consultantName,
+      consulteeName: context.consulteeName,
+      planTitle: context.planTitle,
+      dashboardUrl: notificationHref(context.organizationId, "appointments"),
+    });
   }
 
   /**
