@@ -324,7 +324,14 @@ export async function GET(
               slotsInWindow,
             ],
           },
-          include: { slotsOfAppointment: true, ...LIVE_OCCUPANCY_SELECT },
+          include: {
+            // Same tombstone exclusion as the consultant branches — the merge
+            // below flatMaps these children into the painted grid, so an
+            // unfiltered include would reintroduce deleted rows through the
+            // one arm the first pass missed (CodeRabbit triage).
+            slotsOfAppointment: { where: { deletedAt: null } },
+            ...LIVE_OCCUPANCY_SELECT,
+          },
         })
       : Promise.resolve([]);
 
