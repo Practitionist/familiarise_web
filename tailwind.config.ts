@@ -183,9 +183,15 @@ const config: Config = {
     require("tailwindcss-animate"),
     // Wide enough for the two-column booking dialog AND tall enough that the
     // calendar's six week rows actually fit side-by-side with its chrome.
-    require("tailwindcss/plugin")(({ addVariant }) => {
-      addVariant("mdh", "@media (min-width: 768px) and (min-height: 620px)");
-    }),
+    require("tailwindcss/plugin")(
+      ({
+        addVariant,
+      }: {
+        addVariant: (name: string, variant: string | unknown[]) => void;
+      }) => {
+        addVariant("mdh", "@media (min-width: 768px) and (min-height: 620px)");
+      },
+    ),
   ],
 };
 export default config;
