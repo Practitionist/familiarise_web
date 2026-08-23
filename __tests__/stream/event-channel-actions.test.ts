@@ -43,12 +43,30 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: jest.fn().mockResolvedValue({ users: {} }),
 }));
 
+// syncUserEventChannels is session-gated (F-HIGH-1 sibling); mocking
+// auth-server also keeps jest away from lib/auth's better-auth ESM imports.
+// Default: privileged staff, which passes the self-or-privileged gate for
+// every userId these tests drive.
+const mockGetSession = jest.fn();
+jest.mock("../../lib/auth-server", () => ({
+  getSession: () => mockGetSession(),
+}));
+
+// auth-helpers imports next/server (NextResponse), which needs the fetch
+// globals jest's node env lacks — mirror the real one-liner instead.
+jest.mock("../../lib/auth-helpers", () => ({
+  isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
+}));
+
 describe("Event Channel Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
     mockCache.initialSyncCompletedUsers.clear();
+    mockGetSession.mockResolvedValue({
+      user: { id: "staff-user", role: "ADMIN" },
+    });
   });
 
   describe("checkEventChannelExists", () => {
@@ -561,6 +579,35 @@ describe("Event Channel Actions", () => {
 
       expect(result.success).toBe(true);
       expect(result.skipped).toBe(true);
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects syncing another user's channels as a non-privileged caller", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: "attacker", role: "USER" },
+      });
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("victim-user")).rejects.toThrow(
+        "Forbidden: cannot sync channels for another user",
+      );
+      // The gate fires before ANY Stream/DB work happens.
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects a banned user even when syncing their own channels", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: "banned-user", role: "USER", banned: true },
+      });
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("banned-user")).rejects.toThrow(
+        "Forbidden: account suspended",
+      );
       expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
 

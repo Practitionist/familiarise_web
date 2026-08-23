@@ -29,6 +29,8 @@ import {
   DEFAULT_RETENTION_DAYS,
   isPastRetention,
 } from "@/lib/stream/channel-lifecycle";
+import { getSession } from "@/lib/auth-server";
+import { isPrivileged } from "@/lib/auth-helpers";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -502,6 +504,25 @@ export async function syncUserEventChannels(
   durationMs?: number;
 }> {
   userIdSchema.parse(userId);
+
+  // F-HIGH-1 sibling: this module is "use server", so every export is
+  // remotely invocable, and this sync drives unbounded metered Stream writes
+  // keyed off an arbitrary userId. Mirror assertCanMintToken
+  // (stream.action.ts): read the session with the cookie cache disabled so a
+  // just-demoted staff/admin or a just-banned user cannot ride a stale
+  // session, then allow self or privileged only. Legit callers always act as
+  // themselves (the provider's fire-and-forget sync and
+  // InitializeUserChannelsButton both pass the signed-in user's own id).
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to sync channels");
+  }
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
+  }
+  if (session.user.id !== userId && !isPrivileged(session.user.role)) {
+    throw new Error("Forbidden: cannot sync channels for another user");
+  }
 
   // Allow forced re-sync by clearing the session guard first
   if (force) {
