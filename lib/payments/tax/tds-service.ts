@@ -40,7 +40,8 @@
  *
  * When unblocked:
  *   1. Route consultant payouts through `deriveTds()` in compliance/tds.ts.
- *   2. Use the now-frozen schema: `ConsultantProfile.taxEntityType` (#778 §D)
+ *   2. Use the now-frozen schema: `ConsultantTaxInfo.taxEntityType` (#778 §D;
+ *      canonical since the BLOCKER-0 dedup, #1230)
  *      + `tdsSection` override drive the residual 194J/194C threshold cases
  *      this engine handled; the ₹50K/entity-type threshold logic moves there.
  *   3. Keep `TDSRecord` + this file's FY/quarter arithmetic as the shared

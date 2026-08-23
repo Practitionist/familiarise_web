@@ -14,6 +14,12 @@ const updateTaxInfoSchema = z.object({
   panNumber: z.string().length(10).optional(),
   gstin: z.string().length(15).optional(),
   country: z.string().length(2).optional(),
+  // BLOCKER-0 resolution (#1230 / handoff): this nullable column is the
+  // CANONICAL entity-type field — payout withholding reads it fail-closed
+  // (null ⇒ no ₹5L exemption). Until a consultant declares it here, every
+  // payout over-withholds rather than wrongly granting companies the
+  // individual exemption.
+  taxEntityType: z.enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"]).optional(),
 });
 
 /**
@@ -48,6 +54,7 @@ export async function GET() {
       gstinVerified: taxInfo?.gstinVerified ?? false,
       country: taxInfo?.country ?? "IN",
       isIndianResident: taxInfo?.isIndianResident ?? true,
+      taxEntityType: taxInfo?.taxEntityType ?? null,
     });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
@@ -105,6 +112,9 @@ export async function PUT(req: NextRequest) {
         gstin: validated.gstin,
         country: validated.country || "IN",
         isIndianResident,
+        ...(validated.taxEntityType !== undefined && {
+          taxEntityType: validated.taxEntityType,
+        }),
       },
       update: {
         ...(validated.panNumber !== undefined && {
@@ -120,6 +130,9 @@ export async function PUT(req: NextRequest) {
           country: validated.country,
           isIndianResident,
         }),
+        ...(validated.taxEntityType !== undefined && {
+          taxEntityType: validated.taxEntityType,
+        }),
       },
     });
 
@@ -130,6 +143,7 @@ export async function PUT(req: NextRequest) {
       gstin: taxInfo.gstin,
       gstinVerified: taxInfo.gstinVerified,
       country: taxInfo.country,
+      taxEntityType: taxInfo.taxEntityType ?? null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
