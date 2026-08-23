@@ -9,6 +9,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { z } from "zod";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
+import { isValidUdyamNumber } from "@/lib/compliance/msme";
 
 const updateTaxInfoSchema = z.object({
   panNumber: z.string().length(10).optional(),
@@ -20,6 +21,14 @@ const updateTaxInfoSchema = z.object({
   // payout over-withholds rather than wrongly granting companies the
   // individual exemption.
   taxEntityType: z.enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"]).optional(),
+  // MSME declaration — #1230 intake writer. The payout deadline engine reads
+  // msmeStatus/writtenAgreementWithFamiliarise on ConsultantProfile to stamp
+  // mustPayByDate (MSMED 15/45-day terms + §16 interest exposure); nothing
+  // wrote them before, so every consultant defaulted to NONE. Udyam format is
+  // validated server-side (UDYAM-XX-00-0000000).
+  msmeStatus: z.enum(["NONE", "MICRO", "SMALL", "MEDIUM"]).optional(),
+  udyamNumber: z.string().max(19).nullable().optional(),
+  msmeWrittenAgreement: z.boolean().optional(),
 });
 
 /**
@@ -55,6 +64,9 @@ export async function GET() {
       country: taxInfo?.country ?? "IN",
       isIndianResident: taxInfo?.isIndianResident ?? true,
       taxEntityType: taxInfo?.taxEntityType ?? null,
+      msmeStatus: consultantProfile.msmeStatus,
+      udyamNumber: consultantProfile.udyamNumber,
+      msmeWrittenAgreement: consultantProfile.writtenAgreementWithFamiliarise,
     });
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
@@ -92,6 +104,20 @@ export async function PUT(req: NextRequest) {
     const body = await req.json();
     const validated = updateTaxInfoSchema.parse(body);
 
+    // Udyam format gate — reject malformed numbers rather than storing junk
+    // that the MSME deadline engine would treat as registered (§37(2)(g)
+    // disallowance turns on this classification being real).
+    if (
+      validated.udyamNumber !== undefined &&
+      validated.udyamNumber !== null &&
+      !isValidUdyamNumber(validated.udyamNumber)
+    ) {
+      return NextResponse.json(
+        { error: "Udyam number must match UDYAM-XX-00-0000000" },
+        { status: 400 },
+      );
+    }
+
     const isIndianResident = (validated.country || "IN") === "IN";
 
     // Encrypt PAN if provided
@@ -103,8 +129,7 @@ export async function PUT(req: NextRequest) {
       panFields = { panEncrypted: encrypted, panLast4: last4 };
     }
 
-    const taxInfo = await prisma.consultantTaxInfo.upsert({
-      where: { consultantProfileId: consultantProfile.id },
+    const taxInfo = await prisma.consultantTaxInfo.upsert({      where: { consultantProfileId: consultantProfile.id },
       create: {
         consultantProfileId: consultantProfile.id,
         panEncrypted: panFields?.panEncrypted ?? null,
@@ -136,6 +161,26 @@ export async function PUT(req: NextRequest) {
       },
     });
 
+    // MSME declaration rides the same PUT (#1230): these live on the
+    // ConsultantProfile row itself, not the TaxInfo satellite.
+    const msmeProfileUpdate = {
+      ...(validated.msmeStatus !== undefined && {
+        msmeStatus: validated.msmeStatus,
+      }),
+      ...(validated.udyamNumber !== undefined && {
+        udyamNumber: validated.udyamNumber,
+      }),
+      ...(validated.msmeWrittenAgreement !== undefined && {
+        writtenAgreementWithFamiliarise: validated.msmeWrittenAgreement,
+      }),
+    };
+    if (Object.keys(msmeProfileUpdate).length > 0) {
+      await prisma.consultantProfile.update({
+        where: { id: consultantProfile.id },
+        data: msmeProfileUpdate,
+      });
+    }
+
     return NextResponse.json({
       message: "Tax info updated",
       panMasked: taxInfo.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
@@ -144,6 +189,8 @@ export async function PUT(req: NextRequest) {
       gstinVerified: taxInfo.gstinVerified,
       country: taxInfo.country,
       taxEntityType: taxInfo.taxEntityType ?? null,
+      msmeStatus: validated.msmeStatus ?? null,
+      udyamNumber: validated.udyamNumber ?? null,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

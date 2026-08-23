@@ -68,6 +68,12 @@ const PatchBodySchema = z
     pan: z.string().length(10).nullable().optional(),
     gstRegStatus: GstRegStatusSchema.optional(),
     gstStateCode: z.string().length(2).nullable().optional(),
+    // MSME (MSMED Act) declaration — #1230. The payout deadline engine reads
+    // this satellite to compute the 15/45-day mustPayByDate on host-org
+    // payouts; until now nothing wrote it, so every org defaulted to NONE and
+    // got 60-day terms where the statute mandates 15/45.
+    msmeStatus: z.enum(["NONE", "MICRO", "SMALL", "MEDIUM"]).optional(),
+    msmeWrittenAgreementOnFile: z.boolean().optional(),
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     isPublic: z.boolean().optional(),
@@ -458,6 +464,34 @@ export async function PATCH(
                               };
                             })()
                           : { panEncrypted: null, panLast4: null })),
+                    },
+                  },
+                },
+              }
+            : {}),
+          // MSME satellite — same conditional-relation pattern as taxInfo
+          // above (#1230 intake writer for the payout-deadline engine).
+          ...(body.msmeStatus !== undefined || body.msmeWrittenAgreementOnFile !== undefined
+            ? {
+                msmeInfo: {
+                  upsert: {
+                    create: {
+                      ...(body.msmeStatus !== undefined && {
+                        msmeStatus: body.msmeStatus,
+                      }),
+                      ...(body.msmeWrittenAgreementOnFile !== undefined && {
+                        msmeWrittenAgreementOnFile:
+                          body.msmeWrittenAgreementOnFile,
+                      }),
+                    },
+                    update: {
+                      ...(body.msmeStatus !== undefined && {
+                        msmeStatus: body.msmeStatus,
+                      }),
+                      ...(body.msmeWrittenAgreementOnFile !== undefined && {
+                        msmeWrittenAgreementOnFile:
+                          body.msmeWrittenAgreementOnFile,
+                      }),
                     },
                   },
                 },
