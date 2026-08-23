@@ -138,30 +138,59 @@ describe("Channel Actions", () => {
       );
     });
 
-    it("adopts an existing channel when creation loses the create race (F-HIGH-3)", async () => {
+    it.each([
+      [
+        "plain already-exists message",
+        new Error('GetOrCreateChannel failed: "channel already exists"'),
+      ],
+      [
+        "message with unrelated numeric code",
+        Object.assign(new Error("channel already exists"), { code: 4 }),
+      ],
+    ])(
+      "adopts an existing channel on duplicate rejection (%s)",
+      async (_label, duplicateError) => {
+        const { createChannel } =
+          await import("../../actions/stream/chat/channel.action");
+
+        mockChannel.create.mockRejectedValueOnce(duplicateError);
+
+        // team type so the post-create path includes the host moderator grant.
+        const result = await createChannel({
+          channelType: "team",
+          channelId: "race-loser",
+          members: ["user1"],
+          createdById: "user1",
+        });
+
+        // Adopted, not failed: same id handed back, no raw payload, and the
+        // normal post-create path still ran (moderator grant + cache stamp).
+        expect(result.channelId).toBe("race-loser");
+        expect(result.channelData).toBeNull();
+        expect(mockChannel.assignRoles).toHaveBeenCalled();
+        expect(mockCache.markChannelExists).toHaveBeenCalled();
+      },
+    );
+
+    it("rethrows Not Allowed (code 17) failures instead of adopting", async () => {
+      // Stream's error table defines 17 as Not Allowed / HTTP 403 — a
+      // permission failure, never a duplicate. The predicate must not swallow
+      // it into the adopt path or creation would be skipped silently.
+      const forbidden = Object.assign(new Error("Not Allowed"), { code: 17 });
+      mockChannel.create.mockRejectedValueOnce(forbidden);
+
       const { createChannel } =
         await import("../../actions/stream/chat/channel.action");
 
-      const duplicateError = Object.assign(
-        new Error("CreateChannel failed with error code 17: already exists"),
-        { code: 17 },
-      );
-      mockChannel.create.mockRejectedValueOnce(duplicateError);
-
-      // team type so the post-create path includes the host moderator grant.
-      const result = await createChannel({
-        channelType: "team",
-        channelId: "race-loser",
-        members: ["user1"],
-        createdById: "user1",
-      });
-
-      // Adopted, not failed: same id handed back, no raw payload, and the
-      // normal post-create path still ran (moderator grant + existence cache).
-      expect(result.channelId).toBe("race-loser");
-      expect(result.channelData).toBeNull();
-      expect(mockChannel.assignRoles).toHaveBeenCalled();
-      expect(mockCache.markChannelExists).toHaveBeenCalled();
+      await expect(
+        createChannel({
+          channelType: "messaging",
+          channelId: "forbidden-channel",
+          members: ["user1"],
+          createdById: "user1",
+        }),
+      ).rejects.toThrow("Not Allowed");
+      expect(mockCache.markChannelExists).not.toHaveBeenCalled();
     });
 
     it("rethrows non-duplicate create failures", async () => {

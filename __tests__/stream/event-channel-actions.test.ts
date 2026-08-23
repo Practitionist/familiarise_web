@@ -49,7 +49,8 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
 // every userId these tests drive.
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
-  getSession: () => mockGetSession(),
+  getSession: (disableCookieCache?: boolean) =>
+    mockGetSession(disableCookieCache),
 }));
 
 // auth-helpers imports next/server (NextResponse), which needs the fetch
@@ -227,11 +228,10 @@ describe("Event Channel Actions", () => {
       mockChannel.addMembers
         .mockRejectedValueOnce(new Error("Channel not found"))
         .mockResolvedValueOnce({});
-      const duplicateError = Object.assign(
-        new Error("CreateChannel failed with error code 17: already exists"),
-        { code: 17 },
+      const duplicateError = new Error(
+        'GetOrCreateChannel failed: "channel already exists"',
       );
-      mockChannel.create.mockRejectedValue(duplicateError);
+      mockChannel.create.mockRejectedValueOnce(duplicateError);
 
       mockPrisma.webinar.findUnique.mockResolvedValue({
         id: "web-race",
@@ -258,6 +258,49 @@ describe("Event Channel Actions", () => {
       expect(mockCache.markMembership).toHaveBeenCalledWith(
         "webinar-web-race",
         "raced-user",
+        true,
+      );
+    });
+
+    it("leaves membership UNCACHED when the post-adoption retry fails", async () => {
+      mockCache.getMembershipCached.mockReturnValue(false);
+      // First miss → creation attempt; adoption wins; then BOTH membership
+      // attempts fail.
+      mockChannel.addMembers
+        .mockRejectedValueOnce(new Error("Channel not found"))
+        .mockRejectedValueOnce(new Error("retry failed too"));
+      mockChannel.create.mockRejectedValueOnce(
+        new Error('GetOrCreateChannel failed: "channel already exists"'),
+      );
+
+      mockPrisma.webinar.findUnique.mockResolvedValue({
+        id: "web-race-2",
+        webinarPlan: {
+          title: "Raced Webinar 2",
+          consultantProfile: { user: { id: "consultant-1" } },
+        },
+        appointment: {
+          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+        },
+      });
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      // Still resolves — a failed join must not fail the caller; the next
+      // sync reconciles.
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-race-2",
+        "unlucky-user",
+      );
+      expect(result.success).toBe(true);
+
+      // But nothing may cache "is member": a cached true would suppress every
+      // future add attempt until the TTL lapses.
+      expect(mockCache.markMembership).not.toHaveBeenCalledWith(
+        "webinar-web-race-2",
+        "unlucky-user",
         true,
       );
     });
@@ -594,6 +637,21 @@ describe("Event Channel Actions", () => {
         "Forbidden: cannot sync channels for another user",
       );
       // The gate fires before ANY Stream/DB work happens.
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      // And it reads the session with the cookie cache disabled, so a
+      // just-demoted/banned identity cannot ride a stale cached session.
+      expect(mockGetSession).toHaveBeenCalledWith(true);
+    });
+
+    it("rejects unauthenticated callers outright", async () => {
+      mockGetSession.mockResolvedValue(null);
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("anyone")).rejects.toThrow(
+        "Unauthorized: sign in to sync channels",
+      );
       expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
 

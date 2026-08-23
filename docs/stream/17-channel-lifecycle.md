@@ -94,9 +94,15 @@ What adoption does guarantee:
 What adoption does **not** guarantee is your membership. The winner's roster
 snapshot may predate you, so the lazy paths (`addUserToEventChannel`,
 `addUserToDmChannel`) retry `addMembers([userId])` once after adopting. That
-retry is best-effort: a failure is logged and swallowed, never thrown, because
-the next dashboard sync will reconcile a genuinely missed membership anyway.
-Any other create failure — quota, outage, validation — still propagates.
+retry is best-effort: a failure is logged and swallowed, never thrown, and the
+membership cache stays unwritten so nothing suppresses a future attempt — the
+next dashboard sync will reconcile a genuinely missed membership anyway.
+The explicit creators (`createChannel` and its entity wrappers) intentionally
+skip an equivalent post-adoption diff: their roster inputs are deterministic
+from the same entity rows the winner read, so divergence is rare and transient,
+and a `queryChannels` diff on the awaited payment-webhook hot path would cost
+more than it protects. Any other create failure — quota, outage, validation —
+still propagates.
 
 ## Aging: freeze, then delete
 

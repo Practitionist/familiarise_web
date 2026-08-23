@@ -367,7 +367,7 @@ flowchart TB
     AuthGate -->|Yes| GetUser[Get user from database]
 
     GetUser --> CheckUser{User exists?}
-    CheckUser -->|No| Error1[Throw: User not found]
+    CheckUser -->|No| ResolveMissing["Resolve: {success:false,<br/>error:'User not found'}"]
     CheckUser -->|Yes| GetWebinarsAppts
 
     subgraph "Webinar Membership"
@@ -611,6 +611,9 @@ export async function syncAllUserChannels() {
 
   for (const user of users) {
     try {
+      // The session gate applies here too: this loop only passes when it runs
+      // under a PRIVILEGED (ADMIN/STAFF) session, or when each call acts as
+      // self. An unauthenticated script is rejected outright.
       await syncUserEventChannels(user.id);
       successCount++;
     } catch (error) {

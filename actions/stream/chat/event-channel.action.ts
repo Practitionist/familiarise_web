@@ -199,6 +199,7 @@ export async function addUserToEventChannel(
     // F-HIGH-3: a concurrent creator may win the race between our failed
     // addMembers above and this create(); on their duplicate-create rejection
     // we ADOPT the winner's channel instead of failing this user's join.
+    let adoptRetryFailed = false;
     try {
       await withStreamCircuitBreaker(
         () => channelWithData.create(),
@@ -220,6 +221,7 @@ export async function addUserToEventChannel(
       try {
         await channel.addMembers([userId]);
       } catch (adoptError) {
+        adoptRetryFailed = true;
         streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
           channelId,
           userId,
@@ -243,7 +245,13 @@ export async function addUserToEventChannel(
     }
 
     markChannelExists(channelType, channelId);
-    markMembership(channelId, userId, true);
+    // Cache membership only when it is actually ensured: after an adopted race
+    // whose addMembers retry failed we leave it UNCACHED so the next sync (or
+    // navigation) retries, instead of a cached "true" suppressing every future
+    // attempt until the TTL lapses.
+    if (!adoptRetryFailed) {
+      markMembership(channelId, userId, true);
+    }
     created = true;
 
     streamLogger.info("Created channel and added user", {
@@ -946,6 +954,7 @@ async function addUserToDmChannel(
   } as Record<string, unknown>);
   // F-HIGH-3: same adopt-on-duplicate-create contract as the event path — a
   // concurrent creator of this DM wins the race, we adopt their channel.
+  let adoptRetryFailed = false;
   try {
     await withStreamCircuitBreaker(
       () => channelWithData.create(),
@@ -966,6 +975,7 @@ async function addUserToDmChannel(
     try {
       await channel.addMembers([currentUserId]);
     } catch (adoptError) {
+      adoptRetryFailed = true;
       streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
         channelId,
         currentUserId,
@@ -989,7 +999,10 @@ async function addUserToDmChannel(
   }
 
   markChannelExists(channelType, channelId);
-  markMembership(channelId, currentUserId, true);
+  // Same uncached-on-failed-retry rule as the event path above.
+  if (!adoptRetryFailed) {
+    markMembership(channelId, currentUserId, true);
+  }
   streamLogger.info("Created DM channel", {
     channelId,
     consultantUserId,
@@ -1128,7 +1141,11 @@ async function getWebinarIdsForUser(
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: { select: { endsAt: true } },
+              slotsOfAppointment: {
+                orderBy: { endsAt: "desc" },
+                take: 1,
+                select: { endsAt: true },
+              },
             },
           },
         },
@@ -1149,7 +1166,11 @@ async function getWebinarIdsForUser(
         appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: { select: { endsAt: true } },
+            slotsOfAppointment: {
+              orderBy: { endsAt: "desc" },
+              take: 1,
+              select: { endsAt: true },
+            },
           },
         },
       },
@@ -1191,7 +1212,11 @@ async function getClassIdsForUser(
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: { select: { endsAt: true } },
+              slotsOfAppointment: {
+                orderBy: { endsAt: "desc" },
+                take: 1,
+                select: { endsAt: true },
+              },
             },
           },
         },
@@ -1214,7 +1239,11 @@ async function getClassIdsForUser(
         appointments: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: { select: { endsAt: true } },
+            slotsOfAppointment: {
+              orderBy: { endsAt: "desc" },
+              take: 1,
+              select: { endsAt: true },
+            },
           },
         },
       },
