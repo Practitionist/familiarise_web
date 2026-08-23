@@ -528,12 +528,30 @@ export const addUserToEventChannel = async (
         members: [userId], // Add during creation
       });
 
-      await channel.create();
-      systemCreatedChannel = true;
-      console.log(
-        `Created channel ${channelId} with creator ${channelCreatorId} ` +
-          `and initial member ${userId}`,
-      );
+      try {
+        await channel.create();
+        systemCreatedChannel = true;
+        console.log(
+          `Created channel ${channelId} with creator ${channelCreatorId} ` +
+            `and initial member ${userId}`,
+        );
+      } catch (createError) {
+        if (!isChannelAlreadyExistsError(createError)) throw createError;
+
+        // Lost a concurrent-create race: ADOPT the winner's channel instead
+        // of failing this user's join, and retry our own membership once —
+        // the winner's roster snapshot may predate us.
+        console.log(`Lost the create race for ${channelId}; adopting`);
+        try {
+          await channel.addMembers([userId]);
+        } catch (adoptError) {
+          // Best-effort: logged, never thrown; the next sync reconciles a miss.
+          console.warn(
+            `Post-adoption addMembers failed for ${userId}:`,
+            adoptError,
+          );
+        }
+      }
     } else {
       // Channel exists - update name if needed and add member
       const eventData = await getEventData(eventType, eventId);
