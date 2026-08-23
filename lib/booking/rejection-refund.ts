@@ -42,7 +42,10 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  isFreeCreditIntent,
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
 import { resolveBookingRefundContext } from "./cancellation-scope";
 
 export type RejectionRefundOutcome = {
@@ -98,6 +101,18 @@ export async function refundRejectedRequest(args: {
       ctx.hoursUntilNextSession ?? -1,
       true,
     );
+    // #1161 — a fully-credit-funded payment carries amount 0, so the clamp
+    // below reads 0 and used to skip the front door entirely: rejecting such a
+    // booking restored no credits. The credits rail accepts no partial amount
+    // anyway, so it routes around the clamp at 100% instead of through it.
+    if (isFreeCreditIntent(ctx.paidPayment.paymentIntent)) {
+      const result = await refundBookingPayment({
+        paymentId: ctx.paidPayment.id,
+        reason: `${args.kind} request rejected by consultant (${refundPct}%)`,
+        initiatedByUserId: args.initiatedByUserId,
+      });
+      return { refundPct, amountRefundedPaise: result.amountRefundedPaise };
+    }
     // Clamp to what is actually still refundable. A percentage of the gross
     // overshoots on a payment with an earlier partial refund, and the refund
     // operation rejects the whole request rather than paying the remainder.
