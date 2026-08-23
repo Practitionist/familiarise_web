@@ -34,6 +34,7 @@ import { getSession } from "../../lib/auth-server";
 import prisma from "../../lib/prisma";
 import {
   ONBOARDING_DRAFT_MAX_BYTES,
+  createDraftSaveQueue,
   encodeDraftForSave,
   reviveDraftPayload,
   sanitizeDraftValue,
@@ -274,6 +275,65 @@ describe("clearOnboardingDraftAction", () => {
     await expect(clearOnboardingDraftAction()).resolves.toMatchObject({
       success: false,
     });
+  });
+});
+
+describe("createDraftSaveQueue", () => {
+  it("serializes tasks in enqueue order even when they would resolve out of order", async () => {
+    const queue = createDraftSaveQueue();
+    const order: string[] = [];
+
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => (releaseFirst = resolve));
+
+    const first = queue.enqueue(async () => {
+      await gate; // slow save dispatched EARLY
+      order.push("first");
+    });
+    const second = queue.enqueue(async () => {
+      order.push("second"); // fast save dispatched LATE
+    });
+
+    expect(order).toEqual([]); // second must wait for the first to settle
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  it("runs later tasks even when an earlier task rejected", async () => {
+    const queue = createDraftSaveQueue();
+
+    const failing = queue.enqueue(async () => {
+      throw new Error("network down");
+    });
+    await expect(failing).rejects.toThrow("network down");
+
+    await expect(queue.enqueue(async () => "ok")).resolves.toBe("ok");
+  });
+
+  it("drain resolves only after every in-flight task has settled", async () => {
+    const queue = createDraftSaveQueue();
+    let settled = false;
+    void queue.enqueue(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      settled = true;
+    });
+
+    await queue.drain();
+    expect(settled).toBe(true);
+  });
+
+  it("drain never rejects, even when a drained task failed", async () => {
+    const queue = createDraftSaveQueue();
+    void queue
+      .enqueue(async () => {
+        throw new Error("boom");
+      })
+      .catch(() => {});
+
+    await expect(queue.drain()).resolves.toBeUndefined();
+    // Queue stays usable after a failure.
+    await expect(queue.enqueue(async () => "next")).resolves.toBe("next");
   });
 });
 

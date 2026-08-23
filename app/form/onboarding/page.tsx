@@ -11,7 +11,11 @@ import {
   loadOnboardingDraftAction,
   saveOnboardingDraftAction,
 } from "@/actions/onboarding-draft.action";
-import { encodeDraftForSave } from "@/utils/onboarding-draft";
+import {
+  createDraftSaveQueue,
+  encodeDraftForSave,
+  type DraftSaveQueue,
+} from "@/utils/onboarding-draft";
 import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import {
   OnboardingFormData,
@@ -107,6 +111,8 @@ interface OnboardingStepContext {
   onSubmit: (data: Partial<OnboardingFormData>) => Promise<void>;
   onGoToStep: (targetStep: number) => void;
   onExitOrgWizard: () => void;
+  /** Settle in-flight draft saves before anything deletes the row. */
+  onQuiesceDraftSaves: () => Promise<void>;
 }
 
 interface OnboardingStep {
@@ -276,6 +282,9 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
           afterLaunch={async () => {
             const userId = ctx.userId;
             if (!userId) return;
+            // Same invariant as the submit path: no save may land after the
+            // draft row is deleted below.
+            await ctx.onQuiesceDraftSaves();
             await completeOrgWorkspaceOnboardingAction(userId);
             await clearOnboardingDraftAction();
           }}
@@ -309,6 +318,13 @@ const MultiStepForm: React.FC = () => {
   const draftReadyRef = useRef(false);
   const draftCompletedRef = useRef(false);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Serialized saves (review round 1): a later keystroke must land after an
+  // earlier in-flight upsert, and the row must never be deleted while a save
+  // is still unsettled — otherwise the upsert recreates it after the clear.
+  const draftSaveQueueRef = useRef<DraftSaveQueue | null>(null);
+  if (!draftSaveQueueRef.current) {
+    draftSaveQueueRef.current = createDraftSaveQueue();
+  }
 
   // Apply a referral code captured at first touch (signup / r/[code]) now that
   // the user is authenticated — covers OAuth and verified-email signups, which
@@ -368,6 +384,7 @@ const MultiStepForm: React.FC = () => {
     if (!draftReadyRef.current || draftCompletedRef.current) return;
     if (!session?.user?.id) return;
 
+    const queue = draftSaveQueueRef.current;
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
       const encoded = encodeDraftForSave({
@@ -375,12 +392,17 @@ const MultiStepForm: React.FC = () => {
         currentStep: step,
         payload: formData as Record<string, unknown>,
       });
-      if (!encoded) return; // invalid or over-budget payloads are skipped, never fatal
-      void saveOnboardingDraftAction(encoded).then((result) => {
-        if (!result.success) {
-          trackOnboardingEvent("draft_save_failed", { error: result.error });
-        }
-      });
+      if (!encoded || !queue) return; // invalid/over-budget payloads are skipped, never fatal
+      void queue
+        .enqueue(() => saveOnboardingDraftAction(encoded))
+        .then((result) => {
+          if (!result.success) {
+            trackOnboardingEvent("draft_save_failed", { error: result.error });
+          }
+        })
+        .catch(() => {
+          trackOnboardingEvent("draft_save_failed", { error: "unreachable" });
+        });
     }, DRAFT_SAVE_DEBOUNCE_MS);
 
     return () => {
@@ -388,14 +410,26 @@ const MultiStepForm: React.FC = () => {
     };
   }, [step, formData, session?.user?.id]);
 
-  const startOver = async () => {
+  /** Cancel pending autosave and let every dispatched-but-unsettled save land
+   *  BEFORE the caller deletes the draft row — an upsert arriving after the
+   *  delete would resurrect stale state (review round 1). */
+  const quiesceDraftSaves = async () => {
     draftCompletedRef.current = true;
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    await draftSaveQueueRef.current?.drain().catch(() => {});
+  };
+
+  const startOver = async () => {
+    await quiesceDraftSaves();
     setDraftRestored(false);
     setFormData({});
     setStep(0);
     await clearOnboardingDraftAction().catch(() => {});
+    // Autosave must stay armed: hydration runs once per mount, so resetting
+    // draftReadyRef here would kill saving for the rest of the session
+    // (review round 1). draftCompletedRef stayed true through the reset
+    // above, so the empty reset state itself was never persisted.
     draftCompletedRef.current = false;
-    draftReadyRef.current = false;
   };
 
   const handleNext = async (stepData: Partial<OnboardingFormData>) => {
@@ -556,9 +590,15 @@ const MultiStepForm: React.FC = () => {
 
       // Success: stop autosaving and drop the draft — the terminal CAS flip
       // has happened server-side, and a lingering row would resurrect stale
-      // state for any future re-onboarding surface.
+      // state for any future re-onboarding surface. Drain first so no already
+      // dispatched save can recreate the row after deletion (review round 1).
       draftCompletedRef.current = true;
-      void clearOnboardingDraftAction().catch(() => {});
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+      void draftSaveQueueRef.current
+        ?.drain()
+        .catch(() => {})
+        .then(() => clearOnboardingDraftAction())
+        .catch(() => {});
 
       if (result.verificationWarning) {
         toast({
@@ -670,6 +710,7 @@ const MultiStepForm: React.FC = () => {
     onSubmit: handleSubmit,
     onGoToStep: handleGoToStep,
     onExitOrgWizard: handleExitOrgWizard,
+    onQuiesceDraftSaves: quiesceDraftSaves,
   };
 
   if (activeStep?.fullBleed) {

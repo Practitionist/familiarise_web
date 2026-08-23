@@ -183,7 +183,12 @@ export function prepareDraftForPersist(
   };
 
   const serialized = JSON.stringify(prepared);
-  if (Buffer.byteLength(serialized, "utf8") > ONBOARDING_DRAFT_MAX_BYTES) {
+  // Web-standard byte sizing: Buffer is a Node global present in client
+  // bundles only via Next.js's incidental polyfill; TextEncoder is baseline
+  // across runtimes and returns identical UTF-8 byte counts.
+  if (
+    new TextEncoder().encode(serialized).length > ONBOARDING_DRAFT_MAX_BYTES
+  ) {
     return null;
   }
   return prepared;
@@ -212,6 +217,43 @@ export function encodeDraftForSave(
   input: SaveOnboardingDraftInput,
 ): SaveOnboardingDraftInput | null {
   return prepareDraftForPersist(input);
+}
+
+/**
+ * Serializes draft-save promises so a later wizard state can never be
+ * overwritten by an earlier in-flight upsert (true last-write-wins), and so
+ * lifecycle code can DRAIN every dispatched-but-unsettled save before the
+ * draft row is deleted — an upsert landing after the delete would resurrect
+ * stale state (review round 1, page.tsx).
+ */
+export interface DraftSaveQueue {
+  /** Chains task after all previously enqueued tasks; rejects if task throws.
+   *  A previous failure never blocks a later task from running. */
+  enqueue<T>(task: () => Promise<T>): Promise<T>;
+  /** Resolves once every enqueued task has settled (fulfilled or rejected). */
+  drain(): Promise<void>;
+}
+
+export function createDraftSaveQueue(): DraftSaveQueue {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    enqueue(task) {
+      const run = tail.then(task, task);
+      // Keep the internal chain alive regardless of this task's outcome;
+      // `run` itself surfaces rejection to the caller to handle.
+      tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    },
+    drain() {
+      return tail.then(
+        () => undefined,
+        () => undefined,
+      );
+    },
+  };
 }
 
 // Re-exported for actions that need the DOB schema's guarantees on the way
