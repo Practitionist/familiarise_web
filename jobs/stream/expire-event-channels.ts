@@ -37,7 +37,9 @@ import {
 import { getChannelTypeFromId, CLASS_PREFIX, WEBINAR_PREFIX } from "../../lib/stream-channel-ids";
 import {
   chunk,
+  pause,
   STREAM_BATCH_LIMIT,
+  STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
@@ -77,16 +79,19 @@ const MAX_EVENTS_PER_RUN = 5_000;
 /**
  * Freeze pacing. The UpdateChannelPartial endpoint is capped at 300 req/min
  * APP-WIDE (shared with maintenance drain freeze/unfreeze), so the freeze loop
- * must never run flat-out: width 10 concurrent plus this sleep between chunks
- * averages ~140/min even if Stream answers instantly, leaving half the budget
- * for live traffic. Env-tunable so an operator can drain a large backlog
- * deliberately by trading headroom.
+ * must never run flat-out: width `STREAM_CONCURRENCY_LIMIT` concurrent plus
+ * this sleep between chunks averages under STREAM_TARGET_REQUESTS_PER_MINUTE
+ * even if Stream answers instantly, leaving half the budget for live traffic.
+ *
+ * STREAM_FREEZE_PACING_MS can only SLOW this down. Values below the safe
+ * minimum clamp up to STREAM_BATCH_PAUSE_MS — accepting a literal 0 would let
+ * one env typo recreate the very burst this job exists to prevent.
  */
 const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
 const FREEZE_PACING_MS =
   Number.isFinite(PARSED_PACING_MS) && PARSED_PACING_MS >= 0
-    ? PARSED_PACING_MS
-    : 4_000;
+    ? Math.max(PARSED_PACING_MS, STREAM_BATCH_PAUSE_MS)
+    : STREAM_BATCH_PAUSE_MS;
 
 /**
  * Hard cap on freezes per run. At default pacing, 600 freezes ≈ 4 min, which
@@ -251,8 +256,8 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   // per run so the workflow timeout is never at risk.
   const freezeBatch = toFreeze.slice(0, MAX_FREEZE_PER_RUN);
   for (const [batchIdx, batch] of chunk(freezeBatch, STREAM_CONCURRENCY_LIMIT).entries()) {
-    if (batchIdx > 0 && FREEZE_PACING_MS > 0) {
-      await new Promise((resolve) => setTimeout(resolve, FREEZE_PACING_MS));
+    if (batchIdx > 0) {
+      await pause(FREEZE_PACING_MS);
     }
     const outcomes = await Promise.allSettled(
       batch.map((event) =>

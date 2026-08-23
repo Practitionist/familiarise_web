@@ -16,7 +16,12 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
-import { chunk, STREAM_CONCURRENCY_LIMIT } from "@/lib/stream/batch";
+import {
+  chunk,
+  pause,
+  STREAM_BATCH_PAUSE_MS,
+  STREAM_CONCURRENCY_LIMIT,
+} from "@/lib/stream/batch";
 import { getEventChannelIdsForAppointment } from "@/lib/stream/appointment-channels";
 import prisma from "@/lib/prisma";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
@@ -311,13 +316,18 @@ async function freezeChannelsForSessions(
     // outage it exists for — and not one failure reached `result.errors`. Per
     // channel, the breaker sees each real failure and each is reported.
     //
-    // Chunked by STREAM_CONCURRENCY_LIMIT (2026-08-23): a bare
-    // `channelIds.map(...)` fired every updatePartial simultaneously — up to
-    // MAX_DRAIN_BATCH at once — and UpdateChannelPartial is capped at 300/min
-    // app-wide, so a single drain could exhaust the same budget the daily
-    // expire cron lives on. Sequential chunks of 10 keep each transition far
-    // under the cap.
-    for (const batch of chunk(channelIds, STREAM_CONCURRENCY_LIMIT)) {
+    // Chunked by STREAM_CONCURRENCY_LIMIT and PAUSED between batches
+    // (2026-08-23): a bare `channelIds.map(...)` fired every updatePartial
+    // simultaneously — up to MAX_DRAIN_BATCH at once — and UpdateChannelPartial
+    // is capped at 300/min app-wide. Concurrency alone is not rate control:
+    // ten parallel calls answered in 100ms is ~6000 req/min. The pause holds
+    // this loop under STREAM_TARGET_REQUESTS_PER_MINUTE — half the cap — so it
+    // cannot jointly breach 300/min with the paced expire cron even if their
+    // windows overlap (they run on different infra, so no shared limiter).
+    for (const [batchIdx, batch] of chunk(channelIds, STREAM_CONCURRENCY_LIMIT).entries()) {
+      if (batchIdx > 0) {
+        await pause(STREAM_BATCH_PAUSE_MS);
+      }
       const outcomes = await Promise.allSettled(
         batch.map((channelId) =>
           withStreamCircuitBreaker(() =>
@@ -383,9 +393,12 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
     if (channelIds.length === 0) return result;
 
     const chat = getStreamChatClient();
-    // Chunked like the freeze path above — same 300/min UpdateChannelPartial
-    // budget, same reason.
-    for (const batch of chunk(channelIds, STREAM_CONCURRENCY_LIMIT)) {
+    // Chunked and paused like the freeze path above — same 300/min
+    // UpdateChannelPartial budget, same reason.
+    for (const [batchIdx, batch] of chunk(channelIds, STREAM_CONCURRENCY_LIMIT).entries()) {
+      if (batchIdx > 0) {
+        await pause(STREAM_BATCH_PAUSE_MS);
+      }
       const outcomes = await Promise.allSettled(
         batch.map((channelId) =>
           withStreamCircuitBreaker(() =>
