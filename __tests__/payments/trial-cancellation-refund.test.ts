@@ -44,13 +44,23 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       delete: (...a: unknown[]) => mockAppointmentDelete(...a),
     },
-    payment: { findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a) },
+    payment: {
+      findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
+      findUnique: jest.fn().mockResolvedValue({
+        id: "pay-1",
+        paymentIntent: "pi_test",
+        amount: BigInt(100000),
+        paymentStatus: "SUCCEEDED",
+        deletedAt: null,
+      }),
+    },
   },
 }));
 
-jest.mock("../../lib/payments/operations/refund", () => ({
-  refundPayment: (...a: unknown[]) => mockRefundPayment(...a),
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => mockRefundPayment(...a),
 }));
+
 
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
