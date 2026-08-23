@@ -794,26 +794,31 @@ export async function handleRefundCreated(
           status: true,
         },
       });
-      if (invoice) {
-        const mapped = mapGatewayRefundStatus(status);
-        if (mapped === "SUCCEEDED") {
-          // Per-refund idempotency: the GST credit note is unique on
-          // refundId, so its presence means THIS gateway refund was already
-          // booked end-to-end. (The old invoice-status guard collapsed
-          // distinct refunds: the first partial flipped the invoice REFUNDED
-          // and every later partial was skipped wholesale — real cash left
-          // via the gateway with no credit note, no wallet credit, no
-          // journal.)
-          const existingCreditNote = await tx.creditNote.findUnique({
-            where: { refundId },
-            select: { id: true },
-          });
-          if (existingCreditNote) {
-            console.log(
-              `💸 Invoice refund ${refundId} already booked, skipping`,
-            );
-            return;
-          }
+        if (invoice) {
+          const mapped = mapGatewayRefundStatus(status);
+          if (mapped === "SUCCEEDED") {
+            // Per-refund idempotency — keyed on the LEDGER JOURNAL, not the
+            // credit note. The journal (`invoice-refund:<refundId>`) is the
+            // one write that happens for EVERY booked refund, while
+            // mintInvoiceRefundCreditNote legitimately returns null for DRAFT/
+            // unissued invoices — a CN-only probe let redeliveries of those
+            // re-run the audit log and (pre-#1128-fix) double the wallet
+            // credit. postLedgerTxn's own idempotency stays as the second
+            // layer; this probe just short-circuits before any side effects.
+            // (The old invoice-status guard collapsed distinct refunds: the
+            // first partial flipped the invoice REFUNDED and every later
+            // partial was skipped wholesale — real cash left via the gateway
+            // with no credit note, no wallet credit, no journal.)
+            const alreadyBooked = await tx.ledgerTransaction.findUnique({
+              where: { idempotencyKey: `invoice-refund:${refundId}` },
+              select: { id: true },
+            });
+            if (alreadyBooked) {
+              console.log(
+                `💸 Invoice refund ${refundId} already booked, skipping`,
+              );
+              return;
+            }
 
           // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
           // refunded invoice. One per gateway refund, idempotent on refundId.
