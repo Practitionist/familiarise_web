@@ -165,6 +165,92 @@ function buildPaymentMetadata(
 }
 
 // ============================================================================
+// Open-Order Reuse (rec C, checkout dossier Q2)
+// ============================================================================
+
+/**
+ * Rec C (bugs/finances/checkout-webhooks-idempotency.md Q2) — a checkout
+ * remount or new tab mints a FRESH clientIdempotencyKey, so #828's same-key
+ * replay sees nothing and a naive flow mints a PARALLEL Razorpay order for
+ * the same user+plan — parallel charges. Before any gateway call we adopt an
+ * open PENDING payment for the same user+plan(+org) whose expiresAt window
+ * is still live and hand its orderId back so every mount resumes the SAME
+ * order.
+ *
+ * The scope is deliberately tight: userId equality, status PENDING,
+ * expiresAt strictly in the future (respect the minted window), same routed
+ * gateway (a Razorpay order cannot be resumed through Stripe.js or vice
+ * versa — the replay path refuses cross-gateway resume for the same reason),
+ * soft-deletes excluded, and plan identity resolved through the appointment
+ * join (Payment carries no planId column). Legitimate repeat purchases are
+ * unaffected: once the hold expires or is cancelled, the row is no longer
+ * (PENDING ∧ fresh) and the next attempt mints fresh.
+ *
+ * Race-safe without a claim column: every schema-valid checkout input takes
+ * a distributed lock keyed identically for the same user+plan (consultee +
+ * slot atoms for slot shapes, event-checkout:<type>:<event|plan> otherwise),
+ * so two concurrent remounts serialize before reaching here and the loser
+ * observes the winner's COMMITTED row; same-key duplicates stay covered by
+ * the clientIdempotencyKey unique (#828 P2002 replay).
+ */
+export async function findReusablePendingOrderPayment(
+  db: Pick<typeof prisma, "payment">,
+  params: {
+    userId: string;
+    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+    planId: string;
+    eventId?: string;
+    organizationId: string | null;
+    paymentGateway: PaymentGateway;
+  },
+) {
+  // Plan identity per type — events are identified by their event row (the
+  // plan is 1:1 with it); direct bookings by their plan id. An undefined
+  // eventId would make Prisma drop the filter entirely (matches ANY
+  // appointment), which is exactly the over-broad reuse we must never do.
+  let planScope: Record<string, unknown> | null;
+  switch (params.appointmentType) {
+    case "CONSULTATION":
+      planScope = { consultation: { consultationPlanId: params.planId } };
+      break;
+    case "SUBSCRIPTION":
+      planScope = { subscription: { subscriptionPlanId: params.planId } };
+      break;
+    case "WEBINAR":
+      planScope = params.eventId ? { webinarId: params.eventId } : null;
+      break;
+    case "CLASS":
+      planScope = params.eventId ? { classId: params.eventId } : null;
+      break;
+    default:
+      planScope = null;
+  }
+  if (!planScope) return null;
+
+  return db.payment.findFirst({
+    where: {
+      userId: params.userId,
+      paymentStatus: PaymentStatus.PENDING,
+      // Freshness — respect the minted window exactly; never resume a stale hold.
+      expiresAt: { gt: new Date() },
+      // Null-safe org equality: personal stays personal, sponsored matches sponsor.
+      organizationId: params.organizationId,
+      paymentGateway: params.paymentGateway,
+      deletedAt: null,
+      appointment: planScope,
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      paymentIntent: true,
+      amount: true,
+      currency: true,
+      isMockPayment: true,
+    },
+  });
+}
+
+// ============================================================================
 // Payment Intent Manager
 // ============================================================================
 
@@ -2275,6 +2361,47 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
+
+    // Rec C — adopt an open fresh PENDING order for this user+plan(+org)
+    // BEFORE minting anything at the gateway. Runs under the checkout lock
+    // (see findReusablePendingOrderPayment for the race-safety argument), so
+    // a remount/new tab converges on the first attempt's order instead of
+    // charging in parallel. Mock/zero-amount/org-sponsored flows are never
+    // PENDING, so the lookup can only ever match a real gateway hold.
+    const reusableOrder = await findReusablePendingOrderPayment(prisma, {
+      userId,
+      appointmentType,
+      planId: validatedData.planId,
+      eventId: validatedData.eventId,
+      organizationId,
+      paymentGateway: validatedData.paymentGateway,
+    });
+    if (reusableOrder) {
+      console.log(
+        JSON.stringify({
+          event: "checkout_open_order_reused",
+          appointmentType,
+          orderId: reusableOrder.paymentIntent,
+          userId,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      // Same shape as replayByIdempotencyKey's PENDING branch so clients
+      // handle both resume paths identically.
+      return {
+        success: true,
+        reused: true,
+        orderId: reusableOrder.paymentIntent,
+        paymentIntent: {
+          id: reusableOrder.paymentIntent,
+          client_secret: null,
+        },
+        amount: Number(reusableOrder.amount),
+        currency: reusableOrder.currency,
+        isMockPayment: reusableOrder.isMockPayment,
+        message: "Resuming your in-progress checkout.",
+      };
+    }
 
     // #832 — one checked renewal at the long-latency boundary (gateway call
     // + tentative-booking tx still ahead). A false return means the lock
