@@ -985,6 +985,28 @@ uploadedAt       DateTime  @default(now())
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
 
+### Alternatives considered (#onboarding-ux, 2026-08)
+
+Recorded so nobody re-litigates these without new evidence. Benchmarks from
+the Aug-2026 competitor review: Calendly (setup-as-activation, required steps
+minimal, rest becomes a checklist), ADPList (demand side ≈ zero friction,
+supply side is a checklist not a gate), Clarity.fm (members self-serve
+instantly; experts file a separate application reviewed async),
+MentorCruise (application-based supply, near-zero demand friction).
+
+| Decision | Rejected alternative | Why rejected |
+|----------|---------------------|--------------|
+| Targeted refactor of the existing wizard | Full rewrite (new state machine, new components) | The hard parts were already correct and battle-tested: 5-layer validation pipeline, atomic tx, #724/#840 CAS flip, idempotent upserts, DPDP consent stamping. A rewrite (~8.6k LOC) would re-risk all of them while fighting the #705 additive-only schema freeze. The real problems were UX-layer, not data-layer. |
+| Server draft row (`OnboardingDraft`) | `localStorage` only | Lost on device switch/clear-storage and invisible to ops; also cannot be cascade-deleted with the user under DPDP erasure. |
+| Server draft row | Per-step incremental commits to real tables | Touches many live code paths, complicates "incomplete" states, and couples wizard navigation to production upserts. The draft keeps the big-bang transaction as the single writer of truth. |
+| Consultee cut to 2 screens | 1-screen consent-only gate | Would maximize conversion but lose all personalization/matching signal at signup; 2 screens keep name/DOB/contact while everything else defers. Keeping all 4 original screens was measured against ADPList/Calendly demand-side flows and judged the primary abandonment risk. |
+| Deferrable consultant verification | Keep docs strictly blocking | Verification review is asynchronous by nature (docs say 1-2 business days); blocking onboarding on it adds drop-off without speeding the review. Dashboard VerificationSection already owned post-onboarding submission, making deferral nearly free. Marketplace visibility still gates on verification, so supply quality is unchanged. |
+
+If funnel data (Sentry breadcrumbs, category `onboarding`) contradicts any of
+these assumptions — e.g. deferred consultants never finish verification, or
+step-0 role picking leaks — revisit that row specifically rather than the
+whole design.
+
 ---
 
 ## 12. File Map
