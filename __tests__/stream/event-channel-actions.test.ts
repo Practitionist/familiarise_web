@@ -202,6 +202,48 @@ describe("Event Channel Actions", () => {
       expect(mockCache.markMembership).toHaveBeenCalled();
     });
 
+    it("adopts the winner's channel when creation loses the race (F-HIGH-3)", async () => {
+      mockCache.getMembershipCached.mockReturnValue(false);
+      // First addMembers miss → fall through to creation; second call is the
+      // post-adoption membership retry against the winner's channel.
+      mockChannel.addMembers
+        .mockRejectedValueOnce(new Error("Channel not found"))
+        .mockResolvedValueOnce({});
+      const duplicateError = Object.assign(
+        new Error("CreateChannel failed with error code 17: already exists"),
+        { code: 17 },
+      );
+      mockChannel.create.mockRejectedValue(duplicateError);
+
+      mockPrisma.webinar.findUnique.mockResolvedValue({
+        id: "web-race",
+        webinarPlan: {
+          title: "Raced Webinar",
+          consultantProfile: { user: { id: "consultant-1" } },
+        },
+        appointment: {
+          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+        },
+      });
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-race",
+        "raced-user",
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockChannel.addMembers).toHaveBeenCalledWith(["raced-user"]);
+      expect(mockCache.markMembership).toHaveBeenCalledWith(
+        "webinar-web-race",
+        "raced-user",
+        true,
+      );
+    });
+
     it("should create new channel when addMembers fails and event exists", async () => {
       mockCache.getMembershipCached.mockReturnValue(false);
       mockChannel.addMembers.mockRejectedValue(new Error("Channel not found"));

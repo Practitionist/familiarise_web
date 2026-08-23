@@ -19,7 +19,11 @@ import {
 } from "@/lib/stream-cache";
 import { upsertUserToStream, upsertUsersToStream } from "./user.action";
 import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
-import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
+import {
+  bookingOrgId,
+  getDmChannelId,
+  isChannelAlreadyExistsError,
+} from "@/lib/stream-utils";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 
 // Validation schemas
@@ -186,12 +190,37 @@ export async function addUserToEventChannel(
     );
 
     // #473 — fast-fail channel creation under a Stream outage.
-    await withStreamCircuitBreaker(
-      () => channelWithData.create(),
-      () => {
-        throw new StreamUnavailableError();
-      },
-    );
+    // F-HIGH-3: a concurrent creator may win the race between our failed
+    // addMembers above and this create(); on their duplicate-create rejection
+    // we ADOPT the winner's channel instead of failing this user's join.
+    try {
+      await withStreamCircuitBreaker(
+        () => channelWithData.create(),
+        () => {
+          throw new StreamUnavailableError();
+        },
+      );
+    } catch (createError) {
+      if (!isChannelAlreadyExistsError(createError)) throw createError;
+
+      streamLogger.info(
+        "Lost channel-create race; adopting existing channel",
+        { channelId, userId },
+      );
+
+      // The winner's roster snapshot may predate us — retry our own membership
+      // once. Best-effort: a failed retry is logged, never thrown, so the
+      // join still resolves and the next sync reconciles if it truly missed.
+      try {
+        await channel.addMembers([userId]);
+      } catch (adoptError) {
+        streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
+          channelId,
+          userId,
+          error: adoptError,
+        });
+      }
+    }
 
     // Lazy-create bypasses createChannel, so the #899 channel-scoped host
     // grant is repeated here. Non-fatal: chat still works without it.
@@ -890,12 +919,35 @@ async function addUserToDmChannel(
     dm_consultant_user_id: consultantUserId,
     dm_consultee_user_id: consulteeUserId,
   } as Record<string, unknown>);
-  await withStreamCircuitBreaker(
-    () => channelWithData.create(),
-    () => {
-      throw new StreamUnavailableError();
-    },
-  );
+  // F-HIGH-3: same adopt-on-duplicate-create contract as the event path — a
+  // concurrent creator of this DM wins the race, we adopt their channel.
+  try {
+    await withStreamCircuitBreaker(
+      () => channelWithData.create(),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
+  } catch (createError) {
+    if (!isChannelAlreadyExistsError(createError)) throw createError;
+
+    streamLogger.info("Lost channel-create race; adopting existing channel", {
+      channelId,
+      currentUserId,
+    });
+
+    // The winner's roster snapshot may predate us — retry our own membership
+    // once. Best-effort: logged on failure, never fatal to the join.
+    try {
+      await channel.addMembers([currentUserId]);
+    } catch (adoptError) {
+      streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
+        channelId,
+        currentUserId,
+        error: adoptError,
+      });
+    }
+  }
 
   // Lazy-create bypasses createChannel, so the #899 channel-scoped host
   // grant is repeated here. Non-fatal: chat still works without it.

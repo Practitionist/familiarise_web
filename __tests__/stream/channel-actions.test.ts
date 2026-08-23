@@ -138,6 +138,48 @@ describe("Channel Actions", () => {
       );
     });
 
+    it("adopts an existing channel when creation loses the create race (F-HIGH-3)", async () => {
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      const duplicateError = Object.assign(
+        new Error("CreateChannel failed with error code 17: already exists"),
+        { code: 17 },
+      );
+      mockChannel.create.mockRejectedValueOnce(duplicateError);
+
+      // team type so the post-create path includes the host moderator grant.
+      const result = await createChannel({
+        channelType: "team",
+        channelId: "race-loser",
+        members: ["user1"],
+        createdById: "user1",
+      });
+
+      // Adopted, not failed: same id handed back, no raw payload, and the
+      // normal post-create path still ran (moderator grant + existence cache).
+      expect(result.channelId).toBe("race-loser");
+      expect(result.channelData).toBeNull();
+      expect(mockChannel.assignRoles).toHaveBeenCalled();
+      expect(mockCache.markChannelExists).toHaveBeenCalled();
+    });
+
+    it("rethrows non-duplicate create failures", async () => {
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockChannel.create.mockRejectedValueOnce(new Error("Stream 500"));
+
+      await expect(
+        createChannel({
+          channelType: "messaging",
+          channelId: "real-failure",
+          members: ["user1"],
+          createdById: "user1",
+        }),
+      ).rejects.toThrow("Stream 500");
+    });
+
     it("should reject invalid channel type", async () => {
       const { createChannel } =
         await import("../../actions/stream/chat/channel.action");

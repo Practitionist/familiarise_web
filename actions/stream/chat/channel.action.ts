@@ -24,7 +24,11 @@ import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
 import { upsertUsersToStream } from "./user.action";
-import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
+import {
+  bookingOrgId,
+  getDmChannelId,
+  isChannelAlreadyExistsError,
+} from "@/lib/stream-utils";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -139,7 +143,27 @@ export async function createChannel(input: {
     createChannelData as Record<string, unknown>,
   );
 
-  const channelData = await channel.create();
+  // F-HIGH-3: two simultaneous first joins can both miss `addMembers` and
+  // both reach this create(); the loser rejects with Stream's duplicate-create
+  // error. ADOPT the winner's channel instead of failing the caller — from
+  // the awaited payment-webhook path that used to fail a real attendee's
+  // booking join outright.
+  let channelData;
+  try {
+    channelData = await channel.create();
+  } catch (error) {
+    if (!isChannelAlreadyExistsError(error)) throw error;
+
+    // Lost the race. The winner created the same channelId from the same
+    // roster, so continue down the normal post-create path (moderator grant,
+    // existence cache). The raw create response is dropped (`null`) — callers
+    // consume channelId/members, never the payload.
+    channelData = null;
+    streamLogger.info("Lost channel-create race; adopting existing channel", {
+      channelId: validated.channelId,
+      type: validated.channelType,
+    });
+  }
 
   // Channel-scoped moderation replaces the old global-admin Stream role
   // (#899). Only the channel HOST may moderate — never an arbitrary creator:
