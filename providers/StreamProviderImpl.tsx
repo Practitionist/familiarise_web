@@ -120,33 +120,51 @@ const StreamProviderImpl = ({
   //  repeatedly and producing "Consecutive calls to connectUser" warnings)
   // Each token type has its own expiry to avoid one overwriting the other's validity window.
   const tokenCacheRef = useRef<{
+    userId?: string;
     chatToken?: string;
     chatExpiresAt?: number;
     videoToken?: string;
     videoExpiresAt?: number;
   }>({});
 
-  const isTokenValid = useCallback((type: "chat" | "video") => {
-    const cache = tokenCacheRef.current;
-    const token = type === "chat" ? cache.chatToken : cache.videoToken;
-    const expiresAt =
-      type === "chat" ? cache.chatExpiresAt : cache.videoExpiresAt;
-    if (!token || !expiresAt) return false;
-    // Check if token expires within next 5 minutes
-    return Date.now() < expiresAt - 5 * 60 * 1000;
-  }, []);
+  const isTokenValid = useCallback(
+    (type: "chat" | "video", forUserId: string) => {
+      const cache = tokenCacheRef.current;
+      // Identity-scoped: a token minted for a prior user must never satisfy
+      // this one, even while still unexpired.
+      if (cache.userId !== forUserId) return false;
+      const token = type === "chat" ? cache.chatToken : cache.videoToken;
+      const expiresAt =
+        type === "chat" ? cache.chatExpiresAt : cache.videoExpiresAt;
+      if (!token || !expiresAt) return false;
+      // Check if token expires within next 5 minutes
+      return Date.now() < expiresAt - 5 * 60 * 1000;
+    },
+    [],
+  );
 
   // In-flight token requests, shared so concurrent callers (the prefetch
   // effect below + the connect effects) get ONE server-action round trip
-  // instead of racing duplicates.
+  // instead of racing duplicates. Keyed by userId: a request minted for a
+  // prior identity must never resolve for the current one.
   const tokenPromiseRef = useRef<{
+    userId?: string;
     chat?: Promise<string>;
     video?: Promise<string>;
   }>({});
 
   const getCachedToken = useCallback(
     async (type: "chat" | "video"): Promise<string> => {
-      if (isTokenValid(type)) {
+      // A user switch invalidates both caches wholesale before any read.
+      if (
+        tokenCacheRef.current.userId !== userId ||
+        tokenPromiseRef.current.userId !== userId
+      ) {
+        tokenCacheRef.current = { userId };
+        tokenPromiseRef.current = { userId };
+      }
+
+      if (isTokenValid(type, userId)) {
         const cache = tokenCacheRef.current;
         return type === "chat" ? cache.chatToken! : cache.videoToken!;
       }
@@ -176,14 +194,19 @@ const StreamProviderImpl = ({
         },
         () => {},
       );
+      // `.finally` returns a DERIVED promise that re-rejects when the request
+      // fails; left unattached that is an unhandled rejection on every failed
+      // mint. The catch swallows exactly that derived rejection — the original
+      // still propagates to `return request` callers.
       void request.finally(() => {
-        if (tokenPromiseRef.current.chat === request && type === "chat") {
+        if (tokenPromiseRef.current.userId !== userId) return;
+        if (type === "chat" && tokenPromiseRef.current.chat === request) {
           delete tokenPromiseRef.current.chat;
         }
-        if (tokenPromiseRef.current.video === request && type === "video") {
+        if (type === "video" && tokenPromiseRef.current.video === request) {
           delete tokenPromiseRef.current.video;
         }
-      });
+      }).catch(() => {});
 
       return request;
     },
@@ -200,10 +223,10 @@ const StreamProviderImpl = ({
   // getCachedToken (cleared promise ref → fresh attempt).
   useEffect(() => {
     if (!apiKey || !userId) return;
-    if (enableChat && !isTokenValid("chat")) {
+    if (enableChat && !isTokenValid("chat", userId)) {
       void getCachedToken("chat").catch(() => {});
     }
-    if (enableVideo && !isTokenValid("video")) {
+    if (enableVideo && !isTokenValid("video", userId)) {
       void getCachedToken("video").catch(() => {});
     }
   }, [userId, enableChat, enableVideo, getCachedToken, isTokenValid]);

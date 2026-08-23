@@ -46,10 +46,13 @@ function isPersonalChannel(channel: Channel): boolean {
  * property, but v9's typings don't declare it. One cast, one place, with the
  * pinned-major caveat noted: iterating it lets the badge recount from state
  * ChatSidebar already paid for, instead of re-querying Stream per event.
+ * (v9 renamed the old `client.channels` map to `activeChannels`.)
  */
 function loadedChannels(client: StreamChat): Channel[] {
   return Object.values(
-    (client as unknown as { channels: Record<string, Channel> }).channels ?? {},
+    (client as unknown as {
+      activeChannels?: Record<string, Channel>;
+    }).activeChannels ?? {},
   );
 }
 
@@ -83,14 +86,27 @@ export function useChatUnreadCount(): number {
     const FALLBACK_MIN_INTERVAL_MS = 30_000;
     const recountViaQuery = async () => {
       try {
-        const channels = await client.queryChannels(
-          { members: { $in: [client.userID!] }, ...PERSONAL_FILTER },
-          { last_message_at: -1 },
-          // state:true hydrates read state so countUnread() works; watch:false
-          // because this hook only counts — ChatSidebar owns watching.
-          { limit: 30, state: true, watch: false },
-        );
-        if (cancelled) return;
+        // Paginate: the first page alone undercounts anyone with more
+        // personal channels than one page holds. Hard-capped so a
+        // pathological account cannot loop forever.
+        const PAGE_SIZE = 30;
+        const MAX_PAGES = 5;
+        const channels: Channel[] = [];
+        let offset = 0;
+        let page;
+        do {
+          page = await client.queryChannels(
+            { members: { $in: [client.userID!] }, ...PERSONAL_FILTER },
+            { last_message_at: -1 },
+            // state:true hydrates read state so countUnread() works;
+            // watch:false because this hook only counts — ChatSidebar owns
+            // watching.
+            { limit: PAGE_SIZE, offset, state: true, watch: false },
+          );
+          if (cancelled) return;
+          channels.push(...page);
+          offset += PAGE_SIZE;
+        } while (page.length === PAGE_SIZE && offset < PAGE_SIZE * MAX_PAGES);
         setUnreadCount(channels.reduce((sum, c) => sum + c.countUnread(), 0));
       } catch (error) {
         // A failed recount leaves the previous number in place — a stale badge
@@ -110,6 +126,10 @@ export function useChatUnreadCount(): number {
         setUnreadCount(local);
         return;
       }
+      // Pre-connect: no identity yet, so a fallback would query with an
+      // undefined member id AND stamp the throttle — which would then block
+      // the connection.changed(online) retry for 30s. Wait for that retry.
+      if (!client.userID) return;
       const now = Date.now();
       if (now - lastFallbackAt < FALLBACK_MIN_INTERVAL_MS) return;
       lastFallbackAt = now;
@@ -133,6 +153,7 @@ export function useChatUnreadCount(): number {
       if (
         event.type === "message.new" ||
         event.type === "notification.mark_read" ||
+        event.type === "notification.mark_unread" ||
         event.type === "notification.message_new" ||
         (event.type === "connection.changed" && event.online)
       ) {
