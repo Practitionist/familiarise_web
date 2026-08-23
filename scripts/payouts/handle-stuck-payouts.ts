@@ -19,7 +19,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PayoutStatus, PaymentGateway } from "@prisma/client";
+import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 
@@ -260,8 +260,18 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
               "Payout never sent to gateway after multiple attempts",
           },
         });
+        // Release the earnings like the webhook FAILED path does — without
+        // this, BATCHED earnings stayed welded to a permanently-FAILED
+        // payout: excluded from future batches by `payoutId: null`, never
+        // released, money held hostage with no actor.
+        const released = await prisma.consultantEarnings.updateMany({
+          where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+          data: { payoutId: null, status: EarningStatus.READY },
+        });
         failedCount++;
-        console.log(`   Marked as permanently FAILED (max retries reached)`);
+        console.log(
+          `   Marked as permanently FAILED (max retries reached); released ${released.count} earning(s)`,
+        );
       } else {
         // Reset to APPROVED for retry
         await prisma.consultantPayout.update({

@@ -2,11 +2,12 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 
 export async function GET(req: NextRequest) {
   try {
+    const razorpayClient = getRazorpayClient();
     // Check authentication
     const session = await getSession();
     if (!session?.user) {

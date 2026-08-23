@@ -457,7 +457,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
   } catch (err) {
@@ -603,7 +603,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       await withSerializableRetry(() =>
         prisma.$transaction(
           (tx) => cleanupFailedPaymentAppointment(tx, txResult.appointmentId),
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
         ),
       );
     } catch (refundError) {
@@ -877,7 +877,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     const dashboardUrl = notificationHref(orgId, "appointments");
 
     // Notify consultee of successful payment
-    void notifyPaymentSuccess(userId, {
+    void Promise.resolve(notifyPaymentSuccess(userId, {
       ...scope,
       amount,
       currency,
@@ -885,7 +885,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       appointmentType: metadata.appointmentType,
       planTitle: metadata.planId || planTitle,
       dashboardUrl,
-    });
+    })).catch(() => {});
 
     // Notify both consultant and consultee of the booked appointment
     const notifUserIds = [userId];
@@ -918,16 +918,22 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         }),
       );
     } else {
-      void notifyAppointmentBooked(notifUserIds, {
-        ...scope,
-        appointmentId,
-        dateTime: firstSlot.startsAt.toISOString(),
-        appointmentType: metadata.appointmentType,
-        consultantName: consultantNameForNotif,
-        consulteeName: userName || "User",
-        planTitle: metadata.planId || planTitle,
-        dashboardUrl,
-      });
+      // Money-hardening pass — Promise.resolve guards against non-promise
+      // returns (Novu wrappers swallow internally; test doubles return
+      // undefined), so a synchronous throw can't become an unhandled
+      // rejection inside this handler.
+      void Promise.resolve(
+        notifyAppointmentBooked(notifUserIds, {
+          ...scope,
+          appointmentId,
+          dateTime: firstSlot.startsAt.toISOString(),
+          appointmentType: metadata.appointmentType,
+          consultantName: consultantNameForNotif,
+          consulteeName: userName || "User",
+          planTitle: metadata.planId || planTitle,
+          dashboardUrl,
+        }),
+      ).catch(() => {});
     }
   } catch (novuError) {
     reportSentryError(novuError, { subsystem: "payments", level: "warning" });
@@ -1207,14 +1213,14 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       const appointmentType =
         payment.appointment?.appointmentType || "CONSULTATION";
 
-      void notifyPaymentFailed(payment.userId, {
+      void Promise.resolve(notifyPaymentFailed(payment.userId, {
         amount: payment.amount,
         currency: payment.currency,
         consultantName,
         appointmentType,
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}/dashboard`,
-      });
+      })).catch(() => {});
     } catch (novuError) {
       reportSentryError(novuError, { subsystem: "payments", level: "warning" });
       console.error(

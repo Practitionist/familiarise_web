@@ -189,10 +189,34 @@ ledger triggers re-applied per the sidecar contract), after which all seven
 implemented scenarios pass. The production deploy must follow the same
 order: push before deploy, or the same route families 500.
 
+
+**17. Flash-sale hot-slot + hot-event storm (staged — needs k6 or equivalent
+load generator against staging; booking-journey hardening train #1201–#1211).**
+Simulates a popular consultant releasing availability: 50+ concurrent
+consultation checkouts for the SAME 1:1 slot, plus 200 concurrent webinar
+checkouts against a `maxParticipants: 20` event. The guards under test are
+the full B4/B5/B8 stack shipped on the train:
+
+- Optimistic capacity pre-check (`readEventCapacity`) must answer SOLD OUT
+  for webinar losers before the mutex is requested.
+- The event mutex and consultee lock waiters use `CHECKOUT_WAIT_RETRY_CONFIG`
+  (~7s worst case) — no request may hang past the ~26s function ceiling.
+- Structured BUSY 409s (`EVENT_CHECKOUT_BUSY`, `CONSULTEE_BOOKING_BUSY`,
+  `EVENT_SOLD_OUT`) carry `retryAfter` and are never raw 504/500s.
+- The client's single auto-retry fires once per BUSY 409 and cannot mint a
+  duplicate order (same idempotency key).
+- RFA hold cap: a bot farm submitting >3 pending requests from one account
+  receives 429.
+
+Invariants: exactly one confirmed consultation slot; exactly 20 webinar
+confirmations; zero double charges; zero raw 502/504 responses (structured
+4xx only); P95 under 26s. The pass condition is that every non-winner
+receives either a clean sold-out/busy/retry-later 4xx with honest copy, or
+a successful auto-retry after a brief pause.
 ## Go/no-go
 
 Scenarios 1 through 4 must pass with zero duplicate charges and zero double
-bookings, and scenario 6 must pass at twice the expected launch peak.
+bookings, and scenarios 6 and 17 must pass at twice the expected launch peak.
 Scenarios 9 through 13, 14a, 14b, 15, and 16 must pass on the staging clone
 after the schema push; they are cheap enough to run on every hardening PR.
 Scenario 14c (enterprise allocation races) and the others inform the

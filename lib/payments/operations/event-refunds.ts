@@ -176,7 +176,7 @@ export async function refundWholeEventPayments(
               refundId: `event:${kind}:${eventId}`,
               initiatedByUserId,
             }),
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
         ),
       );
       summary.refundsIssued += result.childRefundIds.length;

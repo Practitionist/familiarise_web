@@ -71,7 +71,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
               orphan.userId,
             );
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
         ),
       );
       const remaining = await prisma.slotOfAppointment.count({

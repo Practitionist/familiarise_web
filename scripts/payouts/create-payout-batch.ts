@@ -182,7 +182,13 @@ export async function createPayoutBatch(
             },
           });
 
-          // Link the exact earnings by ID (not broad filter)
+          // Link the exact earnings by ID (not broad filter).
+          // #993 parity — mark BATCHED (not left READY): the earning is now
+          // in a batch and must not be re-picked, but cash hasn't moved yet.
+          // Leaving it READY meant the canonical handlers — which filter on
+          // BATCHED — never saw these rows: earnings stayed welded to their
+          // payout forever (never PAID on completion, permanently orphaned on
+          // pre-gateway failure), and refundEarnings treated them as un-paid.
           const linkResult = await tx.consultantEarnings.updateMany({
             where: {
               id: { in: readyEarnings.map((e) => e.id) },
@@ -191,6 +197,7 @@ export async function createPayoutBatch(
             },
             data: {
               payoutId: payout.id,
+              status: EarningStatus.BATCHED,
             },
           });
 

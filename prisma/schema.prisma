@@ -1674,6 +1674,9 @@ model OrganizationEarnings {
 
   status    EarningStatus
   holdUntil DateTime?     @db.Timestamptz
+  // #1020-1 — mirror of ConsultantEarnings.preDisputeStatus: prior state
+  // preserved when a dispute HELDs the row so release restores it faithfully.
+  preDisputeStatus EarningStatus?
 
   orgPayoutId String?
   orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
@@ -2140,6 +2143,11 @@ model UsageLedgerEntry {
 
   @@index([membershipId, createdAt])
   @@index([programAssignmentId, createdAt])
+  // Refund hot path: reverseBookingUtilization aggregates by paymentId
+  // INSIDE the refund transaction — without this index that is a seq scan of
+  // an append-only table whose latency grows with history exactly when a
+  // customer is waiting.
+  @@index([paymentId])
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2224,6 +2232,7 @@ enum LedgerTransactionKind {
   TOPUP_REFUND
   INVOICE_ISSUED
   INVOICE_PAID
+  INVOICE_REFUND
   PAYOUT
   ORG_PAYOUT
   REFUND
@@ -3274,6 +3283,14 @@ model Webinar {
   status          WebinarStatus @default(SCHEDULED)
   feedbackSummary String?
 
+  // Freeze ledger (UpdateChannelPartial rate-limit incident, 2026-08-23): the
+  // daily expire cron used to re-issue updatePartial({frozen:true}) for every
+  // channel in the 7–90d age band on every run — value-idempotent, but each
+  // no-op still burned one Stream API call until the app-wide 300/min cap
+  // tripped. Null = not yet frozen; the stamp is written after the freeze call
+  // succeeds, so a crash between the two costs one redundant call next day.
+  chatFrozenAt DateTime? @db.Timestamptz
+
   // Per-instance capacity. Null inherits WebinarPlan.maxParticipants, so the
   // plan value is the default for new instances and the organizer can retune a
   // single session without touching its siblings.
@@ -3383,6 +3400,9 @@ model Class {
   // Subscription.schedulingTimezone for why it is pinned, not followed.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
+
+  // Freeze ledger — see Webinar.chatFrozenAt.
+  chatFrozenAt             DateTime?   @db.Timestamptz
 
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
@@ -4382,6 +4402,8 @@ model Refund {
   @@index([paymentId, status])
   @@index([status, cascadedAt])
   @@index([status, failedNotifiedAt])
+  // Finance date-range exports + reconcile-cron age scans.
+  @@index([createdAt])
 }
 
 enum RefundStatus {
@@ -4428,6 +4450,8 @@ model Dispute {
   @@index([dueBy])
   @@index([paymentId, status])
   @@index([assignedToUserId])
+  // Finance date-range exports + evidence-deadline sweeps.
+  @@index([createdAt])
 }
 
 enum DisputeStatus {
@@ -4511,6 +4535,12 @@ model ConsultantEarnings {
   status    EarningStatus @default(PENDING)
   holdUntil DateTime      @db.Timestamptz // Release after hold period
   paidAt    DateTime?     @db.Timestamptz
+  // #1020-1 — the status an earning was in when an open dispute HELD it
+  // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
+  // instead of force-maturing a PENDING row into READY prematurely. Null =
+  // never dispute-held (or held before this column shipped — releases then
+  // fall back to READY, the historical behavior).
+  preDisputeStatus EarningStatus?
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
