@@ -15,8 +15,14 @@
  *      `streamRecordingRetentionDays` dial (default 90) rather than inventing a
  *      second number to explain.
  *
- * Both stages are idempotent: freezing a frozen channel and deleting a deleted
- * one are no-ops, so a partial run simply resumes.
+ * Both stages are idempotent: deleting a deleted channel is a no-op, and since
+ * 2026-08-23 freezing is LEDGERED — `Webinar.chatFrozenAt` / `Class.chatFrozenAt`
+ * records that a channel was frozen, so already-frozen channels are filtered out
+ * before any Stream call is made. Before the ledger every daily run re-issued
+ * `updatePartial({frozen:true})` for every channel in the 7–90d age band:
+ * value-idempotent, but each no-op burned an UpdateChannelPartial call until
+ * ~300 of them tripped Stream's per-minute cap (the 2026-08-23 10:36 IST alert)
+ * and the resulting 429s opened the circuit breaker and starved the delete stage.
  */
 import "dotenv/config";
 
@@ -31,7 +37,9 @@ import {
 import { getChannelTypeFromId, CLASS_PREFIX, WEBINAR_PREFIX } from "../../lib/stream-channel-ids";
 import {
   chunk,
+  pause,
   STREAM_BATCH_LIMIT,
+  STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "../../lib/stream/batch";
 import { withCronLock } from "../../lib/cron/with-cron-lock";
@@ -68,9 +76,35 @@ const LOOKBACK_MARGIN_DAYS = 60;
 /** Backstop so one pathological run cannot hold the cron open indefinitely. */
 const MAX_EVENTS_PER_RUN = 5_000;
 
+/**
+ * Freeze pacing. The UpdateChannelPartial endpoint is capped at 300 req/min
+ * APP-WIDE (shared with maintenance drain freeze/unfreeze), so the freeze loop
+ * must never run flat-out: width `STREAM_CONCURRENCY_LIMIT` concurrent plus
+ * this sleep between chunks averages under STREAM_TARGET_REQUESTS_PER_MINUTE
+ * even if Stream answers instantly, leaving half the budget for live traffic.
+ *
+ * STREAM_FREEZE_PACING_MS can only SLOW this down. Values below the safe
+ * minimum clamp up to STREAM_BATCH_PAUSE_MS — accepting a literal 0 would let
+ * one env typo recreate the very burst this job exists to prevent.
+ */
+const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
+const FREEZE_PACING_MS =
+  Number.isFinite(PARSED_PACING_MS) && PARSED_PACING_MS >= 0
+    ? Math.max(PARSED_PACING_MS, STREAM_BATCH_PAUSE_MS)
+    : STREAM_BATCH_PAUSE_MS;
+
+/**
+ * Hard cap on freezes per run. At default pacing, 600 freezes ≈ 4 min, which
+ * fits the workflow's 10-minute timeout alongside the delete stage; anything
+ * left over resumes next run (the ledger makes resume cheap — only unstamped
+ * channels are retried).
+ */
+const MAX_FREEZE_PER_RUN = 600;
+
 export interface ExpireEventChannelsResult {
   frozen: number;
   deleted: number;
+  skippedAlreadyFrozen: number;
   errors: string[];
   success: boolean;
 }
@@ -79,6 +113,11 @@ interface EventRow {
   channelId: string;
   endsAt: Date;
   retentionDays: number;
+  /** Null = the ledger says this channel has never been frozen. */
+  chatFrozenAt: Date | null;
+  entity:
+    | { kind: "webinar"; id: string }
+    | { kind: "class"; id: string };
 }
 
 /**
@@ -101,8 +140,8 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     take: MAX_EVENTS_PER_RUN,
     orderBy: { createdAt: "desc" },
     select: {
-      webinar: { select: { id: true } },
-      class: { select: { id: true } },
+      webinar: { select: { id: true, chatFrozenAt: true } },
+      class: { select: { id: true, chatFrozenAt: true } },
       organization: { select: { streamRecordingRetentionDays: true } },
       slotsOfAppointment: {
         select: { endsAt: true },
@@ -127,13 +166,30 @@ async function loadEndedEvents(): Promise<EventRow[]> {
         : null;
     if (!channelId) continue;
 
+    let entity: EventRow["entity"];
+    let chatFrozenAt: Date | null;
+    if (appointment.webinar) {
+      entity = { kind: "webinar", id: appointment.webinar.id };
+      chatFrozenAt = appointment.webinar.chatFrozenAt;
+    } else if (appointment.class) {
+      entity = { kind: "class", id: appointment.class.id };
+      chatFrozenAt = appointment.class.chatFrozenAt;
+    } else {
+      continue;
+    }
+
     const retentionDays =
       appointment.organization?.streamRecordingRetentionDays ??
       DEFAULT_RETENTION_DAYS;
 
     const existing = byChannel.get(channelId);
     if (!existing || existing.endsAt < endsAt) {
-      byChannel.set(channelId, { channelId, endsAt, retentionDays });
+      byChannel.set(channelId, { channelId, endsAt, retentionDays, chatFrozenAt, entity });
+    } else if (existing.chatFrozenAt === null && chatFrozenAt !== null) {
+      // Same channel seen via a second cohort's appointment: keep the newest
+      // end but don't lose the ledger stamp the earlier row carried.
+      existing.chatFrozenAt = chatFrozenAt;
+      existing.entity = entity;
     }
   }
   return Array.from(byChannel.values());
@@ -149,6 +205,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   const result: ExpireEventChannelsResult = {
     frozen: 0,
     deleted: 0,
+    skippedAlreadyFrozen: 0,
     errors: [],
     success: true,
   };
@@ -167,7 +224,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   const events = await loadEndedEvents();
   if (events.length === 0) return result;
 
-  const toFreeze: string[] = [];
+  const toFreeze: EventRow[] = [];
   const toDelete: string[] = [];
 
   for (const event of events) {
@@ -176,7 +233,15 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       // Past retention wins: no point freezing something we are deleting.
       toDelete.push(event.channelId);
     } else if (age >= FREEZE_AFTER_DAYS * DAY_MS) {
-      toFreeze.push(event.channelId);
+      if (event.chatFrozenAt) {
+        // Ledger hit — the channel is already frozen on Stream. Re-issuing the
+        // updatePartial would succeed as a no-op but still spend one
+        // UpdateChannelPartial call, which is exactly how the 2026-08-23 burst
+        // happened. Skip without touching the API.
+        result.skippedAlreadyFrozen++;
+      } else {
+        toFreeze.push(event);
+      }
     }
   }
 
@@ -186,28 +251,70 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
   // the chunk size here is a CONCURRENCY width and not a payload ceiling —
   // chunking by STREAM_BATCH_LIMIT fired a hundred simultaneous requests at an
   // app that also serves live user traffic. allSettled so one missing channel
-  // cannot abort the run.
-  for (const batch of chunk(toFreeze, STREAM_CONCURRENCY_LIMIT)) {
+  // cannot abort the run. Paced (see FREEZE_PACING_MS) so even a full backlog
+  // cannot breach Stream's app-wide 300/min cap for this endpoint, and capped
+  // per run so the workflow timeout is never at risk.
+  const freezeBatch = toFreeze.slice(0, MAX_FREEZE_PER_RUN);
+  for (const [batchIdx, batch] of chunk(freezeBatch, STREAM_CONCURRENCY_LIMIT).entries()) {
+    if (batchIdx > 0) {
+      await pause(FREEZE_PACING_MS);
+    }
     const outcomes = await Promise.allSettled(
-      batch.map((channelId) =>
+      batch.map((event) =>
         withStreamCircuitBreaker(() =>
           chat
-            .channel(getChannelTypeFromId(channelId), channelId)
+            .channel(getChannelTypeFromId(event.channelId), event.channelId)
             .updatePartial({ set: { frozen: true } }),
         ),
       ),
     );
+    const stamped: { webinarIds: string[]; classIds: string[] } = {
+      webinarIds: [],
+      classIds: [],
+    };
     outcomes.forEach((outcome, i) => {
+      const event = batch[i];
       if (outcome.status === "fulfilled") {
         result.frozen++;
+        stamped[
+          event.entity.kind === "webinar" ? "webinarIds" : "classIds"
+        ].push(event.entity.id);
       } else {
         // A channel that was never created is the common case (chat is lazy),
-        // not a failure worth failing the run over.
+        // not a failure worth failing the run over. A 429 is quota, not an
+        // outage — pacing should make it rare, and it must not fail the run.
         result.errors.push(
-          `freeze ${batch[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+          `freeze ${event.channelId}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
         );
       }
     });
+    // Stamp the ledger only after the Stream call succeeded, best-effort per
+    // model. A missed stamp costs one redundant freeze next run — safe by
+    // construction; a premature stamp could leave a channel unfrozen forever,
+    // which is not.
+    try {
+      await Promise.all([
+        stamped.webinarIds.length > 0 &&
+          prisma.webinar.updateMany({
+            where: { id: { in: stamped.webinarIds } },
+            data: { chatFrozenAt: new Date() },
+          }),
+        stamped.classIds.length > 0 &&
+          prisma.class.updateMany({
+            where: { id: { in: stamped.classIds } },
+            data: { chatFrozenAt: new Date() },
+          }),
+      ]);
+    } catch (err) {
+      result.errors.push(
+        `ledger stamp: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (toFreeze.length > freezeBatch.length) {
+    result.errors.push(
+      `freeze cap: deferred ${toFreeze.length - freezeBatch.length} channels to the next run`,
+    );
   }
 
   // Delete. `deleteChannels` takes cids and caps at 100 per request; it is
@@ -239,6 +346,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     JSON.stringify({
       event: "expire_event_channels",
       frozen: result.frozen,
+      skippedAlreadyFrozen: result.skippedAlreadyFrozen,
       deleted: result.deleted,
       errorCount: result.errors.length,
       timestamp: new Date().toISOString(),
