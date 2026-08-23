@@ -206,7 +206,7 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="sticky top-24 space-y-4">
+    <div className="xl:sticky xl:top-[calc(var(--header-height,5rem)+1rem)] space-y-4">
       {/* Profile Image Card — refined, no flat border */}
       <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
         <div className="aspect-[4/3] relative">
