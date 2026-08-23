@@ -48,6 +48,9 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   razorpayClient: {
     payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
   },
+  getRazorpayClient: () => ({
+    payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
+  }),
 }));
 
 const getSession = jest.fn();

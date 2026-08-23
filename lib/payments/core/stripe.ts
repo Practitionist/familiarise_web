@@ -39,7 +39,19 @@ const initializeStripeClient = () => {
   });
 };
 
-export const stripeClient = initializeStripeClient();
+// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// module scope put the SDK constructor on every cold boot of any route whose
+// import graph reaches this file (#1124); deferring to first use keeps boot
+// free and preserves the exact semantics — a missing key yields a permanent
+// null either way.
+let stripeClientInstance: Stripe | null = null;
+
+export function getStripeClient(): Stripe | null {
+  if (!stripeClientInstance) {
+    stripeClientInstance = initializeStripeClient();
+  }
+  return stripeClientInstance;
+}
 
 // ============================================================================
 // Helper Functions
@@ -68,6 +80,7 @@ export async function createStripeCheckoutSession({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new PaymentError(
       "Stripe client not initialized - check STRIPE_SECRET_KEY environment variable",
@@ -140,6 +153,7 @@ export async function cancelStripePayment(
   paymentIntentId: string,
   reason: string = "requested_by_customer",
 ): Promise<void> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     console.warn("Stripe client not initialized - cannot cancel payment");
     return;
@@ -196,6 +210,7 @@ export async function createStripeRefund({
   reason,
   metadata,
 }: RefundParams): Promise<RefundResult> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new RefundError(
       "Stripe client not initialized - cannot process refund",
@@ -235,6 +250,7 @@ export async function createStripeRefund({
  * Get refund status from Stripe
  */
 export async function getStripeRefund(refundId: string): Promise<RefundResult> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new RefundError(
       "Stripe client not initialized",
@@ -267,6 +283,7 @@ export async function listStripeRefunds(
   paymentIntentId: string,
   limit: number = 10,
 ): Promise<RefundResult[]> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new RefundError(
       "Stripe client not initialized",
@@ -305,6 +322,7 @@ export async function listStripeRefunds(
 export async function getStripeDispute(
   disputeId: string,
 ): Promise<DisputeResult> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new DisputeError(
       "Stripe client not initialized",
@@ -346,6 +364,7 @@ export async function submitStripeDisputeEvidence({
   disputeId,
   evidence,
 }: DisputeParams): Promise<DisputeResult> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new DisputeError(
       "Stripe client not initialized",
@@ -399,6 +418,7 @@ export async function submitStripeDisputeEvidence({
 export async function listStripeDisputes(
   limit: number = 10,
 ): Promise<DisputeResult[]> {
+  const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new DisputeError(
       "Stripe client not initialized",

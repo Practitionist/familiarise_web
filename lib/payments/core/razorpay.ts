@@ -28,7 +28,19 @@ const initializeRazorpayClient = () => {
   });
 };
 
-export const razorpayClient = initializeRazorpayClient();
+// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// module scope put the SDK constructor on every cold boot of any route whose
+// import graph reaches this file (#1124); deferring to first use keeps boot
+// free and preserves the exact semantics — a missing key yields a permanent
+// null either way.
+let razorpayClientInstance: Razorpay | null = null;
+
+export function getRazorpayClient(): Razorpay | null {
+  if (!razorpayClientInstance) {
+    razorpayClientInstance = initializeRazorpayClient();
+  }
+  return razorpayClientInstance;
+}
 
 // ============================================================================
 // Helper Functions
@@ -49,6 +61,7 @@ export async function createRazorpayOrder({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new PaymentError(
       "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
@@ -102,6 +115,7 @@ export async function createRazorpayOrder({
  * Cancel a Razorpay order (best effort - cannot actually cancel after payment)
  */
 export async function cancelRazorpayOrder(orderId: string): Promise<void> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     console.warn("Razorpay client not initialized - cannot cancel order");
     return;
@@ -258,6 +272,7 @@ export async function createRazorpayRefund({
   metadata,
   idempotencyKey,
 }: RefundParams): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized - cannot process refund",
@@ -326,6 +341,7 @@ export async function createRazorpayRefund({
 export async function getRazorpayRefund(
   refundId: string,
 ): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",
@@ -364,6 +380,7 @@ export async function listRazorpayRefunds(
   orderId: string,
   limit: number = 10,
 ): Promise<RefundResult[]> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",

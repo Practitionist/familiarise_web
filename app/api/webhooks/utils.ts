@@ -8,8 +8,8 @@ import {
 } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
-import { stripeClient } from "@/lib/payments/core/stripe";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getStripeClient } from "@/lib/payments/core/stripe";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
@@ -532,6 +532,7 @@ export async function verifyWebhookSignature(
   secret: string,
   gateway: "stripe" | "razorpay",
 ): Promise<{ isValid: boolean; body: string }> {
+  const stripeClient = getStripeClient();
   const signature =
     req.headers.get("stripe-signature") ||
     req.headers.get("x-razorpay-signature");
@@ -1052,6 +1053,8 @@ export async function handleDisputeCreated(
   isChargeRefundable: boolean,
   gateway: "STRIPE" | "RAZORPAY",
 ) {
+  const stripeClient = getStripeClient();
+  const razorpayClient = getRazorpayClient();
   // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
   // This lookup is an external HTTP call to Stripe or Razorpay; leaving it
   // inside the tx held a database transaction open across a network round trip,

@@ -32,7 +32,7 @@ import {
   razorpayOrderPaidEventSchema,
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { z } from "zod";
 
 // Strict inner-entity schemas used to narrow optional envelope fields at the
@@ -132,6 +132,7 @@ export async function processRazorpayWebhookEvent(
   eventType: string,
   eventId: string,
 ): Promise<void> {
+  const razorpayClient = getRazorpayClient();
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
   // `notes.*` fields the app populated (referrerEmail etc). See
