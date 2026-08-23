@@ -314,7 +314,8 @@ export function withRunningBalance<T extends { deltaPaise: number }>(
 export function signedDeltaPaise(
   rows: readonly { direction: string; amountPaise: bigint | number }[],
 ): number {
-  const total = rows.reduce((acc, r) => {
+  let total = 0;
+  for (const r of rows) {
     const amount =
       typeof r.amountPaise === "bigint"
         ? Number(r.amountPaise)
@@ -324,12 +325,14 @@ export function signedDeltaPaise(
         `signedDeltaPaise: amount ${r.amountPaise} exceeds the safe integer range`,
       );
     }
-    return acc + (r.direction === "CREDIT" ? amount : -amount);
-  }, 0);
-  if (!Number.isSafeInteger(total)) {
-    throw new Error(
-      `signedDeltaPaise: summed delta ${total} exceeds the safe integer range`,
-    );
+    total += r.direction === "CREDIT" ? amount : -amount;
+    // Validate the RUNNING total too: a later debit can bring an imprecise
+    // sum back into range after precision was already lost mid-accumulation.
+    if (!Number.isSafeInteger(total)) {
+      throw new Error(
+        `signedDeltaPaise: intermediate total ${total} exceeds the safe integer range`,
+      );
+    }
   }
   return total;
 }

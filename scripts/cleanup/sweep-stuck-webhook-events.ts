@@ -125,6 +125,14 @@ async function sweepStuckWebhookEventsUnlocked(
       // no redelivery to rescue it. This sweep is the only thing that will.
       provider: { in: ["razorpay", "stream"] },
       receivedAt: { lt: staleBefore },
+      // #1205-triage — claim freshness rides the dedicated claimedAt column;
+      // receivedAt stays untouched so give-up aging cannot be reset by our
+      // own re-drives.
+      AND: [
+        {
+          OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+        },
+      ],
       OR: [
         // Crashed before recording anything.
         { processed: false, error: null },
@@ -170,8 +178,11 @@ async function sweepStuckWebhookEventsUnlocked(
     // 30s per call, so "still alive past the staleness window" is rare —
     // but a claim makes sweep-vs-sweep double-drive impossible outright.
     const claimed = await prisma.webhookEvent.updateMany({
-      where: { eventId: ev.eventId, receivedAt: ev.receivedAt },
-      data: { receivedAt: new Date() },
+      where: {
+        eventId: ev.eventId,
+        OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
+      },
+      data: { claimedAt: new Date() },
     });
     if (claimed.count === 0) {
       console.log(

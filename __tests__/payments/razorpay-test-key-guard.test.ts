@@ -190,6 +190,10 @@ describe("RazorpayX payouts client (lib/payments/payouts/razorpay-payouts.ts)", 
     process.env.ENABLE_LIVE_PAYOUTS = "true";
     process.env.NEXT_PHASE = "phase-production-build";
     process.env.RAZORPAYX_KEY_ID = "rzp_test_buildx";
+    // #1219-triage — a missing secret must not be the reason this passes:
+    // construct against a complete credential set so the exemption (not an
+    // unrelated config throw) is what's under test.
+    process.env.RAZORPAYX_KEY_SECRET = "xsecret";
     process.env.RAZORPAYX_ACCOUNT_NUMBER = "acc_1";
     const mod = requirePayoutsFactory();
     expect(() => mod.getRazorpayPayoutsService()).not.toThrow();

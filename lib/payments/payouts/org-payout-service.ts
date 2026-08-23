@@ -551,8 +551,10 @@ export async function processOrgPayout(
       }
 
       // #1020 — a payout whose earnings sit on a disputed payment must not
-      // leave the building. Checked INSIDE this Serializable tx (free with
-      // the isolation we're already paying for); returning unclaimed keeps
+      // leave the building. Checked inside the claim tx (READ COMMITTED —
+      // race-safety comes from the CAS claim below per ADR 13, and the
+      // residual window to gateway submit is backstopped by the LOST
+      // clawback); returning unclaimed keeps
       // the row PENDING so a later cron run advances it once the dispute
       // resolves. Residual window to gateway submit is backstopped by the
       // LOST-handler clawback (#1020-2).
@@ -971,8 +973,19 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
           break;
       }
     } catch (err) {
-      reportSentryError(err, { subsystem: "payments" });
+      // #1205-triage — PERMANENT rejections must terminate the row, not sit
+      // in PROCESSING forever: the redrive would retry a data rejection
+      // every hour indefinitely while its BATCHED earnings stay locked.
       const message = err instanceof Error ? err.message : String(err);
+      if (
+        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+        err instanceof PayoutValidationError
+      ) {
+        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+        result.advanced++;
+        continue;
+      }
+      reportSentryError(err, { subsystem: "payments" });
       result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
     }
   }
