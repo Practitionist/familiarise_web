@@ -29,6 +29,7 @@ import {
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 // #817 — the canonical invitable set lives in org-labels; a local duplicate
 // here drifted (BILLING_ADMIN went missing) so the route now imports it.
@@ -204,7 +205,11 @@ export async function POST(
   let wasExisting = false;
   let invitation;
   try {
-    invitation = await prisma.$transaction(
+    // #1132 follow-up — the tx below assumed a retry budget that never
+    // existed; a P2034 abort surfaced as a raw 500 to the invite sender.
+    // Transient serialization failures now retry via the house helper.
+    invitation = await withSerializableRetry(() =>
+      prisma.$transaction(
       async (tx) => {
         const existing = await tx.invitation.findFirst({
           where: {
@@ -270,6 +275,7 @@ export async function POST(
         return record;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
     );
   } catch (err) {
     if (err instanceof DomainVerificationRequiredError) {

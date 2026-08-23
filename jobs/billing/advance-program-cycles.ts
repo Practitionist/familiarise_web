@@ -40,6 +40,7 @@ import { Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 // Bounded scan — one batch per run; the next tick drains the remainder.
 const BATCH_SIZE = 500;
@@ -109,7 +110,10 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
     const orgId = a.program.contract.organizationId;
 
     try {
-      const result = await prisma.$transaction(
+      // #1132 follow-up — transient P2034 aborts now retry; persistent ones
+      // still fall through to the outer catch's skip-with-Sentry semantics.
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
         async (tx) => {
           if (decision.action === "CLOSE") {
             // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
@@ -186,6 +190,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
           return { outcome: "rolled" as const, successorId: successor.id };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
       );
 
       if (result.outcome === "rolled") stats.rolled += 1;

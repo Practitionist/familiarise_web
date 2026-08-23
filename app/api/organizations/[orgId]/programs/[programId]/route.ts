@@ -16,6 +16,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const ProgramStatusSchema = z.enum([
   "ACTIVE",
@@ -452,7 +453,10 @@ export async function DELETE(
     // (which Prisma surfaces as a retryable serialization error). The
     // explicit assignment count + utilization check inside the tx still
     // runs first as a fast-fail.
-    await prisma.$transaction(
+    // #1132 follow-up — transient serialization aborts now retry instead of
+    // 500ing the DELETE.
+    await withSerializableRetry(() =>
+      prisma.$transaction(
       async (tx) => {
         const current = await tx.program.findFirst({
           where: { id: programId, contract: { organizationId: orgId } },
@@ -503,6 +507,7 @@ export async function DELETE(
         });
       },
       { isolationLevel: "Serializable" },
+      ),
     );
     return new NextResponse(null, { status: 204 });
   } catch (err) {
