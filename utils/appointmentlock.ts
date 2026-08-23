@@ -111,11 +111,23 @@ const DEFAULT_LOCK_TTL = 60000; // 60 seconds
 // lock, silently admitting a second buyer. Sized per checkout type (mirrors
 // the LONG_JOB_TTL_MS precedent in lib/cron/with-cron-lock.ts); checkout
 // also renews once before the gateway call and aborts if ownership is lost.
+//
+// CLASS additionally carries the documented serverless-freeze worst case
+// (bugs/finances/high-concurrency-and-spikes.md): a freeze suspends the
+// instance AFTER the single checked renewal while Redis keeps counting the
+// TTL down, so at 300s a frozen checkout could lose ownership mid-payment
+// and let a second instance enter. 600s consolidates the old end-to-end
+// envelope (initial window + the one renewal, ~594s effective after drift)
+// into a single grant, so a late freeze cannot outlive ownership. Hard-crash
+// stalls stay bounded where it matters: contention losers hold only
+// CHECKOUT_WAIT_RETRY_CONFIG (~7s) and get a structured 409, and the
+// Serializable recount + #440 GiST constraint remain the correctness
+// backstops behind the lock.
 export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
   CONSULTATION: 60_000,
   SUBSCRIPTION: 120_000,
   WEBINAR: 120_000,
-  CLASS: 300_000,
+  CLASS: 600_000,
 };
 
 // ============================================================================
