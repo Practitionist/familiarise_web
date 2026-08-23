@@ -3,7 +3,7 @@
 **Date:** 2026-08-23 · **Branch reviewed:** `perf/stream-chat-load` · **Method:** 4 parallel deep-dives (cross-cutting/security, server chat core, client chat, video/meetings) + live latency probing.
 **Scope:** every file under `lib/stream*`, `actions/stream/**`, `app/api/stream/**`, `app/api/meetings/**`, `app/meetings/**`, `components/chat/**`, `providers/Stream*`, `hooks/useChatUnreadCount.ts`, `jobs/stream/*`, `scripts/stream/*`, `.github/workflows/*stream*|*expire*|*recording*`.
 
-Severity roll-up: **3 HIGH · 8 MED-HIGH/MED · 9 LOW/INFO**. The two HIGH clusters are actionable this week.
+Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. The two HIGH clusters are actionable this week.
 
 ---
 
@@ -11,7 +11,7 @@ Severity roll-up: **3 HIGH · 8 MED-HIGH/MED · 9 LOW/INFO**. The two HIGH clust
 
 Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video** (participant-minute-billed). Postgres stores *no chat state and no call media* — Stream is the system of record for messages/calls; Postgres (`MeetingSession`, `MeetingAttendance`, `Recording`) is the system of record for *entitlements, scheduling truth, and recording metadata*. Everything else is projections.
 
-```
+```text
                     ┌──────────────────────────────────────────────┐
   Browser ────WS──▶ │ Stream edge (chat WS + video SFU)            │
     │               │   primary region: ??? ← 253–395ms RTT probe  │
@@ -35,22 +35,25 @@ Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video*
  Supabase Postgres (Prisma): Appointment/SlotOfAppointment (truth),
    MeetingSession(1:1 slot, streamCallId unique), MeetingAttendance,
    Recording, WebhookEvent(outbox-ish), Webinar/Class.chatFrozenAt ledger
-```
+```text
 
 ### 1.1 Channel taxonomy & ID discipline
+
 `lib/stream-channel-ids.ts` + `lib/stream-utils.ts` are the single source of ID truth: `dm-<a>-<b>` / `dmo-<org16>-<pair24>` / `dmh-<hash>` (personal DMs, byte-order pair sort — `localeCompare` banned after incident P0-3), `webinar-*`/`class-*` (team), `collab-*` (host+collaborators). Legacy `consultation-/subscription-` prefixes are resolve-only, deliberately unmanaged so survivors aren't swept. 64-char ceiling enforced by deterministic hashing (`fitOrHash`), not validation (`channelIdSchema.min(1)` never enforces it).
 
 ### 1.2 Channel lifecycle (state machine)
-```
+
+```text
 absent ──lazy create-on-miss (addMembers 404→atomic create)──▶ live
 absent ──payment webhook / booking approval / collab accept──▶ live
 live   ──+7d after last slot ends──▶ frozen (ledgered via chatFrozenAt)
 frozen ──+retentionDays (org dial, default 90)──▶ hard-deleted (bulk 100)
 live   ──maintenance OFFLINE──▶ frozen (DMs exempt) ──ONLINE exit──▶ unfrozen
-```
+```text
 Membership is **Postgres-authoritative projection**: expected set rebuilt from plan/slot rows each sync; immediate writes on webhook/approval/removal; nightly cron owns freeze/delete.
 
 ### 1.3 Meeting lifecycle
+
 No room exists at booking. First Join mints deterministically: `slot-<anchorSlotId>` (`getOrCreateAppointmentMeeting`), anchor resolved by reusing the run-grouping helper (#1061). `/api/meetings/[id]/join` is the **only** grantor (authn → banned → entitlement union → getOrCreate repair → `updateCallMembers(call_member)`). End paths (session timeout, explicit end, maintenance drain, orphan reconciler) all converge on one guard: **skip if `endedAt` already set**. Recordings: capability+consent-gated start (race-safe atomic claim), webhook-driven lifecycle, Supabase transfer with retry+page-after-3, retention tombstone cron.
 
 ---
@@ -61,7 +64,7 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 |---|---|---|
 | Webhook route | HMAC over raw body, constant-time compare, secret = `STREAM_WEBHOOK_SECRET \|\| STREAM_API_SECRET`; persist receipt **before** 200; handler in `after()`; `X-Webhook-ID` idempotency | 10 event types handled; compile-time exhaustive dispatch |
 | Circuit breaker | Shared Redis breaker (5 fails/30s reset/half-open 3); expected errors (404/code16, 429 post-incident) neither trip nor page | One breaker serves BOTH redis-lock ops and Stream ops — see F-MED-1 |
-| Server actions | `upsertUserToStream` cached 5min; creators stamp `organization_id`; `removeUserFromEventChannel` returns `{success:false}` instead of throwing | Several exports have **no session gate** — F-HIGH-1/2 |
+| Server actions | `upsertUserToStream` cached 5min; creators stamp `organization_id`; `removeUserFromEventChannel` returns `{success:false}` instead of throwing | Several exports have **no session gate** — F-HIGH-1/F-MED-6 |
 | Client store | Module snapshot + `useSyncExternalStore`; stable server snapshot; bail-on-no-op writes | Prevents SSR skip + element-type-change remounts |
 | Video join | Always `call_member` (a `host` role would lock out — zero grants exist); host-ness from `custom.consultantUserId` | Call type hardened: `user` has NO join-call; script refuses `--apply` until join route deployed |
 | Attendance | Sole writer = participant webhooks; `(meetingSessionId,userId)` upsert, immutable `firstJoinedAt` | No-show detection consumes it — webhook outage ⇒ attendance loss |
@@ -94,12 +97,15 @@ Two simultaneous first joins both miss `addMembers`, both build roster and call 
 - **F-MED-9 · Non-consenting users dropped from upsert but still listed as members** in atomic creates — one withdrawn-consent attendee can fail creation for an entire webinar cohort.
 
 ### LOW / INFO (condensed)
-Unhandled webhook events leave no durable record · unpaced `backfill-channel-org.ts` shares the paced consumers' budget · positive-only existence caching · dead/deprecated exports on the server boundary (`searchUsers` PII search) · per-process caches near-useless on serverless (documented) · `membershipCache:false` written even on failed removal (documented trade-off, consumers must trust `true` exclusively) · breaker metrics log-only · "reconcile cron catches mid-sync tab close" comment references a cron that doesn't exist (client provider is the only driver) · HEAD verification endpoint unsigned.
+
+Unhandled webhook events keep only their durable receipt (identity + payload + signature logged by `webhook-dispatch.ts` before dispatch) but no recorded processing outcome · unpaced `backfill-channel-org.ts` shares the paced consumers' budget · positive-only existence caching · dead/deprecated exports on the server boundary (`searchUsers` PII search) · per-process caches near-useless on serverless (documented) · `membershipCache:false` written even on failed removal (documented trade-off, consumers must trust `true` exclusively) · breaker metrics log-only · "reconcile cron catches mid-sync tab close" comment references a cron that doesn't exist (client provider is the only driver) · HEAD verification endpoint unsigned.
 
 ### What is genuinely strong (keep doing this)
+
 Ack-first webhook durability with claim semantics + sweeper; the #1134 P0 series (ID discipline, secret fallback, role stripping); grants/subscription scripts engineered like production migrations (dry-run defaults, pre-image dumps, deploy gates, post-write verification); pacing doctrine + freeze ledger; the #248 remount-storm architecture; race-safe recording claims; exhaustive webhook dispatch; 25 focused test files pinning exactly the historical failure modes.
 
 ### Docs debt
+
 `docs/stream/02` (phantom `STREAM_SYNC_SECRET`), `05` (old `streamCallId` format, removed client-side getOrCreate), `09/10` (dead paths/routes, NextAuth remnants), `13` (wrong signing-secret story — Stream signs with API secret; handler table lists 6/10 events). README self-aware ("code is correct, docs drifted").
 
 ---
