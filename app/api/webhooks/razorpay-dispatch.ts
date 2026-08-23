@@ -32,7 +32,7 @@ import {
   razorpayOrderPaidEventSchema,
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { z } from "zod";
 
 // Strict inner-entity schemas used to narrow optional envelope fields at the
@@ -209,6 +209,9 @@ export async function processRazorpayWebhookEvent(
         );
         let paymentIntentId = refundEvent.payment_id;
 
+        // Only the refund family resolves payment_id → order_id via the SDK;
+        // other event branches must not construct a client.
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(
@@ -259,6 +262,7 @@ export async function processRazorpayWebhookEvent(
         );
         let failedPaymentIntentId = failedRefundEvent.payment_id;
 
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(

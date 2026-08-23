@@ -8,8 +8,8 @@ import {
 } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
-import { stripeClient } from "@/lib/payments/core/stripe";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getStripeClient } from "@/lib/payments/core/stripe";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
@@ -544,6 +544,9 @@ export async function verifyWebhookSignature(
 
   try {
     if (gateway === "stripe") {
+      // Only Stripe verification touches the SDK client; Razorpay verifies
+      // via local HMAC below.
+      const stripeClient = getStripeClient();
       if (!stripeClient) {
         console.error(
           "Stripe client not initialized - cannot verify webhook signature",
@@ -1159,6 +1162,9 @@ export async function handleDisputeCreated(
   isChargeRefundable: boolean,
   gateway: "STRIPE" | "RAZORPAY",
 ) {
+  // Only resolve the client the dispute's gateway will use.
+  const stripeClient = gateway === "STRIPE" ? getStripeClient() : null;
+  const razorpayClient = gateway === "RAZORPAY" ? getRazorpayClient() : null;
   // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
   // This lookup is an external HTTP call to Stripe or Razorpay; leaving it
   // inside the tx held a database transaction open across a network round trip,
@@ -1341,13 +1347,22 @@ export async function handleDisputeUpdated(
   status: string,
   evidence: Record<string, unknown> | null,
 ) {
+  // #1020-2 — staged inside the tx, dispatched only after COMMIT (declared
+  // here because the tx callback assigns it).
+  let consultantClawbackPage: {
+    disputeId: string;
+    paymentId: string;
+    amountPaise: number;
+    earnings: number;
+  } | null = null;
+
   // #785 — Serializable so SSI detects a refund racing this lost-chargeback on
   // the same payment: refundPayment (also Serializable) reads disputes + writes
   // a Refund row while applyOrgChargeback below reads refunds + writes the
   // dispute, so an interleaving forms a dangerous rw-structure and one tx aborts
   // (retried by the gateway webhook redelivery) instead of both reversing the
   // org for the same money.
-  return await prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx) => {
       const dispute = await tx.dispute.findUnique({
         where: { disputeId },
@@ -1535,20 +1550,16 @@ export async function handleDisputeUpdated(
           );
         }
         if (consultantManualRecoveryCount > 0) {
-          void Promise.resolve(
-            recordSystemError({
-              organizationId: null,
-              category: "PAYOUT",
-              summary: `Chargeback clawback needed: ${consultantManualRecoveryCount} PAID consultant earning(s) totalling ${consultantManualRecoveryPaise} paise on dispute ${disputeId}`,
-              err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
-              context: {
-                disputeId,
-                paymentId: dispute.paymentId,
-                amountPaise: consultantManualRecoveryPaise,
-                earnings: consultantManualRecoveryCount,
-              },
-            }),
-          ).catch(() => {});
+          // Staged for POST-COMMIT dispatch (see consultantClawbackPage):
+          // paging from inside the tx meant an SSI abort reached ops with a
+          // reversal total that was never persisted, and the gateway
+          // redelivery would double-page.
+          consultantClawbackPage = {
+            disputeId,
+            paymentId: dispute.paymentId,
+            amountPaise: consultantManualRecoveryPaise,
+            earnings: consultantManualRecoveryCount,
+          };
         }
 
         // #1008 — HOST org earnings side (mirrors the consultant loop above).
@@ -1696,6 +1707,31 @@ export async function handleDisputeUpdated(
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
   );
+
+  // Post-commit dispatch: the reversal rows are durable at this point, so
+  // exactly one page reaches ops per successful lost-dispute transition. An
+  // SSI abort never reaches this — no page for money not persisted.
+  // (The cast defeats TS's initializer narrowing: the only assignment happens
+  // inside the tx callback, which CFA cannot see past the await.)
+  const stagedClawbackPage = consultantClawbackPage as {
+    disputeId: string;
+    paymentId: string;
+    amountPaise: number;
+    earnings: number;
+  } | null;
+  if (stagedClawbackPage) {
+    void Promise.resolve(
+      recordSystemError({
+        organizationId: null,
+        category: "PAYOUT",
+        summary: `Chargeback clawback needed: ${stagedClawbackPage.earnings} PAID consultant earning(s) totalling ${stagedClawbackPage.amountPaise} paise on dispute ${stagedClawbackPage.disputeId}`,
+        err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
+        context: { ...stagedClawbackPage },
+      }),
+    ).catch(() => {});
+  }
+
+  return result;
 }
 
 /**
