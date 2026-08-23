@@ -15,7 +15,7 @@ import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
 import { breakDownSlotsPreservingStatus } from "@/utils/timeSlotsProcessing";
@@ -354,13 +354,13 @@ export default function ConsultationPricingToggle({
                 </Button>
               </DialogTrigger>
               <DialogContent
-                className="z-[1002] sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85dvh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl"
+                className="z-[1002] w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] h-[min(85dvh,900px)] flex flex-col overflow-hidden bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl [container-type:size]"
                 // Inline zIndex: arbitrary-class merge with the z-50 base in
                 // dialog.tsx is ordering-dependent; the nav (z-[1000]) and
                 // announcement bar (z-[1001]) must never paint above this.
                 style={{ zIndex: 1002 }}
               >
-                <DialogHeader className="p-4 sm:p-6 lg:p-7 border-b border-zinc-800">
+                <DialogHeader className="flex-none p-4 sm:p-6 lg:p-7 border-b border-zinc-800">
                   <DialogTitle className="text-lg sm:text-xl lg:text-2xl font-semibold">
                     Book {option.title} Consultation
                   </DialogTitle>
@@ -369,20 +369,17 @@ export default function ConsultationPricingToggle({
                     consultation
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8">
+                {/* Stretch-to-fit body: the dialog never scrolls; each pane
+                    flexes and only the slot list scrolls internally. */}
+                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8 overflow-hidden">
                   {/* Calendar Section */}
-                  <div>
-                    <h3 className="text-base sm:text-lg font-semibold mb-3 flex items-center text-white">
+                  <div className="min-h-0 flex flex-col">
+                    <h3 className="flex-none text-base sm:text-lg font-semibold mb-2 sm:mb-3 flex items-center text-white">
                       <CalendarIcon className="mr-2 h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />{" "}
                       Select a Date
                     </h3>
-                    <div
-                      className="bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50"
-                      style={
-                        { "--cell": "clamp(26px, 5.2dvh, 42px)" } as CSSProperties
-                      }
-                    >
-                      <div className="flex justify-between items-center mb-2 sm:mb-3">
+                    <div className="flex-1 min-h-0 flex flex-col bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50 [--cell:clamp(22px,5.2cqh,40px)] md:[--cell:min(8cqh,48px)]">
+                      <div className="flex-none flex justify-between items-center mb-2 sm:mb-3">
                         <Button
                           variant="ghost"
                           size="default"
@@ -428,7 +425,7 @@ export default function ConsultationPricingToggle({
                           &gt;
                         </Button>
                       </div>
-                      <div className="grid grid-cols-7 justify-items-center gap-x-1 sm:gap-x-3 text-center text-xs sm:text-base font-medium text-zinc-400 mb-1.5 sm:mb-3">
+                      <div className="flex-none grid grid-cols-7 justify-items-center gap-x-1 sm:gap-x-3 text-center text-xs sm:text-base font-medium text-zinc-400 mb-1.5 sm:mb-3">
                         <div>Mo</div>
                         <div>Tu</div>
                         <div>We</div>
@@ -440,31 +437,14 @@ export default function ConsultationPricingToggle({
                       <div className="grid grid-cols-7 justify-items-center gap-x-1 gap-y-1 sm:gap-x-2 sm:gap-y-2">
                         {renderCalendar()}
                       </div>
-                      {/* Day-level availability legend (matches slot colors) */}
-                      <div className="flex flex-wrap items-center justify-center gap-x-3 sm:gap-x-4 gap-y-1.5 mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-zinc-700/40">
-                        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-zinc-500">
-                          <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-emerald-400" />
-                          Available
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-zinc-500">
-                          <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-amber-400" />
-                          Partially booked
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-zinc-500">
-                          <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-rose-400" />
-                          Fully booked
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-zinc-500">
-                          <span className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-zinc-700" />
-                          No slots
-                        </div>
-                      </div>
+                      {/* Dot colors share the slot list legend below — no
+                          separate calendar legend needed. */}
                     </div>
                   </div>
 
                   {/* Available Slots Section */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
+                  <div className="min-h-0 flex flex-col">
+                    <div className="flex-none flex items-center justify-between mb-3">
                       <h3 className="text-base sm:text-lg font-semibold flex items-center text-white">
                         <ClockIcon className="mr-2 h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />{" "}
                         Available {selectedDuration} hour Slots
@@ -491,7 +471,7 @@ export default function ConsultationPricingToggle({
                       )}
                     </div>
                     {consultantDetails?.scheduleType && (
-                      <div className="hidden md:block mb-3 p-2.5 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
+                      <div className="flex-none hidden md:block mb-3 p-2.5 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
                         <p className="text-xs sm:text-sm text-zinc-400">
                           This consultant prefers{" "}
                           <span
@@ -509,7 +489,7 @@ export default function ConsultationPricingToggle({
                         </p>
                       </div>
                     )}
-                    <div className="grid grid-cols-1 gap-2.5 sm:gap-3 max-h-[30dvh] md:max-h-[350px] overflow-y-auto pr-1 sm:pr-2">
+                    <div className="flex-1 min-h-0 grid grid-cols-1 content-start gap-2.5 sm:gap-3 overflow-y-auto pr-1 sm:pr-2">
                       {availableSlots.length > 0 ? (
                         <>
                           {availableSlots.map((slot, index) => {
@@ -620,7 +600,7 @@ export default function ConsultationPricingToggle({
                     </div>
                   </div>
                 </div>
-                <div className="bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 flex justify-end rounded-b-2xl border-t border-zinc-800">
+                <div className="flex-none bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 flex justify-end rounded-b-2xl border-t border-zinc-800">
                   <Button
                     className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6 sm:px-8 h-10 sm:h-12 text-sm sm:text-base"
                     onClick={
