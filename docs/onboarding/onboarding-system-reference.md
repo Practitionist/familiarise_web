@@ -189,13 +189,26 @@ State:
   step: number (0-4)
   formData: Partial<OnboardingFormData>  — cumulative across steps
 
+Draft layer (resumable wizard, #onboarding-ux):
+  On mount   → loadOnboardingDraftAction() hydrates step + formData once
+               (draftReadyRef gates autosave until hydration resolves)
+  Per step   → debounced (800ms) autosave through a serialized save queue,
+               so later state always lands after earlier in-flight upserts
+  Lifecycle  → every delete of the draft row (successful submission, Start
+               over, org-wizard launch) first DRAINS the queue via
+               quiesceDraftSaves(), then clears — an in-flight upsert can
+               never recreate a deleted row
+
 Handlers:
   handleNext(stepData)  → merge data, advance step
   handleBack()          → decrement step
   handleSubmit(data)    → validate, transform, submit to server action
+  startOver()           → quiesce saves, clear draft row, restart at step 0;
+                          autosave stays armed afterwards
 
 Layout:
   Header with step counter + sign-out
+  Resume banner when a saved draft was restored (with Start over)
   Progress stepper (circles + connector lines)
   Form card (renders current step)
   Help text footer
@@ -264,32 +277,28 @@ CustomSlot: { startsAt (ISO string), endsAt (ISO string) }
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
-| `verificationLinkedinUrl` | url | Yes | Regex: `/^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i` |
-| `verificationDocuments` | file upload | Yes (min 1) | Max 5 files, 10MB each. Types: PDF, PNG, JPG, JPEG, WEBP |
+| `verificationLinkedinUrl` | url | Optional at submit | Regex: `/^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i` |
+| `verificationDocuments` | file upload | Optional at submit | Max 5 files, 10MB each. Types: PDF, PNG, JPG, JPEG, WEBP |
 | `verificationNotes` | textarea | No | max 500 chars |
 | `termsAccepted` | checkbox | Yes | — |
 | `privacyAccepted` | checkbox | Yes | — |
+
+Both verification inputs are labeled "(needed to get listed)": providing
+LinkedIn + ≥1 uploaded document submits the verification immediately;
+skipping defers to the dashboard (decision #12). Only documents that actually
+persisted (uploaded records or uploads with a storage URL) count toward the
+package — see `isPersistableVerificationDoc()` in onboarding-shared.ts.
 
 Uses `VerificationDocumentUpload` component (drag & drop, progress, status badges).
 - Upload endpoint: `POST /api/verification/documents`
 - Remove endpoint: `DELETE /api/verification/documents?id={docId}`
 
-### 3.6 Step 1 Consultee: `ConsulteeProfileForm`
+### 3.6 Consultee Profile/Preferences Steps — REMOVED
 
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `occupation` | text | Yes | min 1 char |
-| `currentCompany` | text | No | — |
-| `careerStage` | select | No | CareerStage enum |
-| `industry` | text | No | — |
-| `aboutMe` | textarea | Yes | min 1 char |
-
-### 3.7 Step 2 Consultee: `ConsulteePreferencesForm`
-
-| Field | Type | Required | Validation |
-|-------|------|----------|------------|
-| `preferredLanguage` | text | No | — |
-| `goals` | textarea | No | — |
+`ConsulteeProfileForm` and `ConsulteePreferencesForm` were removed in
+#onboarding-ux: the consultee flow is now 2 screens (§2), and enrichment
+(occupation, career stage, industry, aboutMe, goals) moved to the consultee
+dashboard's Settings tab plus the lazy `ensureConsulteeProfile()` path (§0).
 
 ### 3.8 Agreement Forms
 
@@ -299,7 +308,7 @@ Both `ConsulteeAgreementForm` and `StaffAgreementForm` collect:
 
 ### 3.9 Review Forms
 
-All review forms (`ConsultantReviewForm`, `ConsulteeReviewForm`, `StaffReviewForm`) are read-only displays of accumulated `formData`. The consultant review includes sections for professional background, schedule, and verification. The review step calls `onSubmit(formData)` which triggers the full submission pipeline.
+All review forms (`ConsultantReviewForm`, `StaffReviewForm`) are read-only displays of accumulated `formData`. The consultant review includes sections for professional background, schedule, and verification. The review step calls `onSubmit(formData)` which triggers the full submission pipeline. (The consultee flow has no review step since #onboarding-ux — its final screen submits directly.)
 
 ---
 
@@ -606,17 +615,30 @@ Step 4: TRANSACTION (maxWait: 10s, timeout: 30s)
   └─ User.update with profile IDs + full include
 
 Step 5: POST-TRANSACTION (consultant only)
-  └─ submitVerificationRequest(userId, consultantProfileId, body, name, email)
-      ├─ Update User.linkedinUrl
-      ├─ Create ConsultantProfileVerification (status: PENDING)
-      ├─ Create/link ProfileVerificationDocument records
-      ├─ Update ConsultantProfile.verificationStatus → UNDER_REVIEW
-      └─ Notify admins via Novu (fire-and-forget)
-      └─ On failure: returns verificationWarning (profile still saved)
+  └─ shouldSubmitVerification(body) — LinkedIn + ≥1 persistable document?
+      ├─ YES → submitVerificationRequest(userId, consultantProfileId, body, name, email)
+      │     ├─ Update User.linkedinUrl
+      │     ├─ Create ConsultantProfileVerification (status: PENDING)
+      │     ├─ Create/link ProfileVerificationDocument records
+      │     ├─ Update ConsultantProfile.verificationStatus → UNDER_REVIEW
+      │     └─ Notify admins via Novu (fire-and-forget)
+      │         └─ On failure: returns verificationWarning (profile still saved)
+      └─ NO → deferred path (#onboarding-ux, decision #12)
+            ├─ Save whatever LinkedIn was entered onto User.linkedinUrl
+            ├─ Profile keeps model default PENDING_VERIFICATION
+            │  (unlisted until verified; no verification rows, no document
+            │   links, never UNDER_REVIEW)
+            └─ Response carries verificationDeferred: true — the consultant
+               finishes from Settings → Verification (/api/verification/submit)
 
 Step 6: RETURN
-  └─ { success: true, user, verificationWarning? }
+  └─ { success: true, user, verificationWarning?, verificationDeferred? }
 ```
+
+> "Persistable document" = an existing record uploaded earlier via
+> `/api/verification/documents`, or an onboarding upload carrying its storage
+> URL (`isPersistableVerificationDoc`). The same predicate gates both the
+> deferral decision and what `submitVerificationRequest` persists.
 
 ### Availability Slot Sync
 
@@ -960,7 +982,7 @@ uploadedAt       DateTime  @default(now())
 
 2. **STAFF/ADMIN are invite-only.** The server rejects these roles from public onboarding (`processOnboardingData` returns an error). The UI greys out the STAFF option. Admin onboarding exists for admin-initiated flows.
 
-3. **Verification is post-transaction.** `submitVerificationRequest()` runs after the main transaction commits. If it fails, the user profile is still created. The client receives `verificationWarning` to display a warning toast.
+3. **Verification is post-transaction and conditional.** `submitVerificationRequest()` runs after the main transaction commits, but only when the package is complete (LinkedIn + ≥1 persistable document — see decision #12). If submission itself fails, the user profile is still created. The client receives `verificationWarning` to display a warning toast.
 
 4. **Replace (not merge) semantics.** Professional background sections (work experience, education, certifications, achievements) and availability slots are completely replaced on each submission. This prevents orphaned records but means partial updates aren't supported.
 
@@ -981,7 +1003,7 @@ uploadedAt       DateTime  @default(now())
 
 11. **Drafts are a convenience cache, never an authorization surface.** The `OnboardingDraft` row (one per user, autosaved per step) only restores wizard state. Guards read `User.onboardingCompleted`; the draft row is deleted on completion, cascade-deleted with the user under DPDP erasure, and its `role` column is narrowed to the three public roles so it can never masquerade as an authz signal. Multi-device drafts are last-write-wins; the terminal transition remains protected by the #724/#840 CAS.
 
-12. **Consultant verification is deferrable.** A submission without LinkedIn + ≥1 document still completes onboarding: the profile is saved with the model default `PENDING_VERIFICATION` and the response carries `verificationDeferred: true`. Marketplace visibility continues to gate on verification, so a deferred consultant is simply unlisted until they finish from Settings → Verification (`/api/verification/submit`, `VerificationSection.tsx`). Policy lives in `shouldSubmitVerification()` (onboarding-shared.ts).
+12. **Consultant verification is deferrable.** A submission without LinkedIn + ≥1 persistable document still completes onboarding: the profile is saved with the model default `PENDING_VERIFICATION` and the response carries `verificationDeferred: true`. Marketplace visibility continues to gate on verification, so a deferred consultant is simply unlisted until they finish from Settings → Verification (`/api/verification/submit`, `VerificationSection.tsx`). Policy lives in `shouldSubmitVerification()` (onboarding-shared.ts); "persistable" means the entry would actually create/link a row (`isPersistableVerificationDoc()`), so junk like `[{}]` defers instead of flipping the profile to `UNDER_REVIEW` with zero documents.
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
 
