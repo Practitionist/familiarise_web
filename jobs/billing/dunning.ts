@@ -32,6 +32,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -99,7 +100,13 @@ export async function runDunning(): Promise<DunningStats> {
   stats.scannedStage1 = newlyOverdue.length;
 
   for (const inv of newlyOverdue) {
-    const claimed = await prisma.$transaction(
+    // #1132 follow-up — transient P2034 aborts are retried by the house
+    // helper; persistent failures skip this invoice so one bad row can't
+    // kill the day's run.
+    let claimed: boolean;
+    try {
+      claimed = await withSerializableRetry(() =>
+        prisma.$transaction(
       async (tx) => {
         // Claim the row only if still ISSUED + un-stamped so two replicas
         // don't both flip + notify. Loser sees count 0 and skips.
@@ -128,7 +135,12 @@ export async function runDunning(): Promise<DunningStats> {
         return true;
       },
       { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
-    );
+        ),
+      );
+    } catch (err) {
+      console.error(`[dunning] claim failed for invoice ${inv.id}:`, err);
+      continue;
+    }
 
     if (!claimed) continue;
     stats.markedOverdue += 1;
@@ -179,7 +191,13 @@ export async function runDunning(): Promise<DunningStats> {
     const priorReminderAt = inv.lastDunningReminderAt;
     const nextStage = inv.dunningReminderCount + 1;
 
-    const claimed = await prisma.$transaction(
+    // #1132 follow-up — transient P2034 aborts are retried by the house
+    // helper; persistent failures skip this invoice so one bad row can't
+    // kill the day's run.
+    let claimed: boolean;
+    try {
+      claimed = await withSerializableRetry(() =>
+        prisma.$transaction(
       async (tx) => {
         const claim = await tx.organizationInvoice.updateMany({
           where: {
@@ -196,7 +214,12 @@ export async function runDunning(): Promise<DunningStats> {
         return claim.count > 0;
       },
       { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
-    );
+        ),
+      );
+    } catch (err) {
+      console.error(`[dunning] claim failed for invoice ${inv.id}:`, err);
+      continue;
+    }
 
     if (!claimed) continue;
     stats.remindersSent += 1;
@@ -244,33 +267,44 @@ export async function runDunning(): Promise<DunningStats> {
       // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
       // replicas can't both stamp + log. Idempotent claim: only stamp a row
       // still un-suspended + OVERDUE; loser sees count 0 and skips.
-      const claimed = await prisma.$transaction(
-        async (tx) => {
-          const claim = await tx.organizationInvoice.updateMany({
-            where: { id: inv.id, dunningSuspendedAt: null, status: "OVERDUE" },
-            data: { dunningSuspendedAt: now },
-          });
-          if (claim.count === 0) return false;
+      // #1132 follow-up — transient P2034 aborts are retried by the house
+      // helper; persistent failures skip this invoice so one bad row can't
+      // kill the day's run.
+      let claimed: boolean;
+      try {
+        claimed = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              const claim = await tx.organizationInvoice.updateMany({
+                where: { id: inv.id, dunningSuspendedAt: null, status: "OVERDUE" },
+                data: { dunningSuspendedAt: now },
+              });
+              if (claim.count === 0) return false;
 
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: inv.organizationId,
-              actorMembershipId: null,
-              category: "INVOICE",
-              action: AUDIT_ACTIONS.INVOICE.INVOICE_DUNNING_SUSPENDED,
-              description: `Invoice ${inv.invoiceNumber} unpaid past dunning grace — org sponsored bookings suspended`,
-              details: {
-                invoiceId: inv.id,
-                invoiceNumber: inv.invoiceNumber,
-                totalPaise: inv.totalPaise,
-                currency: inv.displayCurrency,
-              },
+              await tx.orgAuditLog.create({
+                data: {
+                  organizationId: inv.organizationId,
+                  actorMembershipId: null,
+                  category: "INVOICE",
+                  action: AUDIT_ACTIONS.INVOICE.INVOICE_DUNNING_SUSPENDED,
+                  description: `Invoice ${inv.invoiceNumber} unpaid past dunning grace — org sponsored bookings suspended`,
+                  details: {
+                    invoiceId: inv.id,
+                    invoiceNumber: inv.invoiceNumber,
+                    totalPaise: inv.totalPaise,
+                    currency: inv.displayCurrency,
+                  },
+                },
+              });
+              return true;
             },
-          });
-          return true;
-        },
-        { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
-      );
+            { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
+          ),
+        );
+      } catch (err) {
+        console.error(`[dunning] stage-3 suspend claim failed for invoice ${inv.id}:`, err);
+        continue;
+      }
 
       if (!claimed) continue;
       stats.suspended += 1;
