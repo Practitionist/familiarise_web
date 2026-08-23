@@ -25,6 +25,7 @@ import {
   isStripeConnectConfigured,
 } from "./stripe-connect";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { randomUUID } from "crypto";
 import {
@@ -642,6 +643,31 @@ async function processSinglePayout(payout: {
   let tdsRateAppliedBps: number | null = null;
   const financialYear = getIndianFinancialYear();
   try {
+    // #1020 — a payout whose earnings sit on a disputed payment must not
+    // leave the building. Pre-claim reject: cheap, touches no state. The
+    // residual window between this check and the gateway submit is backstopped
+    // by the LOST-handler clawback (#1020-2), which now covers PAID earnings.
+    const disputedEarning = await prisma.consultantEarnings.findFirst({
+      where: {
+        payoutId: payout.id,
+        payment: {
+          disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+        },
+      },
+      select: { id: true },
+    });
+    if (disputedEarning) {
+      console.warn(
+        `[Payouts] Payout ${payout.id} blocked — an earning's payment has a live dispute`,
+      );
+      reportSentryMessage("Payout blocked by live dispute", {
+        subsystem: "payments",
+        expected: true,
+        extra: { payoutId: payout.id },
+      });
+      return { payoutId: payout.id, success: false, skipped: true };
+    }
+
     // #776 — atomic CAS claim (ported from the deleted scripts/payouts copy
     // in #850): only one runner — GH job, admin route, concurrent invocation
     // with Redis down — may move APPROVED → PROCESSING. Zero rows means a

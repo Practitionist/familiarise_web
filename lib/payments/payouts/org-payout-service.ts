@@ -58,6 +58,7 @@ import { assertPayoutBalance } from "./balance-preflight";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -544,6 +545,32 @@ export async function processOrgPayout(
         }
         return {
           status: current.status,
+          submittedToGateway: false,
+          claimed: false,
+        };
+      }
+
+      // #1020 — a payout whose earnings sit on a disputed payment must not
+      // leave the building. Checked INSIDE this Serializable tx (free with
+      // the isolation we're already paying for); returning unclaimed keeps
+      // the row PENDING so a later cron run advances it once the dispute
+      // resolves. Residual window to gateway submit is backstopped by the
+      // LOST-handler clawback (#1020-2).
+      const disputedOrgEarning = await tx.organizationEarnings.findFirst({
+        where: {
+          orgPayoutId: payoutId,
+          payment: {
+            disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+          },
+        },
+        select: { id: true },
+      });
+      if (disputedOrgEarning) {
+        console.warn(
+          `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
+        );
+        return {
+          status: "PENDING" as PayoutStatus,
           submittedToGateway: false,
           claimed: false,
         };

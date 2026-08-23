@@ -75,10 +75,17 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 }));
 
 import prisma from "../../lib/prisma";
+import type { RefundStatus } from "@prisma/client";
 
-type Row = Record<string, unknown>;
+/** The refund fields the handler reads and the assertions pin. */
+interface RefundRow {
+  id: string;
+  refundId: string;
+  status: RefundStatus;
+  paymentId: string;
+}
 
-const store: { refunds: Row[] } = { refunds: [] };
+const store: { refunds: RefundRow[] } = { refunds: [] };
 
 function resetStore() {
   store.refunds = [];
@@ -106,15 +113,18 @@ function txStub() {
     billingAccount: { findFirst: jest.fn(async () => null), findUniqueOrThrow: jest.fn() },
     orgAuditLog: { create: jest.fn(async () => ({})) },
     refund: {
-      findUnique: jest.fn(async ({ where }: { where: Row }) =>
+      findUnique: jest.fn(async ({ where }: { where: { refundId: string } }) =>
         store.refunds.find((r) => r.refundId === where.refundId) ?? null,
       ),
-      create: jest.fn(async ({ data }: { data: Row }) => {
-        const created = { id: `row_${store.refunds.length + 1}`, ...data };
+      create: jest.fn(async ({ data }: { data: Omit<RefundRow, "id"> }) => {
+        const created: RefundRow = {
+          id: `row_${store.refunds.length + 1}`,
+          ...data,
+        };
         store.refunds.push(created);
         return created;
       }),
-      update: jest.fn(async ({ data }: { data: Row }) => {
+      update: jest.fn(async ({ data }: { data: Partial<RefundRow> }) => {
         const row = store.refunds[0];
         if (row) Object.assign(row, data);
         return row ?? {};
@@ -123,11 +133,17 @@ function txStub() {
   };
 }
 
-// prisma.$transaction(fn) → fn(txStub)
-(prisma as unknown as { $transaction: unknown }).$transaction = (
-  (fn: (tx: ReturnType<typeof txStub>) => Promise<unknown>) =>
-    fn(txStub())
-) as unknown;
+type TxStub = ReturnType<typeof txStub>;
+
+// Single typed seam over the real client: the handler's $transaction callback
+// runs against our stub (env-backed prisma import, same trick as before —
+// the double cast is confined to this one assignment).
+type TransactionFn = (
+  fn: (tx: TxStub) => Promise<unknown>,
+  opts?: unknown,
+) => Promise<unknown>;
+(prisma as unknown as { $transaction: TransactionFn }).$transaction = (fn) =>
+  fn(txStub());
 
 import { handleRefundCreated } from "../../app/api/webhooks/utils";
 
