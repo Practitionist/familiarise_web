@@ -25,6 +25,10 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
+import {
+  DEFAULT_RETENTION_DAYS,
+  isPastRetention,
+} from "@/lib/stream/channel-lifecycle";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -974,6 +978,107 @@ async function addUserToDmChannel(
 }
 
 /**
+ * F-HIGH-2 — Postgres rows outlive Stream channels. The retention cron
+ * hard-deletes a channel once `retentionDays` have passed since its last slot,
+ * but the underlying Webinar/Class rows survive forever. Before this filter,
+ * those dead rows kept appearing in the sync expected-set, so the next
+ * dashboard sync re-created deleted channels with their full historic roster —
+ * and because the freeze ledger was stamped BEFORE deletion, the resurrected
+ * channel was classified as already-frozen and never frozen again: writable
+ * forever, membership regrowing unbounded. Events past retention are excluded
+ * here using the same window math as the cron, with the thresholds shared via
+ * lib/stream/channel-lifecycle so the two sides cannot drift.
+ */
+
+/** The two inputs of one event's retention decision. */
+interface RetentionWindow {
+  /** Latest slot end across the event's sessions; null = no session yet. */
+  endsAt: Date | null;
+  /** Org dial when known (B2C bookings fall back to the schema default). */
+  retentionDays: number;
+}
+
+/** Structural shape of one event's retention-relevant appointment data. */
+interface AppointmentWindow {
+  organization: { streamRecordingRetentionDays: number | null } | null;
+  slotsOfAppointment: { endsAt: Date }[];
+}
+
+function isPastRetentionWindow(window: RetentionWindow): boolean {
+  // Callers always resolve the org dial against the schema default already.
+  return isPastRetention(window.endsAt, window.retentionDays);
+}
+
+/** Webinar has AT MOST one appointment (singular relation). */
+function webinarRetentionWindow(
+  appointment: AppointmentWindow | null,
+): RetentionWindow {
+  if (!appointment) {
+    // No session yet — the cron can't have expired something that never ran.
+    return { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS };
+  }
+  const endsAt = appointment.slotsOfAppointment.reduce<Date | null>(
+    (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
+    null,
+  );
+  return {
+    endsAt,
+    retentionDays:
+      appointment.organization?.streamRecordingRetentionDays ??
+      DEFAULT_RETENTION_DAYS,
+  };
+}
+
+/**
+ * A class spans many appointments (one per attendee cohort) but ONE channel;
+ * collapse to the latest end across all of them, carrying THAT cohort's org
+ * dial — the same collapse rule the expire cron applies per channel.
+ */
+function latestClassRetentionWindow(
+  appointments: AppointmentWindow[] | undefined,
+): RetentionWindow {
+  // Undefined/empty = no session info — treat as live; the retention cron
+  // can never have expired an event it has no slot evidence for.
+  if (!appointments || appointments.length === 0) {
+    return { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS };
+  }
+  return appointments.reduce<RetentionWindow>(
+    (latest, apt) => {
+      const aptLatest = apt.slotsOfAppointment.reduce<Date | null>(
+        (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
+        null,
+      );
+      if (!aptLatest) return latest;
+      if (!latest.endsAt || aptLatest > latest.endsAt) {
+        return {
+          endsAt: aptLatest,
+          retentionDays:
+            apt.organization?.streamRecordingRetentionDays ??
+            DEFAULT_RETENTION_DAYS,
+        };
+      }
+      return latest;
+    },
+    { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS },
+  );
+}
+
+/** Dedupe ids and drop any whose channel is past retention (F-HIGH-2). */
+function dedupeLive<T extends { id: string }>(
+  rowGroups: T[][],
+  windowOf: (row: T) => RetentionWindow,
+): string[] {
+  const seen = new Set<string>();
+  const liveIds: string[] = [];
+  for (const row of rowGroups.flat()) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    if (!isPastRetentionWindow(windowOf(row))) liveIds.push(row.id);
+  }
+  return liveIds;
+}
+
+/**
  * Get webinar IDs for a user (both hosted and enrolled).
  * Handles dual-role users who are both consultant and consultee.
  */
@@ -984,7 +1089,9 @@ async function getWebinarIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
-  const queries: Promise<{ id: string }[]>[] = [];
+  const queries: Promise<
+    { id: string; appointment: AppointmentWindow | null }[]
+  >[] = [];
 
   // Consultant: get webinars they host
   if (user.consultantProfileId) {
@@ -993,7 +1100,17 @@ async function getWebinarIdsForUser(
         where: {
           webinarPlan: { consultantProfileId: user.consultantProfileId },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          appointment: {
+            select: {
+              organization: {
+                select: { streamRecordingRetentionDays: true },
+              },
+              slotsOfAppointment: { select: { endsAt: true } },
+            },
+          },
+        },
       }),
     );
   }
@@ -1006,12 +1123,22 @@ async function getWebinarIdsForUser(
           slotsOfAppointment: { some: { user: { some: { id: userId } } } },
         },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        appointment: {
+          select: {
+            organization: { select: { streamRecordingRetentionDays: true } },
+            slotsOfAppointment: { select: { endsAt: true } },
+          },
+        },
+      },
     }),
   );
 
   const results = await Promise.all(queries);
-  return Array.from(new Set(results.flatMap((r) => r.map((w) => w.id))));
+  return dedupeLive(results, (row) =>
+    webinarRetentionWindow(row.appointment),
+  );
 }
 
 /**
@@ -1025,7 +1152,9 @@ async function getClassIdsForUser(
     consulteeProfileId: string | null;
   },
 ): Promise<string[]> {
-  const queries: Promise<{ id: string }[]>[] = [];
+  const queries: Promise<
+    { id: string; appointments: AppointmentWindow[] }[]
+  >[] = [];
 
   // Consultant: get classes they host
   if (user.consultantProfileId) {
@@ -1034,7 +1163,17 @@ async function getClassIdsForUser(
         where: {
           classPlan: { consultantProfileId: user.consultantProfileId },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          appointments: {
+            select: {
+              organization: {
+                select: { streamRecordingRetentionDays: true },
+              },
+              slotsOfAppointment: { select: { endsAt: true } },
+            },
+          },
+        },
       }),
     );
   }
@@ -1049,10 +1188,20 @@ async function getClassIdsForUser(
           },
         },
       },
-      select: { id: true },
+      select: {
+        id: true,
+        appointments: {
+          select: {
+            organization: { select: { streamRecordingRetentionDays: true } },
+            slotsOfAppointment: { select: { endsAt: true } },
+          },
+        },
+      },
     }),
   );
 
   const results = await Promise.all(queries);
-  return Array.from(new Set(results.flatMap((r) => r.map((c) => c.id))));
+  return dedupeLive(results, (row) =>
+    latestClassRetentionWindow(row.appointments),
+  );
 }
