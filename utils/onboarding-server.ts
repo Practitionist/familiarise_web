@@ -18,6 +18,7 @@ import {
   buildAdminScalarData,
   validateProfessionalBackground,
   shouldSubmitVerification,
+  isPersistableVerificationDoc,
 } from "./onboarding-shared";
 
 // ============================================================================
@@ -479,7 +480,14 @@ async function submitVerificationRequest(
   });
 
   if (verificationDocuments && verificationDocuments.length > 0) {
-    const existingDocuments = verificationDocuments.filter(
+    // Same predicate that gated the deferral decision in
+    // maybeSubmitConsultantVerification — a doc that would not persist here
+    // must never have started a review (review round 1).
+    const persistableDocs = verificationDocuments.filter(
+      isPersistableVerificationDoc,
+    ) as VerificationDocumentInput[];
+
+    const existingDocuments = persistableDocs.filter(
       (doc) => doc.id && !doc.isOnboardingUpload,
     );
     if (existingDocuments.length > 0) {
@@ -493,7 +501,7 @@ async function submitVerificationRequest(
       });
     }
 
-    const onboardingDocuments = verificationDocuments.filter(
+    const onboardingDocuments = persistableDocs.filter(
       (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
     );
     if (onboardingDocuments.length > 0) {
