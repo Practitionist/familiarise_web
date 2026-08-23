@@ -30,9 +30,10 @@ const initializeRazorpayClient = () => {
 
 // Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
 // module scope put the SDK constructor on every cold boot of any route whose
-// import graph reaches this file (#1124); deferring to first use keeps boot
-// free and preserves the exact semantics — a missing key yields a permanent
-// null either way.
+// import graph reaches this file. MEASURED 2026-08-23 (#1221): this does NOT
+// shrink the #1124 concurrent-instance event-loop stall — that reproduced
+// 12/12 at full strength on a build carrying exactly this change. Keep the
+// lazy pattern as boot hygiene; do not cite it as stall mitigation.
 let razorpayClientInstance: Razorpay | null = null;
 
 export function getRazorpayClient(): Razorpay | null {
