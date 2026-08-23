@@ -136,3 +136,23 @@ export function bookingOrgId(booking: {
     null
   );
 }
+
+/**
+ * Detect Stream's "channel already exists" rejection so concurrent
+ * create-on-miss paths can ADOPT the winner's channel instead of failing the
+ * user journey (architecture review F-HIGH-3: two simultaneous first joins
+ * both miss `addMembers`, both `create()`; the loser used to throw, which from
+ * the awaited payment-webhook path failed that attendee's join outright).
+ *
+ * Matched three ways because the shape has drifted across SDK versions:
+ *   - error.code 17 (Stream's AlreadyExists API code)
+ *   - HTTP 409
+ *   - message text fallback ("already exists") for envelope-less rejections
+ */
+export function isChannelAlreadyExistsError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const e = error as { code?: number | null; status?: number };
+  return (
+    e.code === 17 || e.status === 409 || /already exists/i.test(error.message)
+  );
+}
