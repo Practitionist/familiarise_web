@@ -731,7 +731,7 @@ export async function PATCH(
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
-      // re-approval actually re-mints the link instead of parroting
+      // re-approval restores the link instead of parroting
       // "already in progress" forever.
       const needsLinkRetry =
         result.duplicate &&
@@ -774,12 +774,12 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry, and the retry re-mints — so it may
-        // only ever be reached while NO link exists. Everything after a
+        // The 502 below invites a retry; the retry reuses the same PENDING
+        // payment (#1181) rather than minting a parallel order — so a second
+        // live link can never reach the consultee. Everything after a
         // successful mint therefore reports and continues: a 502 past this
-        // point would hand the consultee a second live link (the duplicate
-        // guard walks appointment.payment, which approval payments never
-        // populate — see #1166).
+        // point would still be wrong, because it reads as a failure the
+        // consultant should answer by re-approving.
         let paymentResult;
         try {
           paymentResult = await generatePaymentLink(result.data);
@@ -989,6 +989,11 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
     userId: requestedBy.user.id,
     appointmentType: "CONSULTATION",
     consultationId: consultation.id,
+    // #1181 — the request created this appointment at submit time; threading
+    // it stamps Payment.appointmentId so capture confirms THAT row instead of
+    // building a twin off metadata, and the duplicate-payment guard (which
+    // walks appointment.payment) can see approval payments at all.
+    appointmentId: appointment?.id ?? undefined,
     planId: consultationPlan.id,
     // #1165 — settlement is INR-only and Razorpay is the KYC'd primary
     // gateway; the trial path already minted on it. Param stays configurable

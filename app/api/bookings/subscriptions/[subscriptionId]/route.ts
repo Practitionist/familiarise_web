@@ -704,7 +704,7 @@ export async function PATCH(
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
-      // re-approval actually re-mints the link.
+      // re-approval restores the link.
       const needsLinkRetry =
         result.duplicate &&
         result.data.status === AppointmentStatus.APPROVED_PENDING_PAYMENT &&
@@ -718,7 +718,8 @@ export async function PATCH(
 
       // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
       // in-tx comment). Mint failure leaves APPROVED_PENDING_PAYMENT with no
-      // link; re-approval re-enters via needsLinkRetry.
+      // link; re-approval re-enters via needsLinkRetry and reuses the PENDING
+      // payment the first attempt persisted (#1181).
       let mintedLink: {
         paymentUrl: string;
         paymentAmount: number;
@@ -728,9 +729,10 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry, and the retry re-mints — so it may
-        // only ever be reached while NO link exists. Everything after a
-        // successful mint therefore reports and continues (#1166).
+        // The 502 below invites a retry; the retry reuses the same PENDING
+        // payment (#1181) rather than minting a parallel order — so a second
+        // live link can never reach the consultee. Everything after a
+        // successful mint therefore reports and continues.
         let paymentResult;
         try {
           paymentResult = await generatePaymentLinkForSubscription(
@@ -999,11 +1001,21 @@ async function generatePaymentLinkForSubscription(
   schedulingPeriodEndsAt: Date,
 ) {
   const { subscriptionPlan, requestedBy } = subscription;
+  // #1181 — the request-time appointment (direct checkout creates a
+  // placeholder for exactly this linkage; proposed-times creates real rows).
+  // First under the route's deterministic createdAt/id ordering, the same row
+  // the confirm flip and org resolution read. Threading it stamps
+  // Payment.appointmentId so capture confirms THAT row instead of building a
+  // twin subscription off metadata, and the duplicate-payment guard (which
+  // walks appointments.payment) can see approval payments at all. Unset only
+  // when no appointment exists yet — nothing to confirm, mint as before.
+  const appointmentId = subscription.appointments[0]?.id ?? undefined;
 
   return await createApprovalPaymentIntent({
     userId: requestedBy.user.id,
     appointmentType: "SUBSCRIPTION",
     subscriptionId: subscription.id,
+    appointmentId,
     planId: subscriptionPlan.id,
     // #1165 — settlement is INR-only; Razorpay is the KYC'd primary gateway,
     // matching the trial path. Param stays configurable for a scale decision.
