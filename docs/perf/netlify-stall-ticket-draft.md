@@ -29,14 +29,17 @@ On stalled first invocations, a diagnostic route that awaits 400ms of idle *befo
 **3. Memory/CPU scaling does not touch it.**
 We configured the v2 handler correctly by name (`___netlify-server-handler`; verified via `searchSiteFunctions`, field `m`) at **2048 MB** — i.e. doubled vCPU, since your docs state memory and vCPU scale together. Result under the identical 12-way burst protocol:
 
-| Config | Result |
-|---|---|
-| 1024 MB control | 11/12 slow, TTFB 27.8–31.0s |
-| 2048 MB | 11/12 slow, TTFB 35.9–37.6s + one platform 500 |
+| Config | Deploy id (ready UTC 2026-08-22) | commit_ref | searchSiteFunctions `m` | Result |
+|---|---|---|---|---|
+| control 1024 MB | `6a894a2398d6…` (07:05) / `6a895a3f4651…` (08:13) | 74f58138 / 08b10ce4 | 1024 | 11/12 slow, TTFB 27.8–31.0s |
+| **treatment 2048 MB** | **`6a8954981e6f…` (07:49)** | **17228d7e** | **2048** | **11/12 slow, TTFB 35.9–37.6s + one platform 500** |
+| post-revert re-run | `6a8974a11d65…` (10:06) | 0646d8f5 | 1024 | 12/12 slow, TTFB 32.6–38.0s |
+
+(An intermediate burst on `6a895c2e7d70…`/58fb03fc at 08:22 came back 16/16 fast — an anomaly attributable to residual warm capacity from three deploys and two concurrent agent sessions within nine minutes, not to the memory setting; recorded for completeness.)
 
 No improvement (possibly worse). We reverted.
 
-**4. Not our bundle's init work.** Sequential brand-new instances complete module loading + init + a full SSR render in <2s total, so first-invocation application work cannot account for 24s; and if the stall were proportional to per-instance init CPU, doubling CPU should have moved it.
+**4. Not our bundle's init work.** Sequential brand-new instances complete module loading + init + a full SSR render in <2s total, so first-invocation application work cannot account for 24s; and if the stall were proportional to per-instance init CPU, doubling CPU should have moved it. Confirmed again on 2026-08-23: a build carrying lazy-initialized payment SDK clients (#1221, deploy-preview-1221, commit 353cef1e) still stalled **12/12 at 29.5–31.5s** after ≥30 min idle, while its sequential profile was normal (first-ever request 5.84s settling to ~0.26s warm).
 
 **5. Observability gap:** this function emits no `Init Duration:` log line (only `Duration:`/`Memory Usage:`), so cold starts can't be discriminated from logs; we had to build an in-app instance-age probe. A forum report from May 2025 describes the same absence.
 

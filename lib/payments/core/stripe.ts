@@ -45,10 +45,14 @@ const initializeStripeClient = () => {
 // shrink the #1124 concurrent-instance event-loop stall — that reproduced
 // 12/12 at full strength on a build carrying exactly this change. Keep the
 // lazy pattern as boot hygiene; do not cite it as stall mitigation.
-let stripeClientInstance: Stripe | null = null;
+// `undefined` = not yet attempted; `null` = attempted and missing credentials
+// (cached, like the original module-scope init, so the warning logs once).
+// `undefined` = not yet attempted; `null` = attempted and missing credentials
+// (cached, like the original module-scope init, so the warning logs once).
+let stripeClientInstance: Stripe | null | undefined;
 
 export function getStripeClient(): Stripe | null {
-  if (!stripeClientInstance) {
+  if (stripeClientInstance === undefined) {
     stripeClientInstance = initializeStripeClient();
   }
   return stripeClientInstance;

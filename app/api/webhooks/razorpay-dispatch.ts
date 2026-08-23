@@ -132,7 +132,6 @@ export async function processRazorpayWebhookEvent(
   eventType: string,
   eventId: string,
 ): Promise<void> {
-  const razorpayClient = getRazorpayClient();
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
   // `notes.*` fields the app populated (referrerEmail etc). See
@@ -210,6 +209,9 @@ export async function processRazorpayWebhookEvent(
         );
         let paymentIntentId = refundEvent.payment_id;
 
+        // Only the refund family resolves payment_id → order_id via the SDK;
+        // other event branches must not construct a client.
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(
@@ -260,6 +262,7 @@ export async function processRazorpayWebhookEvent(
         );
         let failedPaymentIntentId = failedRefundEvent.payment_id;
 
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(

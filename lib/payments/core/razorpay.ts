@@ -34,10 +34,10 @@ const initializeRazorpayClient = () => {
 // shrink the #1124 concurrent-instance event-loop stall — that reproduced
 // 12/12 at full strength on a build carrying exactly this change. Keep the
 // lazy pattern as boot hygiene; do not cite it as stall mitigation.
-let razorpayClientInstance: Razorpay | null = null;
+let razorpayClientInstance: Razorpay | null | undefined;
 
 export function getRazorpayClient(): Razorpay | null {
-  if (!razorpayClientInstance) {
+  if (razorpayClientInstance === undefined) {
     razorpayClientInstance = initializeRazorpayClient();
   }
   return razorpayClientInstance;
