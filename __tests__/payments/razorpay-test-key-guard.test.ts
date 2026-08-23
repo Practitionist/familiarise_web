@@ -25,6 +25,7 @@
 
 type EnvKey =
   | "NODE_ENV"
+  | "NEXT_PHASE"
   | "RAZORPAY_KEY_ID"
   | "RAZORPAY_SECRET"
   | "RAZORPAYX_KEY_ID"
@@ -34,6 +35,7 @@ type EnvKey =
 
 const ENV_KEYS: EnvKey[] = [
   "NODE_ENV",
+  "NEXT_PHASE",
   "RAZORPAY_KEY_ID",
   "RAZORPAY_SECRET",
   "RAZORPAYX_KEY_ID",
@@ -110,6 +112,14 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
     expect(mod.razorpayClient).not.toBeNull();
   });
 
+  it("next build phase + prod posture + rzp_test_ key → initializes fine (builds move no money)", () => {
+    setNodeEnvForGuard("production");
+    process.env.NEXT_PHASE = "phase-production-build";
+    process.env.RAZORPAY_KEY_ID = "rzp_test_buildkey";
+    process.env.RAZORPAY_SECRET = "testsecret";
+    expect(() => requireCoreModule()).not.toThrow();
+  });
+
   it("production + rzp_live_ key → initializes fine (the guard only fires on test keys)", () => {
     setNodeEnvForGuard("production");
     process.env.RAZORPAY_KEY_ID = "rzp_live_realkeyid";
@@ -173,6 +183,15 @@ describe("RazorpayX payouts client (lib/payments/payouts/razorpay-payouts.ts)", 
     const { getRazorpayPayoutsService } = requirePayoutsFactory();
 
     expect(getRazorpayPayoutsService().isConfigured()).toBe(true);
+  });
+
+  it("next build phase + live flag + test key → constructs fine (builds move no money)", () => {
+    process.env.ENABLE_LIVE_PAYOUTS = "true";
+    process.env.NEXT_PHASE = "phase-production-build";
+    process.env.RAZORPAYX_KEY_ID = "rzp_test_buildx";
+    process.env.RAZORPAYX_ACCOUNT_NUMBER = "acc_1";
+    const mod = requirePayoutsFactory();
+    expect(() => mod.getRazorpayPayoutsService()).not.toThrow();
   });
 
   it("isRazorpayPayoutsConfigured rethrows the guard instead of reading as 'not configured'", () => {

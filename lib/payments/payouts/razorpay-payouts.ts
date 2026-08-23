@@ -554,7 +554,15 @@ export function getRazorpayPayoutsService(): RazorpayPayoutsService {
     // them COMPLETED. With the flag off, test keys are legitimate (dev,
     // preview, the sandbox smokes under scripts/smoke/, or a prod deploy
     // still under the go-live freeze) and must keep working.
-    if (ENABLE_LIVE_PAYOUTS && /^rzp_test_/.test(keyId)) {
+    //
+    // Same `next build` exemption as the core client: a build with the flag
+    // set moves no money, and module-load throws during page-data collection
+    // broke deploys (see razorpay.ts).
+    if (
+      ENABLE_LIVE_PAYOUTS &&
+      process.env.NEXT_PHASE !== "phase-production-build" &&
+      /^rzp_test_/.test(keyId)
+    ) {
       throw new PaymentError(
         `${
           process.env.RAZORPAYX_KEY_ID

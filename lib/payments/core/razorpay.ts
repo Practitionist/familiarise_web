@@ -28,10 +28,24 @@ const initializeRazorpayClient = () => {
   // customer: charges decline, refunds dead-end, webhooks never verify, while
   // every Payment row still reads as gateway-authoritative. Fail the boot
   // loudly instead. Dev / preview / test keep legitimate access to test keys —
-  // this fires on the production posture only. (The RazorpayX payouts client
-  // carries the same guard keyed to ENABLE_LIVE_PAYOUTS instead of NODE_ENV —
-  // see getRazorpayPayoutsService in lib/payments/payouts/razorpay-payouts.ts.)
-  if (process.env.NODE_ENV === "production" && /^rzp_test_/.test(keyId)) {
+  // this fires on the production posture only.
+  //
+  // EXCEPT during `next build`: builds run with NODE_ENV=production (and CI /
+  // Netlify build environments legitimately hold test keys — a build moves no
+  // money), and this module loads while Next collects page data, so an
+  // unconditional throw broke every deploy preview + the CI build job. The
+  // guard still fires on the first real runtime boot in production, which is
+  // where the customer-facing failure it exists for would happen. (The
+  // RazorpayX payouts client carries the same guard keyed to
+  // ENABLE_LIVE_PAYOUTS instead of NODE_ENV — see getRazorpayPayoutsService
+  // in lib/payments/payouts/razorpay-payouts.ts.)
+  const isNextBuildPhase =
+    process.env.NEXT_PHASE === "phase-production-build";
+  if (
+    process.env.NODE_ENV === "production" &&
+    !isNextBuildPhase &&
+    /^rzp_test_/.test(keyId)
+  ) {
     throw new PaymentError(
       `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${keyId}) while NODE_ENV=production. ` +
         "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
