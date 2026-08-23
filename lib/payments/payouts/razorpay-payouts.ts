@@ -7,6 +7,8 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+import { PaymentError } from "@/lib/payments/core/types";
 import crypto from "crypto";
 
 // ============================================
@@ -541,8 +543,43 @@ let razorpayPayoutsInstance: RazorpayPayoutsService | null = null;
 
 export function getRazorpayPayoutsService(): RazorpayPayoutsService {
   if (!razorpayPayoutsInstance) {
+    const keyId =
+      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "";
+
+    // PM-10 — ENABLE_LIVE_PAYOUTS, not NODE_ENV, is the posture where real
+    // money leaves via RazorpayX: the consultant rail holds submissions
+    // behind it (payout-service.ts) and the org rail behind the same flag
+    // (org-payout-service.ts). A TEST key there means payouts vanish into
+    // test mode — no bank account is ever debited — while our ledger marks
+    // them COMPLETED. With the flag off, test keys are legitimate (dev,
+    // preview, the sandbox smokes under scripts/smoke/, or a prod deploy
+    // still under the go-live freeze) and must keep working.
+    //
+    // Same `next build` exemption as the core client: a build with the flag
+    // set moves no money, and module-load throws during page-data collection
+    // broke deploys (see razorpay.ts).
+    if (
+      ENABLE_LIVE_PAYOUTS &&
+      process.env.NEXT_PHASE !== "phase-production-build" &&
+      /^rzp_test_/.test(keyId)
+    ) {
+      throw new PaymentError(
+        `${
+          process.env.RAZORPAYX_KEY_ID
+            ? "RAZORPAYX_KEY_ID"
+            : "RAZORPAYX_KEY_ID (unset — falling back to RAZORPAY_KEY_ID)"
+        } is set to a Razorpay TEST key (${keyId}) while ENABLE_LIVE_PAYOUTS=true. ` +
+          "Live payouts cannot run against test mode: no bank account would ever " +
+          "be debited while our ledger marks the payout COMPLETED. " +
+          "Fix: set RAZORPAYX_KEY_ID and RAZORPAYX_KEY_SECRET to the RazorpayX LIVE keys, " +
+          "or set ENABLE_LIVE_PAYOUTS=false to keep the disbursement freeze on.",
+        "RAZORPAYX_TEST_KEYS_IN_LIVE_MODE",
+        "RAZORPAY",
+      );
+    }
+
     razorpayPayoutsInstance = new RazorpayPayoutsService({
-      keyId: process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "",
+      keyId,
       keySecret:
         process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_SECRET || "",
       accountNumber: process.env.RAZORPAYX_ACCOUNT_NUMBER || "",
@@ -562,6 +599,16 @@ export function isRazorpayPayoutsConfigured(): boolean {
   } catch (error) {
     // Constructor throws only on missing credentials — a modelled
     // "not configured yet" outcome (e.g. local/dev env), not a fault.
+    // EXCEPT the PM-10 live-posture guard in getRazorpayPayoutsService:
+    // swallowing that into "not configured" would make assertPayoutBalance
+    // fail OPEN and wave a payout batch through on test keys. Rethrow so
+    // the live gate fails closed with the actionable error.
+    if (
+      error instanceof PaymentError &&
+      error.code === "RAZORPAYX_TEST_KEYS_IN_LIVE_MODE"
+    ) {
+      throw error;
+    }
     reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
