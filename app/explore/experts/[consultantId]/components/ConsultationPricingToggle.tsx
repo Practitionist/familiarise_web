@@ -354,31 +354,33 @@ export default function ConsultationPricingToggle({
                 </Button>
               </DialogTrigger>
               <DialogContent
-                className="z-[1002] w-[calc(100%-1.5rem)] sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] h-[min(85dvh,900px)] flex flex-col overflow-hidden bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl [container-type:size]"
+                className="z-[1002] w-[calc(100%-1.5rem)] sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] h-[min(85dvh,900px)] flex flex-col overflow-hidden bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl"
                 // Inline zIndex: arbitrary-class merge with the z-50 base in
                 // dialog.tsx is ordering-dependent; the nav (z-[1000]) and
                 // announcement bar (z-[1001]) must never paint above this.
                 style={{ zIndex: 1002 }}
               >
-                <DialogHeader className="flex-none p-4 sm:p-6 lg:p-7 border-b border-zinc-800">
+                <DialogHeader className="flex-none p-4 lg:p-6 border-b border-zinc-800">
                   <DialogTitle className="text-lg sm:text-xl lg:text-2xl font-semibold">
                     Book {option.title} Consultation
                   </DialogTitle>
-                  <DialogDescription className="hidden sm:block text-zinc-400 text-sm lg:text-base">
+                  <DialogDescription className="hidden lg:block text-zinc-400 text-sm lg:text-base">
                     Select a date and time for your {option.duration}{" "}
                     consultation
                   </DialogDescription>
                 </DialogHeader>
-                {/* Stretch-to-fit body: the dialog never scrolls; each pane
-                    flexes and only the slot list scrolls internally. */}
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 md:grid-rows-1 gap-4 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8 overflow-y-auto md:overflow-hidden">
+                {/* Stretch-to-fit body: the dialog never scrolls on mdh+
+                    (wide AND tall) screens — each pane flexes and only the
+                    slot list scrolls internally. Short/wide screens fall
+                    back to the stacked, body-scrollable layout. */}
+                <div className="flex-1 min-h-0 grid grid-cols-1 mdh:grid-cols-2 mdh:grid-rows-1 gap-4 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8 overflow-y-auto mdh:overflow-hidden">
                   {/* Calendar Section */}
                   <div className="min-h-0 flex flex-col">
                     <h3 className="flex-none text-base sm:text-lg font-semibold mb-2 sm:mb-3 flex items-center text-white">
                       <CalendarIcon className="mr-2 h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />{" "}
                       Select a Date
                     </h3>
-                    <div className="flex-1 min-h-0 flex flex-col bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50 overflow-hidden [--cell:clamp(24px,6cqh,40px)] md:[container-type:size] md:[--cell:clamp(22px,calc(16.6cqh_-_30px),48px)]">
+                    <div className="flex-1 min-h-0 flex flex-col bg-zinc-800/60 p-3 sm:p-4 lg:p-5 rounded-xl border border-zinc-700/50 overflow-hidden [--cell:clamp(26px,5.5dvh,36px)] mdh:[container-type:size] mdh:[--cell:clamp(20px,calc(16.6cqh_-_28px),48px)]">
                       <div className="flex-none flex justify-between items-center mb-2 sm:mb-3">
                         <Button
                           variant="ghost"
@@ -471,7 +473,7 @@ export default function ConsultationPricingToggle({
                       )}
                     </div>
                     {consultantDetails?.scheduleType && (
-                      <div className="flex-none hidden md:block mb-3 p-2.5 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
+                      <div className="flex-none hidden mdh:block mb-3 p-2.5 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
                         <p className="text-xs sm:text-sm text-zinc-400">
                           This consultant prefers{" "}
                           <span
@@ -489,7 +491,7 @@ export default function ConsultationPricingToggle({
                         </p>
                       </div>
                     )}
-                    <div className="flex-1 min-h-0 grid grid-cols-1 content-start gap-2.5 sm:gap-3 max-h-[40dvh] md:max-h-none overflow-y-auto pr-1 sm:pr-2">
+                    <div className="flex-1 min-h-0 grid grid-cols-1 content-start gap-2.5 sm:gap-3 max-h-[30dvh] mdh:max-h-none overflow-y-auto pr-1 sm:pr-2">
                       {availableSlots.length > 0 ? (
                         <>
                           {availableSlots.map((slot, index) => {
@@ -600,7 +602,7 @@ export default function ConsultationPricingToggle({
                     </div>
                   </div>
                 </div>
-                <div className="flex-none bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 flex justify-end rounded-b-2xl border-t border-zinc-800">
+                <div className="flex-none bg-zinc-800/50 px-4 sm:px-6 lg:px-8 py-3 lg:py-4 flex justify-end rounded-b-2xl border-t border-zinc-800">
                   <Button
                     className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-6 sm:px-8 h-10 sm:h-12 text-sm sm:text-base"
                     onClick={
