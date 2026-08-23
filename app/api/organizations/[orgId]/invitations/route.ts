@@ -89,14 +89,35 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  // Invitations require an ACTIVE org. Pre-verification we return
-  // 409 ORG_NOT_VERIFIED instead of spawning orphan tokens that
-  // would never get an email sent. The UI banner explains the state.
+  // Invitations require an operable org, but NOT a verified one:
+  // #1132 follow-up — this route was hard-gated on ACTIVE, which made the
+  // UNVERIFIED_ORG_SEAT_CAP grace (enforced in-tx below) unreachable dead
+  // code. The creation wizard fires team invites seconds after creating a
+  // PENDING_VERIFICATION org and every one of them 409'd ORG_NOT_VERIFIED,
+  // poisoning the launch moment for every self-serve org. Pre-verification
+  // orgs may now invite up to the seat cap; SUSPENDED / DEACTIVATED orgs
+  // stay blocked by the explicit check here.
   const access = await requireOrgAccess(orgId, {
     minimumRole: "MAINTAINER",
-    requireActive: true,
+    requireActive: false,
   });
   if (access.error) return access.error;
+  if (
+    access.org.status === "SUSPENDED" ||
+    access.org.status === "DEACTIVATED"
+  ) {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message:
+          access.org.status === "SUSPENDED"
+            ? "Invitations are paused while the organization is suspended."
+            : "This organization has been deactivated.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   // Per-org sliding-window cap: 20 invitations per hour. Keyed on orgId
   // (not IP) so a credential-stuffing attacker that rotates IPs still
