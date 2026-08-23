@@ -184,6 +184,23 @@ model OnboardingDraft {
   /// JSON-serialized Partial<OnboardingFormData> with non-JSON values
   /// (File/Blob/Date instances) sanitized by the writer. Dates are stored as
   /// ISO strings and revived by the reader's Zod schema.
+  ///
+  /// Why JSONB here and not normalized tables (deliberate, per the
+  /// #onboarding-ux decision record in docs/onboarding):
+  ///   * The payload's shape MIRRORS THE WIZARD UI, so it changes whenever
+  ///     the wizard does — normalizing would couple DB migrations to form
+  ///     tweaks; an EAV key/value table was rejected as strictly worse
+  ///     (untyped values AND row explosion).
+  ///   * It is always read/written AS A WHOLE document — no code filters,
+  ///     joins, or aggregates inside it. The queryable keys (userId, role,
+  ///     currentStep) ARE real columns above; this is the standard
+  ///     "stable columns + volatile blob" hybrid.
+  ///   * It never becomes truth. The single writer of real data remains the
+  ///     Zod-validated big-bang transaction into fully-normalized tables;
+  ///     this row is a convenience cache deleted on completion.
+  ///
+  /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
+  /// promote that key to a real column instead of querying the blob.
   payload Json
 
   createdAt DateTime @default(now())
