@@ -1,4 +1,22 @@
-"use server";
+/**
+ * Channel-creation primitives for Stream Chat (webinar/class/consultation/
+ * subscription/collaborator channels).
+ *
+ * DELIBERATELY NOT a "use server" module (architecture review 2026-08-23,
+ * F-HIGH-1). Marking this file "use server" turned every export into a
+ * remotely invocable RPC endpoint with no session check, and Stream's
+ * server-side API bypasses all permission checks ("server-side allows
+ * everything so long as a valid API key and secret is provided") — so that
+ * surface let any browser mint arbitrary channels/memberships or trigger a
+ * full-database upsert+create storm billed to our MAU.
+ *
+ * All callers are server-side: API routes under app/api/stream and
+ * app/api/bookings, lib/payments/webhooks/handlers.ts,
+ * lib/collaborators/service.ts, and tests. This file must NEVER be re-marked
+ * "use server". If a client ever needs one of these operations directly, put
+ * an authenticated, session-checked API route (or a gated action in its own
+ * "use server" file) in front of it.
+ */
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -507,188 +525,6 @@ export async function createSubscriptionChannel(
     },
     organizationId: resolvedOrgId,
   });
-}
-
-/**
- * Initialize channels for all existing entities
- * Uses parallel processing for better performance
- */
-export async function initializeAllChannels() {
-  streamLogger.info("Starting bulk channel initialization");
-
-  // Fetch all data in parallel
-  const [webinars, classes, consultations, subscriptions] = await Promise.all([
-    prisma.webinar.findMany({
-      include: {
-        webinarPlan: {
-          include: {
-            consultantProfile: { include: { user: { select: { id: true } } } },
-          },
-        },
-        appointment: {
-          select: {
-            slotsOfAppointment: {
-              select: { user: { select: { id: true } } },
-            },
-          },
-        },
-      },
-    }),
-    prisma.class.findMany({
-      include: {
-        classPlan: {
-          include: {
-            consultantProfile: { include: { user: { select: { id: true } } } },
-          },
-        },
-        appointments: {
-          select: {
-            slotsOfAppointment: {
-              select: { user: { select: { id: true } } },
-            },
-          },
-        },
-      },
-    }),
-    prisma.consultation.findMany({
-      where: { status: "APPROVED" },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: { include: { user: { select: { id: true } } } },
-          },
-        },
-        requestedBy: { include: { user: { select: { id: true } } } },
-      },
-    }),
-    prisma.subscription.findMany({
-      where: { status: "APPROVED" },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: { include: { user: { select: { id: true } } } },
-          },
-        },
-        requestedBy: { include: { user: { select: { id: true } } } },
-      },
-    }),
-  ]);
-
-  streamLogger.info("Fetched entities for initialization", {
-    webinars: webinars.length,
-    classes: classes.length,
-    consultations: consultations.length,
-    subscriptions: subscriptions.length,
-  });
-
-  // Collect all unique user IDs
-  const userIds = new Set<string>();
-
-  webinars.forEach((w) => {
-    if (w.webinarPlan.consultantProfile?.user?.id) {
-      userIds.add(w.webinarPlan.consultantProfile.user.id);
-    }
-    (w.appointment?.slotsOfAppointment ?? [])
-      .flatMap((slot) => slot.user)
-      .forEach((u) => userIds.add(u.id));
-  });
-
-  classes.forEach((c) => {
-    if (c.classPlan.consultantProfile?.user?.id) {
-      userIds.add(c.classPlan.consultantProfile.user.id);
-    }
-    c.appointments
-      .flatMap((apt) => apt.slotsOfAppointment)
-      .flatMap((slot) => slot.user)
-      .forEach((u) => userIds.add(u.id));
-  });
-
-  consultations.forEach((c) => {
-    if (c.consultationPlan.consultantProfile?.user?.id) {
-      userIds.add(c.consultationPlan.consultantProfile.user.id);
-    }
-    if (c.requestedBy?.user?.id) userIds.add(c.requestedBy.user.id);
-  });
-
-  subscriptions.forEach((s) => {
-    if (s.subscriptionPlan.consultantProfile?.user?.id) {
-      userIds.add(s.subscriptionPlan.consultantProfile.user.id);
-    }
-    if (s.requestedBy?.user?.id) userIds.add(s.requestedBy.user.id);
-  });
-
-  // Batch upsert all users first
-  const uniqueUserIds = Array.from(userIds);
-  if (uniqueUserIds.length > 0) {
-    await upsertUsersToStream(uniqueUserIds);
-  }
-
-  // Create channels in parallel batches (limit concurrency to avoid rate limits)
-  const BATCH_SIZE = 10;
-  const results = {
-    webinars: { success: 0, failed: 0 },
-    classes: { success: 0, failed: 0 },
-    consultations: { success: 0, failed: 0 },
-    subscriptions: { success: 0, failed: 0 },
-  };
-
-  // Process webinars
-  for (let i = 0; i < webinars.length; i += BATCH_SIZE) {
-    const batch = webinars.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.allSettled(
-      batch.map((w) => createWebinarChannel(w.id)),
-    );
-    batchResults.forEach((r) => {
-      if (r.status === "fulfilled") results.webinars.success++;
-      else results.webinars.failed++;
-    });
-  }
-
-  // Process classes
-  for (let i = 0; i < classes.length; i += BATCH_SIZE) {
-    const batch = classes.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.allSettled(
-      batch.map((c) => createClassChannel(c.id)),
-    );
-    batchResults.forEach((r) => {
-      if (r.status === "fulfilled") results.classes.success++;
-      else results.classes.failed++;
-    });
-  }
-
-  // Process consultations
-  for (let i = 0; i < consultations.length; i += BATCH_SIZE) {
-    const batch = consultations.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.allSettled(
-      batch.map((c) => createConsultationChannel(c.id)),
-    );
-    batchResults.forEach((r) => {
-      if (r.status === "fulfilled") results.consultations.success++;
-      else results.consultations.failed++;
-    });
-  }
-
-  // Process subscriptions
-  for (let i = 0; i < subscriptions.length; i += BATCH_SIZE) {
-    const batch = subscriptions.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.allSettled(
-      batch.map((s) => createSubscriptionChannel(s.id)),
-    );
-    batchResults.forEach((r) => {
-      if (r.status === "fulfilled") results.subscriptions.success++;
-      else results.subscriptions.failed++;
-    });
-  }
-
-  streamLogger.info("Bulk channel initialization completed", { results });
-
-  return {
-    success: true,
-    counts: {
-      users: uniqueUserIds.length,
-      ...results,
-    },
-  };
 }
 
 /**
