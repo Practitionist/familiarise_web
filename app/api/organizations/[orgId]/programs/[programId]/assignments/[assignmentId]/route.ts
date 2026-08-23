@@ -154,12 +154,31 @@ export async function PATCH(
           { httpStatus: 400 },
         );
       }
-      const next = await tx.programAssignment.update({
-        where: { id: assignmentId },
+      // #1132 follow-up — period edits must not resurrect terminal rows. A
+      // plain update() here let a MAINTAINER extend the period of a
+      // ROLLED / CLOSED / CANCELLED assignment, silently re-arming the
+      // sponsored-spend entitlement that checkout resolves by window alone.
+      // Claim only live rows via CAS, mirroring the cancel path above.
+      const claimedPeriod = await tx.programAssignment.updateMany({
+        where: {
+          id: assignmentId,
+          status: { in: ["ACTIVE", "PAUSED"] },
+        },
         data: {
           periodStart: nextStart,
           periodEnd: nextEnd,
         },
+      });
+      if (claimedPeriod.count === 0) {
+        throw Object.assign(
+          new Error(
+            "Assignment is no longer live (rolled, closed, or cancelled); its period can no longer change",
+          ),
+          { httpStatus: 409, code: "ASSIGNMENT_NOT_LIVE" },
+        );
+      }
+      const next = await tx.programAssignment.findUniqueOrThrow({
+        where: { id: assignmentId },
       });
       await tx.orgAuditLog.create({
         data: {

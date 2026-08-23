@@ -2329,6 +2329,10 @@ export async function handleCheckout(
       const assignment = await prisma.programAssignment.findFirst({
         where: {
           membershipId: callerMembership.id,
+          // #1132 follow-up — only a live assignment may sponsor new spend.
+          // The period window alone matched ROLLED / CLOSED / CANCELLED rows
+          // whose periods a stale PATCH could extend.
+          status: "ACTIVE",
           periodStart: { lte: now },
           periodEnd: { gte: now },
           program: {
