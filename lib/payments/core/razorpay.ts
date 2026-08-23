@@ -15,6 +15,47 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 // Razorpay Client Initialization
 // ============================================================================
 
+// PM-10 — nothing downstream distinguishes test mode from live mode, so a
+// TEST key in a production posture boots cleanly and fails only at the first
+// customer: charges decline, refunds dead-end, webhooks never verify, while
+// every Payment row still reads as gateway-authoritative. Fail the boot
+// loudly instead. Dev / preview / test keep legitimate access to test keys —
+// this fires on the production posture only.
+//
+// This guard runs AT MODULE LOAD — it is an env read, not SDK construction,
+// so #1221's lazy-client change keeps its cost at microseconds. Do NOT move
+// it inside the lazy initializer: the fail-fast contract (razorpay-test-key-
+// guard.test.ts) is that a misconfigured production posture dies at require
+// time, before any route boots.
+//
+// EXCEPT during `next build`: builds run with NODE_ENV=production (and CI /
+// Netlify build environments legitimately hold test keys — a build moves no
+// money), and this module loads while Next collects page data, so an
+// unconditional throw broke every deploy preview + the CI build job. The
+// guard still fires on the first real runtime boot in production, which is
+// where the customer-facing failure it exists for would happen. (The
+// RazorpayX payouts client carries the same guard keyed to
+// ENABLE_LIVE_PAYOUTS instead of NODE_ENV — see getRazorpayPayoutsService
+// in lib/payments/payouts/razorpay-payouts.ts.)
+{
+  const guardKeyId = process.env.RAZORPAY_KEY_ID;
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    guardKeyId &&
+    /^rzp_test_/.test(guardKeyId)
+  ) {
+    throw new PaymentError(
+      `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${guardKeyId}) while NODE_ENV=production. ` +
+        "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
+        "Fix: replace RAZORPAY_KEY_ID and RAZORPAY_SECRET with the account's LIVE keys " +
+        "(dashboard.razorpay.com → Settings → API Keys → Live mode) and redeploy.",
+      "RAZORPAY_TEST_KEY_IN_PRODUCTION",
+      "RAZORPAY",
+    );
+  }
+}
+
 // L2 FIX: Removed module-load console.warn — per-call errors are more actionable
 const initializeRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
@@ -23,46 +64,26 @@ const initializeRazorpayClient = () => {
     return null;
   }
 
-  // PM-10 — nothing downstream distinguishes test mode from live mode, so a
-  // TEST key in a production posture boots cleanly and fails only at the first
-  // customer: charges decline, refunds dead-end, webhooks never verify, while
-  // every Payment row still reads as gateway-authoritative. Fail the boot
-  // loudly instead. Dev / preview / test keep legitimate access to test keys —
-  // this fires on the production posture only.
-  //
-  // EXCEPT during `next build`: builds run with NODE_ENV=production (and CI /
-  // Netlify build environments legitimately hold test keys — a build moves no
-  // money), and this module loads while Next collects page data, so an
-  // unconditional throw broke every deploy preview + the CI build job. The
-  // guard still fires on the first real runtime boot in production, which is
-  // where the customer-facing failure it exists for would happen. (The
-  // RazorpayX payouts client carries the same guard keyed to
-  // ENABLE_LIVE_PAYOUTS instead of NODE_ENV — see getRazorpayPayoutsService
-  // in lib/payments/payouts/razorpay-payouts.ts.)
-  const isNextBuildPhase =
-    process.env.NEXT_PHASE === "phase-production-build";
-  if (
-    process.env.NODE_ENV === "production" &&
-    !isNextBuildPhase &&
-    /^rzp_test_/.test(keyId)
-  ) {
-    throw new PaymentError(
-      `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${keyId}) while NODE_ENV=production. ` +
-        "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
-        "Fix: replace RAZORPAY_KEY_ID and RAZORPAY_SECRET with the account's LIVE keys " +
-        "(dashboard.razorpay.com → Settings → API Keys → Live mode) and redeploy.",
-      "RAZORPAY_TEST_KEY_IN_PRODUCTION",
-      "RAZORPAY",
-    );
-  }
-
   return new Razorpay({
     key_id: keyId,
     key_secret: keySecret,
   });
 };
 
-export const razorpayClient = initializeRazorpayClient();
+// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// module scope put the SDK constructor on every cold boot of any route whose
+// import graph reaches this file. MEASURED 2026-08-23 (#1221): this does NOT
+// shrink the #1124 concurrent-instance event-loop stall — that reproduced
+// 12/12 at full strength on a build carrying exactly this change. Keep the
+// lazy pattern as boot hygiene; do not cite it as stall mitigation.
+let razorpayClientInstance: Razorpay | null | undefined;
+
+export function getRazorpayClient(): Razorpay | null {
+  if (razorpayClientInstance === undefined) {
+    razorpayClientInstance = initializeRazorpayClient();
+  }
+  return razorpayClientInstance;
+}
 
 // ============================================================================
 // SDK call timeout
@@ -122,6 +143,7 @@ export async function createRazorpayOrder({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new PaymentError(
       "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
@@ -177,6 +199,7 @@ export async function createRazorpayOrder({
  * Cancel a Razorpay order (best effort - cannot actually cancel after payment)
  */
 export async function cancelRazorpayOrder(orderId: string): Promise<void> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     console.warn("Razorpay client not initialized - cannot cancel order");
     return;
@@ -335,6 +358,7 @@ export async function createRazorpayRefund({
   metadata,
   idempotencyKey,
 }: RefundParams): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized - cannot process refund",
@@ -405,6 +429,7 @@ export async function createRazorpayRefund({
 export async function getRazorpayRefund(
   refundId: string,
 ): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",
@@ -445,6 +470,7 @@ export async function listRazorpayRefunds(
   orderId: string,
   limit: number = 10,
 ): Promise<RefundResult[]> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",

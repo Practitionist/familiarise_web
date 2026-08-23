@@ -8,8 +8,8 @@ import {
 } from "@/lib/payments/dispute-status";
 import { Prisma, PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
-import { stripeClient } from "@/lib/payments/core/stripe";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getStripeClient } from "@/lib/payments/core/stripe";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import {
   notifyRefundProcessed,
@@ -544,6 +544,9 @@ export async function verifyWebhookSignature(
 
   try {
     if (gateway === "stripe") {
+      // Only Stripe verification touches the SDK client; Razorpay verifies
+      // via local HMAC below.
+      const stripeClient = getStripeClient();
       if (!stripeClient) {
         console.error(
           "Stripe client not initialized - cannot verify webhook signature",
@@ -1159,6 +1162,9 @@ export async function handleDisputeCreated(
   isChargeRefundable: boolean,
   gateway: "STRIPE" | "RAZORPAY",
 ) {
+  // Only resolve the client the dispute's gateway will use.
+  const stripeClient = gateway === "STRIPE" ? getStripeClient() : null;
+  const razorpayClient = gateway === "RAZORPAY" ? getRazorpayClient() : null;
   // Resolve `chargeId` to OUR paymentIntent BEFORE opening the transaction.
   // This lookup is an external HTTP call to Stripe or Razorpay; leaving it
   // inside the tx held a database transaction open across a network round trip,

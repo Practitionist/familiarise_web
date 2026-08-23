@@ -33,7 +33,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { z } from "zod";
 
@@ -48,6 +48,7 @@ const verifySignatureSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const razorpayClient = getRazorpayClient();
     const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

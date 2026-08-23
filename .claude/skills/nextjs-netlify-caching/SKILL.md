@@ -197,6 +197,23 @@ The function runs with `AWS_LAMBDA_FUNCTION_MEMORY_SIZE=1024`, a V8 heap limit o
 
 Do not treat the platform ceiling as a backstop either. Netlify documents 10 s by default and 26 s maximum on paid plans, yet invocations of 26.4 s to 31.9 s were logged on this Pro account. The stall itself is tracked as issue #1124; #1120 is closed by #1123, which established that it is not a database problem.
 
+### The 2026-08-22 memory A/B: assessed and reverted — and what it disproves
+
+The "CPU-starved cold-boot" reading above became testable when Netlify shipped per-function `memory`/`vcpu` config (Credit-based Pro/Ent; `memory` and `vcpu` **scale together**, so setting either tests the same lever). Applied correctly at 2048 MB to the v2 handler and measured under the identical 12-way concurrent unique-key burst protocol:
+
+| Deploy | Handler memory | Result |
+|---|---|---|
+| control (1024 MB) | 1024 | 11/12 slow, TTFB 27.8–31.0 s |
+| treatment | 2048 | 11/12 slow, TTFB 35.9–37.6 s + one platform 500 |
+
+No improvement, possibly worse. Reverted in 08b10ce4. Two conclusions: the CPU-share hypothesis for the stall is **weakened**, not confirmed — doubling per-instance CPU should have shrunk a CPU-bound stall and moved nothing; and any artifact claiming memory "resolved" the stall descends from a misattributed burst that ran during a hyperactive window (three deploys + two agent sessions within nine minutes) where residual warm capacity produced the fast numbers.
+
+**Method traps this cost a day to learn.** Runtime API v2 generates ONE function named `___netlify-server-handler`; overrides targeting v1 names (`___netlify-handler`, `___netlify-odb-handler`) are silently ignored — verify with `netlify api searchSiteFunctions --data '{"site_id":"…"}'` (record field `m`). Netlify deploy IDs do not visibly map to commits: `netlify api listSiteDeploys` → `commit_ref` does, and every cross-deploy claim must use it. Cross-preview A/Bs confound ISR cache freshness with instance-pool age; only same-deploy comparisons count.
+
+**Where this leaves the levers.** Warming workflows (#1148 keep-warm/warm-deploy) protect only the lone-click case — one ping keeps one instance warm and cannot cover bursts. App-side init work is bounded by measurement (solo new instance = full boot + render in ~1.9 s), so shaving SDK init buys fractions of that budget, nothing more. If the tail remains unacceptable after code hygiene, the remaining lever is architectural — always-on compute for SSR — not more warming machinery. A support ticket with the evidence pack lives at `docs/perf/netlify-stall-ticket-draft.md`.
+
+The warm-then-burst close-out (2026-08-23, preview-1148): idle→6-burst stalled 6/6 at 30.6–32.0 s; ~150 s of sustained sequential traffic kept essentially ONE instance warm (every subsequent unique-key RSC fetch served from the ISR/durable cache at ~0.24 s); an immediate 12-burst still stalled 4/12 at 27.8–30.3 s plus a platform 504. Concurrency width alone forces fresh instances into the stall seconds after heavy activity — no ping cadence can prevent it. The same day, a build carrying lazy-initialized Razorpay/Stripe clients (#1221) reproduced the stall at full strength (12/12 slow, 29.5–31.5 s after ≥30 min idle) while its sequential profile was textbook — second independent confirmation, after the CPU-doubling null result, that the stall does not scale with application init work. Do not re-propose bundle-shaving as a stall fix.
+
 ### Fail-open and a cacheable response are safe alone and dangerous together
 
 A fail-open path on an ISR route converts a transient database blip into a cached artefact. `fallbackOnTransientDbError` rethrew during `next build` but degraded at request time, and on `/explore/experts/[consultantId]` that produced HTTP 200 responses carrying the degraded shell at 66 KB against a healthy 104–118 KB. Ten of forty concurrent cold renders came back that way, each with `Cache-Status: "Netlify Durable"; fwd=uri-miss; stored`, and re-fetching them five minutes later returned the same broken page in 0.30–0.64 s with `"Netlify Durable"; hit` and `age: 318–350`. The broken page becomes the *fast* one, which is why nobody notices.

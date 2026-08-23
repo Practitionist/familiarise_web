@@ -18,6 +18,9 @@
  *
  * Each test re-requires the modules under jest.resetModules() because both
  * clients initialize at module load / factory-first-call from process.env.
+ * (#1221 made the CORE client construct lazily — the PM-10 guard still fires
+ * at module load as a cheap env check, while SDK construction happens on the
+ * first getRazorpayClient() call. The assertions below follow that split.)
  * Error-code asserts are duck-typed (not instanceof) on purpose: resetModules
  * means the PaymentError class inside the fresh module registry is a
  * different constructor than any top-level import here.
@@ -92,9 +95,7 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
     process.env.RAZORPAY_KEY_ID = "rzp_test_wrongposture";
     process.env.RAZORPAY_SECRET = "some_secret";
 
-    const thrown = captureThrow(
-      () => requireCoreModule().razorpayClient,
-    );
+    const thrown = captureThrow(() => requireCoreModule());
 
     expect(thrown.message).toMatch(/RAZORPAY_KEY_ID/);
     expect(thrown.message).toMatch(/rzp_test_wrongposture/);
@@ -109,7 +110,7 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
 
     const mod = requireCoreModule();
 
-    expect(mod.razorpayClient).not.toBeNull();
+    expect(mod.getRazorpayClient()).not.toBeNull();
   });
 
   it("next build phase + prod posture + rzp_test_ key → initializes fine (builds move no money)", () => {
@@ -127,7 +128,7 @@ describe("core checkout/refund client (lib/payments/core/razorpay.ts)", () => {
 
     const mod = requireCoreModule();
 
-    expect(mod.razorpayClient).not.toBeNull();
+    expect(mod.getRazorpayClient()).not.toBeNull();
   });
 });
 
