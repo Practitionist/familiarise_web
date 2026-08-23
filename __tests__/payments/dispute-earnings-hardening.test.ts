@@ -514,6 +514,39 @@ describe("#1020-2 — already-paid earnings enter the LOST clawback", () => {
     expect(pages[0].summary).toContain("8000 paise");
   });
 
+  it("an aborted transaction never pages — the page is post-commit", async () => {
+    seedPayment(10_000);
+    store.consultantEarnings.push({
+      id: "ce_paid1",
+      paymentId: "pay_db_1",
+      status: "PAID",
+      consultantSharePaise: 6_000,
+      refundedShareAmount: 0,
+      consultantProfileId: "cp_1",
+      payoutId: "payout_1",
+    });
+    store.disputes.push({
+      id: "disp_row_1",
+      disputeId: "disp_1",
+      status: "NEEDS_RESPONSE",
+      amountPaise: 10_000,
+      paymentId: "pay_db_1",
+    });
+    // SSI abort: the tx callback rejects after staging the page.
+    mockedTransaction.mockImplementationOnce(async () => {
+      throw new Error("P2034 serialization failure");
+    });
+
+    await expect(handleDisputeUpdated("disp_1", "lost", null)).rejects.toThrow(
+      /serialization failure/,
+    );
+
+    const clawbackPages = recordSystemError.mock.calls
+      .map((c) => c[0] as { summary?: string })
+      .filter((c) => c.summary?.includes("Chargeback clawback needed"));
+    expect(clawbackPages).toHaveLength(0);
+  });
+
   it("PAID org earnings are clawed back through the reversal engine, prorated", async () => {
     seedPayment(10_000);
     store.orgEarnings.push({
