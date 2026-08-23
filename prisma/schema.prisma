@@ -3283,6 +3283,14 @@ model Webinar {
   status          WebinarStatus @default(SCHEDULED)
   feedbackSummary String?
 
+  // Freeze ledger (UpdateChannelPartial rate-limit incident, 2026-08-23): the
+  // daily expire cron used to re-issue updatePartial({frozen:true}) for every
+  // channel in the 7–90d age band on every run — value-idempotent, but each
+  // no-op still burned one Stream API call until the app-wide 300/min cap
+  // tripped. Null = not yet frozen; the stamp is written after the freeze call
+  // succeeds, so a crash between the two costs one redundant call next day.
+  chatFrozenAt DateTime? @db.Timestamptz
+
   // Per-instance capacity. Null inherits WebinarPlan.maxParticipants, so the
   // plan value is the default for new instances and the organizer can retune a
   // single session without touching its siblings.
@@ -3392,6 +3400,9 @@ model Class {
   // Subscription.schedulingTimezone for why it is pinned, not followed.
   schedulingTimezone       String      @default("Asia/Kolkata")
   status                   ClassStatus @default(SCHEDULED)
+
+  // Freeze ledger — see Webinar.chatFrozenAt.
+  chatFrozenAt             DateTime?   @db.Timestamptz
 
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
