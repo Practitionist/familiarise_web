@@ -185,6 +185,22 @@ export function isExpectedStreamError(error: unknown): boolean {
 }
 
 /**
+ * A Stream rate-limit rejection (HTTP 429) means the app exhausted a per-minute
+ * quota — quota, not availability. The 2026-08-23 incident showed why the two
+ * must not be conflated: the daily expire cron burned through its
+ * UpdateChannelPartial budget, and the resulting 429s tripped this breaker,
+ * which then fast-failed the UNRELATED deleteChannels stage too. Rate limits
+ * therefore neither trip the breaker nor page Sentry as errors; callers that
+ * pace themselves (see jobs/stream/expire-event-channels.ts FREEZE_PACING_MS)
+ * should stay under the cap in the first place.
+ */
+export function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const e = error as { status?: number };
+  return e.status === 429;
+}
+
+/**
  * #473 — wrap a hot-path Stream network call in the shared circuit breaker so a
  * Stream outage fast-fails (sub-ms) instead of every dashboard load eating the
  * full 30s client timeout and cascading.
@@ -203,11 +219,12 @@ export async function withStreamCircuitBreaker<T>(
   fallback?: () => T,
 ): Promise<T> {
   try {
-    // #899 — expected "channel not found" misses must not trip the breaker.
+    // #899 — expected "channel not found" misses must not trip the breaker;
+    // neither do 429s (quota ≠ outage, see isRateLimitError).
     return await withCircuitBreaker(
       operation,
       undefined,
-      (e) => !isExpectedStreamError(e),
+      (e) => !(isExpectedStreamError(e) || isRateLimitError(e)),
     );
   } catch (error) {
     // Distinguish "breaker is OPEN, we never tried" from a real Stream error.
@@ -225,8 +242,10 @@ export async function withStreamCircuitBreaker<T>(
     }
     // #899 — an expected miss (channel not found) is normal on the lazy
     // create-or-join path: rethrow for the caller's create/fallback branch
-    // without Sentry noise. Only genuine Stream errors are captured.
-    if (!isExpectedStreamError(error)) {
+    // without Sentry noise. A 429 is self-inflicted quota exhaustion, already
+    // alerted on by Stream itself — also not an error page. Only genuine
+    // Stream errors are captured.
+    if (!(isExpectedStreamError(error) || isRateLimitError(error))) {
       Sentry.captureException(error, { tags: { subsystem: "stream" } });
     }
     throw error;
