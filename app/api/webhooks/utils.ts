@@ -1279,14 +1279,21 @@ export async function handleDisputeCreated(
           `✅ Dispute ${disputeId} created for payment ${payment.id}`,
         );
 
-        // M1 FIX: Hold consultant earnings to prevent payout of disputed funds
-        const heldResult = await tx.consultantEarnings.updateMany({
-          where: {
-            paymentId: payment.id,
-            status: { in: ["PENDING", "READY"] },
-          },
-          data: { status: "HELD" },
+        // M1 FIX: Hold consultant earnings to prevent payout of disputed funds.
+        // #1020-1 — two CAS groups (not one blind updateMany) so each row's
+        // PRIOR status rides along in preDisputeStatus: a WON/CLOSED release
+        // must restore a PENDING earning to PENDING, not force-mature it. The
+        // where-clauses exclude already-HELD rows, so a second dispute on the
+        // same payment can never clobber the first hold's recorded prior.
+        const heldReady = await tx.consultantEarnings.updateMany({
+          where: { paymentId: payment.id, status: "READY" },
+          data: { status: "HELD", preDisputeStatus: "READY" },
         });
+        const heldPending = await tx.consultantEarnings.updateMany({
+          where: { paymentId: payment.id, status: "PENDING" },
+          data: { status: "HELD", preDisputeStatus: "PENDING" },
+        });
+        const heldResult = { count: heldReady.count + heldPending.count };
         if (heldResult.count > 0) {
           console.log(
             `🔒 ${heldResult.count} earnings held due to dispute ${disputeId}`,
@@ -1294,15 +1301,17 @@ export async function handleDisputeCreated(
         }
 
         // #1008 — hold the HOST org's earnings too (mirrors the consultant hold).
-        // PENDING_TRUST is left alone — it's already un-releasable. Single CAS, so
-        // it's race-safe against payout batching without upgrading isolation.
-        const orgHeld = await tx.organizationEarnings.updateMany({
-          where: {
-            paymentId: payment.id,
-            status: { in: ["PENDING", "READY"] },
-          },
-          data: { status: "HELD" },
+        // PENDING_TRUST is left alone — it's already un-releasable. Single CAS per
+        // group, so it's race-safe against payout batching without upgrading isolation.
+        const orgHeldReady = await tx.organizationEarnings.updateMany({
+          where: { paymentId: payment.id, status: "READY" },
+          data: { status: "HELD", preDisputeStatus: "READY" },
         });
+        const orgHeldPending = await tx.organizationEarnings.updateMany({
+          where: { paymentId: payment.id, status: "PENDING" },
+          data: { status: "HELD", preDisputeStatus: "PENDING" },
+        });
+        const orgHeld = { count: orgHeldReady.count + orgHeldPending.count };
         if (orgHeld.count > 0) {
           console.log(
             `🔒 ${orgHeld.count} org earnings held due to dispute ${disputeId}`,
@@ -1403,55 +1412,96 @@ export async function handleDisputeUpdated(
         mappedStatus === "WARNING_CLOSED" ||
         mappedStatus === "CLOSED"
       ) {
-        // Dispute resolved in platform's favor — release held earnings back to READY
+        // Dispute resolved in platform's favor — release held earnings.
+        // #1020-1 — restore each row's TRUE prior state from preDisputeStatus
+        // instead of force-maturing everything to READY: a PENDING earning
+        // that was mid-hold-period when the dispute landed must return to
+        // PENDING so its maturity clock stays honest. Rows with no recorded
+        // prior (held before the column shipped) keep the historical READY
+        // behavior. All three groups clear the marker; the null-prior group
+        // is also what makes a redelivered WON a no-op (nothing matches).
+        const relPending = await tx.consultantEarnings.updateMany({
+          where: {
+            paymentId: dispute.paymentId,
+            status: "HELD",
+            preDisputeStatus: "PENDING",
+          },
+          data: { status: "PENDING", preDisputeStatus: null },
+        });
         const released = await tx.consultantEarnings.updateMany({
           where: { paymentId: dispute.paymentId, status: "HELD" },
-          data: { status: "READY" },
+          data: { status: "READY", preDisputeStatus: null },
         });
-        if (released.count > 0) {
+        if (relPending.count + released.count > 0) {
           console.log(
-            `🔓 ${released.count} earnings released — dispute ${disputeId} won`,
+            `🔓 ${released.count} earnings released (+${relPending.count} restored to PENDING) — dispute ${disputeId} won`,
           );
         }
         // #1008 — release the org's held earnings too. No-op exactly when a
         // refund already flipped them to REFUNDED (that path wins first).
+        const orgRelPending = await tx.organizationEarnings.updateMany({
+          where: {
+            paymentId: dispute.paymentId,
+            status: "HELD",
+            preDisputeStatus: "PENDING",
+          },
+          data: { status: "PENDING", preDisputeStatus: null },
+        });
         const orgReleased = await tx.organizationEarnings.updateMany({
           where: { paymentId: dispute.paymentId, status: "HELD" },
-          data: { status: "READY" },
+          data: { status: "READY", preDisputeStatus: null },
         });
-        if (orgReleased.count > 0) {
+        if (orgReleased.count + orgRelPending.count > 0) {
           console.log(
-            `🔓 ${orgReleased.count} org earnings released — dispute ${disputeId} won`,
+            `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING) — dispute ${disputeId} won`,
           );
         }
       } else if (
         mappedStatus === "LOST" ||
         mappedStatus === "CHARGE_REFUNDED"
       ) {
-        // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds
-        const heldEarnings = await tx.consultantEarnings.findMany({
-          where: { paymentId: dispute.paymentId, status: "HELD" },
+        // Dispute lost — mark held earnings as REFUNDED, accounting for partial refunds.
+        // #1020-3 — a PARTIAL dispute used to refund the FULL share on both
+        // sides; every reversal here is now prorated to the disputed fraction
+        // of the payment (floored, capped at the remaining refundable).
+        // #1020-2 — the loops also include PAID rows: a fast payout followed
+        // by a late chargeback used to leave paid-out earnings untouched.
+        const prorationFactor =
+          dispute.payment.amount > 0
+            ? Math.min(dispute.amountPaise / dispute.payment.amount, 1)
+            : 1;
+
+        const lostConsultantEarnings = await tx.consultantEarnings.findMany({
+          where: { paymentId: dispute.paymentId, status: { in: ["HELD", "PAID"] } },
           select: {
             id: true,
             consultantSharePaise: true,
             refundedShareAmount: true,
             consultantProfileId: true,
             payoutId: true,
+            status: true,
           },
         });
-        for (const earning of heldEarnings) {
+        let consultantManualRecoveryPaise = 0;
+        let consultantManualRecoveryCount = 0;
+        for (const earning of lostConsultantEarnings) {
           const alreadyRefunded = earning.refundedShareAmount ?? 0;
           const remainingRefundable = Math.max(
             earning.consultantSharePaise - alreadyRefunded,
             0,
           );
+          const proratedReversal = Math.floor(
+            earning.consultantSharePaise * prorationFactor,
+          );
+          const reversalNow = Math.min(proratedReversal, remainingRefundable);
 
           await tx.consultantEarnings.update({
             where: { id: earning.id },
             data: {
               status: "REFUNDED",
-              ...(remainingRefundable > 0
-                ? { refundedShareAmount: { increment: remainingRefundable } }
+              preDisputeStatus: null,
+              ...(reversalNow > 0
+                ? { refundedShareAmount: { increment: reversalNow } }
                 : {}),
             },
           });
@@ -1470,43 +1520,75 @@ export async function handleDisputeUpdated(
             });
           }
 
+          // #1020-2 — a PAID consultant share means the cash already left in
+          // a COMPLETED payout, and the consultant rail has no automatic
+          // clawback mechanism (the documented R-06/E-05 posture is manual
+          // recovery). The STATE is now truthful (REFUNDED + TDS reversed);
+          // page ops once per dispute with the total to recover by hand.
+          if (earning.status === "PAID" && reversalNow > 0) {
+            consultantManualRecoveryPaise += reversalNow;
+            consultantManualRecoveryCount++;
+          }
+
           console.log(
-            `💸 Earnings ${earning.id} refunded (${remainingRefundable} paise) — dispute ${disputeId} lost`,
+            `💸 Earnings ${earning.id} refunded (${reversalNow} paise) — dispute ${disputeId} lost`,
           );
+        }
+        if (consultantManualRecoveryCount > 0) {
+          void Promise.resolve(
+            recordSystemError({
+              organizationId: null,
+              category: "PAYOUT",
+              summary: `Chargeback clawback needed: ${consultantManualRecoveryCount} PAID consultant earning(s) totalling ${consultantManualRecoveryPaise} paise on dispute ${disputeId}`,
+              err: new Error("CONSULTANT_PAID_EARNING_CLAWBACK"),
+              context: {
+                disputeId,
+                paymentId: dispute.paymentId,
+                amountPaise: consultantManualRecoveryPaise,
+                earnings: consultantManualRecoveryCount,
+              },
+            }),
+          ).catch(() => {});
         }
 
         // #1008 — HOST org earnings side (mirrors the consultant loop above).
-        // Held org earnings flip to REFUNDED; a share already paid out to the
-        // host org is clawed back through the reversal engine. This is the
+        // Held AND paid org earnings flip to REFUNDED; a share already paid out
+        // to the host org is clawed back through the reversal engine. This is the
         // host-EARNINGS recovery — distinct from applyOrgChargeback below, which
         // recovers the sponsor-FUNDER's money (different party, no double-count).
-        const heldOrgEarnings = await tx.organizationEarnings.findMany({
-          where: { paymentId: dispute.paymentId, status: "HELD" },
+        const lostOrgEarnings = await tx.organizationEarnings.findMany({
+          where: { paymentId: dispute.paymentId, status: { in: ["HELD", "PAID"] } },
           select: {
             id: true,
             orgSharePaise: true,
             refundedAmountPaise: true,
             organizationId: true,
             orgPayoutId: true,
+            status: true,
             orgPayout: { select: { status: true } },
           },
         });
-        for (const oe of heldOrgEarnings) {
+        for (const oe of lostOrgEarnings) {
           const alreadyRefunded = oe.refundedAmountPaise ?? 0;
           const remaining = Math.max(oe.orgSharePaise - alreadyRefunded, 0);
+          const reversalNow = Math.min(
+            Math.floor(oe.orgSharePaise * prorationFactor),
+            remaining,
+          );
           await tx.organizationEarnings.update({
             where: { id: oe.id },
             data: {
               status: "REFUNDED",
-              ...(remaining > 0
-                ? { refundedAmountPaise: { increment: remaining } }
+              preDisputeStatus: null,
+              ...(reversalNow > 0
+                ? { refundedAmountPaise: { increment: reversalNow } }
                 : {}),
             },
           });
           if (
             oe.orgPayoutId &&
             oe.orgPayout?.status === "COMPLETED" &&
-            remaining > 0
+            reversalNow > 0
           ) {
             await applyReversal(tx, {
               source: {
@@ -1514,7 +1596,7 @@ export async function handleDisputeUpdated(
                 orgPayoutId: oe.orgPayoutId,
                 organizationId: oe.organizationId,
               },
-              amountPaise: remaining,
+              amountPaise: reversalNow,
               reason: `chargeback lost (dispute ${disputeId})`,
               refundId: `dispute:${dispute.id}`,
             });

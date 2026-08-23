@@ -1674,6 +1674,9 @@ model OrganizationEarnings {
 
   status    EarningStatus
   holdUntil DateTime?     @db.Timestamptz
+  // #1020-1 — mirror of ConsultantEarnings.preDisputeStatus: prior state
+  // preserved when a dispute HELDs the row so release restores it faithfully.
+  preDisputeStatus EarningStatus?
 
   orgPayoutId String?
   orgPayout   OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
@@ -4532,6 +4535,12 @@ model ConsultantEarnings {
   status    EarningStatus @default(PENDING)
   holdUntil DateTime      @db.Timestamptz // Release after hold period
   paidAt    DateTime?     @db.Timestamptz
+  // #1020-1 — the status an earning was in when an open dispute HELD it
+  // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
+  // instead of force-maturing a PENDING row into READY prematurely. Null =
+  // never dispute-held (or held before this column shipped — releases then
+  // fall back to READY, the historical behavior).
+  preDisputeStatus EarningStatus?
 
   // Currency (always INR for MVP, extensible for multi-currency)
   currency Currency @default(INR)
