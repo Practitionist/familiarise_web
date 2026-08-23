@@ -380,7 +380,7 @@ export default function ConsultationPricingToggle({
                       <CalendarIcon className="mr-2 h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />{" "}
                       Select a Date
                     </h3>
-                    <div className="min-h-0 mdh:flex-1 flex flex-col bg-zinc-800/60 p-3 sm:p-4 lg:p-5 rounded-xl border border-zinc-700/50 overflow-hidden [--cell:clamp(26px,5.5dvh,36px)] mdh:[container-type:size] mdh:[--cell:clamp(20px,calc(16.6cqh_-_28px),48px)]">
+                    <div className="min-h-0 mdh:flex-1 flex flex-col bg-zinc-800/60 p-3 sm:p-4 lg:p-5 rounded-xl border border-zinc-700/50 overflow-hidden [--cell:clamp(26px,5.5dvh,36px)] mdh:[container-type:size] mdh:[--cell:clamp(20px,calc(16.6cqh_-_22px),48px)]">
                       <div className="flex-none flex justify-between items-center mb-2 sm:mb-3">
                         <Button
                           variant="ghost"
