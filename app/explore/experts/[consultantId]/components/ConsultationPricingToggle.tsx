@@ -371,14 +371,14 @@ export default function ConsultationPricingToggle({
                 </DialogHeader>
                 {/* Stretch-to-fit body: the dialog never scrolls; each pane
                     flexes and only the slot list scrolls internally. */}
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8 overflow-hidden">
+                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 md:grid-rows-1 gap-4 md:gap-8 lg:gap-10 p-4 sm:p-6 lg:p-8 overflow-y-auto md:overflow-hidden">
                   {/* Calendar Section */}
                   <div className="min-h-0 flex flex-col">
                     <h3 className="flex-none text-base sm:text-lg font-semibold mb-2 sm:mb-3 flex items-center text-white">
                       <CalendarIcon className="mr-2 h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />{" "}
                       Select a Date
                     </h3>
-                    <div className="flex-1 min-h-0 flex flex-col bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50 [--cell:clamp(22px,5.2cqh,40px)] md:[--cell:min(8cqh,48px)]">
+                    <div className="flex-1 min-h-0 flex flex-col bg-zinc-800/60 p-3 sm:p-5 lg:p-6 rounded-xl border border-zinc-700/50 overflow-hidden [--cell:clamp(24px,6cqh,40px)] md:[container-type:size] md:[--cell:clamp(22px,calc(16.6cqh_-_30px),48px)]">
                       <div className="flex-none flex justify-between items-center mb-2 sm:mb-3">
                         <Button
                           variant="ghost"
@@ -489,7 +489,7 @@ export default function ConsultationPricingToggle({
                         </p>
                       </div>
                     )}
-                    <div className="flex-1 min-h-0 grid grid-cols-1 content-start gap-2.5 sm:gap-3 overflow-y-auto pr-1 sm:pr-2">
+                    <div className="flex-1 min-h-0 grid grid-cols-1 content-start gap-2.5 sm:gap-3 max-h-[40dvh] md:max-h-none overflow-y-auto pr-1 sm:pr-2">
                       {availableSlots.length > 0 ? (
                         <>
                           {availableSlots.map((slot, index) => {
