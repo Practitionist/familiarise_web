@@ -163,6 +163,23 @@ async function sweepStuckWebhookEventsUnlocked(
   let gaveUp = 0;
 
   for (const ev of stuck) {
+    // Claim the row before re-driving: bump receivedAt conditioned on it
+    // still holding the value we selected. Without this, two drivers (this
+    // sweep and a slow live after() callback, or two overlapping entries)
+    // could both re-run the same event. The Razorpay SDK now times out at
+    // 30s per call, so "still alive past the staleness window" is rare —
+    // but a claim makes sweep-vs-sweep double-drive impossible outright.
+    const claimed = await prisma.webhookEvent.updateMany({
+      where: { eventId: ev.eventId, receivedAt: ev.receivedAt },
+      data: { receivedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      console.log(
+        `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
+      );
+      continue;
+    }
+
     // WebhookEvent.payload stores only `event.payload`; the per-event schemas
     // also require the envelope's entity/account_id/contains/created_at, so
     // supply them — the handlers route on eventType + payload.* and never read

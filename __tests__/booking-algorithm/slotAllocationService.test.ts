@@ -2729,3 +2729,73 @@ describe("Auto allocation - timezone day shift", () => {
     expect(slotDate.getUTCHours()).toBeLessThan(11);
   });
 });
+
+// ── Allocation-resilience: cause-specific error codes ────────────────────────
+
+describe("allocation resilience — error codes", () => {
+  it("PERIOD_ENDED when scheduling period is in the past", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInMonths: 1,
+          sessionsPerWeek: 1,
+          sessionDurationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
+            ],
+          }),
+        },
+        // Period ended before "now" (2025-01-01)
+        schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-02-01T00:00:00Z"),
+        appointments: [],
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("PERIOD_ENDED");
+    expect(result.error).toContain("scheduling period ended");
+  });
+
+  it("SLOT_SHORTAGE when period is future but availability falls short", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        subscriptionPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInMonths: 1,
+          sessionsPerWeek: 3, // needs 3/week but only 1 hour/week available
+          sessionDurationInHours: 1,
+          totalSessions: 6,
+          consultantProfile: makeConsultantProfile({
+            slotsOfAvailabilityWeekly: [
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10), // only 1h/wk
+            ],
+          }),
+        },
+        schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-27T00:00:00Z"),
+        appointments: [],
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
+    expect(result.error).toContain("Could only find");
+  });
+});

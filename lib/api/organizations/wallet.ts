@@ -308,16 +308,28 @@ export function withRunningBalance<T extends { deltaPaise: number }>(
   });
 }
 
-/** Signed paise total for ledger rows: CREDIT adds, DEBIT subtracts. */
+/** Signed paise total for ledger rows: CREDIT adds, DEBIT subtracts.
+ *  Asserts the safe-integer range like `sumPaise` — an unguarded BigInt sum
+ *  silently loses precision past 2^53 instead of failing loudly. */
 export function signedDeltaPaise(
   rows: readonly { direction: string; amountPaise: bigint | number }[],
 ): number {
-  return rows.reduce(
-    (acc, r) =>
-      acc +
-      (r.direction === "CREDIT"
+  const total = rows.reduce((acc, r) => {
+    const amount =
+      typeof r.amountPaise === "bigint"
         ? Number(r.amountPaise)
-        : -Number(r.amountPaise)),
-    0,
-  );
+        : r.amountPaise;
+    if (!Number.isSafeInteger(amount)) {
+      throw new Error(
+        `signedDeltaPaise: amount ${r.amountPaise} exceeds the safe integer range`,
+      );
+    }
+    return acc + (r.direction === "CREDIT" ? amount : -amount);
+  }, 0);
+  if (!Number.isSafeInteger(total)) {
+    throw new Error(
+      `signedDeltaPaise: summed delta ${total} exceeds the safe integer range`,
+    );
+  }
+  return total;
 }

@@ -45,6 +45,21 @@ export async function GET(
       );
     }
 
+    // #1182 — what an unpaid item QUOTES is the amount frozen onto its
+    // Payment row when the pay-link was minted, never the plan's live price
+    // (a consultant repricing after acceptance must not move the number the
+    // gateway will charge). Newest live payment per appointment — a re-mint
+    // (expired/failed order replaced, #1181 reuse semantics) freezes the
+    // CURRENT quote onto a newer row, so the newest is the operative charge.
+    // Falls back to the plan only before any payment exists, where the plan
+    // price genuinely is the quote.
+    const frozenPaymentSelect = {
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" as const },
+      take: 1,
+      select: { amount: true, currency: true },
+    } as const;
+
     const planInclude = {
       select: {
         title: true,
@@ -87,8 +102,9 @@ export async function GET(
               },
             },
             // Cancel affordance keys on the Appointment record id
-            // (POST /api/appointments/[appointmentId]/cancel).
-            appointment: { select: { id: true } },
+            // (POST /api/appointments/[appointmentId]/cancel); the frozen
+            // charge rides the same appointment (#1182).
+            appointment: { select: { id: true, payment: frozenPaymentSelect } },
           },
           orderBy: { updatedAt: "desc" },
         }),
@@ -112,7 +128,18 @@ export async function GET(
             },
             // Any one appointment id suffices — the cancel route resolves
             // the parent subscription from it and transitions the whole row.
-            appointments: { select: { id: true }, take: 1 },
+            // Ordered like the mint's pick (#1181) so take: 1 lands on the
+            // appointment the pay-link anchored to, which carries the frozen
+            // charge (#1182). Pinned to PERSONAL appointments (matching this
+            // surface's organizationId: null filter): a mixed subscription
+            // with an earlier org-funded appointment must not leak its frozen
+            // amount onto the personal dashboard.
+            appointments: {
+              where: { organizationId: null },
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+              select: { id: true, payment: frozenPaymentSelect },
+              take: 1,
+            },
           },
           orderBy: { updatedAt: "desc" },
         }),
@@ -172,6 +199,10 @@ export async function GET(
               },
             },
             appointment: { select: { id: true } },
+            // A paid trial owns its Payment directly (TrialSession.paymentId);
+            // it holds the frozen charge the same way (#1182). Free trials
+            // have none and keep quoting the plan's trial price.
+            payment: { select: { amount: true, currency: true } },
           },
           orderBy: { updatedAt: "desc" },
         }),
@@ -185,6 +216,8 @@ export async function GET(
         ); // 48 hours from approval
         const isExpiringSoon =
           expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
+        // #1182 — frozen charge first; the plan is only the pre-mint quote.
+        const frozen = consultation.appointment?.payment[0];
 
         return {
           id: consultation.id,
@@ -194,8 +227,10 @@ export async function GET(
           consultantName:
             consultation.consultationPlan?.consultantProfile?.user?.name ||
             "Consultant",
-          amount: consultation.consultationPlan?.price || 0,
-          currency: consultation.consultationPlan?.priceCurrency || "INR",
+          amount: frozen?.amount ?? (consultation.consultationPlan?.price || 0),
+          currency:
+            (frozen?.currency ?? consultation.consultationPlan?.priceCurrency) ||
+            "INR",
           paymentUrl: consultation.pendingPaymentUrl || "",
           approvedAt: consultation.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
@@ -209,6 +244,8 @@ export async function GET(
         );
         const isExpiringSoon =
           expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
+        // #1182 — frozen charge first; the plan is only the pre-mint quote.
+        const frozen = subscription.appointments[0]?.payment[0];
 
         return {
           id: subscription.id,
@@ -218,8 +255,11 @@ export async function GET(
           consultantName:
             subscription.subscriptionPlan?.consultantProfile?.user?.name ||
             "Consultant",
-          amount: subscription.subscriptionPlan?.price || 0,
-          currency: subscription.subscriptionPlan?.priceCurrency || "INR",
+          amount:
+            frozen?.amount ?? (subscription.subscriptionPlan?.price || 0),
+          currency:
+            (frozen?.currency ?? subscription.subscriptionPlan?.priceCurrency) ||
+            "INR",
           paymentUrl: subscription.pendingPaymentUrl || "",
           approvedAt: subscription.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
@@ -233,6 +273,10 @@ export async function GET(
         const expiresAt = trial.paymentDueAt ?? trial.updatedAt;
         const isExpiringSoon =
           expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
+        // #1182 — frozen charge first; the plan's trial price is only the
+        // pre-mint quote (and the whole quote for free trials, which never
+        // mint one).
+        const frozen = trial.payment;
 
         return {
           id: trial.id,
@@ -242,8 +286,12 @@ export async function GET(
           consultantName:
             trial.subscriptionPlan?.consultantProfile?.user?.name ||
             "Consultant",
-          amount: Number(trial.subscriptionPlan?.trialPriceInPaise ?? 0),
-          currency: trial.subscriptionPlan?.priceCurrency || "INR",
+          amount:
+            frozen?.amount ??
+            Number(trial.subscriptionPlan?.trialPriceInPaise ?? 0),
+          currency:
+            (frozen?.currency ?? trial.subscriptionPlan?.priceCurrency) ||
+            "INR",
           paymentUrl: trial.pendingPaymentUrl || "",
           approvedAt: trial.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),

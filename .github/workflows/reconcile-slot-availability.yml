@@ -4,6 +4,10 @@ on:
   schedule:
     # Run hourly
     - cron: "32 * * * *"
+    # Heaviest sweep in the fleet: full availability reconciliation plus
+    # double-booking detection. The tsx step is the DB-active window read by
+    # check-workflow-hygiene's pool budget.
+    # cron-runtime-minutes: 8
   workflow_dispatch: # Allow manual triggering
 
 jobs:

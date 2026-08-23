@@ -4,6 +4,9 @@ on:
   schedule:
     # Run hourly
     - cron: "7 * * * *"
+    # Bulk completion pass over past-end appointments; the tsx step is the
+    # DB-active window read by check-workflow-hygiene's pool budget.
+    # cron-runtime-minutes: 6
   workflow_dispatch: # Allow manual triggering
 
 jobs:

@@ -112,6 +112,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
+    // The service-layer CAS (approve/reject claim PENDING atomically) throws
+    // a plain state error when a concurrent action won the race — surface it
+    // as 409, not a 500 that reads like an infrastructure fault.
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("cannot be approved") || msg.includes("cannot be rejected")) {
+      return NextResponse.json({ error: msg }, { status: 409 });
+    }
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     return NextResponse.json(
       { error: "Failed to process payout action" },
