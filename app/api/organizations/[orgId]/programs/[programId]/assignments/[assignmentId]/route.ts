@@ -209,7 +209,13 @@ export async function PATCH(
     if (err instanceof Error && "httpStatus" in err) {
       const status =
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      // Code passthrough so clients can branch on ASSIGNMENT_NOT_LIVE etc.
+      // without string-matching messages (parity with supersede/invoices).
+      const code = "code" in err ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code ? { code } : {}) },
+        { status },
+      );
     }
     Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
     throw err;
