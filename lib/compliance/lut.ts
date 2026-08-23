@@ -1,0 +1,54 @@
+/**
+ * Platform Letter of Undertaking (LUT) state — GST Rule 96A / Form RFD-11.
+ *
+ * Zero-rating an export of services WITHOUT paying IGST requires a LUT
+ * valid for the CURRENT financial year filed on the GST portal before the
+ * supply. Without it the supply is taxable at 18% IGST (the pay-then-refund
+ * route of s.16(3)(b) is available but is a deliberate cash-flow decision,
+ * not a default). Forgetting renewal is the classic exporter trap: every
+ * invoice raised after April 1 without a fresh LUT accrues IGST plus
+ * interest.
+ *
+ * The supplier on Familiarise invoices is the platform, so the LUT is
+ * PLATFORM-level configuration, not per-org data:
+ *   - PLATFORM_LUT_NUMBER     e.g. "AD270326000001L/2627"
+ *   - PLATFORM_LUT_VALID_TILL ISO date (inclusive), normally the FY end
+ *
+ * Fail-closed contract (#1230): absent or expired LUT ⇒ callers MUST NOT
+ * zero-rate. deriveGstBreakdown and determineTax both consult this module so
+ * checkout and invoicing cannot drift apart on the same supply.
+ */
+
+export const PLATFORM_LUT_NUMBER_ENV = "PLATFORM_LUT_NUMBER";
+export const PLATFORM_LUT_VALID_TILL_ENV = "PLATFORM_LUT_VALID_TILL";
+
+export interface PlatformLutStatus {
+  /** Both env vars configured. */
+  present: boolean;
+  /** present AND the validity date has not passed. */
+  valid: boolean;
+  number: string | null;
+  validTill: Date | null;
+}
+
+export function readPlatformLut(now: Date = new Date()): PlatformLutStatus {
+  const number = process.env[PLATFORM_LUT_NUMBER_ENV]?.trim() || null;
+  const rawTill = process.env[PLATFORM_LUT_VALID_TILL_ENV]?.trim() || null;
+
+  // End-of-day inclusive: a LUT valid through 2027-03-31 covers supplies ON
+  // the 31st, which a bare midnight comparison would exclude.
+  let validTill: Date | null = null;
+  if (rawTill) {
+    const parsed = new Date(`${rawTill}T23:59:59.999Z`);
+    if (!Number.isNaN(parsed.getTime())) validTill = parsed;
+  }
+
+  const present = !!number && !!validTill;
+  const valid = present && !!validTill && validTill.getTime() >= now.getTime();
+  return { present, valid, number, validTill };
+}
+
+/** True iff exports may be zero-rated right now (fail-closed otherwise). */
+export function hasValidPlatformLut(now: Date = new Date()): boolean {
+  return readPlatformLut(now).valid;
+}

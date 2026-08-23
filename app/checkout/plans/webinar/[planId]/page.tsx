@@ -486,6 +486,7 @@ export default function WebinarCheckoutPage({
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
       isInternational: checkoutTaxContext.isInternational,
+      exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
     planData?.data?.price,
@@ -493,6 +494,7 @@ export default function WebinarCheckoutPage({
     useReferralCredits,
     availableCredits,
     checkoutTaxContext.isInternational,
+    checkoutTaxContext.exportZeroRated,
   ]);
 
   // Periodic staleness check: detect if webinar has ended or been cancelled

@@ -414,6 +414,7 @@ export default function SubscriptionCheckoutPage({
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
       isInternational: checkoutTaxContext.isInternational,
+      exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
     planData?.data?.price,
@@ -421,6 +422,7 @@ export default function SubscriptionCheckoutPage({
     useReferralCredits,
     availableCredits,
     checkoutTaxContext.isInternational,
+    checkoutTaxContext.exportZeroRated,
   ]);
 
   // Periodic staleness check: warn if scheduling period has expired
