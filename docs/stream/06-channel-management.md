@@ -121,7 +121,7 @@ if (registeredCount === 1) {
 
 - User login (ensure membership of all channels)
 - After joining an event (add to specific channel)
-- Periodic background job (fix any inconsistencies)
+- Privileged maintenance run (fix any inconsistencies — the session gate rejects unauthenticated callers entirely)
 - After profile changes
 
 **File**: `actions/stream/chat/event-channel.action.ts`
@@ -144,7 +144,7 @@ export async function syncUserEventChannels(
 }>;
 ```
 
-Three properties of this contract are load-bearing.
+Five properties of this contract are load-bearing.
 
 **It reports failure by resolving, not by rejecting.** A missing user returns
 `{ success: false, error: "User not found" }` rather than throwing. A caller
@@ -163,6 +163,27 @@ correct.
 `Promise.allSettled` rather than a sequential loop, so one channel that fails
 does not abandon the rest — hence `failed` alongside `channelsSynced`. A partial
 result is the normal shape, not an error.
+
+**It is session-gated.** The module is `"use server"`, so the action is
+remotely invocable and gates itself before any work: it reads the session with
+the cookie cache disabled (`getSession(true)`), rejects suspended accounts, and
+allows only self or privileged (`isPrivileged`) callers — mirroring
+`assertCanMintToken` in `actions/stream/chat/stream.action.ts`. The gate fires
+before the `force` path clears the sync dedup guard, so an unauthenticated call
+cannot reset someone else's guard. Legitimate callers always act as self:
+`providers/StreamProviderImpl.tsx` fires the sync fire-and-forget, and
+`components/chat/InitializeUserChannelsButton.tsx` passes the signed-in user's
+own id.
+
+**Its expected-set excludes events past retention.** `getWebinarIdsForUser` and
+`getClassIdsForUser` select each event's latest slot `endsAt` plus the owning
+organization's `streamRecordingRetentionDays`, then drop events whose window
+has lapsed via `isPastRetention` in `lib/stream/channel-lifecycle.ts`. Without
+this filter the sync could lazily resurrect a channel the retention cron
+hard-deleted — and the resurrected channel would classify as already-frozen
+against its `chatFrozenAt` ledger stamp and stay writable forever (F-HIGH-2,
+2026-08-23 architecture review). [17. Channel Lifecycle](./17-channel-lifecycle.md)
+documents the full failure mode and the invariant that protects it.
 
 For the current body, read the function itself. It is long, it changes with the
 event model, and a transcribed copy here has drifted every time.
@@ -328,6 +349,12 @@ await channel.addMembers([userId]);
 await channel.addMembers([userId]); // No-op if already member
 ```
 
+The shipped lazy paths go one step further than check-then-create: when a
+lost create race is rejected by Stream, the existing channel is adopted via
+`isChannelAlreadyExistsError` in `lib/stream-utils.ts` instead of failing the
+caller. [17. Channel Lifecycle](./17-channel-lifecycle.md) documents the full
+create-and-adopt story.
+
 ---
 
 ## User Channel Sync Flow
@@ -335,7 +362,9 @@ await channel.addMembers([userId]); // No-op if already member
 ```mermaid
 flowchart TB
     Start([syncUserEventChannels called])
-    Start --> GetUser[Get user from database]
+    Start --> AuthGate{"Session gate:<br/>signed in, not banned,<br/>self or privileged?"}
+    AuthGate -->|No| Error0[Throw: Unauthorized / Forbidden]
+    AuthGate -->|Yes| GetUser[Get user from database]
 
     GetUser --> CheckUser{User exists?}
     CheckUser -->|No| Error1[Throw: User not found]
@@ -343,7 +372,7 @@ flowchart TB
 
     subgraph "Webinar Membership"
         GetWebinarsAppts[Query webinars<br/>where user holds a slot]
-        DedupeWebinars[Deduplicate webinar IDs]
+        DedupeWebinars[Deduplicate webinar IDs,<br/>drop events past retention]
 
         GetWebinarsAppts --> DedupeWebinars
     end
@@ -352,7 +381,7 @@ flowchart TB
 
     subgraph "Class Membership"
         GetClassesAppts[Query classes<br/>where user holds slots]
-        DedupeClasses[Deduplicate class IDs]
+        DedupeClasses[Deduplicate class IDs,<br/>drop events past retention]
 
         GetClassesAppts --> DedupeClasses
     end
@@ -382,22 +411,26 @@ flowchart TB
 
     style Start fill:#e3f2fd
     style Success fill:#c8e6c9
+    style Error0 fill:#ffcdd2
     style Error1 fill:#ffcdd2
 ```
 
 **Flow Steps**:
 
-1. **User Retrieval**: Fetch user with consultant/consultee profiles
-2. **Webinar Collection**:
+1. **Session Gate**: Require a signed-in, non-banned caller acting as self (or a privileged role); the gate precedes everything, including the `force` guard reset
+2. **User Retrieval**: Fetch user with consultant/consultee profiles
+3. **Webinar Collection**:
    - Query appointment slots
    - Deduplicate IDs
-3. **Webinar Channel Addition**: Add user to all webinar channels
-4. **Class Collection**:
+   - Drop events past their retention window (`isPastRetention`)
+4. **Webinar Channel Addition**: Add user to all webinar channels
+5. **Class Collection**:
    - Query appointment slots
    - Deduplicate IDs
-5. **Class Channel Addition**: Add user to all class channels
-6. **Consultant Check**: If user is consultant, add to hosted events
-7. **Completion**: Return success
+   - Drop events past their retention window (`isPastRetention`)
+6. **Class Channel Addition**: Add user to all class channels
+7. **Consultant Check**: If user is consultant, add to hosted events
+8. **Completion**: Return success
 
 ---
 
@@ -591,6 +624,10 @@ export async function syncAllUserChannels() {
   return { successCount, errorCount };
 }
 ```
+
+The session gate constrains loops like this: each call must act as self or run
+under a privileged caller — an unauthenticated background job is rejected
+outright.
 
 ### Add to Channel on Event Join
 
