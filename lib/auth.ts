@@ -23,6 +23,8 @@ import {
 import { syncSubscriber } from "@/lib/novu/subscriber";
 import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
@@ -518,6 +520,9 @@ export const auth = betterAuth({
               organization: {
                 select: {
                   id: true,
+                  // #1132 follow-up — the auto-join gates below need the
+                  // lifecycle status; joining a SUSPENDED org must be refused.
+                  status: true,
                   ssoSettings: { select: { defaultRoleForAutoJoin: true } },
                 },
               },
@@ -540,6 +545,33 @@ export const auth = betterAuth({
       const bareMembers = currentUserRow?.members ?? [];
       for (const bm of bareMembers) {
         if (!bm.organization) continue;
+        // #1132 follow-up — governance gates for JIT auto-join. Without
+        // these, a stale IdP sync could regrow memberships into a
+        // SUSPENDED / DEACTIVATED org, or push a PENDING_VERIFICATION org
+        // past UNVERIFIED_ORG_SEAT_CAP. Skips are logged so ops can see an
+        // IdP that is out of sync with the platform's lifecycle state.
+        const orgStatus = bm.organization.status;
+        const skipAutoJoin =
+          orgStatus === "SUSPENDED" ||
+          orgStatus === "DEACTIVATED" ||
+          (orgStatus === "PENDING_VERIFICATION" &&
+            (await prisma.membership.count({
+              where: { organizationId: bm.organizationId, status: "ACTIVE" },
+            })) >= UNVERIFIED_ORG_SEAT_CAP);
+        if (skipAutoJoin) {
+          void recordSystemEvent({
+            organizationId: bm.organizationId,
+            category: "SSO",
+            severity: "WARN",
+            message: `JIT auto-join skipped: organization is ${orgStatus} and the seat/cap gate refused membership creation for user ${user.id}`,
+            context: {
+              userId: user.id,
+              betterAuthMemberId: bm.id,
+              organizationStatus: orgStatus,
+            },
+          });
+          continue;
+        }
         const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
         try {
           // Wrap the role-effect resolution + Membership create in a
