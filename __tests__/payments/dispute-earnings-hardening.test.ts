@@ -33,8 +33,12 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   razorpayClient: {
     payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
   },
+  // #1221 made utils.ts consume the lazy getter; serve both shapes.
+  getRazorpayClient: () => ({
+    payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
+  }),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
+jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null, getStripeClient: () => null }));
 jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),
   notifyDisputeCreated: jest.fn(),
