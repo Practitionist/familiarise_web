@@ -54,6 +54,7 @@ interface PayoutItem {
   grossRevenuePaise: number;
   platformFeePaise: number;
   refundsPaise: number;
+  tdsAmountPaise: number | null;
   currency: string;
   status: string;
   periodStart: string;
@@ -358,11 +359,13 @@ export function PayoutsPageClient({
                           const heldForEnablement =
                             payout.status === "PROCESSING" &&
                             !livePayoutsEnabled;
-                          // The deduction gap gross→net (platform fee, refunds,
-                          // and TDS/GST withheld downstream). We surface the
-                          // fields we have; the rest is captioned, never faked.
+                          // #1132 follow-up — the Net column shows the cash
+                          // actually disbursed (amountPaise = net after TDS),
+                          // not netPayoutPaise (pre-TDS org share). The
+                          // tooltip itemizes every deduction the row carries;
+                          // the rest is captioned, never faked.
                           const deduction =
-                            payout.grossRevenuePaise - payout.netPayoutPaise;
+                            payout.grossRevenuePaise - payout.amountPaise;
                           return (
                             <tr key={payout.id} className="border-b last:border-0">
                               <td className="py-3 text-zinc-700">
@@ -382,7 +385,7 @@ export function PayoutsPageClient({
                                       <TooltipTrigger asChild>
                                         <span className="cursor-help underline decoration-dotted underline-offset-2">
                                           {formatCurrencyAmount(
-                                            payout.netPayoutPaise,
+                                            payout.amountPaise,
                                             payout.currency,
                                           )}
                                         </span>
@@ -414,8 +417,21 @@ export function PayoutsPageClient({
                                               </span>
                                             </div>
                                           )}
+                                          {(payout.tdsAmountPaise ?? 0) > 0 && (
+                                            <div className="flex justify-between gap-4">
+                                              <span>TDS withheld</span>
+                                              <span>
+                                                −
+                                                {formatCurrencyAmount(
+                                                  payout.tdsAmountPaise ?? 0,
+                                                  payout.currency,
+                                                )}
+                                              </span>
+                                            </div>
+                                          )}
                                           <div className="pt-1 text-[11px] text-primary-foreground/70">
-                                            Net after platform fee, TDS &amp; GST.
+                                            Disbursed cash — net of platform
+                                            fee, refunds and TDS.
                                           </div>
                                         </div>
                                       </TooltipContent>
@@ -423,7 +439,7 @@ export function PayoutsPageClient({
                                   </TooltipProvider>
                                 ) : (
                                   formatCurrencyAmount(
-                                    payout.netPayoutPaise,
+                                    payout.amountPaise,
                                     payout.currency,
                                   )
                                 )}
