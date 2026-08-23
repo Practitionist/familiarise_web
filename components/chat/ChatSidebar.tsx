@@ -274,7 +274,11 @@ export const ChatSidebar = () => {
         watch: true, // Crucial for real-time updates
         state: true,
         limit: 20, // Reduced initial limit for faster loading
-        message_limit: 100, // Load recent messages for proper chat history and scroll functionality
+        // Sidebar previews need recent context, not full history: 100/channel ×
+        // 40 channels hydrated ~4,000 messages just to paint a list (Stream's
+        // storage-and-bandwidth guidance: align limits with actual need).
+        // Opening a channel paginates deeper history on demand.
+        message_limit: 10,
         presence: false, // Disable presence for initial load to improve performance
       };
 
@@ -378,7 +382,7 @@ export const ChatSidebar = () => {
           watch: true,
           state: true,
           limit: 20,
-          message_limit: 100, // Load messages for paginated channels too
+          message_limit: 10, // Match the initial-load trim above
           presence: false,
           offset,
         };

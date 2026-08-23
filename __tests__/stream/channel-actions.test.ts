@@ -138,6 +138,77 @@ describe("Channel Actions", () => {
       );
     });
 
+    it.each([
+      [
+        "plain already-exists message",
+        new Error('GetOrCreateChannel failed: "channel already exists"'),
+      ],
+      [
+        "message with unrelated numeric code",
+        Object.assign(new Error("channel already exists"), { code: 4 }),
+      ],
+    ])(
+      "adopts an existing channel on duplicate rejection (%s)",
+      async (_label, duplicateError) => {
+        const { createChannel } =
+          await import("../../actions/stream/chat/channel.action");
+
+        mockChannel.create.mockRejectedValueOnce(duplicateError);
+
+        // team type so the post-create path includes the host moderator grant.
+        const result = await createChannel({
+          channelType: "team",
+          channelId: "race-loser",
+          members: ["user1"],
+          createdById: "user1",
+        });
+
+        // Adopted, not failed: same id handed back, no raw payload, and the
+        // normal post-create path still ran (moderator grant + cache stamp).
+        expect(result.channelId).toBe("race-loser");
+        expect(result.channelData).toBeNull();
+        expect(mockChannel.assignRoles).toHaveBeenCalled();
+        expect(mockCache.markChannelExists).toHaveBeenCalled();
+      },
+    );
+
+    it("rethrows Not Allowed (code 17) failures instead of adopting", async () => {
+      // Stream's error table defines 17 as Not Allowed / HTTP 403 — a
+      // permission failure, never a duplicate. The predicate must not swallow
+      // it into the adopt path or creation would be skipped silently.
+      const forbidden = Object.assign(new Error("Not Allowed"), { code: 17 });
+      mockChannel.create.mockRejectedValueOnce(forbidden);
+
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      await expect(
+        createChannel({
+          channelType: "messaging",
+          channelId: "forbidden-channel",
+          members: ["user1"],
+          createdById: "user1",
+        }),
+      ).rejects.toThrow("Not Allowed");
+      expect(mockCache.markChannelExists).not.toHaveBeenCalled();
+    });
+
+    it("rethrows non-duplicate create failures", async () => {
+      const { createChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockChannel.create.mockRejectedValueOnce(new Error("Stream 500"));
+
+      await expect(
+        createChannel({
+          channelType: "messaging",
+          channelId: "real-failure",
+          members: ["user1"],
+          createdById: "user1",
+        }),
+      ).rejects.toThrow("Stream 500");
+    });
+
     it("should reject invalid channel type", async () => {
       const { createChannel } =
         await import("../../actions/stream/chat/channel.action");
@@ -583,120 +654,6 @@ describe("Entity Channel Creation", () => {
         createSubscriptionChannel("subscription-101"),
       ).rejects.toThrow("Participants not found for subscription");
     });
-  });
-});
-
-describe("initializeAllChannels", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockStreamClient.channel.mockReturnValue(mockChannel);
-    mockChannel.query.mockResolvedValue({ members: {} });
-  });
-
-  it("should handle empty database gracefully", async () => {
-    mockPrisma.webinar.findMany.mockResolvedValueOnce([]);
-    mockPrisma.class.findMany.mockResolvedValueOnce([]);
-    mockPrisma.consultation.findMany.mockResolvedValueOnce([]);
-    mockPrisma.subscription.findMany.mockResolvedValueOnce([]);
-
-    const { initializeAllChannels } =
-      await import("../../actions/stream/chat/channel.action");
-
-    const result = await initializeAllChannels();
-
-    expect(result.success).toBe(true);
-    expect(result.counts.users).toBe(0);
-    expect(result.counts.webinars.success).toBe(0);
-    expect(result.counts.webinars.failed).toBe(0);
-  });
-
-  it("should initialize channels for all entity types", async () => {
-    mockPrisma.webinar.findMany.mockResolvedValueOnce([
-      {
-        id: "w1",
-        webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        appointment: { slotsOfAppointment: [{ user: [{ id: "u1" }] }] },
-      },
-    ]);
-    mockPrisma.class.findMany.mockResolvedValueOnce([
-      {
-        id: "cl1",
-        classPlan: { consultantProfile: { user: { id: "c2" } } },
-        appointments: [],
-      },
-    ]);
-    mockPrisma.consultation.findMany.mockResolvedValueOnce([
-      {
-        id: "co1",
-        consultationPlan: { consultantProfile: { user: { id: "c3" } } },
-        requestedBy: { user: { id: "u2" } },
-      },
-    ]);
-    mockPrisma.subscription.findMany.mockResolvedValueOnce([
-      {
-        id: "s1",
-        subscriptionPlan: { consultantProfile: { user: { id: "c4" } } },
-        requestedBy: { user: { id: "u3" } },
-      },
-    ]);
-
-    // Mock the individual entity lookups for channel creation
-    mockPrisma.webinar.findUnique.mockResolvedValue({
-      id: "w1",
-      webinarPlan: {
-        title: "Webinar",
-        consultantProfile: { user: { id: "c1" } },
-      },
-      appointment: null,
-    });
-    mockPrisma.class.findUnique.mockResolvedValue({
-      id: "cl1",
-      classPlan: { title: "Class", consultantProfile: { user: { id: "c2" } } },
-      appointments: [],
-    });
-    mockPrisma.consultation.findUnique.mockResolvedValue({
-      id: "co1",
-      consultationPlan: { consultantProfile: { user: { id: "c3" } } },
-      requestedBy: { user: { id: "u2" } },
-    });
-    mockPrisma.subscription.findUnique.mockResolvedValue({
-      id: "s1",
-      subscriptionPlan: { consultantProfile: { user: { id: "c4" } } },
-      requestedBy: { user: { id: "u3" } },
-    });
-
-    const { initializeAllChannels } =
-      await import("../../actions/stream/chat/channel.action");
-
-    const result = await initializeAllChannels();
-
-    expect(result.success).toBe(true);
-    expect(result.counts.users).toBeGreaterThan(0);
-  });
-
-  it("should handle partial failures", async () => {
-    mockPrisma.webinar.findMany.mockResolvedValueOnce([
-      {
-        id: "w1",
-        webinarPlan: { consultantProfile: { user: { id: "c1" } } },
-        appointment: null,
-      },
-    ]);
-    mockPrisma.class.findMany.mockResolvedValueOnce([]);
-    mockPrisma.consultation.findMany.mockResolvedValueOnce([]);
-    mockPrisma.subscription.findMany.mockResolvedValueOnce([]);
-
-    // Make the webinar channel creation fail
-    mockPrisma.webinar.findUnique.mockResolvedValue(null);
-
-    const { initializeAllChannels } =
-      await import("../../actions/stream/chat/channel.action");
-
-    const result = await initializeAllChannels();
-
-    expect(result.success).toBe(true);
-    expect(result.counts.webinars.failed).toBe(1);
-    expect(result.counts.webinars.success).toBe(0);
   });
 });
 

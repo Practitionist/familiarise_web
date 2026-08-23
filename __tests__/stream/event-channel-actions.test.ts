@@ -43,12 +43,31 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: jest.fn().mockResolvedValue({ users: {} }),
 }));
 
+// syncUserEventChannels is session-gated (F-HIGH-1 sibling); mocking
+// auth-server also keeps jest away from lib/auth's better-auth ESM imports.
+// Default: privileged staff, which passes the self-or-privileged gate for
+// every userId these tests drive.
+const mockGetSession = jest.fn();
+jest.mock("../../lib/auth-server", () => ({
+  getSession: (disableCookieCache?: boolean) =>
+    mockGetSession(disableCookieCache),
+}));
+
+// auth-helpers imports next/server (NextResponse), which needs the fetch
+// globals jest's node env lacks — mirror the real one-liner instead.
+jest.mock("../../lib/auth-helpers", () => ({
+  isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
+}));
+
 describe("Event Channel Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
     mockCache.initialSyncCompletedUsers.clear();
+    mockGetSession.mockResolvedValue({
+      user: { id: "staff-user", role: "ADMIN" },
+    });
   });
 
   describe("checkEventChannelExists", () => {
@@ -200,6 +219,90 @@ describe("Event Channel Actions", () => {
       expect(result.channelId).toBe("consultation-cons-123");
       expect(mockChannel.addMembers).toHaveBeenCalledWith(["user-789"]);
       expect(mockCache.markMembership).toHaveBeenCalled();
+    });
+
+    it("adopts the winner's channel when creation loses the race (F-HIGH-3)", async () => {
+      mockCache.getMembershipCached.mockReturnValue(false);
+      // First addMembers miss → fall through to creation; second call is the
+      // post-adoption membership retry against the winner's channel.
+      mockChannel.addMembers
+        .mockRejectedValueOnce(new Error("Channel not found"))
+        .mockResolvedValueOnce({});
+      const duplicateError = new Error(
+        'GetOrCreateChannel failed: "channel already exists"',
+      );
+      mockChannel.create.mockRejectedValueOnce(duplicateError);
+
+      mockPrisma.webinar.findUnique.mockResolvedValue({
+        id: "web-race",
+        webinarPlan: {
+          title: "Raced Webinar",
+          consultantProfile: { user: { id: "consultant-1" } },
+        },
+        appointment: {
+          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+        },
+      });
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-race",
+        "raced-user",
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockChannel.addMembers).toHaveBeenCalledWith(["raced-user"]);
+      expect(mockCache.markMembership).toHaveBeenCalledWith(
+        "webinar-web-race",
+        "raced-user",
+        true,
+      );
+    });
+
+    it("leaves membership UNCACHED when the post-adoption retry fails", async () => {
+      mockCache.getMembershipCached.mockReturnValue(false);
+      // First miss → creation attempt; adoption wins; then BOTH membership
+      // attempts fail.
+      mockChannel.addMembers
+        .mockRejectedValueOnce(new Error("Channel not found"))
+        .mockRejectedValueOnce(new Error("retry failed too"));
+      mockChannel.create.mockRejectedValueOnce(
+        new Error('GetOrCreateChannel failed: "channel already exists"'),
+      );
+
+      mockPrisma.webinar.findUnique.mockResolvedValue({
+        id: "web-race-2",
+        webinarPlan: {
+          title: "Raced Webinar 2",
+          consultantProfile: { user: { id: "consultant-1" } },
+        },
+        appointment: {
+          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+        },
+      });
+
+      const { addUserToEventChannel } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      // Still resolves — a failed join must not fail the caller; the next
+      // sync reconciles.
+      const result = await addUserToEventChannel(
+        "webinar",
+        "web-race-2",
+        "unlucky-user",
+      );
+      expect(result.success).toBe(true);
+
+      // But nothing may cache "is member": a cached true would suppress every
+      // future add attempt until the TTL lapses.
+      expect(mockCache.markMembership).not.toHaveBeenCalledWith(
+        "webinar-web-race-2",
+        "unlucky-user",
+        true,
+      );
     });
 
     it("should create new channel when addMembers fails and event exists", async () => {
@@ -519,6 +622,50 @@ describe("Event Channel Actions", () => {
 
       expect(result.success).toBe(true);
       expect(result.skipped).toBe(true);
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects syncing another user's channels as a non-privileged caller", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: "attacker", role: "USER" },
+      });
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("victim-user")).rejects.toThrow(
+        "Forbidden: cannot sync channels for another user",
+      );
+      // The gate fires before ANY Stream/DB work happens.
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      // And it reads the session with the cookie cache disabled, so a
+      // just-demoted/banned identity cannot ride a stale cached session.
+      expect(mockGetSession).toHaveBeenCalledWith(true);
+    });
+
+    it("rejects unauthenticated callers outright", async () => {
+      mockGetSession.mockResolvedValue(null);
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("anyone")).rejects.toThrow(
+        "Unauthorized: sign in to sync channels",
+      );
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects a banned user even when syncing their own channels", async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: "banned-user", role: "USER", banned: true },
+      });
+
+      const { syncUserEventChannels } =
+        await import("../../actions/stream/chat/event-channel.action");
+
+      await expect(syncUserEventChannels("banned-user")).rejects.toThrow(
+        "Forbidden: account suspended",
+      );
       expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
 
