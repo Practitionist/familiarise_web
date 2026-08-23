@@ -48,12 +48,14 @@ export async function GET(
     // #1182 — what an unpaid item QUOTES is the amount frozen onto its
     // Payment row when the pay-link was minted, never the plan's live price
     // (a consultant repricing after acceptance must not move the number the
-    // gateway will charge). Earliest live payment per appointment — the same
-    // read the trial checkout page makes (#1180). Falls back to the plan only
-    // before any payment exists, where the plan price genuinely is the quote.
+    // gateway will charge). Newest live payment per appointment — a re-mint
+    // (expired/failed order replaced, #1181 reuse semantics) freezes the
+    // CURRENT quote onto a newer row, so the newest is the operative charge.
+    // Falls back to the plan only before any payment exists, where the plan
+    // price genuinely is the quote.
     const frozenPaymentSelect = {
       where: { deletedAt: null },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: "desc" as const },
       take: 1,
       select: { amount: true, currency: true },
     } as const;
@@ -128,8 +130,12 @@ export async function GET(
             // the parent subscription from it and transitions the whole row.
             // Ordered like the mint's pick (#1181) so take: 1 lands on the
             // appointment the pay-link anchored to, which carries the frozen
-            // charge (#1182).
+            // charge (#1182). Pinned to PERSONAL appointments (matching this
+            // surface's organizationId: null filter): a mixed subscription
+            // with an earlier org-funded appointment must not leak its frozen
+            // amount onto the personal dashboard.
             appointments: {
+              where: { organizationId: null },
               orderBy: [{ createdAt: "asc" }, { id: "asc" }],
               select: { id: true, payment: frozenPaymentSelect },
               take: 1,

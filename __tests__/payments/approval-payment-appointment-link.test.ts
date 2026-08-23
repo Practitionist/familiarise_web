@@ -37,6 +37,8 @@ interface State {
   consultationPlan: Record<string, unknown> | null;
   /** What the duplicate guard's walk over consultation.appointment.payment finds. */
   appointmentPayments: Array<Record<string, unknown>>;
+  /** What findExistingLivePayment's trial arm reads off TrialSession.payment. */
+  trialPayment?: Record<string, unknown> | null;
 }
 
 let state: State;
@@ -59,6 +61,24 @@ jest.mock("../../lib/prisma", () => ({
     },
     payment: {
       create: jest.fn(async ({ data }: any) => ({ id: "pay-new", ...data })),
+    },
+    trialSession: {
+      // Hydrates the include shape findExistingLivePayment's trial arm walks.
+      findUnique: jest.fn(async () => ({
+        id: "trial-1",
+        payment: state.trialPayment,
+      })),
+    },
+    subscriptionPlan: {
+      // Trial pricing reads the parent subscription plan (trialPriceInPaise
+      // fallback path in calculateAmount).
+      findUnique: jest.fn(async () => ({
+        title: "Trial Plan",
+        price: 500_000,
+        priceCurrency: Currency.INR,
+        trialEnabled: true,
+        trialPriceInPaise: 250_000,
+      })),
     },
   },
 }));
@@ -197,6 +217,49 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     expect(result.paymentIntentId).toBe("order_new");
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
     expect(mockedPaymentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // CodeRabbit triage — the trial arm of findExistingLivePayment returned
+  // the TrialSession's payment UNFILTERED, so an EXPIRED order would have
+  // been handed back as a "reusable" checkout link (a dead intent) instead
+  // of minting fresh.
+  it("trial arm: an EXPIRED trial payment falls through to a fresh mint", async () => {
+    state.trialPayment = {
+      paymentStatus: PaymentStatus.EXPIRED,
+      paymentIntent: "order_trial_dead",
+      amount: 250_000,
+      currency: Currency.INR,
+    };
+
+    await createApprovalPaymentIntent({
+      ...mintParams(),
+      appointmentType: "TRIAL" as never,
+      consultationId: undefined,
+      trialId: "trial-1",
+    } as never);
+
+    expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("trial arm: a PENDING trial payment is reused, not duplicated", async () => {
+    state.trialPayment = {
+      paymentStatus: PaymentStatus.PENDING,
+      paymentIntent: "order_trial_live",
+      amount: 250_000,
+      currency: Currency.INR,
+    };
+
+    const result = await createApprovalPaymentIntent({
+      ...mintParams(),
+      appointmentType: "TRIAL" as never,
+      consultationId: undefined,
+      trialId: "trial-1",
+    } as never);
+
+    expect(result.paymentIntentId).toBe("order_trial_live");
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
   });
 });
 

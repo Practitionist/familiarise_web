@@ -424,7 +424,20 @@ export async function findExistingLivePayment(params: {
       },
     });
 
-    return trial?.payment ?? null;
+    const payment = trial?.payment;
+
+    // Same live-status filter as the consultation/subscription arms below:
+    // an EXPIRED or FAILED gateway order cannot be paid — returning it would
+    // have the reuse path hand the payer a dead checkout link (the stored
+    // intent) instead of minting a fresh one.
+    if (
+      !payment ||
+      (payment.paymentStatus !== PaymentStatus.SUCCEEDED &&
+        payment.paymentStatus !== PaymentStatus.PENDING)
+    ) {
+      return null;
+    }
+    return payment;
   }
 
   if (params.consultationId) {
