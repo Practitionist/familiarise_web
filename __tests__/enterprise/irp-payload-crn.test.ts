@@ -44,7 +44,12 @@ function crnBase(): BuildIrpPayloadInput {
         hsnCode: null,
       },
     ],
-    buyer: { name: "Acme Corp", gstin: "29ABCDE1234F1Z5", stateCode: "KA" },
+    buyer: {
+      name: "Acme Corp",
+      gstin: "29ABCDE1234F1Z5",
+      stateCode: "KA",
+      hsnDefault: "999293",
+    },
     seller,
   };
 }

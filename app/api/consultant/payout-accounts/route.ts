@@ -130,6 +130,12 @@ export async function POST(req: NextRequest) {
 
     let razorpayContactId: string | undefined;
     let razorpayFundAccId: string | undefined;
+    // #1230 — the verification loop used to be a dead end: accounts were
+    // born isVerified:false and NOTHING ever flipped the flag, while payout
+    // selection filters on it (payout-service isVerified:true). Run the
+    // penny-drop at creation; when RazorpayX resolves synchronously ("valid")
+    // the account verifies immediately, closing the loop for the common case.
+    let pennyDropVerified = false;
 
     // Create RazorpayX contact and fund account if using Razorpay
     if (data.provider === "RAZORPAY" && isRazorpayPayoutsConfigured()) {
@@ -176,6 +182,20 @@ export async function POST(req: NextRequest) {
         });
         razorpayFundAccId = fundAccount.id;
       }
+
+      // Penny-drop the fresh fund account. A "created" (async) or failed
+      // validation leaves isVerified:false — the PATCH reverify action
+      // retries it; a synchronous "valid" verifies on the spot.
+      if (razorpayFundAccId) {
+        try {
+          const validation =
+            await razorpayPayouts.validateBankAccount(razorpayFundAccId);
+          pennyDropVerified = validation.accountStatus === "valid";
+        } catch (err) {
+          // Non-fatal: creation must not fail because the validator did.
+          console.error("[payout-account] penny-drop error:", err);
+        }
+      }
     }
 
     // Set as default if first account
@@ -195,7 +215,9 @@ export async function POST(req: NextRequest) {
         razorpayContactId,
         razorpayFundAccId,
         isDefault: isFirst,
-        isVerified: false, // Verification pending
+        // #1230 — true when the creation-time penny-drop returned "valid";
+        // otherwise false and the PATCH reverify action retries.
+        isVerified: pennyDropVerified,
       },
     });
 
