@@ -614,8 +614,15 @@ export async function syncAllUserChannels() {
       // The session gate applies here too: this loop only passes when it runs
       // under a PRIVILEGED (ADMIN/STAFF) session, or when each call acts as
       // self. An unauthenticated script is rejected outright.
-      await syncUserEventChannels(user.id);
-      successCount++;
+      const result = await syncUserEventChannels(user.id);
+      // The sync reports per-user problems by RESOLVING with success:false,
+      // not by rejecting — count them as failures, not successes.
+      if (result.success) {
+        successCount++;
+      } else {
+        console.warn(`Skipped ${user.id}: ${result.error}`);
+        errorCount++;
+      }
     } catch (error) {
       console.error(`Failed to sync user ${user.id}:`, error);
       errorCount++;
