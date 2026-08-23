@@ -354,7 +354,7 @@ export default function ConsultationPricingToggle({
                 </Button>
               </DialogTrigger>
               <DialogContent
-                className="z-[1002] w-[calc(100%-1.5rem)] sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] h-[min(85dvh,900px)] flex flex-col overflow-hidden bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl"
+                className="z-[1002] inset-0 left-0 top-0 h-[100dvh] w-full max-w-none translate-x-0 translate-y-0 rounded-none border-0 sm:left-[50%] sm:top-[50%] sm:h-[92dvh] sm:w-[calc(100%-3rem)] sm:max-w-[1100px] lg:max-w-[1200px] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-2xl sm:border sm:border-zinc-800 flex flex-col overflow-hidden bg-zinc-900 text-white p-0 shadow-2xl"
                 // Inline zIndex: arbitrary-class merge with the z-50 base in
                 // dialog.tsx is ordering-dependent; the nav (z-[1000]) and
                 // announcement bar (z-[1001]) must never paint above this.
