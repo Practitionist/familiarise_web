@@ -136,6 +136,14 @@ const StreamProviderImpl = ({
     return Date.now() < expiresAt - 5 * 60 * 1000;
   }, []);
 
+  // In-flight token requests, shared so concurrent callers (the prefetch
+  // effect below + the connect effects) get ONE server-action round trip
+  // instead of racing duplicates.
+  const tokenPromiseRef = useRef<{
+    chat?: Promise<string>;
+    video?: Promise<string>;
+  }>({});
+
   const getCachedToken = useCallback(
     async (type: "chat" | "video"): Promise<string> => {
       if (isTokenValid(type)) {
@@ -143,26 +151,62 @@ const StreamProviderImpl = ({
         return type === "chat" ? cache.chatToken! : cache.videoToken!;
       }
 
+      const existing = type === "chat" ? tokenPromiseRef.current.chat : tokenPromiseRef.current.video;
+      if (existing) return existing;
+
       // Generate new token
-      const newToken =
+      const request =
         type === "chat"
-          ? await chatTokenProvider(userId)
-          : await tokenProvider(userId);
+          ? chatTokenProvider(userId)
+          : tokenProvider(userId);
+      if (type === "chat") tokenPromiseRef.current.chat = request;
+      else tokenPromiseRef.current.video = request;
 
-      // Cache with 50-minute expiry (tokens usually last 1 hour)
-      const expiresAt = Date.now() + 50 * 60 * 1000;
-      if (type === "chat") {
-        tokenCacheRef.current.chatToken = newToken;
-        tokenCacheRef.current.chatExpiresAt = expiresAt;
-      } else {
-        tokenCacheRef.current.videoToken = newToken;
-        tokenCacheRef.current.videoExpiresAt = expiresAt;
-      }
+      void request.then(
+        (newToken) => {
+          // Cache with 50-minute expiry (tokens usually last 1 hour)
+          const expiresAt = Date.now() + 50 * 60 * 1000;
+          if (type === "chat") {
+            tokenCacheRef.current.chatToken = newToken;
+            tokenCacheRef.current.chatExpiresAt = expiresAt;
+          } else {
+            tokenCacheRef.current.videoToken = newToken;
+            tokenCacheRef.current.videoExpiresAt = expiresAt;
+          }
+        },
+        () => {},
+      );
+      void request.finally(() => {
+        if (tokenPromiseRef.current.chat === request && type === "chat") {
+          delete tokenPromiseRef.current.chat;
+        }
+        if (tokenPromiseRef.current.video === request && type === "video") {
+          delete tokenPromiseRef.current.video;
+        }
+      });
 
-      return newToken;
+      return request;
     },
     [userId, isTokenValid],
   );
+
+  // Prefetch both tokens at mount — BEFORE userDetails resolve. Token minting
+  // needs only `userId`, but connectUser used to wait for useUserData first and
+  // only THEN paid a server-action round trip for the token: two serial waits
+  // on the critical path of every dashboard/meetings load. Starting the fetch
+  // immediately lets it complete during the user-data query, so connectUser
+  // starts the WebSocket the moment its other inputs are ready. Fire-and-forget:
+  // failures are handled by the normal connect paths, which re-request via
+  // getCachedToken (cleared promise ref → fresh attempt).
+  useEffect(() => {
+    if (!apiKey || !userId) return;
+    if (enableChat && !isTokenValid("chat")) {
+      void getCachedToken("chat").catch(() => {});
+    }
+    if (enableVideo && !isTokenValid("video")) {
+      void getCachedToken("video").catch(() => {});
+    }
+  }, [userId, enableChat, enableVideo, getCachedToken, isTokenValid]);
 
   // Exponential backoff retry logic
   const getRetryDelay = useCallback((attempt: number) => {
