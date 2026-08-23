@@ -3,7 +3,40 @@
 import { useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
-import { CONSULTANTS_PER_PAGE, type IExpertFilters } from "../utils";
+import {
+  CONSULTANTS_PER_PAGE,
+  DEFAULT_EXPERT_FILTERS,
+  type IExpertFilters,
+} from "../utils";
+
+/** One page of /api/user/consultants — also the shape of the RSC-seeded
+ *  default page from getDefaultConsultantsPage (same function backs both). */
+export interface ConsultantsPage {
+  data: IConsultantCardData[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+// Seed only the exact query the server pre-rendered: the unfiltered default
+// view (the API's isDefaultView predicate). A deep link like ?sort=rating has
+// a different key and must fetch normally — seeding it with the nameAsc page
+// would show wrongly-ordered results without a refetch.
+function isDefaultExpertFilters(filters: IExpertFilters): boolean {
+  const d = DEFAULT_EXPERT_FILTERS;
+  return (
+    filters.domain === d.domain &&
+    filters.subdomain === d.subdomain &&
+    filters.tags.length === 0 &&
+    filters.experience === d.experience &&
+    filters.search === d.search &&
+    filters.sort === d.sort &&
+    filters.minPrice === d.minPrice &&
+    filters.maxPrice === d.maxPrice &&
+    filters.minRating === d.minRating &&
+    filters.companies.length === 0 &&
+    filters.language === d.language &&
+    filters.affiliationType === d.affiliationType
+  );
+}
 
 // Enhanced React Query fetcher function with error handling for consultants
 const fetchConsultantsData = async (url: string) => {
@@ -24,7 +57,10 @@ const fetchConsultantsData = async (url: string) => {
   return res.json();
 };
 
-export function useConsultants(filters: IExpertFilters) {
+export function useConsultants(
+  filters: IExpertFilters,
+  initialPage?: ConsultantsPage,
+) {
   const {
     domain: selectedDomain,
     subdomain: selectedSubdomain,
@@ -112,6 +148,14 @@ export function useConsultants(filters: IExpertFilters) {
       return undefined;
     },
     initialPageParam: 0,
+    // The RSC already rendered page 1 of the default view — hand it to React
+    // Query so the grid paints data instead of a second skeleton pass and no
+    // duplicate /api/user/consultants request fires on mount. The key is
+    // built purely from filter state (never the session), so server and
+    // client derive the identical key value from the first render.
+    ...(initialPage && isDefaultExpertFilters(filters)
+      ? { initialData: { pages: [initialPage], pageParams: [0] } }
+      : {}),
     placeholderData: keepPreviousData,
     staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,

@@ -1,12 +1,15 @@
 import { Suspense } from "react";
-import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
+import { Users, Star, TrendingUp } from "lucide-react";
+import { ExpertsHeroCopy } from "./components/HeroCopy";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
+  getDefaultConsultantsPage,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import { CONSULTANTS_PER_PAGE } from "./utils";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -60,21 +63,7 @@ function HeroSection({
 
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-            <Sparkles className="w-4 h-4 text-white" />
-            <span className="text-sm font-medium text-zinc-300">
-              World-Class Mentorship
-            </span>
-          </div>
-
-          <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight text-white mb-6">
-            Meet Your Perfect <span className="silver-text">Mentor</span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-            Ready to level up? Our amazing mentors are here to guide you!
-            Connect with industry experts who understand your journey.
-          </p>
+          <ExpertsHeroCopy />
 
           <div className="flex flex-wrap justify-center gap-8 md:gap-16">
             {STATS.map((stat) => (
@@ -99,13 +88,27 @@ export default async function ExploreExperts() {
   // These used to degrade to empty rows on a transient timeout. This route is ISR,
   // so that empty page would be cached and served to everyone until the window
   // expired; retry once and otherwise throw, which caches nothing (#1119).
-  const [metadata, featuredExperts, trendingExperts, newestExperts] =
-    await Promise.all([
-      withBuildTimeRetry(getExpertsMetadata),
-      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
-      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
-      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
-    ]);
+  const [
+    metadata,
+    featuredExperts,
+    trendingExperts,
+    newestExperts,
+    initialConsultantsPage,
+  ] = await Promise.all([
+    withBuildTimeRetry(getExpertsMetadata),
+    withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
+    withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+    withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
+    // Page 1 of the default grid — the same cached read the API's default
+    // view serves. Seeds the client useConsultants query so the browse grid
+    // paints with the HTML instead of a second skeleton-then-fetch pass.
+    // "nameAsc" must stay in sync with DEFAULT_EXPERT_FILTERS.sort: the
+    // client only applies this seed when its filters are exactly the
+    // defaults, so a mismatched sort here would go unused, not mis-render.
+    withBuildTimeRetry(() =>
+      getDefaultConsultantsPage("nameAsc", CONSULTANTS_PER_PAGE),
+    ),
+  ]);
 
   return (
     <main className="min-h-screen bg-background">
@@ -142,6 +145,7 @@ export default async function ExploreExperts() {
           metadata={metadata}
           trendingExperts={trendingExperts}
           newestExperts={newestExperts}
+          initialConsultantsPage={initialConsultantsPage}
         />
       </Suspense>
     </main>

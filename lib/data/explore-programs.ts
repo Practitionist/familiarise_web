@@ -4,14 +4,24 @@ import { readByIds } from "@/lib/data/read-by-ids";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
-import { generateProgramImageUrl } from "@/lib/explore/programs";
+import { generateProgramImageUrl, ITEMS_PER_PAGE } from "@/lib/explore/programs";
 import type {
+  ApiMeta,
   Program,
   ClassPlanProgram,
   WebinarPlanProgram,
   ProgramType,
   TopicWithCount,
 } from "@/lib/explore/programs";
+import {
+  parsePlanFilters,
+  buildPlanWhereClause,
+  buildPlanOrderBy,
+} from "@/lib/api/plans/plan-filters";
+import {
+  classPlanListInclude,
+  webinarPlanListInclude,
+} from "@/lib/api/plans/plan-includes";
 
 /**
  * Server-side data access for the explore programs page.
@@ -72,10 +82,13 @@ const liveConsultantWhere = {
  * count of 0 and stay in the ranking — dropping them empties the Trending row
  * in a quiet window.
  *
- * The scan is shared across requests for 60s via unstable_cache; the cached
+ * The scan is shared across requests for 300s via unstable_cache; the cached
  * value is the FULL ranked id array (callers slice — passing limit as an arg
  * would key separate entries). Staleness is harmless: trending order changing
- * 60s late is invisible.
+ * a few minutes late is invisible. The window matches /explore/programs'
+ * `revalidate = 300` — a route's effective revalidate is the MIN of its
+ * segment value and every data-cache window read during the render (#1110),
+ * so a shorter window here would silently cap the route.
  */
 /** Slot window shared by both plan families. */
 const recentSlotWindow = () => {
@@ -128,7 +141,7 @@ const getTrendingClassPlanIds = unstable_cache(
     );
   },
   ["trending-class-plan-ids"],
-  { revalidate: 60 },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 const getTrendingWebinarPlanIds = unstable_cache(
@@ -156,7 +169,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
     );
   },
   ["trending-webinar-plan-ids"],
-  { revalidate: 60 },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 /**
@@ -241,7 +254,7 @@ export const getCuratedPrograms = unstable_cache(
       let webinarPlans;
 
       if (sort === "trending") {
-        // Shared 60s ranking cache — full list, sliced per caller (see the
+        // Shared 300s ranking cache — full list, sliced per caller (see the
         // class-plan twin above for why no limit arg).
         const sortedIds = (await getTrendingWebinarPlanIds()).slice(0, limit);
 
@@ -300,7 +313,7 @@ export const getCuratedPrograms = unstable_cache(
     return toPlain(programs.slice(0, limit));
   },
   ["curated-programs"],
-  { revalidate: 120, tags: ["programs"] },
+  { revalidate: 300, tags: ["programs"] },
 );
 
 // ---------------------------------------------------------------------------
@@ -358,5 +371,83 @@ export const getTopicsWithCount = unstable_cache(
       .sort((a, b) => b.programCount - a.programCount);
   },
   ["topics-with-count"],
+  { revalidate: 300, tags: ["programs"] },
+);
+
+// ---------------------------------------------------------------------------
+// Default "All Programs" page (RSC seed for the explore grid)
+// ---------------------------------------------------------------------------
+
+/** Page 1 of the default (unfiltered, anonymous) All Programs grid. */
+export interface DefaultProgramsPage {
+  classResponse: { data: unknown[]; meta: ApiMeta };
+  webinarResponse: { data: unknown[]; meta: ApiMeta };
+}
+
+/**
+ * Server-side twin of the client's first `usePrograms` fetch:
+ * `GET /api/plans/classes?page=1&limit=12&include=classes` +
+ * `GET /api/plans/webinars?page=1&limit=12`, anonymous (no registration data).
+ *
+ * Built from the routes' own where/orderBy/include builders — never hand-copy
+ * those here, or visibility rules (#726, #catalog-archive) drift between the
+ * seeded grid and what the API serves on scroll/filter. `isRegistered` is
+ * deliberately NOT part of this shape: the seed only ever applies to the
+ * anonymous query key, and the signed-in refetch recomputes registration.
+ *
+ * unstable_cache is keyed without args and tagged "programs", same purge as
+ * the curated reads; 300s matches the route's `revalidate` so this read does
+ * not cap the segment value (#1110).
+ */
+export const getDefaultProgramsPage = unstable_cache(
+  async (): Promise<DefaultProgramsPage> => {
+    const filters = parsePlanFilters(
+      new URLSearchParams({ page: "1", limit: String(ITEMS_PER_PAGE) }),
+    );
+    const { page, limit, skip } = filters;
+    const orderBy = buildPlanOrderBy(filters.sort);
+
+    const [classPlans, classTotal, webinarPlans, webinarTotal] =
+      await Promise.all([
+        prisma.classPlan.findMany({
+          where: buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput,
+          include: classPlanListInclude({
+            includeClasses: true,
+            includeRegistration: false,
+          }),
+          skip,
+          take: limit,
+          ...(orderBy && { orderBy }),
+        }),
+        prisma.classPlan.count({
+          where: buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput,
+        }),
+        prisma.webinarPlan.findMany({
+          where: buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput,
+          include: webinarPlanListInclude({ includeRegistration: false }),
+          skip,
+          take: limit,
+          ...(orderBy && { orderBy }),
+        }),
+        prisma.webinarPlan.count({
+          where: buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput,
+        }),
+      ]);
+
+    // Same meta shape as the routes' paginatedResponse.
+    const meta = (total: number): ApiMeta => ({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    });
+
+    // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
+    return toPlain({
+      classResponse: { data: classPlans, meta: meta(classTotal) },
+      webinarResponse: { data: webinarPlans, meta: meta(webinarTotal) },
+    });
+  },
+  ["default-programs-page"],
   { revalidate: 300, tags: ["programs"] },
 );

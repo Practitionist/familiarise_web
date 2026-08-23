@@ -9,6 +9,7 @@ import {
   paginatedResponse,
   rankAndPaginate,
 } from "../shared/plan-filters";
+import { webinarPlanListInclude } from "@/lib/api/plans/plan-includes";
 import {
   requireApiAuth,
   isPrivileged,
@@ -28,75 +29,8 @@ export async function GET(request: NextRequest) {
       | Prisma.WebinarPlanOrderByWithRelationInput
       | undefined;
 
-    // Build include object based on whether registration data is requested
-    const include: Record<string, unknown> = {
-      consultantProfile: {
-        include: {
-          user: {
-            select: {
-              name: true,
-              image: true,
-              workExperiences: {
-                select: {
-                  company: true,
-                  companyDomain: true,
-                  isCurrent: true,
-                },
-                orderBy: [
-                  { isCurrent: "desc" as const },
-                  { startDate: "desc" as const },
-                ],
-                take: 3,
-              },
-            },
-          },
-        },
-      },
-      topics: true,
-      collaborators: {
-        where: { status: "ACCEPTED" },
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  image: true,
-                  workExperiences: {
-                    select: {
-                      company: true,
-                      companyDomain: true,
-                      isCurrent: true,
-                    },
-                    orderBy: [
-                      { isCurrent: "desc" as const },
-                      { startDate: "desc" as const },
-                    ],
-                    take: 3,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    };
-
-    if (includeRegistration) {
-      include.webinars = {
-        include: {
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true } },
-                },
-              },
-            },
-          },
-        },
-      };
-    }
+    // Shared with the /explore/programs RSC seed — see plan-includes.ts.
+    const include = webinarPlanListInclude({ includeRegistration });
 
     // For trending sort, use a two-step Prisma approach:
     // 1. Lightweight select (IDs + nested slot IDs only) to rank by enrollment count

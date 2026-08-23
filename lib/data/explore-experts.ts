@@ -383,8 +383,12 @@ export const getCuratedExperts = unstable_cache(
 // data cache instead of opening a cross-region pooled connection on every load.
 // Tagged "experts" (same as getCuratedExperts) so it is cleared by the
 // revalidateTag("experts") that consultant verify/edit/delete now fires via
-// purgeExpertSurfaces (lib/data/public-cache.ts); the 60s revalidate is the
-// backstop. (#945 — pairs with the route's no-store fail-open; #932 caching.)
+// purgeExpertSurfaces (lib/data/public-cache.ts); the 300s revalidate is the
+// backstop. 300 (not 60) because /explore/experts now reads this during its
+// ISR render to seed the browse grid, and a route's effective revalidate is
+// the MIN of its segment value and every data-cache window read during the
+// render (#1110) — 60 here would silently cap the route's declared 300.
+// (#945 — pairs with the route's no-store fail-open; #932 caching.)
 export const getDefaultConsultantsPage = unstable_cache(
   async (sort: string, limit: number) => {
     const where: Prisma.ConsultantProfileWhereInput = {
@@ -406,5 +410,5 @@ export const getDefaultConsultantsPage = unstable_cache(
     };
   },
   ["default-consultants-page"],
-  { revalidate: 60, tags: ["experts"] },
+  { revalidate: 300, tags: ["experts"] },
 );

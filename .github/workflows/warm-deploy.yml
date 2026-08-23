@@ -1,0 +1,133 @@
+name: Warm Deploy
+
+# Prime the caches and function instances of a freshly finished deploy.
+#
+# A deploy starts every ISR/CDN cache entry empty, and a Netlify function
+# instance that has never served a request stalls its event loop for roughly
+# 24s before executing anything (#1124 — measured 27.8–31.0s TTFB across 11/12
+# concurrent unique-key requests on preview 1195). The FIRST real visitor after
+# each deploy therefore pays full price per hot route. This workflow pays it
+# instead, in a controlled order:
+#
+#   1. /api/health first — guarantees one function invocation, so the instance
+#      that will serve everything else absorbs the cold-boot stall here rather
+#      than on a page render.
+#   2. Hot public pages sequentially afterwards — primes their CDN/durable
+#      entries while the instance from step 1 is still warm. SEQUENTIAL ON
+#      PURPOSE: concurrent pings would spawn one stalled instance EACH, which
+#      is precisely the pathology being mitigated.
+#
+# Fires on Netlify's deployment statuses for production deploys, branch deploys
+# AND pull-request previews — previews are where the cold cost is worst,
+# because their cache scope is isolated and nothing is ever warm.
+#
+# This does not keep instances alive (see keep-warm.yml); it only removes the
+# empty-cache window right after a deploy.
+
+# deployment_status supports no trigger-level filter (no `types`/`states`
+# narrowing exists for it) — the workflow fires on every status event and the
+# job-level `if` below is the real gate.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deploy origin to warm (defaults to production)"
+        required: false
+        default: "https://familiarisenow.com"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-deploy-${{ github.event.deployment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    # Netlify also reports inactive/other states; only successful deploys with
+    # a resolvable environment URL are worth warming.
+    if: github.event_name == 'workflow_dispatch' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Resolve deploy URL
+        id: url
+        env:
+          EVENT_URL: ${{ github.event.deployment_status.environment_url }}
+          PAYLOAD_WEB_URL: ${{ github.event.deployment.payload.web_url }}
+          DISPATCH_URL: ${{ inputs.base_url }}
+        run: |
+          BASE="${DISPATCH_URL:-${EVENT_URL:-${PAYLOAD_WEB_URL:-}}}"
+          if [ -z "$BASE" ]; then
+            echo "::error::No environment_url on the deployment status; cannot warm."
+            exit 1
+          fi
+          # Strip a trailing slash so the path concatenations below stay clean.
+          BASE="${BASE%/}"
+          # The URL comes from the deployment event payload, i.e. from outside
+          # this repo. It is only ever used through env indirection below, but
+          # validate the shape anyway so nothing resembling shell syntax (or a
+          # control character) ever reaches a run script or GITHUB_OUTPUT.
+          if ! printf '%s' "$BASE" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$'; then
+            echo "::error::environment_url '$BASE' is not a bare https origin; refusing to warm"
+            exit 1
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Warming $BASE"
+
+      # The first request against a brand-new instance can legitimately take
+      # ~30s (#1124), so max-time must sit well above that or the warm-up would
+      # kill the very request doing the warming.
+      #
+      # /api/health is deliberately fail-open: it answers HTTP 200 with
+      # status "degraded" + database "unreachable" when the DB is down, so a
+      # bare curl exit code is NOT a health verdict. Parse the body: warming a
+      # degraded origin is worse than useless — the ISR pages rethrow on DB
+      # failure (#1123), so every page ping would 500, cache nothing, and the
+      # run would still report success. Fail here instead so the red run says
+      # "deploy is up but degraded; nothing was warmed".
+      - name: Warm the function instance (health probe)
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
+        run: |
+          BODY=$(curl -sS -w "\nhealth: ttfb=%{time_starttransfer}s code=%{http_code}" \
+            --fail --max-time 60 --retry 1 --retry-delay 2 \
+            "$BASE_URL/api/health")
+          echo "${BODY##*$'\n'}"
+          STATUS=$(printf '%s' "$BODY" | head -n 1 | jq -r '.status // "unknown"')
+          if [ "$STATUS" != "healthy" ]; then
+            echo "::error::health status is '$STATUS' (not healthy) — origin degraded, skipping page warming"
+            exit 1
+          fi
+
+      # Hot public routes in click-order value. Keep this list short and
+      # deliberate: every line is a billable invocation, and sequential curls
+      # share the instance warmed above.
+      - name: Warm hot public pages
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
+        run: |
+          BASE="$BASE_URL"
+          for path in "/" "/explore/experts" "/explore/programs" "/explore/community" "/about"; do
+            curl -sS -o /dev/null -w "$path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+              --max-time 45 "$BASE$path" || true
+            sleep 1
+          done
+
+      # RSC navigation payloads are what an actual <Link> click fetches; priming
+      # them means the first soft navigation hits the CDN instead of the
+      # function. A generic RSC request also re-walks the render path, keeping
+      # the instance hot.
+      - name: Warm RSC navigation payloads
+        env:
+          BASE_URL: ${{ steps.url.outputs.base }}
+        run: |
+          BASE="$BASE_URL"
+          for path in "/explore/experts" "/explore/programs" "/about"; do
+            curl -sS -o /dev/null -H "RSC: 1" \
+              -w "rsc $path: ttfb=%{time_starttransfer}s code=%{http_code}\n" \
+              --max-time 45 "$BASE$path?_rsc=warmup" || true
+            sleep 1
+          done

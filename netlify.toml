@@ -14,6 +14,38 @@
   # The standard build image has 8 GB, so this stays inside the container cap.
   NODE_OPTIONS = "--max-old-space-size=6144"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Function memory for #1124 — ASSESSED AND REVERTED. Do not re-add without
+# rereading the two measurements below.
+#
+# The stall: a brand-new instance of the Next.js server handler blocks its
+# event loop ~24s before any application work — the whole of the 20–30s tail
+# on public routes (#1124; reproduced 2026-08-22: 11/12 concurrent unique-key
+# requests to deploy preview 1195 at 27.8–31.0s TTFB while same-key requests
+# coalesced at 2.7–5.4s). Leading hypothesis was cold-boot JS/GC at Lambda's
+# memory-proportional CPU share (1024 MB → ~0.5 vCPU, RSS 675–795 MB at rest).
+#
+# Netlify now exposes per-function `memory` up to 4096 MB on Credit-based
+# Pro/Enterprise, so the hypothesis became testable. Two preview measurements,
+# same 12-way concurrent unique-key protocol, 2026-08-22:
+#
+#   1024 MB (control)   11/12 slow at 27.8–31.0 s
+#   2048 MB (treatment) 11/12 slow at 35.9–37.6 s, one platform 500
+#
+# No improvement; possibly a regression (a doubled heap is more boot work, not
+# less, if initialization dominates). Doubling CPU share does not touch this
+# stall, so "memory/CPU-starved boot" is now a weakened explanation and the
+# effective levers are the ones that avoid invoking a cold instance at all:
+# ISR cache hits, warm-deploy priming, and netlify/functions keep-warm.
+#
+# GOTCHA that made the first measurement worthless: runtime API v2
+# (@netlify/plugin-nextjs@5.15.13) generates ONE function named
+# ___netlify-server-handler. The classic ___netlify-handler /
+# ___netlify-odb-handler names belong to v1 and match NOTHING — a toml block
+# targeting them is silently ignored (confirmed via searchSiteFunctions:
+# m stayed 1024). Re-enumerate names after any adapter bump.
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Skip builds for Dependabot PRs
 [context.deploy-preview]
   ignore = """

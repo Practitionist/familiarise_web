@@ -51,6 +51,15 @@ const LOCK_EXEMPT: Record<string, string> = {
   "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
 };
 
+// Scheduled workflows whose job never enters the app: pure HTTP probes with
+// no .ts entrypoint to resolve and nothing a cron lock could protect — a
+// double-run costs one extra GET against a public endpoint. Keep this list
+// to jobs that only curl; anything that executes repo code belongs in the
+// entrypoint/lock regime above.
+const HTTP_ONLY: Record<string, string> = {
+  "keep-warm.yml": "curl heartbeat against /api/health (#1124) — no app code runs",
+};
+
 interface Row {
   workflow: string;
   entrypoint: string | null;
@@ -172,14 +181,21 @@ describe("cron lock registry (#1169)", () => {
 
   it("resolves an entrypoint for every scheduled workflow", () => {
     const unresolved = registry
-      .filter((r) => !r.entrypoint)
+      .filter((r) => !r.entrypoint && !(r.workflow in HTTP_ONLY))
       .map((r) => r.workflow);
     expect(unresolved).toEqual([]);
   });
 
   it("locks every scheduled job, or names why it does not", () => {
     const unlocked = registry
-      .filter((r) => !r.lockedIn && !(r.workflow in LOCK_EXEMPT))
+      .filter(
+        (r) =>
+          !r.lockedIn &&
+          !(r.workflow in LOCK_EXEMPT) &&
+          // HTTP_ONLY only exempts a job while it truly runs no app code; a
+          // workflow that later grows an entrypoint re-enters the lock regime.
+          !(r.workflow in HTTP_ONLY && !r.entrypoint),
+      )
       .map((r) => `${r.workflow} → ${r.entrypoint} (no withCronLock)`);
 
     // Wrap the core in withCronLock rather than adding to LOCK_EXEMPT: an
@@ -188,15 +204,29 @@ describe("cron lock registry (#1169)", () => {
   });
 
   it("keeps every exemption pointing at a workflow that still exists", () => {
-    const stale = Object.keys(LOCK_EXEMPT).filter(
-      (wf) => !registry.some((r) => r.workflow === wf),
-    );
+    const stale = [
+      ...Object.keys(LOCK_EXEMPT),
+      ...Object.keys(HTTP_ONLY),
+    ].filter((wf) => !registry.some((r) => r.workflow === wf));
     expect(stale).toEqual([]);
+  });
+
+  it("keeps HTTP_ONLY limited to workflows that never enter the app", () => {
+    // The exemption's whole justification is "no app code runs". A workflow
+    // that gains a tsx/npm-run entrypoint must leave HTTP_ONLY and take a
+    // real lock (or argue its way into LOCK_EXEMPT with an entrypoint).
+    const grown = registry
+      .filter((r) => r.workflow in HTTP_ONLY && r.entrypoint)
+      .map((r) => `${r.workflow} → ${r.entrypoint}`);
+    expect(grown).toEqual([]);
   });
 
   it("drops an exemption once the job grows a real lock", () => {
     const redundant = registry
-      .filter((r) => r.workflow in LOCK_EXEMPT && r.lockedIn)
+      .filter(
+        (r) =>
+          (r.workflow in LOCK_EXEMPT || r.workflow in HTTP_ONLY) && r.lockedIn,
+      )
       .map((r) => r.workflow);
     expect(redundant).toEqual([]);
   });

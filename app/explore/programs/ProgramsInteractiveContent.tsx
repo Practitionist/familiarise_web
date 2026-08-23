@@ -3,10 +3,11 @@
 import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
-import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
+import { GraduationCap, Video, Users } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
+import type { DefaultProgramsPage } from "@/lib/data/explore-programs";
 import {
   useCuratedPrograms,
   useInfiniteScroll,
@@ -15,6 +16,7 @@ import {
   useProgramsFilters,
   useTopicsWithCount,
 } from "./hooks";
+import { ProgramsHeroCopy } from "./components/HeroCopy";
 import ProgramTabs from "./components/ProgramTabs";
 import SectionHeader from "./components/SectionHeader";
 import AdvancedFilters from "./components/AdvancedFilters";
@@ -32,8 +34,9 @@ interface ProgramsInteractiveContentProps {
   initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
-  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
-  viewerOrgs?: Record<string, string>;
+  /** Server-rendered page 1 of the default All Programs grid — seeds the
+   *  main listing query so first paint skips the client fetch. */
+  initialProgramsPage?: DefaultProgramsPage;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
 }
@@ -65,12 +68,28 @@ export default function ProgramsInteractiveContent({
   initialNewest,
   initialTopics,
   initialStats,
-  viewerOrgs = {},
+  initialProgramsPage,
   availableLevels = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const { formatPrice } = useCurrency();
+
+  // #664 — viewer's ACTIVE org memberships as { orgId: orgName }, for the
+  // "Recommended by <org>" card badge. Resolved client-side from the session
+  // payload (the same memberships OrgSwitcher and checkout trust) rather than
+  // server-side: this page is ISR, so its shared HTML must stay free of
+  // viewer-specific markup. Badges appear once the session hydrates.
+  const viewerOrgs = useMemo<Record<string, string>>(
+    () =>
+      Object.fromEntries(
+        (session?.user?.organizationMemberships ?? []).map((m) => [
+          m.organizationId,
+          m.organizationName,
+        ]),
+      ),
+    [session],
+  );
 
   // All UI state lives in one hook so the orchestrator stays thin.
   const {
@@ -100,6 +119,7 @@ export default function ProgramsInteractiveContent({
   const { programs, isLoading, hasMore, loadMore } = usePrograms(programType, {
     userId,
     filters,
+    initialPage: initialProgramsPage,
   });
 
   const { programs: trendingPrograms, isLoading: trendingLoading } =
@@ -192,21 +212,7 @@ export default function ProgramsInteractiveContent({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
+            <ProgramsHeroCopy />
 
             <div className="flex flex-wrap justify-center gap-8 md:gap-16">
               {stats.map((stat, index) => (

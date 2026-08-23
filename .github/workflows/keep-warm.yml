@@ -1,0 +1,116 @@
+name: Keep Warm
+
+# Keep at least one warm function instance on PRODUCTION between real traffic.
+#
+# The Next.js server handler stalls its event loop for ~24s on a brand-new
+# instance's first invocation (#1124). A single warm instance does not remove
+# that stall — burst traffic still spawns fresh instances that each pay it —
+# but it removes the stall from the COMMON case: a lone visitor clicking
+# through an otherwise idle site, which is exactly the shape of manual testing
+# and low-traffic days.
+#
+# Every ping is a billable invocation (~12/hour ≈ 8.6k/month at the 5-minute
+# cadence); disable this workflow if that trade stops making sense. Previews
+# are deliberately NOT warmed: each PR has its own isolated cache scope and
+# subdomain, so warming one preview does nothing for another, and idle previews
+# going cold is unavoidable (warm-deploy.yml covers their first minutes).
+#
+# GitHub schedule triggers are best-effort with no SLA and can lag several
+# minutes; only the hourly START is exposed to that lag — the 5-minute ping
+# cadence itself runs as an in-job loop and is exact.
+
+on:
+  schedule:
+    # Hourly at :03, with the 5-minute ping cadence implemented as a loop
+    # INSIDE the job rather than as a */5 cron. The check-workflow-hygiene
+    # gate forbids two multi-daily crons sharing any start minute, and this
+    # fleet's minute map is dense enough that no 12-per-hour (or even
+    # 6-per-hour) schedule has a clean lattice — an offset grid like 3-59/5
+    # still collides with the hourly and */6 jobs at :08/:13/:18/:23/:28/
+    # :33/:38/:58. One hourly start on a free minute keeps the gate green
+    # while the loop below preserves the real warm cadence; it also shrinks
+    # exposure to GitHub's best-effort schedule lag (one delayed start per
+    # hour instead of twelve).
+    #
+    # :03 because the free-minute pool is nearly empty and SHRINKS as dev
+    # moves: this job started at :10 and dev's expire-stale-requests went
+    # hourly-at-:10 the same day, colliding in the PR merge build. As of
+    # 2026-08-22 the only minutes free of multi-daily crons are :00, :03
+    # and :15 — re-derive that set before moving this again.
+    - cron: "3 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-warm
+  # A lagged start can overlap the previous hour's loop; the newer run
+  # supersedes it rather than double-pinging.
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    # One hour of 5-minute pings, then exit before the next scheduled run.
+    timeout-minutes: 58
+
+    steps:
+      # The canonical production origins: the Netlify host and the pinned
+      # NEXT_PUBLIC_APP_URL domain. Edge cache scopes are per-host, so both are
+      # pinged; the function instance underneath is shared.
+      #
+      # /api/health guarantees a handler invocation (a page GET can be served
+      # entirely off the CDN cache without touching the function), so instance
+      # warmth does not depend on cache misses. It is also the cheapest route
+      # that proves end-to-end liveness: LIMIT-1 DB probe + status reads, and
+      # doubles as an outage signal — if these pings start failing, prod is
+      # degraded whether or not any user has noticed yet.
+      - name: Ping production every 5 minutes for an hour
+        env:
+          HOSTS: "https://familiarisenow.com https://familiarise.netlify.app"
+        run: |
+          # 11 rounds x 5-minute sleep ≈ 55 minutes of coverage per hourly
+          # run; the next run picks up next hour. Pings are sequential and the
+          # loop sleeps between rounds, so this never bursts the function.
+          #
+          # DEADLINE guard: the happy path fits easily, but if both hosts hit
+          # --max-time on the initial attempt AND the retry every round, the
+          # arithmetic exceeds the 58-minute job timeout (~95 min worst case)
+          # and GitHub would cancel mid-loop. Stop starting new rounds once
+          # 50 minutes have elapsed instead — the next hourly run continues.
+          #
+          # /api/health is fail-open: HTTP 200 with status "degraded" when the
+          # DB is unreachable, so the body is parsed too. Degradation is a
+          # WARNING here, not a failure — the ping still warmed the instance,
+          # and the loop keeps running so warmth (and the outage signal)
+          # continue through the incident.
+          DEADLINE=$((SECONDS + 50 * 60))
+          for round in $(seq 1 11); do
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::notice::keep-warm stopping at round $round — 50-minute deadline reached"
+              break
+            fi
+            for host in $HOSTS; do
+              if BODY=$(curl -sS -w "\n$host/api/health: ttfb=%{time_starttransfer}s code=%{http_code}" \
+                --fail --max-time 60 --retry 1 --retry-delay 3 \
+                "$host/api/health"); then
+                echo "${BODY##*$'\n'}"
+                STATUS=$(printf '%s' "$BODY" | head -n 1 | jq -r '.status // "unknown"')
+                if [ "$STATUS" != "healthy" ]; then
+                  echo "::warning::keep-warm: $host reports health status '$STATUS' — prod degraded"
+                fi
+              else
+                echo "::warning::keep-warm ping failed for $host"
+              fi
+            done
+            if [ "$round" -lt 11 ]; then sleep 300; fi
+          done
+
+      # NOTE: hot page caches are deliberately NOT refreshed here. The ISR
+      # windows on / and /explore/experts are 1h/5m; refreshing them every 5
+      # minutes would force continuous background regeneration invocations for
+      # content that changes on the order of days. The durable cache already
+      # persists entries across instances (Netlify Blobs), so cache priming
+      # only matters right after a deploy — that is warm-deploy.yml's job.
+      # This workflow's single job is instance warmth via the health ping.

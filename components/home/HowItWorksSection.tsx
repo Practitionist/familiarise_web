@@ -81,15 +81,34 @@ export function HowItWorksSection() {
               Get started in minutes. Our streamlined process makes it easy to
               connect with the right expert for your needs.
             </p>
-            <Link href="/explore/experts">
+            {/* Both CTAs live here because this section is unconditional —
+                the only other /explore/programs link on the landing page sits
+                inside the reviews section's Suspense boundary and disappears
+                entirely when there are no reviews to show. */}
+            {/* asChild so Button renders the Link itself — a <button> nested
+                inside an <a> is invalid, inaccessible HTML. */}
+            <div className="flex flex-wrap gap-4">
               <Button
                 size="lg"
                 className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-elevation-2"
+                asChild
               >
-                Start Your Journey
-                <ArrowRight className="ml-2 w-5 h-5" />
+                <Link href="/explore/experts">
+                  Start Your Journey
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Link>
               </Button>
-            </Link>
+              <Button
+                variant="outline"
+                size="lg"
+                className="border-border hover:bg-muted"
+                asChild
+              >
+                <Link href="/explore/programs">
+                  Browse Classes &amp; Webinars
+                </Link>
+              </Button>
+            </div>
           </motion.div>
 
           <div>
