@@ -546,7 +546,15 @@ export async function DELETE(
   if (access.error) return access.error;
 
   try {
-    const outcome = await prisma.$transaction(async (tx) => {
+    // Serializable + retry closes the same TOCTOU the PATCH handler cites
+    // (state-audit S2): an invoice/assignment/PO landing between the
+    // wind-down COUNT checks and the delete would be stranded behind a
+    // DEACTIVATED org. A concurrent insert now aborts one side with P2034
+    // (retried, then 503) instead of slipping through the window
+    // (#1132 follow-up — the PATCH handler already did this; DELETE didn't).
+    const outcome = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
       // #781 §B — three-way delete. LIVE obligations block (wind-down
       // first, per the #779 guard doctrine). Settled financial HISTORY
       // makes the org soft-delete (DEACTIVATED + deletedAt + contact-PII
@@ -662,7 +670,10 @@ export async function DELETE(
         },
       });
       return "soft" as const;
-    });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
 
     return outcome === "hard"
       ? new NextResponse(null, { status: 204 })
