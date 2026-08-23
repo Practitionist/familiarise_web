@@ -136,3 +136,21 @@ export function bookingOrgId(booking: {
     null
   );
 }
+
+/**
+ * Belt-and-braces detector for a duplicate-channel rejection so concurrent
+ * create-on-miss paths can ADOPT the winner's channel instead of failing the
+ * user journey (architecture review F-HIGH-3).
+ *
+ * Deliberately NARROW (message text only). Stream's official API error table
+ * defines no "already exists" code — code 17 is `Not Allowed Error` (HTTP 403)
+ * and v9's channel.create() is an idempotent get-or-create via the /query
+ * endpoint, so duplicates normally RESOLVE rather than reject. Matching by
+ * code or status would misclassify documented failures (notably 17/403) as
+ * benign races and silently skip creation. Only an error whose text names the
+ * collision is treated as adoptable; anything else propagates.
+ */
+export function isChannelAlreadyExistsError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /already exists/i.test(error.message);
+}
