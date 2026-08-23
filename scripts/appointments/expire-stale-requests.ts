@@ -284,6 +284,49 @@ async function expirePendingSubscriptions(): Promise<{
  * front door. REQUEST_ALLOWED_FROM.EXPIRED was widened to APPROVED to make
  * this transition legal (lib/booking/transitions.ts).
  */
+/**
+ * PR 2e (#1192) — release tentative-RESCHEDULED slots on APPROVED
+ * subscriptions past the same 30-day window as PENDING expiry. A partial
+ * reschedule flips released slots to tentative+RESCHEDULED but leaves the
+ * parent APPROVED with no transition edge back — so without this cleanup,
+ * those ghost holds block availability forever.
+ *
+ * Scoped to isTentative AND completionStatus RESCHEDULED so confirmed and
+ * SCHEDULED rows are never touched. The parent subscription is NOT expired
+ * (it has live confirmed sessions).
+ */
+const STALE_RESCHEDULED_HOURS = PENDING_EXPIRATION_DAYS * 24;
+
+async function releaseStaleRescheduledSlots(): Promise<{
+  released: number;
+  errors: string[];
+}> {
+  try {
+    const cutoff = new Date(
+      Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
+    );
+    const result = await prisma.slotOfAppointment.deleteMany({
+      where: {
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+        updatedAt: { lt: cutoff },
+        appointment: {
+          subscriptionId: { not: null },
+          subscription: { status: AppointmentStatus.APPROVED },
+        },
+      },
+    });
+    console.log(
+      `✅ Released ${result.count} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
+    );
+    return { released: result.count, errors: [] };
+  } catch (error) {
+    const msg = `Failed to release stale rescheduled slots: ${error}`;
+    console.error(`❌ ${msg}`);
+    return { released: 0, errors: [msg] };
+  }
+}
+
 async function expireApprovedUnallocatedSubscriptions(): Promise<{
   expired: number;
   issued: number;
@@ -432,6 +475,17 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // Expire APPROVED-unallocated paid subscriptions (PR 2c money fix)
   const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
   allErrors.push(...approvedUnallocated.errors);
+
+  // Release stale tentative-RESCHEDULED slots on APPROVED subscriptions
+  // (PR 2e, #1192 — audit B-P2-02). A partial reschedule flips released
+  // slots to tentative+RESCHEDULED but leaves the parent APPROVED; if the
+  // consultant never allocates replacements those ghosts block the calendar
+  // forever (no sweep cohort covered them). This pass deletes tentative-
+  // RESCHEDULED slots past the threshold so the calendar frees up. The
+  // parent stays APPROVED (it has confirmed sessions); only the ghosts go.
+  const staleRescheduledReleased =
+    await releaseStaleRescheduledSlots();
+  allErrors.push(...staleRescheduledReleased.errors);
 
   // Expire APPROVED_PENDING_PAYMENT requests
   const paymentPendingResult = await expirePaymentPendingRequests();

@@ -227,5 +227,78 @@ export async function declineProposal(args: {
     });
     throw err;
   }
+
+  // PR 2e — the initiator learns their proposal was declined. The booking
+  // stays at its original times; slots released by the proposal remain in
+  // the consultant's allocate queue.
+  try {
+    const detail = await prisma.rescheduleRequest.findUnique({
+      where: { id: args.rescheduleRequestId },
+      select: {
+        initiatedById: true,
+        appointment: {
+          select: {
+            organizationId: true,
+            appointmentType: true,
+            consultation: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        releasedSlotIds: true,
+      },
+    });
+    const appt = detail?.appointment;
+    const side = appt?.consultation ?? appt?.subscription;
+    if (detail && side && appt) {
+      const isConsultation = "consultationPlan" in side;
+      const planTitle = isConsultation
+        ? side.consultationPlan.title
+        : side.subscriptionPlan.title;
+      const consultantUser = isConsultation
+        ? side.consultationPlan.consultantProfile.user
+        : side.subscriptionPlan.consultantProfile.user;
+      void notifyAppointmentRescheduled(
+        [detail.initiatedById, consultantUser.id, side.requestedBy.user.id].filter(
+          (id, i, arr) => arr.indexOf(id) === i,
+        ),
+        {
+          ...notificationScope(appt.organizationId),
+          appointmentType: appt.appointmentType,
+          consultantName: consultantUser.name || "Consultant",
+          consulteeName: side.requestedBy.user.name || "Consultee",
+          planTitle,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          outcome: "DECLINED",
+        },
+      );
+    }
+  } catch (notifyErr) {
+    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+      subsystem: "bookings",
+      op: "reschedule-decline-notify",
+      expected: true,
+    });
+  }
+
   return { done: true };
 }

@@ -9,7 +9,7 @@
     "db:migrate": "prisma migrate dev --name init",
     "db:pull": "prisma db pull",
     "db:push": "npm run db:push:schema && npm run db:sidecars",
-    "db:push:schema": "prisma db push",
+    "db:push:schema": "prisma db push && npm run db:sidecars",
     "db:sidecars": "npm run db:triggers && npm run db:constraints",
     "db:assert-sidecars": "npx tsx -r dotenv/config scripts/db/assert-sidecar-applied.ts",
     "db:triggers": "npx tsx -r dotenv/config scripts/db/apply-ledger-triggers.ts",
@@ -53,7 +53,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "update-env-secret": "npx tsx scripts/update-env-secret.ts",
-    "update-slot-types": "ts-node scripts/update-slot-types.ts"
+    "update-slot-types": "ts-node scripts/update-slot-types.ts",
+    "db:push:no-sidecars-DANGEROUS": "prisma db push"
   },
   "dependencies": {
     "@better-auth/sso": "^1.6.3",

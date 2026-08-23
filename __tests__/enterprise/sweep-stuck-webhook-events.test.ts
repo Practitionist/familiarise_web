@@ -19,6 +19,8 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
+      // claim CAS before each re-drive
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   },
 }));

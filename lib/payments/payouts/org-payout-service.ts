@@ -860,6 +860,96 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
     }
   }
 
+  const redrive = await redriveStaleProcessingOrgPayouts();
+  result.scanned += redrive.scanned;
+  result.advanced += redrive.advanced;
+  result.errors.push(...redrive.errors);
+
+  return result;
+}
+
+/**
+ * Re-drive stale PROCESSING org payouts — the actor the transient-error
+ * contract ("leave row in PROCESSING and re-throw so the cron retries with
+ * the same idempotency key") was missing: this driver scanned PENDING only,
+ * so a single 5xx (or a balance-hold / Stripe-deferred early return) stranded
+ * the row in PROCESSING forever with no recovery path except a webhook that
+ * may never come.
+ *
+ * Two shapes:
+ *   * gatewayPayoutId null — submission never confirmed. Resubmit through
+ *     submitOrgPayoutToGateway; the deterministic X-Payout-Idempotency key
+ *     makes RazorpayX return the ORIGINAL payout if the first attempt landed,
+ *     so this can never double-disburse.
+ *   * gatewayPayoutId set — submitted but confirmation lost. Poll the gateway
+ *     once and route through the mark* handlers (first-writer CAS), covering
+ *     the lost-webhook case where the org's money arrived while the row sat
+ *     in PROCESSING.
+ */
+const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000; // 1h
+
+async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
+  const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
+  const stale = await prisma.organizationPayout.findMany({
+    where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
+    select: { id: true, gatewayPayoutId: true, paymentGateway: true },
+    orderBy: { updatedAt: "asc" },
+    take: 100,
+  });
+  result.scanned = stale.length;
+
+  for (const p of stale) {
+    try {
+      if (p.paymentGateway !== "RAZORPAY") continue; // Stripe rail deferred
+
+      if (!p.gatewayPayoutId) {
+        await submitOrgPayoutToGateway(p.id);
+        result.advanced++;
+        continue;
+      }
+
+      const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
+      const sdk = getRazorpayPayoutsService();
+      const remote = await sdk.fetchPayout(p.gatewayPayoutId);
+      switch (remote.status) {
+        case "processed":
+          await markOrgPayoutCompleted(p.id);
+          result.advanced++;
+          break;
+        case "failed":
+          await markOrgPayoutFailed(
+            p.id,
+            remote.failureReason ?? "Gateway reports the payout failed",
+          );
+          result.advanced++;
+          break;
+        case "cancelled":
+        case "rejected":
+          await markOrgPayoutFailed(
+            p.id,
+            `Gateway reports the payout ${remote.status}`,
+          );
+          result.advanced++;
+          break;
+        case "reversed":
+          await markOrgPayoutReversed(
+            p.id,
+            "Gateway reports the payout reversed",
+          );
+          result.advanced++;
+          break;
+        default:
+          // queued/pending/processing — still in flight; leave for the next run.
+          break;
+      }
+    } catch (err) {
+      reportSentryError(err, { subsystem: "payments" });
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
+    }
+  }
+
   return result;
 }
 

@@ -2140,6 +2140,11 @@ model UsageLedgerEntry {
 
   @@index([membershipId, createdAt])
   @@index([programAssignmentId, createdAt])
+  // Refund hot path: reverseBookingUtilization aggregates by paymentId
+  // INSIDE the refund transaction — without this index that is a seq scan of
+  // an append-only table whose latency grows with history exactly when a
+  // customer is waiting.
+  @@index([paymentId])
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2224,6 +2229,7 @@ enum LedgerTransactionKind {
   TOPUP_REFUND
   INVOICE_ISSUED
   INVOICE_PAID
+  INVOICE_REFUND
   PAYOUT
   ORG_PAYOUT
   REFUND
@@ -4382,6 +4388,8 @@ model Refund {
   @@index([paymentId, status])
   @@index([status, cascadedAt])
   @@index([status, failedNotifiedAt])
+  // Finance date-range exports + reconcile-cron age scans.
+  @@index([createdAt])
 }
 
 enum RefundStatus {
@@ -4428,6 +4436,8 @@ model Dispute {
   @@index([dueBy])
   @@index([paymentId, status])
   @@index([assignedToUserId])
+  // Finance date-range exports + evidence-deadline sweeps.
+  @@index([createdAt])
 }
 
 enum DisputeStatus {
