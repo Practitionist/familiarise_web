@@ -3,7 +3,7 @@
 **Date:** 2026-08-23 · **Branch reviewed:** `perf/stream-chat-load` · **Method:** 4 parallel deep-dives (cross-cutting/security, server chat core, client chat, video/meetings) + live latency probing.
 **Scope:** every file under `lib/stream*`, `actions/stream/**`, `app/api/stream/**`, `app/api/meetings/**`, `app/meetings/**`, `components/chat/**`, `providers/Stream*`, `hooks/useChatUnreadCount.ts`, `jobs/stream/*`, `scripts/stream/*`, `.github/workflows/*stream*|*expire*|*recording*`.
 
-Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. The two HIGH clusters are actionable this week.
+Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. All three HIGH findings are actionable this week.
 
 ---
 

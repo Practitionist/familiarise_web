@@ -150,15 +150,34 @@ export function useChatUnreadCount(): number {
     //   - message events → local recount (debounced), no API call when any
     //     personal channel is already watched.
     const handler = client.on((event) => {
-      if (
-        event.type === "message.new" ||
-        event.type === "notification.mark_read" ||
-        event.type === "notification.mark_unread" ||
-        event.type === "notification.message_new" ||
-        (event.type === "connection.changed" && event.online)
-      ) {
-        scheduleRefresh();
+      // Recount signals:
+      //   - connection.changed(online) → the singleton just connected (this
+      //     hook often mounts before StreamProvider finishes connecting);
+      //     retry the initial load instead of staying at zero until some
+      //     unrelated remount.
+      //   - message/notification events → recount (debounced), no API call
+      //     when personal channels are already watched.
+      if (event.type === "connection.changed") {
+        if (event.online) scheduleRefresh();
+        return;
       }
+      if (
+        event.type !== "message.new" &&
+        event.type !== "notification.mark_read" &&
+        event.type !== "notification.mark_unread" &&
+        event.type !== "notification.message_new"
+      ) {
+        return;
+      }
+      // Server-computed total spans EVERY personal channel — hydrated or not.
+      // The local sum below only sees channels the sidebar has loaded, so
+      // when Stream hands us the authoritative number we take it verbatim
+      // instead of a possibly-partial recount.
+      if (typeof event.total_unread_count === "number") {
+        setUnreadCount(event.total_unread_count);
+        return;
+      }
+      scheduleRefresh();
     });
 
     return () => {
