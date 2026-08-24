@@ -11,11 +11,11 @@ import {
 import { forEachChunk } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
-import { canDirectMessage } from "@/lib/stream/dm-eligibility";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import * as Sentry from "@sentry/nextjs";
+import { getSession } from "@/lib/auth-server";
 
 // Input validation schemas
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -277,13 +277,20 @@ export const upsertUsersToStream = async (userIds: string[]) => {
  * @param currentUserId The current user's ID to exclude from results
  * @returns Users with relationship status information
  */
-export const searchUsersWithRelationships = async (
-  searchTerm: string,
-  currentUserId: string,
-) => {
+export const searchUsersWithRelationships = async (searchTerm: string) => {
   // Validate inputs
   const validatedTerm = searchTermSchema.parse(searchTerm.trim());
-  const validatedUserId = userIdSchema.parse(currentUserId);
+
+  // Identity comes from the SESSION, not from a parameter. This module is
+  // `"use server"`, so every export is remotely invocable; the previous
+  // signature took `currentUserId` from the caller, which let anyone enumerate
+  // another user's related parties (names, emails, avatars) by passing their
+  // id. Same cookie-cache-bypass reasoning as assertCanMintToken.
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to search users");
+  }
+  const validatedUserId = userIdSchema.parse(session.user.id);
 
   try {
     // Fetch current user's profile IDs once
@@ -334,7 +341,6 @@ export const searchUsersWithRelationships = async (
     }
 
     // Batch: find all related user IDs in a few queries instead of N+1
-    const resultUserIds = users.map((u) => u.id);
     const resultConsultantProfileIds = users
       .map((u) => u.consultantProfileId)
       .filter((id): id is string => !!id);
@@ -422,22 +428,12 @@ export const searchUsersWithRelationships = async (
       );
     }
 
-    // Shared appointments (webinars, classes) - single batched query
-    if (resultUserIds.length > 0) {
-      relationshipQueries.push(
-        prisma.slotOfAppointment
-          .findMany({
-            where: {
-              deletedAt: null,
-              appointment: { deletedAt: null },
-              user: { some: { id: validatedUserId } },
-              AND: { user: { some: { id: { in: resultUserIds } } } },
-            },
-            select: { user: { where: { id: { in: resultUserIds } }, select: { id: true } } },
-          })
-          .then((slots) => slots.forEach((s) => s.user.forEach((u) => relatedUserIds.add(u.id)))),
-      );
-    }
+    // NOTE: no shared-slot arm here, matching `canDirectMessage` (PR #1188
+    // review). Co-membership of an event slot used to mark fellow attendees as
+    // "related", which put consultee↔consultee rows into search that the open
+    // route's eligibility gate then refused — a row you can see but cannot
+    // click, and one step toward re-opening peer DMs. Event chat goes through
+    // the team channel via the open route's event arm.
 
     await Promise.all(relationshipQueries);
 
@@ -495,79 +491,11 @@ export const searchUsersWithRelationships = async (
 };
 
 /**
- * Check if two users have any relationship through appointments.
- *
- * Thin re-export of `canDirectMessage` so the server-action surface keeps its
- * name while the logic lives in `lib/stream/dm-eligibility.ts`. The three
- * private helpers that used to live here (`checkConsultationRelationship`,
- * `checkSubscriptionRelationship`, `checkSharedAppointments`) moved with it —
- * they were the only implementation of the rule, and leaving a second copy
- * behind is how the status sets diverged in the first place.
- *
- * Two behaviour changes came with the move, both deliberate:
- *  - the status set widened to `DM_ELIGIBLE_STATUSES` (adds
- *    APPROVED_PENDING_PAYMENT and COMPLETED) and the subscription
- *    scheduling-window filter is gone, per the ever-transacted rule;
- *  - it no longer swallows errors into `false`.
- *
- * @param userId1 First user ID
- * @param userId2 Second user ID
- * @returns Boolean indicating if they have any relationship
+ * The ungated `checkUserRelationship` and deprecated `searchUsers` exports were
+ * REMOVED from this `"use server"` module (PR #1188 review): every export here
+ * is remotely invocable, so they answered "do these two arbitrary users share a
+ * booking?" and global PII search to any browser. The rule's one implementation
+ * is `canDirectMessage` in `lib/stream/dm-eligibility.ts`; user-facing search
+ * goes through the session-scoped `searchUsersWithRelationships` or the
+ * `/api/stream/search-consultees` route.
  */
-export const checkUserRelationship = async (
-  userId1: string,
-  userId2: string,
-): Promise<boolean> => canDirectMessage(userId1, userId2);
-
-/**
- * @deprecated Use searchUsersWithRelationships instead — this performs a global
- * unscoped search that exposes PII of arbitrary users.
- * @param searchTerm The term to search for (name or email)
- * @returns The users that match the search term
- */
-export const searchUsers = async (searchTerm: string) => {
-  const validatedTerm = searchTermSchema.parse(searchTerm.trim());
-
-  try {
-    const users = await prisma.user.findMany({
-      where: {
-        AND: [
-          {
-            NOT: [
-              { id: { startsWith: "recording-egress-" } },
-              { id: { startsWith: "system-" } },
-            ],
-          },
-          {
-            OR: [
-              { name: { contains: validatedTerm, mode: "insensitive" } },
-              { email: { contains: validatedTerm, mode: "insensitive" } },
-            ],
-          },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        role: true,
-      },
-      take: 10,
-      orderBy: [{ name: "asc" }],
-    });
-
-    streamLogger.debug("Legacy user search completed", {
-      term: validatedTerm,
-      resultCount: users.length,
-    });
-
-    return users;
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
-    streamLogger.error("Legacy user search failed", error, {
-      searchTerm: validatedTerm,
-    });
-    throw error;
-  }
-};

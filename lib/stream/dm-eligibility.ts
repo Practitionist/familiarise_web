@@ -29,6 +29,7 @@
  * the search can find but no channel backs.
  */
 import prisma from "@/lib/prisma";
+import { bookingOrgId } from "@/lib/stream-utils";
 import {
   DM_ELIGIBLE_STATUSES,
   dmEligibleStatusFilter,
@@ -129,33 +130,6 @@ async function hasSubscriptionLink(
 }
 
 /**
- * A shared slot — the group arm. This is what lets a webinar host DM an
- * attendee, and it is also why two attendees of the same webinar count as
- * linked (see the note on `canDirectMessage`).
- *
- * The soft-delete filters are not decoration. `SlotOfAppointment` and
- * `Appointment` are soft-deleted, never removed, so without them a cancelled
- * event from two years ago still reads as a live link forever.
- */
-async function hasSharedSlot(
-  userIdA: string,
-  userIdB: string,
-): Promise<boolean> {
-  const slot = await prisma.slotOfAppointment.findFirst({
-    where: {
-      deletedAt: null,
-      appointment: { deletedAt: null },
-      AND: [
-        { user: { some: { id: userIdA } } },
-        { user: { some: { id: userIdB } } },
-      ],
-    },
-    select: { id: true },
-  });
-  return !!slot;
-}
-
-/**
  * May `userIdA` and `userIdB` hold a direct message channel?
  *
  * Throws rather than returning false when the lookup itself fails. The previous
@@ -165,13 +139,18 @@ async function hasSharedSlot(
  * deny a legitimate conversation and — worse, on the reconcile path — make a
  * live channel look unexpected. A gate that cannot evaluate must say so.
  *
- * Note the group arm makes any two attendees of the same event mutually
- * eligible. That is wider than the consultee↔consultee DM block described in
- * `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`,
- * and it is fine only because no code path offers a consultee a way to open a
- * DM: `createDirectMessageChannel` is reached from booking approval and payment
- * success, never from a user action. If a "message this person" affordance is
- * ever added to the attendee list, this arm must be split.
+ * The group arm (`hasSharedSlot`) was REMOVED from this gate deliberately
+ * (CodeRabbit + design review on PR #1188): it made any two attendees of one
+ * event mutually eligible, which the safety note below used to wave off as
+ * "fine because no code path offers a consultee a way to open a DM" — but this
+ * PR itself adds exactly such a path (`POST /api/stream/channels/open`,
+ * reachable by any authenticated account, attendee ids readable from team
+ * channel member state). Peer DMs are forbidden by
+ * `docs/decisions/2026-07-11-moderation-enforcement-and-peer-chat-block.md`.
+ * Host↔attendee DMs are not offered by any surface either: the event arm of
+ * the open route opens the shared team channel, not a DM. If a product need
+ * for host↔attendee DMs appears, reintroduce the arm behind an explicit
+ * host-check inside `hasSharedSlot`, not as blanket co-membership.
  */
 export async function canDirectMessage(
   userIdA: string,
@@ -196,7 +175,6 @@ export async function canDirectMessage(
   const results = await Promise.all([
     hasConsultationLink(a, b),
     hasSubscriptionLink(a, b),
-    hasSharedSlot(userIdA, userIdB),
   ]);
   return results.some(Boolean);
 }
@@ -223,4 +201,80 @@ export async function assertCanDirectMessage(
   if (!(await canDirectMessage(userIdA, userIdB))) {
     throw new DmNotPermittedError(userIdA, userIdB);
   }
+}
+
+/**
+ * The funding contexts (`bookingOrgId` values) under which this pair's eligible
+ * bookings actually live — `null` included when a personal-context booking
+ * exists.
+ *
+ * The open route uses this to validate the client-supplied `organizationId`.
+ * The channel id is re-derived server-side, but the id is a function of the
+ * pair AND the funding context, so a caller able to name an arbitrary org
+ * could mint `dmo-<digest(arbitrary)>-…` channels tagged to an organization it
+ * has no relation to. Contexts are read from the SAME rows the gate and the
+ * reconciler's expected-set use, so what the client is allowed to name is
+ * exactly what the reconciler will keep alive.
+ */
+export async function pairBookingContexts(
+  userIdA: string,
+  userIdB: string,
+): Promise<{ personalAllowed: boolean; organizations: string[] }> {
+  const [a, b] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userIdA },
+      select: { consultantProfileId: true, consulteeProfileId: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userIdB },
+      select: { consultantProfileId: true, consulteeProfileId: true },
+    }),
+  ]);
+  if (!a || !b) return { personalAllowed: false, organizations: [] };
+
+  const directions = buildDirections(a, b);
+  if (directions.length === 0) return { personalAllowed: false, organizations: [] };
+
+  const [consultations, subscriptions] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        status: dmEligibleStatusFilter(),
+        OR: directions.map((d) => ({
+          consultationPlan: { consultantProfileId: d.consultant },
+          requestedById: d.consultee,
+        })),
+      },
+      select: {
+        consultationPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        status: dmEligibleStatusFilter(),
+        OR: directions.map((d) => ({
+          subscriptionPlan: { consultantProfileId: d.consultant },
+          requestedById: d.consultee,
+        })),
+      },
+      select: {
+        subscriptionPlan: { select: { organizationId: true } },
+        appointments: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+
+  const organizations = new Set<string>();
+  let personalAllowed = false;
+  for (const c of consultations) {
+    const org = bookingOrgId(c);
+    if (org === null) personalAllowed = true;
+    else organizations.add(org);
+  }
+  for (const s of subscriptions) {
+    const org = bookingOrgId(s);
+    if (org === null) personalAllowed = true;
+    else organizations.add(org);
+  }
+  return { personalAllowed, organizations: Array.from(organizations) };
 }

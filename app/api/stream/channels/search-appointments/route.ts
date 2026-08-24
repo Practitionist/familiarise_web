@@ -4,6 +4,10 @@ import prisma from "lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
+  dmEligibleStatusFilter,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
+import {
   AppointmentSearchResultSchema,
   type AppointmentSearchResult,
 } from "@/schemas/stream-search";
@@ -114,12 +118,7 @@ export async function GET(request: NextRequest) {
           },
           {
             status: {
-              in: [
-                "APPROVED",
-                "APPROVED_PENDING_PAYMENT",
-                "SCHEDULED",
-                "COMPLETED",
-              ],
+              ...dmEligibleStatusFilter(),
             },
           },
           {
@@ -214,12 +213,7 @@ export async function GET(request: NextRequest) {
           },
           {
             status: {
-              in: [
-                "APPROVED",
-                "APPROVED_PENDING_PAYMENT",
-                "SCHEDULED",
-                "COMPLETED",
-              ],
+              ...dmEligibleStatusFilter(),
             },
           },
           {
@@ -297,7 +291,7 @@ export async function GET(request: NextRequest) {
           },
           {
             status: {
-              in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
+              in: [...OPENABLE_EVENT_STATUSES],
             },
           },
           {
@@ -355,7 +349,7 @@ export async function GET(request: NextRequest) {
           },
           {
             status: {
-              in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"],
+              in: [...OPENABLE_EVENT_STATUSES],
             },
           },
           {

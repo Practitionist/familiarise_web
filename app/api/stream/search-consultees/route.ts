@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
+import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 // See schemas/stream-search.ts for why the shape does not live here.
 import {
   ConsulteeSearchResultSchema,
@@ -59,12 +60,7 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         status: {
-          in: [
-            "APPROVED",
-            "APPROVED_PENDING_PAYMENT",
-            "SCHEDULED",
-            "COMPLETED",
-          ],
+          ...dmEligibleStatusFilter(),
         },
       },
       include: {
@@ -110,12 +106,7 @@ export async function GET(req: NextRequest) {
           consultantProfileId: consultantProfileId,
         },
         status: {
-          in: [
-            "APPROVED",
-            "APPROVED_PENDING_PAYMENT",
-            "SCHEDULED",
-            "COMPLETED",
-          ],
+          ...dmEligibleStatusFilter(),
         },
       },
       include: {

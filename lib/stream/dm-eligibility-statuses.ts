@@ -50,3 +50,19 @@ export const DM_ELIGIBLE_STATUSES: readonly AppointmentStatus[] = [
 export function dmEligibleStatusFilter(): { in: AppointmentStatus[] } {
   return { in: [...DM_ELIGIBLE_STATUSES] };
 }
+
+/**
+ * The event (webinar/class) states whose shared team channel can still be
+ * opened. Lives here rather than in the two routes that need it — the search
+ * route decides which rows are OFFERED and the open route decides which are
+ * CLICKABLE, and any disagreement between those two is either a dead row or a
+ * wider-than-search authorization surface.
+ *
+ * Deliberately narrower than the DM set: CANCELLED events must not be
+ * openable, and DRAFT is author-only.
+ */
+export const OPENABLE_EVENT_STATUSES = [
+  "SCHEDULED",
+  "IN_PROGRESS",
+  "COMPLETED",
+] as const;

@@ -89,14 +89,20 @@ describe("canDirectMessage", () => {
     );
   });
 
-  it("permits a pair sharing an event slot", async () => {
+  it("refuses a pair sharing ONLY an event slot (no consultee↔consultee DMs)", async () => {
+    // The group arm was removed from the gate: with `POST /api/stream/channels/open`
+    // live, co-membership of one event slot WOULD be a user-reachable path to a
+    // peer DM, which the moderation ADR forbids. Host↔attendee DMs are not
+    // offered by any surface either — event rows open the team channel.
     bothUsersExist(CONSULTEE, CONSULTEE);
     mockPrisma.slotOfAppointment.findFirst.mockResolvedValue({ id: "slot-1" });
 
     const { canDirectMessage } = await load();
     await expect(canDirectMessage("attendee-a", "attendee-b")).resolves.toBe(
-      true,
+      false,
     );
+    // The slot table is no longer consulted at all.
+    expect(mockPrisma.slotOfAppointment.findFirst).not.toHaveBeenCalled();
   });
 
   it("refuses two strangers", async () => {
@@ -183,22 +189,6 @@ describe("the status set the gate queries", () => {
     // filter used to make the thread unreachable at midnight on the renewal
     // date, mid-conversation and with no notice to either party.
     expect(where).not.toHaveProperty("schedulingPeriodEndsAt");
-  });
-
-  it("ignores soft-deleted slots and appointments", async () => {
-    bothUsersExist(CONSULTEE, CONSULTEE);
-
-    const { canDirectMessage } = await load();
-    await canDirectMessage("attendee-a", "attendee-b");
-
-    expect(mockPrisma.slotOfAppointment.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          deletedAt: null,
-          appointment: { deletedAt: null },
-        }),
-      }),
-    );
   });
 });
 

@@ -43,7 +43,7 @@
  *
  *   npx tsx scripts/stream/purge-memberless-dms.ts
  *   npx tsx scripts/stream/purge-memberless-dms.ts --apply
- *   npx tsx scripts/stream/purge-memberless-dms.ts --apply --keep-with-messages
+ *   npx tsx scripts/stream/purge-memberless-dms.ts --apply --purge-with-messages
  *
  * NOTE: a dry run READS production. An apply DELETES from production.
  */
@@ -80,7 +80,7 @@ const PRE_IMAGE_PATH = join(
 interface Options {
   apply: boolean;
   /** Skip channels that hold messages, however broken they look. */
-  keepWithMessages: boolean;
+  purgeWithMessages: boolean;
 }
 
 interface Candidate {
@@ -95,7 +95,7 @@ interface Candidate {
 function parseArgs(argv: string[]): Options {
   return {
     apply: argv.includes("--apply"),
-    keepWithMessages: argv.includes("--keep-with-messages"),
+    purgeWithMessages: argv.includes("--purge-with-messages"),
   };
 }
 
@@ -118,7 +118,11 @@ function toCandidate(
   if (memberIds.length >= 2) return null;
 
   const messageCount = channel.state?.messages?.length ?? 0;
-  if (opts.keepWithMessages && messageCount > 0) return null;
+  // Message-bearing channels are KEPT by default (PR #1188 review): a
+  // one-member DM can be the residue of a live conversation whose counterpart
+  // was evicted, and hard delete is irreversible. Only an explicit operator
+  // opt-in destroys history.
+  if (messageCount > 0 && !opts.purgeWithMessages) return null;
 
   const data = channel.data as Record<string, unknown> | undefined;
   return {
@@ -259,7 +263,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   console.log(
     `Purging memberless DMs (${opts.apply ? "LIVE" : "DRY RUN"}` +
-      `${opts.keepWithMessages ? ", keeping any with messages" : ""})...`,
+      `${opts.purgeWithMessages ? ", INCLUDING any with messages" : ", keeping any with messages"})...`,
   );
   const result = await purgeMemberlessDms(opts);
   console.log("\nDone:", result);

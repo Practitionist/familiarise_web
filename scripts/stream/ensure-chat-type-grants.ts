@@ -412,7 +412,12 @@ export async function ensureChatTypeGrants(opts: Options): Promise<number> {
   changed = changed || settingChanged;
 
   if (!changed) return 0;
-  if (!opts.apply) console.log("\n(dry run — pass --apply to write)");
+  if (!opts.apply) {
+    console.log("\n(dry run — pass --apply to write)");
+    // Drift detected but nothing written: a scheduled/CI consumer must be able
+    // to distinguish "in sync" from "drift found" by exit status.
+    process.exitCode = 1;
+  }
 
   return 0;
 }

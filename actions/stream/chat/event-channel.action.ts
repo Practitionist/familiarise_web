@@ -910,7 +910,6 @@ async function getDmPairsForUser(
  * invitation to wire it back in without the check.
  */
 
-=======
 /**
  * F-HIGH-2 — Postgres rows outlive Stream channels. The retention cron
  * hard-deletes a channel once `retentionDays` have passed since its last slot,

@@ -45,8 +45,13 @@ import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import {
   canDirectMessage,
   DmNotPermittedError,
+  pairBookingContexts,
 } from "@/lib/stream/dm-eligibility";
-import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
+import {
+  DM_ELIGIBLE_STATUSES,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
+import { DEFAULT_RETENTION_DAYS, isPastRetention } from "@/lib/stream/channel-lifecycle";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
@@ -67,22 +72,6 @@ const bodySchema = z.discriminatedUnion("kind", [
 ]);
 
 /**
- * Which event states can still open a chat.
- *
- * Mirrors `search-appointments` exactly. The two are the read and the write
- * halves of one flow: search decides which rows are offered, this route decides
- * which are openable, and any disagreement means a row you can see but cannot
- * click — or worse, one you can click that search would never have shown. The
- * whole point of this PR is that three copies of "who may talk" had drifted, so
- * a fourth divergence introduced by its own fix would be a poor result.
- */
-const OPENABLE_EVENT_STATUSES = [
-  "SCHEDULED",
-  "IN_PROGRESS",
-  "COMPLETED",
-] as const;
-
-/**
  * Is the caller a participant in this event — an attendee on one of its slots,
  * or the host consultant?
  *
@@ -91,6 +80,12 @@ const OPENABLE_EVENT_STATUSES = [
  * only, and returns 403 for attendees. Attendees are exactly who needs the
  * event chat. This mirrors the predicate the search route already applies, so
  * the two cannot disagree about which rows are clickable.
+ *
+ * The retention guard (second query) is F-HIGH-2's other half: dev's fix keeps
+ * past-retention events out of the sync expected-set, but create-on-miss here
+ * would resurrect the hard-deleted channel anyway — writable until the expire
+ * cron's next pass re-freezes it. An event whose last slot ended more than
+ * `retentionDays` ago is not openable, full stop.
  */
 async function isEventParticipant(
   eventType: "webinar" | "class",
@@ -114,9 +109,26 @@ async function isEventParticipant(
           { webinarPlan: { consultantProfile: { userId } } },
         ],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        appointment: {
+          select: {
+            organization: { select: { streamRecordingRetentionDays: true } },
+            slotsOfAppointment: {
+              orderBy: { endsAt: "desc" },
+              take: 1,
+              select: { endsAt: true },
+            },
+          },
+        },
+      },
     });
-    return !!hit;
+    if (!hit) return false;
+    return !isPastRetention(
+      hit.appointment?.slotsOfAppointment[0]?.endsAt ?? null,
+      hit.appointment?.organization?.streamRecordingRetentionDays ??
+        DEFAULT_RETENTION_DAYS,
+    );
   }
 
   const hit = await prisma.class.findFirst({
@@ -137,9 +149,46 @@ async function isEventParticipant(
         { classPlan: { consultantProfile: { userId } } },
       ],
     },
-    select: { id: true },
+    select: {
+      id: true,
+      appointments: {
+        // A class spans one appointment per cohort but ONE channel; age is the
+        // latest end across cohorts, carrying that cohort's org dial — same
+        // collapse rule as the expire cron. Each appointment contributes only
+        // its own latest slot (orderBy+take below), so this stays one row per
+        // cohort.
+        select: {
+          organization: { select: { streamRecordingRetentionDays: true } },
+          slotsOfAppointment: {
+            orderBy: { endsAt: "desc" },
+            take: 1,
+            select: { endsAt: true },
+          },
+        },
+      },
+    },
   });
-  return !!hit;
+  if (!hit) return false;
+  const latestCohort = hit.appointments.reduce<
+    | {
+        endsAt: Date;
+        retentionDays: number;
+      }
+    | null
+  >((latest, apt) => {
+    const aptLatest = apt.slotsOfAppointment[0]?.endsAt;
+    if (!aptLatest) return latest;
+    const retentionDays =
+      apt.organization?.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;
+    if (!latest || aptLatest > latest.endsAt) {
+      return { endsAt: aptLatest, retentionDays };
+    }
+    return latest;
+  }, null);
+  return !isPastRetention(
+    latestCohort?.endsAt ?? null,
+    latestCohort?.retentionDays ?? DEFAULT_RETENTION_DAYS,
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -167,7 +216,7 @@ export async function POST(request: NextRequest) {
   try {
     if (body.kind === "dm") {
       const { counterpartyUserId } = body;
-      const organizationId = body.organizationId ?? null;
+      const requestedOrgId = body.organizationId ?? null;
 
       // Covers the self case too — `canDirectMessage` returns false for
       // `a === b` before it touches the database.
@@ -183,6 +232,44 @@ export async function POST(request: NextRequest) {
             eligibleStatuses: DM_ELIGIBLE_STATUSES,
           },
           { status: 403 },
+        );
+      }
+
+      // Funding-context forgery guard. The channel id is re-derived
+      // server-side, but it is a function of the pair AND the funding context —
+      // so an org id accepted unchecked would let anyone mint
+      // `dmo-<digest(arbitrary)>-…` channels tagged to an organization they
+      // have no relation to, and omitting it for an org-funded booking would
+      // mint a personal-id channel the reconciler immediately classifies stale.
+      // The allowed contexts come from the same rows (and the same
+      // `bookingOrgId` precedence) the reconciler's expected-set is built from.
+      const contexts = await pairBookingContexts(userId, counterpartyUserId);
+      let organizationId: string | null;
+      if (requestedOrgId !== null) {
+        if (!contexts.organizations.includes(requestedOrgId)) {
+          return NextResponse.json(
+            {
+              error:
+                "No booking ties this conversation to that organization.",
+            },
+            { status: 403 },
+          );
+        }
+        organizationId = requestedOrgId;
+      } else if (contexts.personalAllowed) {
+        organizationId = null;
+      } else if (contexts.organizations.length === 1) {
+        // Personal context requested, but every eligible booking is org-funded:
+        // deriving the single real context here instead of minting a channel
+        // the reconciler would evict on the next sync.
+        organizationId = contexts.organizations[0];
+      } else {
+        return NextResponse.json(
+          {
+            error:
+              "This conversation exists in multiple organizations — specify which one.",
+          },
+          { status: 400 },
         );
       }
 
