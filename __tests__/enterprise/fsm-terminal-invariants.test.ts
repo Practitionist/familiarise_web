@@ -47,6 +47,41 @@ const MAPS: Record<string, Record<string, readonly string[]>> = {
 };
 
 describe("enterprise FSM terminality invariants", () => {
+  /**
+   * The load-bearing pin (CR #1234 review): `terminalsOf` DERIVES terminals
+   * as the complement of every source list, so asserting "no terminal is a
+   * source" against the derived set is a tautology — a resurrection edge
+   * would simply shrink the derived set and pass silently. Comparing the
+   * derived set against these literals is what catches it.
+   */
+  const EXPECTED_TERMINALS: Record<string, readonly string[]> = {
+    OrgStatus: ["DEACTIVATED"],
+    ContractStatus: ["EXPIRED", "TERMINATED"],
+    ProgramStatus: ["EXPIRED", "CANCELLED"],
+    AssignmentStatus: ["ROLLED", "CLOSED", "CANCELLED"],
+    MemberStatus: ["ERASED"],
+    OrgInvoiceStatus: ["VOID", "CANCELLED", "REFUNDED"],
+    PoStatus: ["CLOSED", "CANCELLED"],
+    PayoutStatus: ["FAILED", "CANCELLED", "REVERSED"],
+    WalletTopUpStatus: ["CONFIRMED", "FAILED"],
+  };
+
+  it("derived terminal sets match the pinned literals exactly", () => {
+    for (const [entity, expected] of Object.entries(EXPECTED_TERMINALS)) {
+      const derived = [
+        ...(TERMINAL_STATES[
+          entity as keyof typeof TERMINAL_STATES
+        ] as ReadonlySet<string>),
+      ].sort();
+      expect({
+        entity,
+        derived,
+        hint:
+          "a transition edge was added/removed from a terminal state — this is the resurrection-edge detector",
+      }).toEqual({ entity, derived: [...expected].sort(), hint: expect.any(String) });
+    }
+  });
+
   it("every guarded map has a TERMINAL_STATES entry", () => {
     for (const entity of Object.keys(MAPS)) {
       expect(TERMINAL_STATES).toHaveProperty(entity);

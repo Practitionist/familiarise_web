@@ -35,21 +35,29 @@ import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { isValidGstin } from "@/lib/compliance/gst";
 
 // #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
 // route (PLATFORM_GSTIN); the rest are env-overridable for a future
 // per-region supplier. Seller state code is derived from the GSTIN prefix
 // inside the mapper, SUPPLIER_STATE_CODE is the fallback.
-const SELLER = {
-  gstin: process.env.PLATFORM_GSTIN ?? "29AAFCF1234Q1ZN",
-  legalName:
-    process.env.SUPPLIER_LEGAL_NAME ??
-    "Familiarise Technologies Private Limited",
-  address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
-  location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
-  pincode: process.env.SUPPLIER_PINCODE ?? "560034",
-  stateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
-};
+// CR #1234 — the dummy-GSTIN fallback is gone: an unset or malformed
+// PLATFORM_GSTIN yields null, the uploader skips the batch item with a
+// logged reason, and buildIrpPayload's own missing-GSTIN guard stays the
+// second net. No statutory payload may carry a fabricated identity.
+const SELLER = (() => {
+  const gstin = process.env.PLATFORM_GSTIN?.trim();
+  return {
+    gstin: gstin && isValidGstin(gstin) ? gstin : null,
+    legalName:
+      process.env.SUPPLIER_LEGAL_NAME ??
+      "Familiarise Technologies Private Limited",
+    address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
+    location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
+    pincode: process.env.SUPPLIER_PINCODE ?? "560034",
+    stateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
+  };
+})();
 
 // #476 — entry-level cron lock; fail-open (repeat-safe side effects).
 export async function runIrpUploader(): Promise<{
@@ -69,6 +77,18 @@ async function runIrpUploaderUnlocked(): Promise<{
 }> {
   console.log("[cron][irp-uploader] starting");
   Sentry.logger.info("job:irp-uploader started");
+
+  // Config gate before any invoice is touched: a missing/malformed
+  // PLATFORM_GSTIN is an ENV outage, not a per-invoice defect — failing each
+  // candidate permanently (MAP: seller GSTIN missing) would burn the whole
+  // queue on a fixable config slip.
+  const sellerGstin = SELLER.gstin;
+  if (!sellerGstin) {
+    console.error(
+      "[cron][irp-uploader] PLATFORM_GSTIN missing or malformed — skipping run",
+    );
+    return { processed: 0, failed: 0, skipped: 0 };
+  }
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -148,7 +168,7 @@ async function runIrpUploaderUnlocked(): Promise<{
         stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
         hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
       },
-      seller: SELLER,
+      seller: { ...SELLER, gstin: sellerGstin },
     });
 
     if (!mapped.ok) {

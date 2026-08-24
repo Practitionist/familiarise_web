@@ -10,6 +10,8 @@
  * than minting documents a GST officer would flag as impersonation.
  */
 
+import { isValidGstin } from "@/lib/compliance/gst";
+
 export interface PlatformSupplier {
   name: string;
   gstin: string;
@@ -25,7 +27,10 @@ export interface PlatformSupplier {
  */
 export function getPlatformSupplier(): PlatformSupplier | null {
   const gstin = process.env.PLATFORM_GSTIN?.trim();
-  if (!gstin) return null;
+  // Format-gate (CR #1234): a typo'd PLATFORM_GSTIN must fail closed like an
+  // absent one — "not-a-gstin" on statutory documents is the same defect as
+  // the old dummy fallback, just quieter.
+  if (!gstin || !isValidGstin(gstin)) return null;
   return {
     name: "Familiarise Technologies Private Limited",
     gstin,

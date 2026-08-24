@@ -57,14 +57,17 @@ function crnBase(): BuildIrpPayloadInput {
 describe("buildIrpPayload — docType CRN", () => {
   it("defaults to INV (historical behavior unchanged)", () => {
     const r = buildIrpPayload(crnBase());
-    expect(r.ok).toBe(true);
-    if (r.ok) expect((r.payload as Record<string, any>).DocDtls.Typ).toBe("INV");
+    // Throw-then-assert keeps jest/no-conditional-expect happy while making
+    // a shape regression fail loudly instead of skipping the assertion.
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    const p = r.payload as { DocDtls: { Typ: string } };
+    expect(p.DocDtls.Typ).toBe("INV");
   });
 
   it("rejects CRN without the s.34 original-invoice reference", () => {
     const r = buildIrpPayload({ ...crnBase(), docType: "CRN" });
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/CRN requires originalInvoice/);
+    if (r.ok) throw new Error("expected rejection for CRN without OrigDocDtls");
+    expect(r.reason).toMatch(/CRN requires originalInvoice/);
   });
 
   it("emits Typ=CRN with OrigDocDtls when references are supplied", () => {
@@ -74,9 +77,11 @@ describe("buildIrpPayload — docType CRN", () => {
       originalInvoiceNumber: "ACME-2026-001",
       originalInvoiceDate: new Date(Date.UTC(2026, 0, 15)),
     });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const p = r.payload as Record<string, any>;
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    const p = r.payload as {
+      DocDtls: { Typ: string; No: string };
+      OrigDocDtls?: { No: string; Dt: string };
+    };
     expect(p.DocDtls.Typ).toBe("CRN");
     expect(p.DocDtls.No).toBe("ACME-2026-CN-001");
     expect(p.OrigDocDtls).toEqual({

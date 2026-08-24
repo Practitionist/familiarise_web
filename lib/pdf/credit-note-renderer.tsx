@@ -61,7 +61,9 @@ function formatMoney(paise: number, currency: Currency): string {
 
 function fmt(d: Date | null | undefined): string {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN");
+  // UTC (CR #1234): match the IRP payload's date components — a host west of
+  // UTC would otherwise render a UTC-midnight value as the previous day.
+  return new Date(d).toLocaleDateString("en-IN", { timeZone: "UTC" });
 }
 
 const styles = StyleSheet.create({
@@ -122,7 +124,10 @@ function Kv({ label, value }: { label: string; value: string }) {
 }
 
 export function OrgCreditNoteDocument({ data }: { data: CreditNotePdfData }) {
-  const taxRate =
+  // CR #1234 — a CN spanning multiple rates would render an aggregate ratio
+  // ("11.5%") as if it were a statutory rate. Label it honestly as an
+  // EFFECTIVE rate; per-line statutory breakdowns land with the CN data model.
+  const effectiveTaxRate =
     data.subtotalPaise > 0
       ? ((data.igstPaise + data.cgstPaise + data.sgstPaise) /
           data.subtotalPaise) *
@@ -183,7 +188,8 @@ export function OrgCreditNoteDocument({ data }: { data: CreditNotePdfData }) {
           </View>
           <View style={styles.row}>
             <Text style={styles.colDesc}>
-              Taxable value reduced ({taxRate.toFixed(0)}% rate)
+              Taxable value reduced (effective rate{" "}
+              {effectiveTaxRate.toFixed(2)}%)
             </Text>
             <Text style={styles.colNum}>
               {formatMoney(data.subtotalPaise, data.displayCurrency)}

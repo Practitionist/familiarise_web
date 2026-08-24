@@ -13,14 +13,17 @@ last-reviewed: 2026-08-23
 The RBI's Payment Aggregator/Payment Gateway directions (and the September
 2025 revisions Razorpay began enforcing on Route users with a 31-Dec-2025
 compliance deadline) draw one line that decides whether a platform needs RBI
-authorisation: **does the entity pool money it collects on behalf of
-third-party sellers and settle it onward?** An e-commerce marketplace that
-does so is deemed a PA even if it never calls itself one. This memo records
-how Familiarise's actual money movement classifies against that line, what
-would change the answer, and what must be kept true in contracts and
-accounting so the classification stays valid. It exists because this question
-was raised during the enterprise overhaul (#1230) with no written answer, and
-an unwritten answer cannot survive a due-diligence call or a bank KYC review.
+authorisation: **does the entity accept or handle payments on behalf of
+third-party sellers and transfer or settle those payments onward?** Pooled
+balances are the common shape, not the legal prerequisite — a future direct
+or split-settlement flow would fall inside scope just as fully. An
+e-commerce marketplace doing so is deemed a PA even if it never calls itself
+one. This memo records how Familiarise's actual money movement classifies
+against that line, what would change the answer, and what must be kept true
+in contracts and accounting so the classification stays valid. It exists
+because this question was raised during the enterprise overhaul (#1230) with
+no written answer, and an unwritten answer cannot survive a due-diligence
+call or a bank KYC review.
 
 ## What the code actually does today (verified against dev @ fccda90f)
 
@@ -41,13 +44,24 @@ funds held for onward settlement.
 
 Under the principal model, Familiarise contracts in its own name on both
 sides: it bills buyers (organisations or consumers) as the supplier of record
-— which is why GST tax invoices issue from the platform, why TDS u/s 194-O
-applies to its payouts, and why refund/chargeback liability sits with the
-platform first — and it purchases the consulting services wholesale from its
-consultants, paying them as its own payables through RazorpayX. A principal is
-not an intermediary: no PA authorisation is required, no nodal or escrow
-account structure applies, and the Route eligibility questions never arise
-because Route is not used.
+— which is why GST tax invoices issue from the platform, and why
+refund/chargeback liability sits with the platform first — and it purchases
+the consulting services wholesale from its consultants, paying them as its
+own payables through RazorpayX. A principal is not an intermediary: no PA
+authorisation is required, no nodal or escrow account structure applies, and
+the Route eligibility questions never arise because Route is not used.
+
+One deliberate caveat on the tax sentence above: **withholding on consultant
+payouts is its own classification question and is NOT settled by
+supplier-of-record status.** The consultant rail still runs the legacy 194J
+engine pending a written CA decision to retire it in favour of Section
+194-O (the org rail's e-commerce-operator semantics); until that sign-off
+lands, treat the consultant-path TDS treatment as conditional. Under the
+Income Tax Act 2025 renumbering effective for transactions from 1 April
+2026, the corresponding provisions are §393 (payments to non-residents,
+formerly s.195) and §397 (TDS on e-commerce participants, formerly 194-O) —
+the payment-code mapping for quarterly filings must be recorded against the
+new numbering when the switch is made (#738 tracks the decision).
 
 ## The three conditions that keep this true
 

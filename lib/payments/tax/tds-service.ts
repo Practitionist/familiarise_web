@@ -124,7 +124,9 @@ export function getFYDateRange(fy: string): { start: Date; end: Date } {
   const startYear = parseInt(fy.split("-")[0]);
   return {
     start: new Date(startYear, 3, 1), // April 1
-    end: new Date(startYear + 1, 2, 31, 23, 59, 59), // March 31
+    // EXCLUSIVE end (CR #1234): an inclusive Mar-31 23:59:59 dropped the
+    // final second's timestamps (.001–.999). Consumers must use `lt`.
+    end: new Date(startYear + 1, 3, 1),
   };
 }
 
@@ -147,7 +149,7 @@ export async function getCurrentFYCumulativePayments(
     where: {
       consultantProfileId,
       status: "COMPLETED",
-      processedAt: { gte: start, lte: end },
+      processedAt: { gte: start, lt: end },
     },
     _sum: { amount: true },
   });

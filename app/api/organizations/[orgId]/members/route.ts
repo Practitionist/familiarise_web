@@ -351,7 +351,7 @@ export async function POST(
       // with an erasure run. Throws IllegalTransitionError (409) on loss.
       await transitionMembership(tx, {
         to: "ACTIVE",
-        where: { id: existing.id },
+        where: { id: existing.id, organizationId: orgId },
         data: {
           role,
           departmentLabel: departmentLabel ?? null,

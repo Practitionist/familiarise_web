@@ -106,17 +106,14 @@ export async function POST(
     // are refused explicitly above).
   });
   if (access.error) return access.error;
-  if (
-    access.org.status === "SUSPENDED" ||
-    access.org.status === "DEACTIVATED"
-  ) {
+  // SUSPENDED-only: requireOrgAccess already answers 403 for DEACTIVATED
+  // before this handler ever sees `access` (CR #1234 — the deactivated arm
+  // here was unreachable dead code).
+  if (access.org.status === "SUSPENDED") {
     return NextResponse.json(
       {
         error: "ORG_NOT_ACTIVE",
-        message:
-          access.org.status === "SUSPENDED"
-            ? "Invitations are paused while the organization is suspended."
-            : "This organization has been deactivated.",
+        message: "Invitations are paused while the organization is suspended.",
         status: access.org.status,
       },
       { status: 409 },

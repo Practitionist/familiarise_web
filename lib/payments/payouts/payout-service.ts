@@ -773,11 +773,11 @@ async function processSinglePayout(payout: {
           consultantProfileId: payout.consultantProfileId,
           payoutId: { not: payout.id },
           OR: [
-            { status: EarningStatus.PAID, paidAt: { gte: start, lte: end } },
+            { status: EarningStatus.PAID, paidAt: { gte: start, lt: end } },
             {
               status: EarningStatus.BATCHED,
               payout: {
-                createdAt: { gte: start, lte: end },
+                createdAt: { gte: start, lt: end },
                 status: {
                   notIn: [
                     PayoutStatus.FAILED,
@@ -1205,7 +1205,7 @@ export async function handlePayoutWebhook(
         where: {
           consultantProfileId: payout.consultantProfileId,
           status: PayoutStatus.COMPLETED,
-          processedAt: { gte: start, lte: end },
+          processedAt: { gte: start, lt: end },
           id: { not: payout.id },
         },
         _sum: { amount: true },

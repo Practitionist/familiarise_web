@@ -26,7 +26,17 @@ function setLut(number: string | null, validTill: string | null) {
 
 afterEach(() => {
   setLut(null, null);
+  // CR #1234 — the valid-LUT fixtures hard-code a FY2026-27 LUT; without a
+  // frozen clock they start failing on 2027-04-01 when production's
+  // new Date() outlives the fixture.
+  jest.useRealTimers();
 });
+
+/** Pin "now" inside the fixture LUT's validity window for time-sensitive tests. */
+function freezeInsideLutWindow() {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2027-03-31T12:00:00Z"));
+}
 
 describe("readPlatformLut / hasValidPlatformLut", () => {
   it("absent env ⇒ not present, not valid (fail-closed)", () => {
@@ -43,16 +53,23 @@ describe("readPlatformLut / hasValidPlatformLut", () => {
     expect(s.valid).toBe(false);
   });
 
-  it("validity date is inclusive through end-of-day", () => {
+  it("validity date is inclusive through INDIAN end-of-day (CR #1234)", () => {
     setLut("LUT/2627", "2027-03-31");
-    // Last instant of the FY is covered...
-    expect(
-      hasValidPlatformLut(new Date("2027-03-31T12:00:00Z")),
-    ).toBe(true);
-    // ...the first instant after it is not.
-    expect(
-      hasValidPlatformLut(new Date("2027-04-01T00:00:00Z")),
-    ).toBe(false);
+    freezeInsideLutWindow();
+    // Last IST instant of the FY = 2027-03-31T18:29:59.999Z — covered...
+    expect(hasValidPlatformLut(new Date("2027-03-31T18:29:59.999Z"))).toBe(
+      true,
+    );
+    // ...and the first instant of April 1 IST (= 18:30:00Z) is not.
+    expect(hasValidPlatformLut(new Date("2027-03-31T18:30:00Z"))).toBe(false);
+  });
+
+  it("rejects non-calendar-date values instead of guessing", () => {
+    setLut("LUT/2627", "not-a-date");
+    freezeInsideLutWindow();
+    const s = readPlatformLut(new Date("2027-03-31T12:00:00Z"));
+    expect(s.present).toBe(false);
+    expect(s.valid).toBe(false);
   });
 });
 
@@ -76,6 +93,7 @@ describe("deriveGstBreakdown export branch", () => {
   });
 
   it("valid LUT ⇒ zero-rated exactly as before", () => {
+    freezeInsideLutWindow();
     setLut("LUT/2627", "2027-03-31");
     const r = deriveGstBreakdown(base);
     expect(r.reason).toBe("ZERO_RATED_EXPORT");
@@ -103,6 +121,7 @@ describe("determineTax export branch (checkout parity)", () => {
   });
 
   it("valid LUT ⇒ zero-rated export", () => {
+    freezeInsideLutWindow();
     setLut("LUT/2627", "2027-03-31");
     const r = determineTax({ baseAmountPaise: 100_000, buyerCountry: "GB" });
     expect(r.isZeroRated).toBe(true);

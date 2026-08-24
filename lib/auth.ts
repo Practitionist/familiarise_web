@@ -25,6 +25,7 @@ import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-sessio
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 
@@ -551,19 +552,12 @@ export const auth = betterAuth({
         // past UNVERIFIED_ORG_SEAT_CAP. Skips are logged so ops can see an
         // IdP that is out of sync with the platform's lifecycle state.
         const orgStatus = bm.organization.status;
-        const skipAutoJoin =
-          orgStatus === "SUSPENDED" ||
-          orgStatus === "DEACTIVATED" ||
-          (orgStatus === "PENDING_VERIFICATION" &&
-            (await prisma.membership.count({
-              where: { organizationId: bm.organizationId, status: "ACTIVE" },
-            })) >= UNVERIFIED_ORG_SEAT_CAP);
-        if (skipAutoJoin) {
+        if (orgStatus === "SUSPENDED" || orgStatus === "DEACTIVATED") {
           void recordSystemEvent({
             organizationId: bm.organizationId,
             category: "SSO",
             severity: "WARN",
-            message: `JIT auto-join skipped: organization is ${orgStatus} and the seat/cap gate refused membership creation for user ${user.id}`,
+            message: `JIT auto-join skipped: organization is ${orgStatus} and the lifecycle gate refused membership creation for user ${user.id}`,
             context: {
               userId: user.id,
               betterAuthMemberId: bm.id,
@@ -578,27 +572,66 @@ export const auth = betterAuth({
           // transaction so the lazy-created profile (LEARNER →
           // ConsulteeProfile, EXPERT → ConsultantProfile) and the
           // Membership row commit atomically.
-          await prisma.$transaction(async (tx) => {
-            const roleEffects = await applyMembershipRoleEffects(tx, {
-              userId: user.id,
-              role: defaultRole,
-              // Pre-fetched at the top of customSession to avoid an
-              // N+1 across the bareMembers loop. Audit Phase B.7.
-              preloadedProfiles,
-            });
-            await tx.membership.create({
-              data: {
+          //
+          // CR #1234 — seat admission is now ATOMIC: for unverified orgs the
+          // active-seat count runs in the SAME Serializable transaction as
+          // the create, so two concurrent JIT sessions can no longer both
+          // observe sub-cap counts and overshoot UNVERIFIED_ORG_SEAT_CAP.
+          // Conflicts retry via the house helper; a persistent abort skips
+          // this join (the next session load repairs it — bareMembers only
+          // lists unrepaired rows).
+          const result = await withSerializableRetry(() =>
+            prisma.$transaction(
+              async (tx): Promise<{ skipped: boolean }> => {
+                if (orgStatus === "PENDING_VERIFICATION") {
+                  const activeMembers = await tx.membership.count({
+                    where: {
+                      organizationId: bm.organizationId,
+                      status: "ACTIVE",
+                    },
+                  });
+                  if (activeMembers >= UNVERIFIED_ORG_SEAT_CAP) {
+                    return { skipped: true };
+                  }
+                }
+                const roleEffects = await applyMembershipRoleEffects(tx, {
+                  userId: user.id,
+                  role: defaultRole,
+                  // Pre-fetched at the top of customSession to avoid an
+                  // N+1 across the bareMembers loop. Audit Phase B.7.
+                  preloadedProfiles,
+                });
+                await tx.membership.create({
+                  data: {
+                    userId: user.id,
+                    organizationId: bm.organizationId,
+                    role: defaultRole,
+                    status: "ACTIVE",
+                    consulteeProfileId: roleEffects.consulteeProfileId,
+                    consultantProfileId: roleEffects.consultantProfileId,
+                    payoutRecipient: roleEffects.payoutRecipient,
+                    betterAuthMemberId: bm.id,
+                  },
+                });
+                return { skipped: false };
+              },
+              { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+            ),
+          );
+          if (result.skipped) {
+            void recordSystemEvent({
+              organizationId: bm.organizationId,
+              category: "SSO",
+              severity: "WARN",
+              message: `JIT auto-join skipped: organization is ${orgStatus} and the seat/cap gate refused membership creation for user ${user.id}`,
+              context: {
                 userId: user.id,
-                organizationId: bm.organizationId,
-                role: defaultRole,
-                status: "ACTIVE",
-                consulteeProfileId: roleEffects.consulteeProfileId,
-                consultantProfileId: roleEffects.consultantProfileId,
-                payoutRecipient: roleEffects.payoutRecipient,
                 betterAuthMemberId: bm.id,
+                organizationStatus: orgStatus,
               },
             });
-          });
+            continue;
+          }
         } catch (err) {
           // Narrow to P2002 (unique-constraint violation) ONLY. The
           // prior bare `catch {}` swallowed every error during the JIT

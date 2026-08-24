@@ -35,12 +35,18 @@ export function readPlatformLut(now: Date = new Date()): PlatformLutStatus {
   const number = process.env[PLATFORM_LUT_NUMBER_ENV]?.trim() || null;
   const rawTill = process.env[PLATFORM_LUT_VALID_TILL_ENV]?.trim() || null;
 
-  // End-of-day inclusive: a LUT valid through 2027-03-31 covers supplies ON
-  // the 31st, which a bare midnight comparison would exclude.
+  // The inclusive end-of-day is INDIAN: a LUT "valid till 2027-03-31" covers
+  // supplies made anywhere in IST on March 31, i.e. through
+  // 2027-03-31T18:29:59.999Z. A UTC-midnight comparison let it lapse five and
+  // a half hours early — the mirror image of the classic renewal trap.
+  // Strict calendar-date parse: anything that isn't YYYY-MM-DD is treated as
+  // unconfigured rather than guessed at.
   let validTill: Date | null = null;
-  if (rawTill) {
-    const parsed = new Date(`${rawTill}T23:59:59.999Z`);
-    if (!Number.isNaN(parsed.getTime())) validTill = parsed;
+  if (rawTill && /^\d{4}-\d{2}-\d{2}$/.test(rawTill)) {
+    const dayEndUtc = new Date(`${rawTill}T00:00:00.000Z`);
+    if (!Number.isNaN(dayEndUtc.getTime())) {
+      validTill = new Date(dayEndUtc.getTime() + (18 * 60 + 30) * 60 * 1000 - 1);
+    }
   }
 
   const present = !!number && !!validTill;

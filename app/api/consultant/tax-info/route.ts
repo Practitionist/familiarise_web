@@ -181,6 +181,18 @@ export async function PUT(req: NextRequest) {
       });
     }
 
+    // Echo the PERSISTED declaration, not the request body (CR #1234): a
+    // taxEntityType-only PUT previously answered null for MSME fields that
+    // were in fact set, and the agreement flag was never returned.
+    const profileAfter = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfile.id },
+      select: {
+        msmeStatus: true,
+        udyamNumber: true,
+        writtenAgreementWithFamiliarise: true,
+      },
+    });
+
     return NextResponse.json({
       message: "Tax info updated",
       panMasked: taxInfo.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
@@ -189,8 +201,9 @@ export async function PUT(req: NextRequest) {
       gstinVerified: taxInfo.gstinVerified,
       country: taxInfo.country,
       taxEntityType: taxInfo.taxEntityType ?? null,
-      msmeStatus: validated.msmeStatus ?? null,
-      udyamNumber: validated.udyamNumber ?? null,
+      msmeStatus: profileAfter?.msmeStatus ?? null,
+      udyamNumber: profileAfter?.udyamNumber ?? null,
+      msmeWrittenAgreement: profileAfter?.writtenAgreementWithFamiliarise ?? false,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

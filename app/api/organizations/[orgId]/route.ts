@@ -718,6 +718,17 @@ export async function DELETE(
         typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
+    // CR #1234 — exhausted Serializable retries surface as a raw P2034
+    // throw; the PATCH handler maps the same case to a retryable 503.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2034"
+    ) {
+      return NextResponse.json(
+        { error: "Transaction conflict — please retry", code: "P2034" },
+        { status: 503 },
+      );
+    }
     throw err;
   }
 }

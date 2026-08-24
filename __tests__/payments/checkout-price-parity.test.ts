@@ -226,12 +226,16 @@ describe("checkout price parity — the edges that actually move money", () => {
   it("zero-rates an international buyer on both sides (valid platform LUT)", () => {
     // #1230 — zero-rating now requires a current-FY LUT; this pin covers the
     // WITH-LUT half of the gate (the no-LUT half is the fail-closed default
-    // asserted by the international fixtures above).
+    // asserted by the international fixtures above). Clock frozen inside the
+    // fixture window (CR #1234).
     process.env.PLATFORM_LUT_NUMBER = "LUT/2627";
     process.env.PLATFORM_LUT_VALID_TILL = "2027-03-31";
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2027-03-31T12:00:00Z"));
     const input: ServerInputs = { basePaise: 500000, buyerCountry: "DE" };
     expect(serverAmount(input).taxPaise).toBe(0);
     expect(clientAmount(input).taxPaise).toBe(0);
+    jest.useRealTimers();
     delete process.env.PLATFORM_LUT_NUMBER;
     delete process.env.PLATFORM_LUT_VALID_TILL;
   });
