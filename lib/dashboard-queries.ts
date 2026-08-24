@@ -347,7 +347,10 @@ export function createUserQueries(userId: string) {
  * Returns a cancel function so callers (hooks with teardown) can retract the
  * callback if they unmount before the idle slot fires.
  */
-export function schedulePrefetch(callback: () => void, timeout = 2000): () => void {
+export function schedulePrefetch(
+  callback: () => void,
+  timeout = 2000,
+): () => void {
   if (typeof window !== "undefined" && "requestIdleCallback" in window) {
     const handle = window.requestIdleCallback(callback, { timeout });
     return () => window.cancelIdleCallback?.(handle);

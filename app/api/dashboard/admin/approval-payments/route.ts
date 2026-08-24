@@ -240,7 +240,8 @@ export async function GET() {
             "Unknown Consultant",
           consultantEmail:
             trial.subscriptionPlan?.consultantProfile?.user?.email || "",
-          consulteeName: trial.consulteeProfile?.user?.name || "Unknown Consultee",
+          consulteeName:
+            trial.consulteeProfile?.user?.name || "Unknown Consultee",
           consulteeEmail: trial.consulteeProfile?.user?.email || "",
           amount: Number(trial.subscriptionPlan?.trialPriceInPaise ?? 0),
           currency: trial.subscriptionPlan?.priceCurrency || "INR",
@@ -277,7 +278,10 @@ export async function GET() {
       ).length,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching approval payments:", error);
     return NextResponse.json(
       {

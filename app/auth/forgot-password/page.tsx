@@ -56,7 +56,10 @@ export default function ForgotPassword() {
         toast({ title: "Request Sent", description: successMessage });
       }
     } catch (error: unknown) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth" } },
+      );
       console.error("Forgot password error:", error);
       const errorMessage =
         error instanceof Error

@@ -120,7 +120,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] credit_purchase ${walletEntryOrderId} notes.amountPaise=${paise} ≠ gatewayAmount=${gatewayAmountPaise}. Skipping wallet credit.`,
       );
       if (organizationId) {
-        prisma.orgAuditLog
+        await prisma.orgAuditLog
           .create({
             data: {
               organizationId,
@@ -155,7 +155,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] credit_purchase confirmed=${result.confirmed} order=${walletEntryOrderId} org=${organizationId ?? "?"} balanceAfter=${result.balanceAfter ?? "?"}`,
       );
       if (organizationId && result.confirmed) {
-        prisma.orgAuditLog
+        await prisma.orgAuditLog
           .create({
             data: {
               organizationId,
@@ -243,7 +243,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] invoice_payment ${invoiceId} totalPaise=${invoiceRow.totalPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
       );
       if (organizationId) {
-        prisma.orgAuditLog
+        await prisma.orgAuditLog
           .create({
             data: {
               organizationId,
@@ -356,7 +356,7 @@ export async function handleOrgPaymentSuccess(
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
     if (resolvedOrgId) {
-      prisma.orgAuditLog
+      await prisma.orgAuditLog
         .create({
           data: {
             organizationId: resolvedOrgId,
@@ -450,7 +450,7 @@ export async function handleOrgPaymentFailure(
       `[Webhook] credit_purchase.failed placeholder deleted (count=${deleted.count}) order=${walletEntryOrderId}`,
     );
     if (organizationId && deleted.count > 0) {
-      prisma.orgAuditLog
+      await prisma.orgAuditLog
         .create({
           data: {
             organizationId,
@@ -491,7 +491,7 @@ export async function handleOrgPaymentFailure(
       `[Webhook] invoice_payment.failed cleared provider order id for invoice ${invoiceId}`,
     );
     if (organizationId) {
-      prisma.orgAuditLog
+      await prisma.orgAuditLog
         .create({
           data: {
             organizationId,
@@ -515,7 +515,6 @@ export async function handleOrgPaymentFailure(
     }
   }
 }
-
 
 // #1134 P1-2 — these three moved to lib/webhooks/event-log.ts so lib/ code (the
 // Stream dispatch, which the stuck-event sweeper drives) can use them without
@@ -627,524 +626,534 @@ export async function handleRefundCreated(
   return await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-    // Find the payment (B2C appointment path)
-    const payment = await tx.payment.findUnique({
-      where: { paymentIntent: paymentIntentId },
-    });
+        // Find the payment (B2C appointment path)
+        const payment = await tx.payment.findUnique({
+          where: { paymentIntent: paymentIntentId },
+        });
 
-    if (!payment) {
-      // Fall through to enterprise branches. We need the original
-      // provider payment id (`pay_<…>`) to look up org-level rows.
-      if (!providerPaymentId) {
-        console.warn(
-          `Payment not found for refund ${refundId} and no providerPaymentId supplied; cannot dispatch org-level refund`,
-        );
-        return;
-      }
-
-      // --- Enterprise wallet top-up refund ---
-      const topUp = await tx.walletTopUp.findFirst({
-        where: { providerPaymentId, status: "CONFIRMED" },
-        select: {
-          id: true,
-          billingAccountId: true,
-          amountPaise: true,
-          providerOrderId: true,
-        },
-      });
-      if (topUp) {
-        const mapped = mapGatewayRefundStatus(status);
-        if (mapped === "SUCCEEDED") {
-          // Clamp: cannot refund more than was credited to this wallet.
-          const refundAmt = Math.min(amount, topUp.amountPaise);
-          const acct = await tx.billingAccount.findUniqueOrThrow({
-            where: { id: topUp.billingAccountId },
-            select: { currency: true, ownerOrgId: true },
-          });
-          // Reverse the top-up's double-entry: Dr WALLET / Cr CASH. The
-          // wallet liability we owe the org shrinks; platform cash returns
-          // to the gateway. postLedgerTxn is idempotent on idempotencyKey,
-          // so a webhook redelivery (or two racing workers) is a no-op —
-          // this replaces the old "already booked?" WalletEntry probe.
-          //
-          // Keyed on the GATEWAY REFUND id, not the payment: Razorpay allows
-          // N partial refunds per payment, and a payment-scoped key made the
-          // second partial refund a silent no-op — real cash left via the
-          // gateway with no WALLET debit and no receivable (platform loss).
-          const posted = await postLedgerTxn(tx, {
-            idempotencyKey: `topup-refund:${refundId}`,
-            kind: "TOPUP_REFUND",
-            description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
-            // #783 — ledger is INR-only; never key accounts by acct.currency.
-            // Must mirror the INR-keyed top-up posting (lib/api/organizations/
-            // wallet.ts) so the refund reversal nets against the same account.
-            postings: [
-              {
-                account: {
-                  kind: "WALLET",
-                  organizationId: acct.ownerOrgId,
-                },
-                direction: "DEBIT",
-                amountPaise: refundAmt,
-              },
-              {
-                account: { kind: "CASH" },
-                direction: "CREDIT",
-                amountPaise: refundAmt,
-              },
-            ],
-          });
-          if (!posted.created) {
-            console.log(
-              `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
+        if (!payment) {
+          // Fall through to enterprise branches. We need the original
+          // provider payment id (`pay_<…>`) to look up org-level rows.
+          if (!providerPaymentId) {
+            console.warn(
+              `Payment not found for refund ${refundId} and no providerPaymentId supplied; cannot dispatch org-level refund`,
             );
             return;
           }
-          // Decrement the cached wallet balance to match the journal. This
-          // can drive the balance negative if the org already spent the
-          // credited funds — that is a real reconcile signal (the org owes
-          // back more than it holds), not an error to swallow here.
-          //
-          // Intentionally NOT inserting a `Refund` row for org-level
-          // refunds: Refund.paymentId is NOT NULL and is scoped to the B2C
-          // `Payment` table. The TOPUP_REFUND journal transaction
-          // (idempotencyKey topup-refund:<gateway refund id>) is the
-          // authoritative record; reconcile jobs index on it.
-          // #1093 §2 (decision 2026-08-13) — the wallet floor WINS. The old
-          // unconditional decrement could drive walletBalance below zero when
-          // the org had already spent the credited funds, which the
-          // billing_account_wallet_nonnegative CHECK rejects — rolling this
-          // webhook back and redelivering it into the same failure forever.
-          // Claw back only what the wallet still holds; the shortfall books
-          // as an ORG_RECEIVABLE posting (the org owes the platform), which
-          // reconciliation actually consumes — a negative cached balance is a
-          // signal nothing reads.
-          const account = await tx.billingAccount.findUniqueOrThrow({
-            where: { id: topUp.billingAccountId },
-            select: { walletBalance: true, ownerOrgId: true },
-          });
-          const balancePaise = Number(account.walletBalance ?? 0);
-          const desiredClawbackPaise = Math.min(
-            Math.max(balancePaise, 0),
-            refundAmt,
-          );
-          // Conditional decrement, not read-modify-write: under contention
-          // the balance may have moved below our snapshot. If the guard
-          // misses, treat the whole refund as shortfall (receivable) rather
-          // than relying on the nonnegative CHECK to abort the tx.
-          let clawbackPaise = desiredClawbackPaise;
-          if (desiredClawbackPaise > 0) {
-            const decremented = await tx.billingAccount.updateMany({
-              where: {
-                id: topUp.billingAccountId,
-                walletBalance: { gte: desiredClawbackPaise },
-              },
-              data: { walletBalance: { decrement: desiredClawbackPaise } },
-            });
-            if (decremented.count === 0) {
-              clawbackPaise = 0;
-            }
-          }
-          const shortfallPaise = refundAmt - clawbackPaise;
-          if (shortfallPaise > 0 && account.ownerOrgId) {
-            await postLedgerTxn(tx, {
-              idempotencyKey: `topup-refund-shortfall:${refundId}`,
-              kind: "TOPUP_REFUND",
-              description:
-                "Top-up refunded after the credited funds were spent — unrecovered portion receivable from the org",
-              postings: [
-                {
-                  account: {
-                    kind: "ORG_RECEIVABLE",
-                    organizationId: account.ownerOrgId,
-                  },
-                  direction: "DEBIT",
-                  amountPaise: shortfallPaise,
-                },
-                {
-                  account: {
-                    kind: "WALLET",
-                    organizationId: account.ownerOrgId,
-                  },
-                  direction: "CREDIT",
-                  amountPaise: shortfallPaise,
-                },
-              ],
-            });
-          }
-          const shortfallNote =
-            shortfallPaise > 0
-              ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE`
-              : "";
-          console.log(
-            `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallNote}`,
-          );
-        }
-        return;
-      }
 
-      // --- Enterprise invoice refund ---
-      const invoice = await tx.organizationInvoice.findFirst({
-        where: { providerPaymentId },
-        select: {
-          id: true,
-          organizationId: true,
-          invoiceNumber: true,
-          totalPaise: true,
-          status: true,
-        },
-      });
-        if (invoice) {
-          const mapped = mapGatewayRefundStatus(status);
-          if (mapped === "SUCCEEDED") {
-            // Per-refund idempotency — keyed on the LEDGER JOURNAL, not the
-            // credit note. The journal (`invoice-refund:<refundId>`) is the
-            // one write that happens for EVERY booked refund, while
-            // mintInvoiceRefundCreditNote legitimately returns null for DRAFT/
-            // unissued invoices — a CN-only probe let redeliveries of those
-            // re-run the audit log and (pre-#1128-fix) double the wallet
-            // credit. postLedgerTxn's own idempotency stays as the second
-            // layer; this probe just short-circuits before any side effects.
-            // (The old invoice-status guard collapsed distinct refunds: the
-            // first partial flipped the invoice REFUNDED and every later
-            // partial was skipped wholesale — real cash left via the gateway
-            // with no credit note, no wallet credit, no journal.)
-            const alreadyBooked = await tx.ledgerTransaction.findUnique({
-              where: { idempotencyKey: `invoice-refund:${refundId}` },
-              select: { id: true },
-            });
-            if (alreadyBooked) {
+          // --- Enterprise wallet top-up refund ---
+          const topUp = await tx.walletTopUp.findFirst({
+            where: { providerPaymentId, status: "CONFIRMED" },
+            select: {
+              id: true,
+              billingAccountId: true,
+              amountPaise: true,
+              providerOrderId: true,
+            },
+          });
+          if (topUp) {
+            const mapped = mapGatewayRefundStatus(status);
+            if (mapped === "SUCCEEDED") {
+              // Clamp: cannot refund more than was credited to this wallet.
+              const refundAmt = Math.min(amount, topUp.amountPaise);
+              const acct = await tx.billingAccount.findUniqueOrThrow({
+                where: { id: topUp.billingAccountId },
+                select: { currency: true, ownerOrgId: true },
+              });
+              // Reverse the top-up's double-entry: Dr WALLET / Cr CASH. The
+              // wallet liability we owe the org shrinks; platform cash returns
+              // to the gateway. postLedgerTxn is idempotent on idempotencyKey,
+              // so a webhook redelivery (or two racing workers) is a no-op —
+              // this replaces the old "already booked?" WalletEntry probe.
+              //
+              // Keyed on the GATEWAY REFUND id, not the payment: Razorpay allows
+              // N partial refunds per payment, and a payment-scoped key made the
+              // second partial refund a silent no-op — real cash left via the
+              // gateway with no WALLET debit and no receivable (platform loss).
+              const posted = await postLedgerTxn(tx, {
+                idempotencyKey: `topup-refund:${refundId}`,
+                kind: "TOPUP_REFUND",
+                description: `Refund for top-up ${topUp.providerOrderId} (gateway refund ${refundId})`,
+                // #783 — ledger is INR-only; never key accounts by acct.currency.
+                // Must mirror the INR-keyed top-up posting (lib/api/organizations/
+                // wallet.ts) so the refund reversal nets against the same account.
+                postings: [
+                  {
+                    account: {
+                      kind: "WALLET",
+                      organizationId: acct.ownerOrgId,
+                    },
+                    direction: "DEBIT",
+                    amountPaise: refundAmt,
+                  },
+                  {
+                    account: { kind: "CASH" },
+                    direction: "CREDIT",
+                    amountPaise: refundAmt,
+                  },
+                ],
+              });
+              if (!posted.created) {
+                console.log(
+                  `💸 Top-up refund already booked for payment ${providerPaymentId}, skipping`,
+                );
+                return;
+              }
+              // Decrement the cached wallet balance to match the journal. This
+              // can drive the balance negative if the org already spent the
+              // credited funds — that is a real reconcile signal (the org owes
+              // back more than it holds), not an error to swallow here.
+              //
+              // Intentionally NOT inserting a `Refund` row for org-level
+              // refunds: Refund.paymentId is NOT NULL and is scoped to the B2C
+              // `Payment` table. The TOPUP_REFUND journal transaction
+              // (idempotencyKey topup-refund:<gateway refund id>) is the
+              // authoritative record; reconcile jobs index on it.
+              // #1093 §2 (decision 2026-08-13) — the wallet floor WINS. The old
+              // unconditional decrement could drive walletBalance below zero when
+              // the org had already spent the credited funds, which the
+              // billing_account_wallet_nonnegative CHECK rejects — rolling this
+              // webhook back and redelivering it into the same failure forever.
+              // Claw back only what the wallet still holds; the shortfall books
+              // as an ORG_RECEIVABLE posting (the org owes the platform), which
+              // reconciliation actually consumes — a negative cached balance is a
+              // signal nothing reads.
+              const account = await tx.billingAccount.findUniqueOrThrow({
+                where: { id: topUp.billingAccountId },
+                select: { walletBalance: true, ownerOrgId: true },
+              });
+              const balancePaise = Number(account.walletBalance ?? 0);
+              const desiredClawbackPaise = Math.min(
+                Math.max(balancePaise, 0),
+                refundAmt,
+              );
+              // Conditional decrement, not read-modify-write: under contention
+              // the balance may have moved below our snapshot. If the guard
+              // misses, treat the whole refund as shortfall (receivable) rather
+              // than relying on the nonnegative CHECK to abort the tx.
+              let clawbackPaise = desiredClawbackPaise;
+              if (desiredClawbackPaise > 0) {
+                const decremented = await tx.billingAccount.updateMany({
+                  where: {
+                    id: topUp.billingAccountId,
+                    walletBalance: { gte: desiredClawbackPaise },
+                  },
+                  data: { walletBalance: { decrement: desiredClawbackPaise } },
+                });
+                if (decremented.count === 0) {
+                  clawbackPaise = 0;
+                }
+              }
+              const shortfallPaise = refundAmt - clawbackPaise;
+              if (shortfallPaise > 0 && account.ownerOrgId) {
+                await postLedgerTxn(tx, {
+                  idempotencyKey: `topup-refund-shortfall:${refundId}`,
+                  kind: "TOPUP_REFUND",
+                  description:
+                    "Top-up refunded after the credited funds were spent — unrecovered portion receivable from the org",
+                  postings: [
+                    {
+                      account: {
+                        kind: "ORG_RECEIVABLE",
+                        organizationId: account.ownerOrgId,
+                      },
+                      direction: "DEBIT",
+                      amountPaise: shortfallPaise,
+                    },
+                    {
+                      account: {
+                        kind: "WALLET",
+                        organizationId: account.ownerOrgId,
+                      },
+                      direction: "CREDIT",
+                      amountPaise: shortfallPaise,
+                    },
+                  ],
+                });
+              }
+              const shortfallNote =
+                shortfallPaise > 0
+                  ? `; ${shortfallPaise} paise booked as ORG_RECEIVABLE`
+                  : "";
               console.log(
-                `💸 Invoice refund ${refundId} already booked, skipping`,
+                `💸 Top-up refund ${refundId} booked: -${clawbackPaise} paise on billingAccount ${topUp.billingAccountId}${shortfallNote}`,
+              );
+            }
+            return;
+          }
+
+          // --- Enterprise invoice refund ---
+          const invoice = await tx.organizationInvoice.findFirst({
+            where: { providerPaymentId },
+            select: {
+              id: true,
+              organizationId: true,
+              invoiceNumber: true,
+              totalPaise: true,
+              status: true,
+            },
+          });
+          if (invoice) {
+            const mapped = mapGatewayRefundStatus(status);
+            if (mapped === "SUCCEEDED") {
+              // Per-refund idempotency — keyed on the LEDGER JOURNAL, not the
+              // credit note. The journal (`invoice-refund:<refundId>`) is the
+              // one write that happens for EVERY booked refund, while
+              // mintInvoiceRefundCreditNote legitimately returns null for DRAFT/
+              // unissued invoices — a CN-only probe let redeliveries of those
+              // re-run the audit log and (pre-#1128-fix) double the wallet
+              // credit. postLedgerTxn's own idempotency stays as the second
+              // layer; this probe just short-circuits before any side effects.
+              // (The old invoice-status guard collapsed distinct refunds: the
+              // first partial flipped the invoice REFUNDED and every later
+              // partial was skipped wholesale — real cash left via the gateway
+              // with no credit note, no wallet credit, no journal.)
+              const alreadyBooked = await tx.ledgerTransaction.findUnique({
+                where: { idempotencyKey: `invoice-refund:${refundId}` },
+                select: { id: true },
+              });
+              if (alreadyBooked) {
+                console.log(
+                  `💸 Invoice refund ${refundId} already booked, skipping`,
+                );
+                return;
+              }
+
+              // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
+              // refunded invoice. One per gateway refund, idempotent on refundId.
+              await mintInvoiceRefundCreditNote(tx, {
+                invoiceId: invoice.id,
+                refundId,
+                amountPaise: amount,
+                reason: `Invoice ${invoice.invoiceNumber} refund`,
+              });
+
+              // Flip to REFUNDED only once cumulative credit notes cover the
+              // invoice total; partial refunds keep it PAID.
+              const creditNoteAgg = await tx.creditNote.aggregate({
+                where: { invoiceId: invoice.id },
+                _sum: { totalPaise: true },
+              });
+              const refundedTotalPaise = sumPaise(
+                creditNoteAgg._sum.totalPaise,
+              );
+              if (
+                refundedTotalPaise >= invoice.totalPaise &&
+                invoice.status !== "REFUNDED"
+              ) {
+                await tx.organizationInvoice.update({
+                  where: { id: invoice.id },
+                  data: { status: "REFUNDED" },
+                });
+              }
+              // NOTE: Booking-level utilization reversal is keyed on
+              // individual Payment ids (BookingUtilization.paymentId @unique),
+              // not on the invoice. Invoices that roll up many bookings do
+              // not have a single paymentId to feed `reverseBookingUtilization`
+              // — a follow-up phase (after the invoice-line-item schema lands)
+              // will iterate over linked line-items and reverse each one
+              // individually. For now, the balanced reversal journal below plus
+              // the INVOICE_REFUNDED audit log is the guaranteed bookkeeping;
+              // the operator runbook calls out bookings that may need manual
+              // reversal.
+              await tx.orgAuditLog
+                .create({
+                  data: {
+                    organizationId: invoice.organizationId,
+                    actorMembershipId: null,
+                    category: "INVOICE",
+                    action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
+                    description: `Invoice ${invoice.invoiceNumber} refunded (${refundId}, ${amount} ${currency})`,
+                    details: {
+                      invoiceId: invoice.id,
+                      refundId,
+                      amount,
+                      currency,
+                      providerPaymentId,
+                    },
+                  },
+                })
+                .catch((err) =>
+                  console.error(
+                    `⚠️ Failed to write INVOICE_REFUNDED audit log:`,
+                    err,
+                  ),
+                );
+              // Balanced reversal journal — mirrors `invoicepaid:<invoiceId>`
+              // (Dr CASH / Cr ORG_RECEIVABLE) with the credit side routed to
+              // wherever the value went: back to CASH when the gateway returns
+              // the money, or to the org's WALLET when the refund is granted as
+              // in-app credit (fundingSource WALLET). Before this posting the
+              // wallet credit was a bare cache increment with NO journal entry —
+              // guaranteed WALLET_BALANCE_DRIFT at reconcile (auto-freezing the
+              // wallet) while the platform books never recorded the refund.
+              //
+              // Still not rethrown on failure, and that is deliberate: the
+              // dispatcher stamps error=true on a throw and the stuck-event
+              // sweeper only re-drives error=null, so rethrowing would roll back
+              // the whole refund booking AND retire the event permanently. On
+              // failure NEITHER the journal NOR the cache credit is written, so
+              // cache and journal stay consistent (refund unbooked, paged
+              // loudly). #1128 tracks making this durable.
+              try {
+                const ba = await tx.billingAccount.findFirst({
+                  where: { ownerOrgId: invoice.organizationId },
+                  select: { id: true, fundingSource: true },
+                });
+                const creditAsWallet =
+                  !!ba &&
+                  ba.fundingSource === "WALLET" &&
+                  !!invoice.organizationId;
+                await postLedgerTxn(tx, {
+                  idempotencyKey: `invoice-refund:${refundId}`,
+                  kind: "INVOICE_REFUND",
+                  invoiceId: invoice.id,
+                  description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
+                  postings: [
+                    {
+                      account: {
+                        kind: "ORG_RECEIVABLE",
+                        organizationId: invoice.organizationId,
+                      },
+                      direction: "DEBIT",
+                      amountPaise: amount,
+                    },
+                    creditAsWallet
+                      ? {
+                          account: {
+                            kind: "WALLET",
+                            organizationId: invoice.organizationId,
+                          },
+                          direction: "CREDIT",
+                          amountPaise: amount,
+                        }
+                      : {
+                          account: { kind: "CASH" },
+                          direction: "CREDIT",
+                          amountPaise: amount,
+                        },
+                  ],
+                });
+                if (creditAsWallet && ba) {
+                  // Cache mirror of the Cr WALLET leg above — written only after
+                  // the journal succeeded so the two can never diverge here.
+                  await walletCredit(tx, {
+                    billingAccountId: ba.id,
+                    amountPaise: amount,
+                    reason: "REFUND",
+                    providerPaymentId,
+                    notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
+                  });
+                }
+              } catch (err) {
+                reportSentryError(err, {
+                  subsystem: "enterprise",
+                  op: "handleRefundCreated.walletCredit",
+                  extra: {
+                    refundId,
+                    invoiceId: invoice.id,
+                    organizationId: invoice.organizationId,
+                    amountPaise: amount,
+                    providerPaymentId,
+                  },
+                });
+                console.warn(
+                  `⚠️ Wallet credit for invoice refund ${refundId} FAILED — org not credited:`,
+                  err,
+                );
+              }
+              console.log(
+                `💸 Invoice refund ${refundId} booked for invoice ${invoice.id}`,
+              );
+            }
+            return;
+          }
+
+          // #813/#812 — the refund references a payment we can't find on ANY path.
+          // The common cause is ordering: `refund.created` arrived before the
+          // `payment.captured` that creates the Payment row. A plain return ACKs the
+          // event (processed=true/error=null) so it never re-runs; a throw stamps
+          // error=true which the sweeper skips (it only re-drives error=null) — both
+          // are permanent death on Razorpay (no redelivery after a 200). Instead
+          // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
+          // until the payment lands (or the terminal age cap gives up). Stripe retries
+          // natively on a 5xx and doesn't read this return, so keep throwing there.
+          const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
+          if (gateway === "RAZORPAY") {
+            return new DeferSignal(deferReason);
+          }
+          throw new Error(`${deferReason} — re-driving`);
+        }
+
+        // Check if refund already exists
+        const existingRefund = await tx.refund.findUnique({
+          where: { refundId },
+        });
+
+        // FIX #4: Extract refund side effects into a helper so they run on BOTH
+        // new refund creation AND status transitions (e.g. PENDING → SUCCEEDED).
+        // FIX P2-1: Accepts refund amount for partial-refund-aware credit restoration.
+        const runRefundSideEffects = async (
+          paymentId: string,
+          refundStatus: string,
+          refundRowId: string,
+          refundAmt?: number,
+          originalPaymentAmt?: number,
+        ) => {
+          if (mapGatewayRefundStatus(refundStatus) !== "SUCCEEDED") return;
+
+          // #776 — route gateway refunds through the canonical cascade so card/app/cron
+          // refunds share ONE engine: earnings + funding-leg + wallet + ledger +
+          // booking-utilization + GST credit-note reversal, idempotent on
+          // `Refund.cascadedAt`. This replaces the old earnings-only `refundEarnings`
+          // path, which left the refund ledger posting + leg/wallet reversal undone on
+          // gateway refunds (a divergence from the app/cron paths). The cascade allows
+          // PAID→REFUNDED, so the legacy `forceRefund` override is no longer needed.
+          try {
+            await applyRefundCascade(tx, {
+              paymentId,
+              refundId: refundRowId,
+              amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
+              reason: "Gateway refund",
+              initiatedByUserId: null,
+            });
+            console.log(`💰 Refund cascade applied for payment ${paymentId}`);
+          } catch (cascadeError) {
+            // #776 / PR#785 review — do NOT swallow. The cascade is idempotent
+            // (Refund.cascadedAt, claimed at its start) and atomic, so rethrowing rolls
+            // the tx back (the claim reverts) and the gateway redelivery / cascadedAt
+            // backstop cron retry it — instead of committing a partial refund (e.g.
+            // earnings reversed but the GST credit note un-minted, with no durable retry).
+            console.error(
+              `⚠️ Refund cascade failed for payment ${paymentId}:`,
+              cascadeError,
+            );
+            throw cascadeError;
+          }
+
+          // Referral-credit restoration is NOT part of the cascade (v2 referral
+          // ledger) — it runs here, and in the app path at the end of refund.ts
+          // Phase 3b. It must run AFTER the Refund row reads SUCCEEDED, because it
+          // derives its restoration target from the cumulative SUCCEEDED refund
+          // total for the payment.
+          //
+          // This used to swallow its error, alone among the steps in this
+          // transaction. A failure silently left a buyer's credits consumed against
+          // a booking they were refunded for, with no actor to retry it. Rethrow
+          // for the same reason the cascade above does: reverseCreditsForPayment is
+          // re-entrant (the partial path nets against `restoredAmount`, the full
+          // path deletes the usage row), so rolling back and re-driving is safe and
+          // is strictly better than committing a partial refund.
+          const restored = await reverseCreditsForPayment(
+            paymentId,
+            tx,
+            refundAmt,
+            originalPaymentAmt,
+          );
+          if (restored > 0) {
+            console.log(
+              `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
+            );
+          }
+        };
+
+        if (existingRefund) {
+          const newStatus = mapGatewayRefundStatus(status);
+          if (existingRefund.status !== newStatus) {
+            // Transition guard: PENDING is the only state a gateway event may
+            // leave. SUCCEEDED / FAILED / CANCELLED are terminal here — a stale
+            // or out-of-order delivery (e.g. `refund.created` with status
+            // "pending" redelivered after `refund.processed`) must never
+            // downgrade a settled refund into the unsweepable real-id-PENDING
+            // limbo class, nor resurrect a failed one. (The old guard compared
+            // the Prisma enum against the RAW gateway string, so it never
+            // short-circuited and every redelivery rewrote the row.)
+            if (existingRefund.status !== "PENDING") {
+              console.log(
+                `↩️ Refund ${refundId} already ${existingRefund.status}; ignoring ${status} event`,
               );
               return;
             }
 
-          // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
-          // refunded invoice. One per gateway refund, idempotent on refundId.
-          await mintInvoiceRefundCreditNote(tx, {
-            invoiceId: invoice.id,
-            refundId,
-            amountPaise: amount,
-            reason: `Invoice ${invoice.invoiceNumber} refund`,
-          });
-
-          // Flip to REFUNDED only once cumulative credit notes cover the
-          // invoice total; partial refunds keep it PAID.
-          const creditNoteAgg = await tx.creditNote.aggregate({
-            where: { invoiceId: invoice.id },
-            _sum: { totalPaise: true },
-          });
-          const refundedTotalPaise = sumPaise(creditNoteAgg._sum.totalPaise);
-          if (
-            refundedTotalPaise >= invoice.totalPaise &&
-            invoice.status !== "REFUNDED"
-          ) {
-            await tx.organizationInvoice.update({
-              where: { id: invoice.id },
-              data: { status: "REFUNDED" },
-            });
-          }
-          // NOTE: Booking-level utilization reversal is keyed on
-          // individual Payment ids (BookingUtilization.paymentId @unique),
-          // not on the invoice. Invoices that roll up many bookings do
-          // not have a single paymentId to feed `reverseBookingUtilization`
-          // — a follow-up phase (after the invoice-line-item schema lands)
-          // will iterate over linked line-items and reverse each one
-          // individually. For now, the balanced reversal journal below plus
-          // the INVOICE_REFUNDED audit log is the guaranteed bookkeeping;
-          // the operator runbook calls out bookings that may need manual
-          // reversal.
-          await tx.orgAuditLog
-            .create({
+            await tx.refund.update({
+              where: { refundId },
               data: {
-                organizationId: invoice.organizationId,
-                actorMembershipId: null,
-                category: "INVOICE",
-                action: AUDIT_ACTIONS.INVOICE.INVOICE_REFUNDED,
-                description: `Invoice ${invoice.invoiceNumber} refunded (${refundId}, ${amount} ${currency})`,
-                details: {
-                  invoiceId: invoice.id,
-                  refundId,
-                  amount,
-                  currency,
-                  providerPaymentId,
-                },
+                status: newStatus,
+                updatedAt: new Date(),
               },
-            })
-            .catch((err) =>
-              console.error(
-                `⚠️ Failed to write INVOICE_REFUNDED audit log:`,
-                err,
-              ),
-            );
-          // Balanced reversal journal — mirrors `invoicepaid:<invoiceId>`
-          // (Dr CASH / Cr ORG_RECEIVABLE) with the credit side routed to
-          // wherever the value went: back to CASH when the gateway returns
-          // the money, or to the org's WALLET when the refund is granted as
-          // in-app credit (fundingSource WALLET). Before this posting the
-          // wallet credit was a bare cache increment with NO journal entry —
-          // guaranteed WALLET_BALANCE_DRIFT at reconcile (auto-freezing the
-          // wallet) while the platform books never recorded the refund.
-          //
-          // Still not rethrown on failure, and that is deliberate: the
-          // dispatcher stamps error=true on a throw and the stuck-event
-          // sweeper only re-drives error=null, so rethrowing would roll back
-          // the whole refund booking AND retire the event permanently. On
-          // failure NEITHER the journal NOR the cache credit is written, so
-          // cache and journal stay consistent (refund unbooked, paged
-          // loudly). #1128 tracks making this durable.
-          try {
-            const ba = await tx.billingAccount.findFirst({
-              where: { ownerOrgId: invoice.organizationId },
-              select: { id: true, fundingSource: true },
             });
-            const creditAsWallet =
-              !!ba && ba.fundingSource === "WALLET" && !!invoice.organizationId;
-            await postLedgerTxn(tx, {
-              idempotencyKey: `invoice-refund:${refundId}`,
-              kind: "INVOICE_REFUND",
-              invoiceId: invoice.id,
-              description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
-              postings: [
-                {
-                  account: {
-                    kind: "ORG_RECEIVABLE",
-                    organizationId: invoice.organizationId,
-                  },
-                  direction: "DEBIT",
-                  amountPaise: amount,
-                },
-                creditAsWallet
-                  ? {
-                      account: {
-                        kind: "WALLET",
-                        organizationId: invoice.organizationId,
-                      },
-                      direction: "CREDIT",
-                      amountPaise: amount,
-                    }
-                  : {
-                      account: { kind: "CASH" },
-                      direction: "CREDIT",
-                      amountPaise: amount,
-                    },
-              ],
-            });
-            if (creditAsWallet && ba) {
-              // Cache mirror of the Cr WALLET leg above — written only after
-              // the journal succeeded so the two can never diverge here.
-              await walletCredit(tx, {
-                billingAccountId: ba.id,
-                amountPaise: amount,
-                reason: "REFUND",
-                providerPaymentId,
-                notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
-              });
+            console.log(`✅ Refund ${refundId} status updated to ${newStatus}`);
+
+            // Run side effects when transitioning TO SUCCEEDED
+            if (newStatus === "SUCCEEDED") {
+              await runRefundSideEffects(
+                payment.id,
+                status,
+                existingRefund.id,
+                amount,
+                payment.amount,
+              );
             }
-          } catch (err) {
-            reportSentryError(err, {
-              subsystem: "enterprise",
-              op: "handleRefundCreated.walletCredit",
-              extra: {
-                refundId,
-                invoiceId: invoice.id,
-                organizationId: invoice.organizationId,
-                amountPaise: amount,
-                providerPaymentId,
-              },
-            });
-            console.warn(
-              `⚠️ Wallet credit for invoice refund ${refundId} FAILED — org not credited:`,
-              err,
-            );
           }
-          console.log(
-            `💸 Invoice refund ${refundId} booked for invoice ${invoice.id}`,
-          );
+          return;
         }
-        return;
-      }
 
-      // #813/#812 — the refund references a payment we can't find on ANY path.
-      // The common cause is ordering: `refund.created` arrived before the
-      // `payment.captured` that creates the Payment row. A plain return ACKs the
-      // event (processed=true/error=null) so it never re-runs; a throw stamps
-      // error=true which the sweeper skips (it only re-drives error=null) — both
-      // are permanent death on Razorpay (no redelivery after a 200). Instead
-      // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
-      // until the payment lands (or the terminal age cap gives up). Stripe retries
-      // natively on a 5xx and doesn't read this return, so keep throwing there.
-      const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
-      if (gateway === "RAZORPAY") {
-        return new DeferSignal(deferReason);
-      }
-      throw new Error(`${deferReason} — re-driving`);
-    }
-
-    // Check if refund already exists
-    const existingRefund = await tx.refund.findUnique({
-      where: { refundId },
-    });
-
-    // FIX #4: Extract refund side effects into a helper so they run on BOTH
-    // new refund creation AND status transitions (e.g. PENDING → SUCCEEDED).
-    // FIX P2-1: Accepts refund amount for partial-refund-aware credit restoration.
-    const runRefundSideEffects = async (
-      paymentId: string,
-      refundStatus: string,
-      refundRowId: string,
-      refundAmt?: number,
-      originalPaymentAmt?: number,
-    ) => {
-      if (mapGatewayRefundStatus(refundStatus) !== "SUCCEEDED") return;
-
-      // #776 — route gateway refunds through the canonical cascade so card/app/cron
-      // refunds share ONE engine: earnings + funding-leg + wallet + ledger +
-      // booking-utilization + GST credit-note reversal, idempotent on
-      // `Refund.cascadedAt`. This replaces the old earnings-only `refundEarnings`
-      // path, which left the refund ledger posting + leg/wallet reversal undone on
-      // gateway refunds (a divergence from the app/cron paths). The cascade allows
-      // PAID→REFUNDED, so the legacy `forceRefund` override is no longer needed.
-      try {
-        await applyRefundCascade(tx, {
-          paymentId,
-          refundId: refundRowId,
-          amountPaise: refundAmt ?? originalPaymentAmt ?? 0,
-          reason: "Gateway refund",
-          initiatedByUserId: null,
-        });
-        console.log(`💰 Refund cascade applied for payment ${paymentId}`);
-      } catch (cascadeError) {
-        // #776 / PR#785 review — do NOT swallow. The cascade is idempotent
-        // (Refund.cascadedAt, claimed at its start) and atomic, so rethrowing rolls
-        // the tx back (the claim reverts) and the gateway redelivery / cascadedAt
-        // backstop cron retry it — instead of committing a partial refund (e.g.
-        // earnings reversed but the GST credit note un-minted, with no durable retry).
-        console.error(
-          `⚠️ Refund cascade failed for payment ${paymentId}:`,
-          cascadeError,
-        );
-        throw cascadeError;
-      }
-
-      // Referral-credit restoration is NOT part of the cascade (v2 referral
-      // ledger) — it runs here, and in the app path at the end of refund.ts
-      // Phase 3b. It must run AFTER the Refund row reads SUCCEEDED, because it
-      // derives its restoration target from the cumulative SUCCEEDED refund
-      // total for the payment.
-      //
-      // This used to swallow its error, alone among the steps in this
-      // transaction. A failure silently left a buyer's credits consumed against
-      // a booking they were refunded for, with no actor to retry it. Rethrow
-      // for the same reason the cascade above does: reverseCreditsForPayment is
-      // re-entrant (the partial path nets against `restoredAmount`, the full
-      // path deletes the usage row), so rolling back and re-driving is safe and
-      // is strictly better than committing a partial refund.
-      const restored = await reverseCreditsForPayment(
-        paymentId,
-        tx,
-        refundAmt,
-        originalPaymentAmt,
-      );
-      if (restored > 0) {
-        console.log(
-          `🔄 Reversed ${restored} referral credits for refunded payment ${paymentId}`,
-        );
-      }
-    };
-
-    if (existingRefund) {
-      const newStatus = mapGatewayRefundStatus(status);
-      if (existingRefund.status !== newStatus) {
-        // Transition guard: PENDING is the only state a gateway event may
-        // leave. SUCCEEDED / FAILED / CANCELLED are terminal here — a stale
-        // or out-of-order delivery (e.g. `refund.created` with status
-        // "pending" redelivered after `refund.processed`) must never
-        // downgrade a settled refund into the unsweepable real-id-PENDING
-        // limbo class, nor resurrect a failed one. (The old guard compared
-        // the Prisma enum against the RAW gateway string, so it never
-        // short-circuited and every redelivery rewrote the row.)
-        if (existingRefund.status !== "PENDING") {
+        // PM-13 — a `refund.failed` for a refund we never recorded (e.g. a refund
+        // initiated from the Razorpay dashboard, not our app) would otherwise mint
+        // an orphan FAILED Refund row attached to the B2C payment. No money moves
+        // either way on a failed refund, so there's nothing to record — skip it.
+        if (mapGatewayRefundStatus(status) === "FAILED" && !existingRefund) {
           console.log(
-            `↩️ Refund ${refundId} already ${existingRefund.status}; ignoring ${status} event`,
+            `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
           );
           return;
         }
 
-        await tx.refund.update({
-          where: { refundId },
+        // Create new refund record
+        const createdRefund = await tx.refund.create({
           data: {
-            status: newStatus,
-            updatedAt: new Date(),
+            amountPaise: amount,
+            // #781 §A — gateway hands back a free-form ISO code; an unsupported
+            // one throws here and dead-letters the event rather than booking it.
+            currency: toCurrencyEnum(currency),
+            status: mapGatewayRefundStatus(status),
+            refundId,
+            paymentGateway: gateway,
+            paymentId: payment.id,
           },
+          select: { id: true },
         });
-        console.log(`✅ Refund ${refundId} status updated to ${newStatus}`);
 
-        // Run side effects when transitioning TO SUCCEEDED
-        if (newStatus === "SUCCEEDED") {
-          await runRefundSideEffects(
-            payment.id,
-            status,
-            existingRefund.id,
+        console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
+
+        // Run side effects for new refunds that are already SUCCEEDED
+        await runRefundSideEffects(
+          payment.id,
+          status,
+          createdRefund.id,
+          amount,
+          payment.amount,
+        );
+
+        // --- Novu notification (fire-and-forget) ---
+        void Promise.resolve(
+          notifyRefundProcessed(payment.userId, {
+            // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
+            // inherits the org-ness of the payment it reverses. dashboardUrl stays a
+            // router bounce deliberately: this goes to the PAYER, and an org billing
+            // page is not readable by a LEARNER whose booking was org-sponsored.
+            ...notificationScope(payment.organizationId),
             amount,
-            payment.amount,
-          );
-        }
-      }
-      return;
-    }
-
-    // PM-13 — a `refund.failed` for a refund we never recorded (e.g. a refund
-    // initiated from the Razorpay dashboard, not our app) would otherwise mint
-    // an orphan FAILED Refund row attached to the B2C payment. No money moves
-    // either way on a failed refund, so there's nothing to record — skip it.
-    if (mapGatewayRefundStatus(status) === "FAILED" && !existingRefund) {
-      console.log(
-        `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
-      );
-      return;
-    }
-
-    // Create new refund record
-    const createdRefund = await tx.refund.create({
-      data: {
-        amountPaise: amount,
-        // #781 §A — gateway hands back a free-form ISO code; an unsupported
-        // one throws here and dead-letters the event rather than booking it.
-        currency: toCurrencyEnum(currency),
-        status: mapGatewayRefundStatus(status),
-        refundId,
-        paymentGateway: gateway,
-        paymentId: payment.id,
+            currency,
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          }),
+        ).catch(() => {});
       },
-      select: { id: true },
-    });
-
-    console.log(`✅ Refund ${refundId} created for payment ${payment.id}`);
-
-    // Run side effects for new refunds that are already SUCCEEDED
-    await runRefundSideEffects(
-      payment.id,
-      status,
-      createdRefund.id,
-      amount,
-      payment.amount,
-    );
-
-    // --- Novu notification (fire-and-forget) ---
-    void Promise.resolve(notifyRefundProcessed(payment.userId, {
-      // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
-      // inherits the org-ness of the payment it reverses. dashboardUrl stays a
-      // router bounce deliberately: this goes to the PAYER, and an org billing
-      // page is not readable by a LEARNER whose booking was org-sponsored.
-      ...notificationScope(payment.organizationId),
-      amount,
-      currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
-    })).catch(() => {});
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 }
@@ -1330,16 +1339,22 @@ export async function handleDisputeCreated(
         }
 
         // --- Novu notification (fire-and-forget) ---
-        void Promise.resolve(notifyDisputeCreated([payment.userId], {
-          disputeId,
-          amount,
-          currency,
-          reason,
-          status: createdStatus ?? "NEEDS_RESPONSE",
-          dashboardUrl: `${getAppUrl()}/dashboard`,
-        })).catch(() => {});
+        void Promise.resolve(
+          notifyDisputeCreated([payment.userId], {
+            disputeId,
+            amount,
+            currency,
+            reason,
+            status: createdStatus ?? "NEEDS_RESPONSE",
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          }),
+        ).catch(() => {});
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 }
@@ -1492,7 +1507,10 @@ export async function handleDisputeUpdated(
             : 1;
 
         const lostConsultantEarnings = await tx.consultantEarnings.findMany({
-          where: { paymentId: dispute.paymentId, status: { in: ["HELD", "PAID"] } },
+          where: {
+            paymentId: dispute.paymentId,
+            status: { in: ["HELD", "PAID"] },
+          },
           select: {
             id: true,
             consultantSharePaise: true,
@@ -1573,7 +1591,10 @@ export async function handleDisputeUpdated(
         // host-EARNINGS recovery — distinct from applyOrgChargeback below, which
         // recovers the sponsor-FUNDER's money (different party, no double-count).
         const lostOrgEarnings = await tx.organizationEarnings.findMany({
-          where: { paymentId: dispute.paymentId, status: { in: ["HELD", "PAID"] } },
+          where: {
+            paymentId: dispute.paymentId,
+            status: { in: ["HELD", "PAID"] },
+          },
           select: {
             id: true,
             orgSharePaise: true,
@@ -1699,18 +1720,24 @@ export async function handleDisputeUpdated(
         });
 
         if (disputePayment) {
-          void Promise.resolve(notifyDisputeResolved([disputePayment.userId], {
-            disputeId,
-            amount: dispute.amountPaise,
-            currency: dispute.currency,
-            reason: dispute.reason || undefined,
-            status: mappedStatus,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
-          })).catch(() => {});
+          void Promise.resolve(
+            notifyDisputeResolved([disputePayment.userId], {
+              disputeId,
+              amount: dispute.amountPaise,
+              currency: dispute.currency,
+              reason: dispute.reason || undefined,
+              status: mappedStatus,
+              dashboardUrl: `${getAppUrl()}/dashboard`,
+            }),
+          ).catch(() => {});
         }
       }
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 15_000,
+    },
   );
 
   // Post-commit dispatch: the reversal rows are durable at this point, so
@@ -1985,8 +2012,6 @@ export async function applyB2cChargebackReversal(
 // ============================================================================
 // Webhook Event Logging
 // ============================================================================
-
-
 
 // ============================================================================
 // Payout Webhook Handlers

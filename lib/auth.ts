@@ -4,11 +4,7 @@ import { APIError } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { admin, customSession, organization } from "better-auth/plugins";
-import {
-  adminAc,
-  userAc,
-  defaultAc,
-} from "better-auth/plugins/admin/access";
+import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
@@ -21,7 +17,10 @@ import {
   sendVerificationEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
-import { shouldRejectSession, lookupEnforcedOrg } from "@/lib/sso/enforce-session";
+import {
+  shouldRejectSession,
+  lookupEnforcedOrg,
+} from "@/lib/sso/enforce-session";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { buildConsentArtifact } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
@@ -289,9 +288,14 @@ export const auth = betterAuth({
               // Fail open on consent stamping — the user-create hook
               // shouldn't sink a signup over an audit-trail glitch. The
               // /consent backfill cron (#701) re-creates missing rows.
-              console.error("[AUTH_HOOK] DPDP consent stamp error:", consentError);
+              console.error(
+                "[AUTH_HOOK] DPDP consent stamp error:",
+                consentError,
+              );
               Sentry.captureException(
-                consentError instanceof Error ? consentError : new Error(String(consentError)),
+                consentError instanceof Error
+                  ? consentError
+                  : new Error(String(consentError)),
                 { tags: { subsystem: "auth" }, level: "warning" },
               );
             }
@@ -538,7 +542,8 @@ export const auth = betterAuth({
       const bareMembers = currentUserRow?.members ?? [];
       for (const bm of bareMembers) {
         if (!bm.organization) continue;
-        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
+        const defaultRole =
+          bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
         try {
           // Wrap the role-effect resolution + Membership create in a
           // transaction so the lazy-created profile (LEARNER →

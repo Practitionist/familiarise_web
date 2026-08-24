@@ -5,7 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signUp, useSession, sendVerificationEmail, getSession } from "@/lib/auth-client";
+import {
+  signUp,
+  useSession,
+  sendVerificationEmail,
+  getSession,
+} from "@/lib/auth-client";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
@@ -85,7 +90,9 @@ function SignUpContent() {
     let cancelled = false;
     const resolveAndGo = (completed: boolean) => {
       if (cancelled) return;
-      const target = completed ? safeCallbackUrl || "/dashboard" : onboardingUrl;
+      const target = completed
+        ? safeCallbackUrl || "/dashboard"
+        : onboardingUrl;
       if (navigatedRef.current === target) return;
       navigatedRef.current = target;
       router.replace(target);
@@ -136,7 +143,10 @@ function SignUpContent() {
   const handleResendVerification = async () => {
     setResending(true);
     try {
-      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      await sendVerificationEmail({
+        email,
+        callbackURL: verificationCallbackUrl,
+      });
       toast({
         title: "Verification email sent",
         description: `Check ${email} for the link.`,
@@ -191,14 +201,20 @@ function SignUpContent() {
     if (!email || !email.includes("@")) return;
     setSsoChecking(true);
     try {
-      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      const res = await fetch(
+        `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
+      );
       if (res.ok) {
         const data = await res.json();
-        setSsoCheck(data.enforceSSO ? {
-          enforceSSO: true,
-          organizationName: data.organizationName,
-          ssoBody: data.ssoBody,
-        } : null);
+        setSsoCheck(
+          data.enforceSSO
+            ? {
+                enforceSSO: true,
+                organizationName: data.organizationName,
+                ssoBody: data.ssoBody,
+              }
+            : null,
+        );
       }
     } catch {
       // ignore — fall through to normal signup
@@ -236,15 +252,26 @@ function SignUpContent() {
     if (!raw) return "An unexpected error occurred. Please try again.";
     const lower = raw.toLowerCase();
     const issues: string[] = [];
-    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+    if (
+      lower.includes("email") &&
+      (lower.includes("invalid") || lower.includes("required"))
+    )
       issues.push("Please enter a valid email address.");
-    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+    if (
+      lower.includes("password") &&
+      (lower.includes("too small") ||
+        lower.includes(">=") ||
+        lower.includes("required"))
+    )
       issues.push("Password must be at least 8 characters.");
     if (lower.includes("already") || lower.includes("exists"))
       return "An account with this email already exists. Try signing in instead.";
     if (issues.length > 0) return issues.join(" ");
     // Strip "[body.field]" prefixes for anything we didn't catch
-    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "An unexpected error occurred.";
+    return (
+      raw.replace(/\[body\.\w+\]\s*/g, "").trim() ||
+      "An unexpected error occurred."
+    );
   };
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -289,7 +316,10 @@ function SignUpContent() {
         router.push(onboardingUrl);
       }
     } catch (error: unknown) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth" } },
+      );
       console.error("Sign up error:", error);
       const message =
         error instanceof Error
@@ -432,7 +462,8 @@ function SignUpContent() {
           {ssoCheck?.enforceSSO && (
             <div className="mt-4 rounded-md border border-white/15 bg-white/5 p-4">
               <p className="mb-3 text-sm text-zinc-400">
-                Your organization requires SSO sign-in. Use the button below to authenticate.
+                Your organization requires SSO sign-in. Use the button below to
+                authenticate.
               </p>
               <Button
                 type="button"

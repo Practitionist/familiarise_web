@@ -140,7 +140,9 @@ function SignInContent() {
     if (!email || !email.includes("@")) return;
     setSsoChecking(true);
     try {
-      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      const res = await fetch(
+        `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
+      );
       if (res.ok) {
         const data = await res.json();
         // Why: the domain-check route returns `providerMisconfigured: true`
@@ -158,11 +160,15 @@ function SignInContent() {
           });
           setSsoCheck(null);
         } else {
-          setSsoCheck(data.enforceSSO ? {
-            enforceSSO: true,
-            organizationName: data.organizationName,
-            ssoBody: data.ssoBody,
-          } : null);
+          setSsoCheck(
+            data.enforceSSO
+              ? {
+                  enforceSSO: true,
+                  organizationName: data.organizationName,
+                  ssoBody: data.ssoBody,
+                }
+              : null,
+          );
         }
       }
     } catch {
@@ -208,7 +214,9 @@ function SignInContent() {
     }
     setSsoChecking(true);
     try {
-      const res = await fetch(`/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`);
+      const res = await fetch(
+        `/api/auth/sso/domain-check?email=${encodeURIComponent(email)}`,
+      );
       if (!res.ok) throw new Error("check failed");
       const data = await res.json();
       // Same misconfigured-cert short-circuit as the blur handler — see
@@ -223,7 +231,11 @@ function SignInContent() {
         return;
       }
       if (data.enforceSSO) {
-        setSsoCheck({ enforceSSO: true, organizationName: data.organizationName, ssoBody: data.ssoBody });
+        setSsoCheck({
+          enforceSSO: true,
+          organizationName: data.organizationName,
+          ssoBody: data.ssoBody,
+        });
         const result = await ssoSigninWithGuard({
           providerId: data.ssoBody.providerId,
           domain: data.ssoBody.domain,
@@ -239,7 +251,8 @@ function SignInContent() {
       } else {
         toast({
           title: "No SSO provider found",
-          description: "No corporate SSO is configured for this email domain. Contact your IT admin.",
+          description:
+            "No corporate SSO is configured for this email domain. Contact your IT admin.",
           variant: "destructive",
         });
       }
@@ -257,20 +270,34 @@ function SignInContent() {
   const friendlyAuthError = (raw: string | undefined): string => {
     if (!raw) return "Invalid email or password.";
     const lower = raw.toLowerCase();
-    if (lower.includes("email") && (lower.includes("invalid") || lower.includes("required")))
+    if (
+      lower.includes("email") &&
+      (lower.includes("invalid") || lower.includes("required"))
+    )
       return "Please enter a valid email address.";
-    if (lower.includes("password") && (lower.includes("too small") || lower.includes(">=") || lower.includes("required")))
+    if (
+      lower.includes("password") &&
+      (lower.includes("too small") ||
+        lower.includes(">=") ||
+        lower.includes("required"))
+    )
       return "Please enter your password.";
     if (lower.includes("invalid") && lower.includes("credentials"))
       return "Invalid email or password.";
     if (lower.includes("not found") || lower.includes("no user"))
       return "No account found with this email. Check the address or sign up.";
-    return raw.replace(/\[body\.\w+\]\s*/g, "").trim() || "Invalid email or password.";
+    return (
+      raw.replace(/\[body\.\w+\]\s*/g, "").trim() ||
+      "Invalid email or password."
+    );
   };
 
   const handleResendVerification = async () => {
     if (!email || !email.includes("@")) {
-      toast({ title: "Enter your email address first", variant: "destructive" });
+      toast({
+        title: "Enter your email address first",
+        variant: "destructive",
+      });
       return;
     }
     setResending(true);
@@ -280,7 +307,10 @@ function SignInContent() {
       const verificationCallbackUrl = callbackUrl
         ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
         : "/auth/verify-email";
-      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      await sendVerificationEmail({
+        email,
+        callbackURL: verificationCallbackUrl,
+      });
       toast({
         title: "Verification email sent",
         description: `Check ${email} for the link.`,
@@ -311,11 +341,15 @@ function SignInContent() {
 
       if (error) {
         const code = (error as { code?: string }).code;
-        if (code === "EMAIL_NOT_VERIFIED" || /verif/i.test(error.message ?? "")) {
+        if (
+          code === "EMAIL_NOT_VERIFIED" ||
+          /verif/i.test(error.message ?? "")
+        ) {
           setNeedsVerification(true);
           toast({
             title: "Verify your email",
-            description: "Your email isn't verified yet — resend the link below.",
+            description:
+              "Your email isn't verified yet — resend the link below.",
           });
         } else {
           toast({
@@ -337,7 +371,10 @@ function SignInContent() {
         // callback must go through onboarding first, not straight to callbackUrl.
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth" } },
+      );
       console.error("Sign in error:", error);
       toast({
         title: "Sign In Error",

@@ -19,9 +19,8 @@ interface PrefetchDashboardOptions {
 // FAQ fetcher — backs the Help tab of the shared Support surface, which both
 // the consultant and consultee dashboards mount. Not a dashboard query.
 export const fetchHelpFAQs = async () => {
-  const { faqs } = await import(
-    "@/components/dashboard/shared/support/questions"
-  );
+  const { faqs } =
+    await import("@/components/dashboard/shared/support/questions");
   return faqs;
 };
 
@@ -55,7 +54,10 @@ export function usePrefetchDashboard({
 
   // Utility function to safely prefetch queries
   const safePrefetch = useCallback(
-    async (queries: FetchQueryOptions[], priority: "high" | "medium" | "low" = "medium") => {
+    async (
+      queries: FetchQueryOptions[],
+      priority: "high" | "medium" | "low" = "medium",
+    ) => {
       const delay =
         priority === "high" ? 0 : priority === "medium" ? 500 : 1000;
 
