@@ -35,6 +35,44 @@ const updateTaxInfoSchema = z.object({
  * GET /api/consultant/tax-info
  * Get the authenticated consultant's tax info
  */
+// S3776 — PAN encryption extracted so PUT stays under the complexity budget.
+function buildPanFields(panNumber: string | undefined):
+  | { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string }
+  | undefined {
+  if (!panNumber) return undefined;
+  const { encrypted, last4 } = encryptPAN(panNumber);
+  return { panEncrypted: encrypted, panLast4: last4 };
+}
+
+type MsmeDeclaration = {
+  msmeStatus?: "NONE" | "MICRO" | "SMALL" | "MEDIUM";
+  udyamNumber?: string | null;
+  msmeWrittenAgreement?: boolean;
+};
+
+// S3776 — MSME profile write extracted from the PUT handler.
+async function applyMsmeDeclaration(
+  consultantProfileId: string,
+  validated: MsmeDeclaration,
+): Promise<void> {
+  const msmeProfileUpdate = {
+    ...(validated.msmeStatus !== undefined && {
+      msmeStatus: validated.msmeStatus,
+    }),
+    ...(validated.udyamNumber !== undefined && {
+      udyamNumber: validated.udyamNumber,
+    }),
+    ...(validated.msmeWrittenAgreement !== undefined && {
+      writtenAgreementWithFamiliarise: validated.msmeWrittenAgreement,
+    }),
+  };
+  if (Object.keys(msmeProfileUpdate).length === 0) return;
+  await prisma.consultantProfile.update({
+    where: { id: consultantProfileId },
+    data: msmeProfileUpdate,
+  });
+}
+
 export async function GET() {
   try {
     const session = await getSession();
@@ -121,13 +159,7 @@ export async function PUT(req: NextRequest) {
     const isIndianResident = (validated.country || "IN") === "IN";
 
     // Encrypt PAN if provided
-    let panFields:
-      | { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string }
-      | undefined;
-    if (validated.panNumber) {
-      const { encrypted, last4 } = encryptPAN(validated.panNumber);
-      panFields = { panEncrypted: encrypted, panLast4: last4 };
-    }
+    const panFields = buildPanFields(validated.panNumber);
 
     const taxInfo = await prisma.consultantTaxInfo.upsert({      where: { consultantProfileId: consultantProfile.id },
       create: {
@@ -163,23 +195,7 @@ export async function PUT(req: NextRequest) {
 
     // MSME declaration rides the same PUT (#1230): these live on the
     // ConsultantProfile row itself, not the TaxInfo satellite.
-    const msmeProfileUpdate = {
-      ...(validated.msmeStatus !== undefined && {
-        msmeStatus: validated.msmeStatus,
-      }),
-      ...(validated.udyamNumber !== undefined && {
-        udyamNumber: validated.udyamNumber,
-      }),
-      ...(validated.msmeWrittenAgreement !== undefined && {
-        writtenAgreementWithFamiliarise: validated.msmeWrittenAgreement,
-      }),
-    };
-    if (Object.keys(msmeProfileUpdate).length > 0) {
-      await prisma.consultantProfile.update({
-        where: { id: consultantProfile.id },
-        data: msmeProfileUpdate,
-      });
-    }
+    await applyMsmeDeclaration(consultantProfile.id, validated);
 
     // Echo the PERSISTED declaration, not the request body (CR #1234): a
     // taxEntityType-only PUT previously answered null for MSME fields that

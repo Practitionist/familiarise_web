@@ -11,7 +11,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -70,6 +70,129 @@ export async function GET(
   return NextResponse.json({ assignment });
 }
 
+/**
+ * S3776 — the PATCH transaction body extracted so the route handler stays
+ * under the complexity budget. Behavior identical to the previous inline
+ * version (cancel cascade vs guarded period edit).
+ */
+async function applyAssignmentPatch(
+  tx: Tx,
+  ctx: {
+    orgId: string;
+    programId: string;
+    assignmentId: string;
+    actorMembershipId: string;
+    body: z.infer<typeof PatchBodySchema>;
+  },
+) {
+  const { orgId, programId, assignmentId, actorMembershipId, body } = ctx;
+  const current = await tx.programAssignment.findFirst({
+    where: {
+      id: assignmentId,
+      programId,
+      program: { contract: { organizationId: orgId } },
+    },
+  });
+  if (!current) {
+    throw Object.assign(new Error("Assignment not found"), {
+      httpStatus: 404,
+    });
+  }
+
+  // #779 §B — early cancellation. Claim only an ACTIVE row so a concurrent
+  // cancel / cycle-rollover can't double-free the seat. periodEnd clamps to
+  // periodStart for a not-yet-started allocation (no negative period).
+  if (body.cancel) {
+    const cancelEnd = new Date(
+      Math.max(Date.now(), current.periodStart.getTime()),
+    );
+    const claimed = await tx.programAssignment.updateMany({
+      where: { id: assignmentId, status: "ACTIVE" },
+      data: { status: "CANCELLED", periodEnd: cancelEnd },
+    });
+    if (claimed.count === 0) {
+      throw Object.assign(
+        new Error(
+          "Assignment is not active (already rolled, closed, or cancelled)",
+        ),
+        { httpStatus: 409, code: "ASSIGNMENT_NOT_ACTIVE" },
+      );
+    }
+    await adjustActiveSeatCount(tx, { programId, delta: -1 });
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: orgId,
+        actorMembershipId,
+        targetMembershipId: current.membershipId,
+        category: "PROGRAM",
+        action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
+        description: `Program assignment cancelled early for program ${programId}`,
+        details: { programId, assignmentId, cancelledEarly: true },
+      },
+    });
+    return tx.programAssignment.findUniqueOrThrow({
+      where: { id: assignmentId },
+    });
+  }
+
+  const nextStart = body.periodStart ?? current.periodStart;
+  const nextEnd = body.periodEnd ?? current.periodEnd;
+  if (nextEnd.getTime() <= nextStart.getTime()) {
+    throw Object.assign(new Error("periodEnd must be after periodStart"), {
+      httpStatus: 400,
+    });
+  }
+  // #1132 follow-up — period edits must not resurrect terminal rows. A
+  // plain update() here let a MAINTAINER extend the period of a
+  // ROLLED / CLOSED / CANCELLED assignment, silently re-arming the
+  // sponsored-spend entitlement that checkout resolves by window alone.
+  // Claim only live rows via CAS, mirroring the cancel path above.
+  const claimedPeriod = await tx.programAssignment.updateMany({
+    where: {
+      id: assignmentId,
+      status: { in: ["ACTIVE", "PAUSED"] },
+    },
+    data: {
+      periodStart: nextStart,
+      periodEnd: nextEnd,
+    },
+  });
+  if (claimedPeriod.count === 0) {
+    throw Object.assign(
+      new Error(
+        "Assignment is no longer live (rolled, closed, or cancelled); its period can no longer change",
+      ),
+      { httpStatus: 409, code: "ASSIGNMENT_NOT_LIVE" },
+    );
+  }
+  const next = await tx.programAssignment.findUniqueOrThrow({
+    where: { id: assignmentId },
+  });
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: orgId,
+      actorMembershipId,
+      targetMembershipId: current.membershipId,
+      category: "PROGRAM",
+      action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_UPDATED,
+      description: `Program assignment period updated for program ${programId}`,
+      details: {
+        programId,
+        assignmentId,
+        from: {
+          periodStart: current.periodStart.toISOString(),
+          periodEnd: current.periodEnd.toISOString(),
+        },
+        to: {
+          periodStart: nextStart.toISOString(),
+          periodEnd: nextEnd.toISOString(),
+        },
+      },
+    },
+  });
+  return next;
+}
+
 export async function PATCH(
   req: NextRequest,
   {
@@ -96,114 +219,16 @@ export async function PATCH(
   const body = parsed.data;
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
-      const current = await tx.programAssignment.findFirst({
-        where: {
-          id: assignmentId,
-          programId,
-          program: { contract: { organizationId: orgId } },
-        },
-      });
-      if (!current) {
-        throw Object.assign(new Error("Assignment not found"), {
-          httpStatus: 404,
-        });
-      }
+    const updated = await prisma.$transaction(async (tx) =>
+      applyAssignmentPatch(tx, {
+        orgId,
+        programId,
+        assignmentId,
+        actorMembershipId: access.member.id,
+        body,
+      }),
+    );
 
-      // #779 §B — early cancellation. Claim only an ACTIVE row so a concurrent
-      // cancel / cycle-rollover can't double-free the seat. periodEnd clamps to
-      // periodStart for a not-yet-started allocation (no negative period).
-      if (body.cancel) {
-        const cancelEnd = new Date(
-          Math.max(Date.now(), current.periodStart.getTime()),
-        );
-        const claimed = await tx.programAssignment.updateMany({
-          where: { id: assignmentId, status: "ACTIVE" },
-          data: { status: "CANCELLED", periodEnd: cancelEnd },
-        });
-        if (claimed.count === 0) {
-          throw Object.assign(
-            new Error(
-              "Assignment is not active (already rolled, closed, or cancelled)",
-            ),
-            { httpStatus: 409, code: "ASSIGNMENT_NOT_ACTIVE" },
-          );
-        }
-        await adjustActiveSeatCount(tx, { programId, delta: -1 });
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            targetMembershipId: current.membershipId,
-            category: "PROGRAM",
-            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
-            description: `Program assignment cancelled early for program ${programId}`,
-            details: { programId, assignmentId, cancelledEarly: true },
-          },
-        });
-        return tx.programAssignment.findUniqueOrThrow({
-          where: { id: assignmentId },
-        });
-      }
-
-      const nextStart = body.periodStart ?? current.periodStart;
-      const nextEnd = body.periodEnd ?? current.periodEnd;
-      if (nextEnd.getTime() <= nextStart.getTime()) {
-        throw Object.assign(
-          new Error("periodEnd must be after periodStart"),
-          { httpStatus: 400 },
-        );
-      }
-      // #1132 follow-up — period edits must not resurrect terminal rows. A
-      // plain update() here let a MAINTAINER extend the period of a
-      // ROLLED / CLOSED / CANCELLED assignment, silently re-arming the
-      // sponsored-spend entitlement that checkout resolves by window alone.
-      // Claim only live rows via CAS, mirroring the cancel path above.
-      const claimedPeriod = await tx.programAssignment.updateMany({
-        where: {
-          id: assignmentId,
-          status: { in: ["ACTIVE", "PAUSED"] },
-        },
-        data: {
-          periodStart: nextStart,
-          periodEnd: nextEnd,
-        },
-      });
-      if (claimedPeriod.count === 0) {
-        throw Object.assign(
-          new Error(
-            "Assignment is no longer live (rolled, closed, or cancelled); its period can no longer change",
-          ),
-          { httpStatus: 409, code: "ASSIGNMENT_NOT_LIVE" },
-        );
-      }
-      const next = await tx.programAssignment.findUniqueOrThrow({
-        where: { id: assignmentId },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          targetMembershipId: current.membershipId,
-          category: "PROGRAM",
-          action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_UPDATED,
-          description: `Program assignment period updated for program ${programId}`,
-          details: {
-            programId,
-            assignmentId,
-            from: {
-              periodStart: current.periodStart.toISOString(),
-              periodEnd: current.periodEnd.toISOString(),
-            },
-            to: {
-              periodStart: nextStart.toISOString(),
-              periodEnd: nextEnd.toISOString(),
-            },
-          },
-        },
-      });
-      return next;
-    });
     return NextResponse.json({ assignment: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {

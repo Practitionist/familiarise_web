@@ -114,7 +114,13 @@ const styles = StyleSheet.create({
   },
 });
 
-function Kv({ label, value }: { label: string; value: string }) {
+function Kv({
+  label,
+  value,
+}: {
+  readonly label: string;
+  readonly value: string;
+}) {
   return (
     <View style={styles.kv}>
       <Text style={styles.k}>{label}</Text>
@@ -123,7 +129,7 @@ function Kv({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function OrgCreditNoteDocument({ data }: { data: CreditNotePdfData }) {
+export function OrgCreditNoteDocument({ data }: { readonly data: CreditNotePdfData }) {
   // CR #1234 — a CN spanning multiple rates would render an aggregate ratio
   // ("11.5%") as if it were a statutory rate. Label it honestly as an
   // EFFECTIVE rate; per-line statutory breakdowns land with the CN data model.

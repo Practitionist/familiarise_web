@@ -78,6 +78,102 @@ export async function GET(
   return NextResponse.json({ payoutAccount, exists: true });
 }
 
+/**
+ * S3776 — provisioning + penny-drop extracted from the PUT handler. Behavior
+ * unchanged: demote VERIFIED before re-provisioning, create contact/fund
+ * account, penny-drop, bind ids to the bank-detail revision, and verify via
+ * the guarded CAS on "valid". All failures are non-fatal by design.
+ */
+async function provisionAndVerifyOrgPayoutAccount(ctx: {
+  orgId: string;
+  actorMembershipId: string;
+  upsertedId: string;
+  upsertedVersion: number;
+  currentStatus: string;
+  accountHolderName: string;
+  billingEmail: string;
+  ifscCode: string | null;
+  accountNumber: string;
+  last4: string;
+}): Promise<void> {
+  const {
+    orgId,
+    actorMembershipId,
+    upsertedId,
+    upsertedVersion,
+    currentStatus,
+    accountHolderName,
+    billingEmail,
+    ifscCode,
+    accountNumber,
+    last4,
+  } = ctx;
+  if (!isRazorpayPayoutsConfigured() || !ifscCode) return;
+
+  // A re-provisioning attempt must not leave the row VERIFIED while its new
+  // fund account is still unproven: demote first (VERIFIED→PENDING is a
+  // legal edge), then provision.
+  if (currentStatus === "VERIFIED") {
+    await prisma.$transaction(async (tx) => {
+      await transitionOrgPayoutAccount(tx, {
+        where: { id: upsertedId, version: upsertedVersion },
+        to: "PENDING_VERIFICATION",
+        data: { verifiedAt: null },
+      });
+    });
+  }
+  try {
+    const svc = getRazorpayPayoutsService();
+    const contact = await svc.createContact({
+      name: accountHolderName,
+      email: billingEmail,
+      type: "vendor",
+      referenceId: orgId,
+    });
+    const fund = await svc.createFundAccount({
+      contactId: contact.id,
+      accountType: "bank_account",
+      bankAccount: {
+        name: accountHolderName,
+        ifsc: ifscCode,
+        accountNumber,
+      },
+    });
+    const validation = await svc.validateBankAccount(fund.id);
+
+    // Bind BOTH writes to the bank-detail revision this request created: a
+    // second PUT landing while our Razorpay calls are in flight must never
+    // receive stale ids or an unearned VERIFIED stamp.
+    await prisma.organizationPayoutAccount.updateMany({
+      where: { id: upsertedId, version: upsertedVersion },
+      data: {
+        razorpayContactId: contact.id,
+        razorpayFundAccountId: fund.id,
+      },
+    });
+    if (validation.accountStatus === "valid") {
+      await prisma.$transaction(async (tx) => {
+        await transitionOrgPayoutAccount(tx, {
+          where: { id: upsertedId, version: upsertedVersion },
+          to: "VERIFIED",
+          data: { verifiedAt: new Date() },
+          audit: {
+            organizationId: orgId,
+            actorMembershipId,
+            category: "SETTINGS",
+            action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+            description: "Payout account verified via RazorpayX penny-drop",
+            details: { fundAccountId: fund.id, last4 },
+          },
+        });
+      });
+    }
+  } catch (err) {
+    // Non-fatal: bank-detail upsert succeeded; verification retries later.
+    console.error("[org-payout-account] penny-drop error:", err);
+  }
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
@@ -191,82 +287,19 @@ export async function PUT(
     return next;
   });
 
-  // #1230 — wire the dormant verification loop. The FSM and the payout
-  // preflight both expect VERIFIED rows, but nothing ever left
-  // PENDING_VERIFICATION. Create the RazorpayX contact/fund account from the
-  // raw details now (they are still in scope; the stored row is ciphertext),
-  // run the penny-drop, and verify through the guarded CAS on "valid". Async
-  // ("created") or failed validations leave PENDING_VERIFICATION — re-saving
-  // bank details or a future reverify action retries it.
-  if (isRazorpayPayoutsConfigured() && body.ifscCode) {
-    // CR #1234 r3.5 — a re-provisioning attempt must not leave the row
-    // VERIFIED while its new fund account is still unproven: demote first
-    // (VERIFIED→PENDING is a legal edge), then provision. If validation
-    // succeeds below, the CAS flips it back; if it fails, the row sits
-    // honestly at PENDING_VERIFICATION.
-    if (upserted.status === "VERIFIED") {
-      await prisma.$transaction(async (tx) => {
-        await transitionOrgPayoutAccount(tx, {
-          where: { id: upserted.id, version: upserted.version },
-          to: "PENDING_VERIFICATION",
-          data: { verifiedAt: null },
-        });
-      });
-    }
-    try {
-      const svc = getRazorpayPayoutsService();
-      const contact = await svc.createContact({
-        name: body.accountHolderName,
-        email: access.org.billingEmail ?? "",
-        type: "vendor",
-        referenceId: orgId,
-      });
-      const fund = await svc.createFundAccount({
-        contactId: contact.id,
-        accountType: "bank_account",
-        bankAccount: {
-          name: body.accountHolderName,
-          ifsc: body.ifscCode,
-          accountNumber: body.accountNumber,
-        },
-      });
-      const validation = await svc.validateBankAccount(fund.id);
-
-      // CR #1234 r2 — bind BOTH writes to the bank-detail revision this
-      // request created. A second PUT (new details, bumped version) landing
-      // while our Razorpay calls are in flight must never receive the first
-      // request's fund-account ids or a VERIFIED stamp it did not earn.
-      await prisma.organizationPayoutAccount.updateMany({
-        where: { id: upserted.id, version: upserted.version },
-        data: {
-          razorpayContactId: contact.id,
-          razorpayFundAccountId: fund.id,
-        },
-      });
-      if (validation.accountStatus === "valid") {
-        // CAS on id+version: refuses rows already flipped concurrently or
-        // superseded by newer bank details.
-        await prisma.$transaction(async (tx) => {
-          await transitionOrgPayoutAccount(tx, {
-            where: { id: upserted.id, version: upserted.version },
-            to: "VERIFIED",
-            data: { verifiedAt: new Date() },
-            audit: {
-              organizationId: orgId,
-              actorMembershipId: access.member.id,
-              category: "SETTINGS",
-              action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
-              description: "Payout account verified via RazorpayX penny-drop",
-              details: { fundAccountId: fund.id, last4: last4 },
-            },
-          });
-        });
-      }
-    } catch (err) {
-      // Non-fatal: bank-detail upsert succeeded; verification retries later.
-      console.error("[org-payout-account] penny-drop error:", err);
-    }
-  }
+  // #1230 — wire the dormant verification loop (see helper below).
+  await provisionAndVerifyOrgPayoutAccount({
+    orgId,
+    actorMembershipId: access.member.id,
+    upsertedId: upserted.id,
+    upsertedVersion: upserted.version,
+    currentStatus: upserted.status,
+    accountHolderName: body.accountHolderName,
+    billingEmail: access.org.billingEmail ?? "",
+    ifscCode: body.ifscCode ?? null,
+    accountNumber: body.accountNumber,
+    last4,
+  });
 
   // CR #1234 r2 — respond with the POST-verification row: the transition
   // above may have flipped status/verifiedAt after `upserted` was read.
