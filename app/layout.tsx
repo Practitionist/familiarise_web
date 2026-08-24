@@ -74,24 +74,34 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={sora.variable} suppressHydrationWarning>
-      <body
-        className={`${sora.className} flex flex-col min-h-screen antialiased`}
-        suppressHydrationWarning
-      >
-        {/*
-          Pre-paint document scroll lock for /dashboard/* — the same class the
-          DashboardScrollLock component manages after hydration. Blocking and
-          inline so the very first paint already has html.dashboard-scroll-locked
-          applied; without it the window over-scrolls body.min-h-screen into dead
-          white space before React mounts. Idempotent with the component:
-          classList.add is a no-op when present, and removal on leaving the
-          dashboard tree stays the component's cleanup job.
-        */}
+      {/*
+        Pre-paint document scroll lock for /dashboard/* — the same class the
+        DashboardScrollLock component manages after hydration. Blocking and
+        inline so the very first paint already has html.dashboard-scroll-locked
+        applied; without it the window over-scrolls body.min-h-screen into dead
+        white space before React mounts. Idempotent with the component:
+        classList.add is a no-op when present, and removal on leaving the
+        dashboard tree stays the component's cleanup job.
+
+        This is the pattern Next.js itself prescribes for pre-hydration DOM
+        fixes (see the "Preventing flash before hydration" guide): a static,
+        non-interpolated string via dangerouslySetInnerHTML, placed in <head>
+        so it parses before any body content. It executes under the existing
+        CSP's script-src 'unsafe-inline'; a future nonce-based CSP must nonce
+        or hash this tag. next/script's beforeInteractive is NOT equivalent —
+        it runs too late in App Router (vercel/next.js#43402) and flashes.
+      */}
+      <head>
         <script
           dangerouslySetInnerHTML={{
             __html: 'try{if(location.pathname.startsWith("/dashboard"))document.documentElement.classList.add("dashboard-scroll-locked")}catch(e){}',
           }}
         />
+      </head>
+      <body
+        className={`${sora.className} flex flex-col min-h-screen antialiased`}
+        suppressHydrationWarning
+      >
         <ReactQueryProvider>
           <AuthSyncProvider />
           <MaintenanceProvider>
