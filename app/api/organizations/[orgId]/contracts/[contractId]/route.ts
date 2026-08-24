@@ -136,6 +136,7 @@ export async function PATCH(
         const { locked } = await getContractLockState(
           contractId,
           current.status,
+          tx,
         );
         if (locked) {
           throw Object.assign(
@@ -258,11 +259,16 @@ export async function PATCH(
           },
         });
 
-        // #779 §A — TERMINATED cascade: a terminated contract takes its
+        // #779 §A — TERMINATED/EXPIRED cascade: a dead contract takes its
         // programs (ACTIVE → EXPIRED) and their still-ACTIVE assignments
         // (→ CLOSED) down with it, in this same tx, so nothing is left
-        // drawing against a dead contract.
-        if (body.status === "TERMINATED") {
+        // drawing against a dead contract. TERMINATED is operator-initiated
+        // mid-cycle and pre-guarded above; EXPIRED may be natural term-end
+        // or a manual early close, and this mirrors jobs/contracts/
+        // expire-contracts.ts exactly — without it, a manually-expired
+        // contract left assignments ACTIVE against it for up to 24h
+        // (#1132 follow-up).
+        if (body.status === "TERMINATED" || body.status === "EXPIRED") {
           await tx.program.updateMany({
             where: { contractId, status: "ACTIVE" },
             data: { status: "EXPIRED" },

@@ -113,16 +113,18 @@ export async function POST(
         },
       });
 
-      // Re-point programs so entitlements continue under the new terms — and
-      // so the cycle engine (which requires an ACTIVE contract) keeps rolling
-      // their assignments. Invoices stay on the old contract.
-      await tx.program.updateMany({
-        where: { contractId: old.id },
-        data: { contractId: successor.id },
-      });
-
-      await tx.contract.update({
-        where: { id: old.id },
+      // #1132 follow-up — claim the old contract via CAS BEFORE re-pointing
+      // programs. Two concurrent supersedes both passed the read-checks above
+      // (READ COMMITTED) and minted duplicate ACTIVE successors with a
+      // last-writer-wins supersession chain. Only one claim can win; the
+      // loser throws and its transaction rolls back the successor it created
+      // moments earlier.
+      const claimedOld = await tx.contract.updateMany({
+        where: {
+          id: old.id,
+          status: "ACTIVE",
+          supersededByContractId: null,
+        },
         data: {
           // AMENDMENT replaces a live term → TERMINATED; RENEWAL closes a
           // completed term → EXPIRED.
@@ -131,6 +133,20 @@ export async function POST(
           supersededAt: now,
           supersessionReason: body.reason,
         },
+      });
+      if (claimedOld.count === 0) {
+        throw Object.assign(
+          new Error("Contract already superseded by a concurrent request"),
+          { httpStatus: 409, code: "CONTRACT_ALREADY_SUPERSEDED" },
+        );
+      }
+
+      // Re-point programs so entitlements continue under the new terms — and
+      // so the cycle engine (which requires an ACTIVE contract) keeps rolling
+      // their assignments. Invoices stay on the old contract.
+      await tx.program.updateMany({
+        where: { contractId: old.id },
+        data: { contractId: successor.id },
       });
 
       await tx.orgAuditLog.create({
