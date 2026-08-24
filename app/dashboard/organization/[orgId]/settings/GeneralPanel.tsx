@@ -310,7 +310,14 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       });
       await queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save MSME declaration");
+      // Stale-tab conflicts route through the same dialog as the generic
+      // mutation instead of a dead-end banner (CR #1240 r2).
+      const code = (err as { code?: string }).code;
+      if (code === "VERSION_CONFLICT") {
+        setConflictOpen(true);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to save MSME declaration");
+      }
     } finally {
       setMsmeSaving(false);
     }
