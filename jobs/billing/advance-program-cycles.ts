@@ -75,6 +75,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
           id: true,
           contract: {
             select: {
+              id: true,
               organizationId: true,
               status: true,
               autoRenew: true,
@@ -115,7 +116,35 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
         async (tx) => {
-          if (decision.action === "CLOSE") {
+          // Wave-3 TOCTOU closure (#1230) — the ROLL/CLOSE decision above was
+          // computed from the candidate SCAN, which auto-renew/supersede can
+          // re-point or retire before this tx claims. Serializable cannot
+          // protect rows the tx never reads, so re-read the contract facts
+          // here and recompute before claiming.
+          const liveContract = await tx.contract.findUnique({
+            where: { id: a.program.contract.id },
+            select: { status: true, autoRenew: true, effectiveTo: true },
+          });
+          // Contract deleted between scan and claim ⇒ CLOSE (never roll
+          // under a contract that no longer exists).
+          // Contract deleted between scan and claim ⇒ CLOSE via the engine's own
+          // decision table (jobs may not carry free-form audit-action literals).
+          const effectiveDecision = liveContract
+            ? decideCycleTransition({
+                successorPeriodStart: successorStart,
+                successorPeriodEnd: successorEnd,
+                contractStatus: liveContract.status,
+                contractAutoRenew: liveContract.autoRenew,
+                contractEffectiveTo: liveContract.effectiveTo,
+              })
+            : decideCycleTransition({
+                successorPeriodStart: successorStart,
+                successorPeriodEnd: successorEnd,
+                contractStatus: "EXPIRED",
+                contractAutoRenew: false,
+                contractEffectiveTo: null,
+              });
+          if (effectiveDecision.action === "CLOSE") {
             // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
             const claim = await tx.programAssignment.updateMany({
               where: { id: a.id, status: "ACTIVE", rolledAt: null },
@@ -130,12 +159,12 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
                 targetMembershipId: null,
                 category: "PROGRAM",
                 action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-                description: `ProgramAssignment ${a.id} closed (${decision.reason}); no successor`,
+                description: `ProgramAssignment ${a.id} closed (${effectiveDecision.reason}); no successor`,
                 details: {
                   assignmentId: a.id,
                   programId: a.programId,
                   closed: true,
-                  reason: decision.reason,
+                  reason: effectiveDecision.reason,
                 },
               },
             });

@@ -136,6 +136,7 @@ export async function PATCH(
         const { locked } = await getContractLockState(
           contractId,
           current.status,
+          tx,
         );
         if (locked) {
           throw Object.assign(

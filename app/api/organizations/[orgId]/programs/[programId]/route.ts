@@ -190,6 +190,22 @@ export async function PATCH(
         });
       }
 
+      // Wave-3 TOCTOU closure (#1230) — the pre-transaction lock check above
+      // used the global client and can be defeated by a concurrent
+      // first-assignment stamping `configLockedAt` between check and write.
+      // Money-field writes therefore RE-CHECK against this tx's snapshot.
+      if (touchesMoney) {
+        const { locked: lockedNow } = await getProgramLockState(programId, tx);
+        if (lockedNow) {
+          throw Object.assign(
+            new Error(
+              "Program is in use — money config is locked. Only the name can be changed.",
+            ),
+            { httpStatus: 409, code: "PROGRAM_CONFIG_LOCKED" },
+          );
+        }
+      }
+
       // #768 #14/#15 — the create route validates overage combos on the WHOLE
       // config; a piecemeal PATCH could still assemble CHARGE_* with no
       // circuit-breaker ceiling (unbounded liability) or dead knobs. Merge
