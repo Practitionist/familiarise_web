@@ -207,7 +207,7 @@ export default function OrgDashboardShell({
   // burn a full guarded render that ends in "forbidden"). Home is
   // universal for ACTIVE members. No-op until `org` resolves.
   const prefetchPaths = useMemo(() => {
-    if (!org || org.organization.status !== "ACTIVE") return [];
+    if (!org?.organization || org.organization.status !== "ACTIVE") return [];
     const base = `/dashboard/organization/${orgId}`;
     const can = (surface: OrgSurface) =>
       hasOrgPermission(org.membership.role, surface);

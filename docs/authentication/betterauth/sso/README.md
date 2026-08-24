@@ -17,7 +17,7 @@ SSO is the most security-sensitive subsystem in the codebase. Eight static invar
 
 | In scope | Out of scope |
 |---|---|
-| SSO enforcement (write-time and read-time) | OAuth providers — see [`../oauth/`](../oauth/README.md) |
+| SSO enforcement (write-time; read-time removed — see §4) | OAuth providers — see [`../oauth/`](../oauth/README.md) |
 | Provider registration (SAML + OIDC) | General BetterAuth setup — see [`../01-architecture.md`](../01-architecture.md) |
 | Domain claims + DNS TXT verification | Org management UI |
 | Member-to-Membership bridge | Authorization / role hierarchy — see `docs/authorization/` |
@@ -173,7 +173,7 @@ Domain claims require a DNS TXT record at `_familiarise-verify.<domain>` contain
 
 ### Fail-Open During Setup
 
-If an org enables `enforceSSO` but hasn't registered any providers yet, enforcement is skipped (both `shouldRejectSession` and `customSession` check `registeredProviderIds.length > 0`). This prevents the org owner from locking themselves out mid-setup.
+If an org enables `enforceSSO` but hasn't registered any providers yet, enforcement is skipped by `shouldRejectSession` (`registeredProviderIds.length > 0`). This prevents the org owner from locking themselves out mid-setup. (The removed `customSession` read-time check used to mirror this; see §4 Layer 2.)
 
 ## 5. Edge Cases & Foot-Guns
 

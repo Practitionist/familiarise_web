@@ -2,22 +2,24 @@
 
 > **⚠️ Status (post #1242 audit):** the `usePrefetchDashboard` /
 > `prefetchOnTabHover` API shown below is **NOT currently mounted anywhere in
-> the app** — only `staticQueries` from that module has live consumers. The
-> prefetching that actually ships today is:
+> the app** — only `staticQueries` from that module has live consumers.
+> **Everything below the horizontal rule is a historical design reference,
+> not a description of running behavior.**
+>
+> The prefetching that actually ships today:
 >
 > - **Personal dashboards:** layout-level idle `router.prefetch` of `/home`
->   (+ `/appointments` for consultants) via `schedulePrefetch`.
+>   (+ `/appointments` for consultants) via `schedulePrefetch`
+>   (`consultee/[consulteeId]/layout.tsx`, `consultant/[consultantId]/layout.tsx`).
 > - **Admin/staff:** `prefetchPaths` on `OperatorDashboardShell`
->   (`AdminShell`, `StaffShell`).
+>   (`AdminShell`, `StaffShell`) → `usePrefetchNavPaths`.
 > - **Org / org-workspace:** `usePrefetchNavPaths` in their shells
->   (permission-gated for org).
+>   (`OrgDashboardShell` permission-gated, `OrgWorkspaceShell`).
 >
-> Treat the hook examples below as a design reference, not a description of
-> running behavior. Either wire the hover/data prefetch back in or delete the
-> dead exports — don't cite this page as evidence the behavior exists.
+> Either wire the hover/data prefetch back in or delete the dead exports —
+> don't cite this page as evidence the behavior exists.
 
-> **Related**: This doc covers client-side prefetching for fast navigation.
-> For server-side caching and real-time updates, see [`realtime-caching-strategy.md`](./realtime-caching-strategy.md).
+---
 
 ## Overview
 

@@ -22,7 +22,9 @@ import { schedulePrefetch } from "@/lib/dashboard-queries";
  */
 export function usePrefetchNavPaths(paths: string[], delay = 3000): void {
   const router = useRouter();
-  const prefetchKey = paths.join("|");
+  // Dedupe: callers may build lists programmatically; a repeated path would
+  // otherwise schedule duplicate router.prefetch calls.
+  const prefetchKey = [...new Set(paths)].join("|");
 
   useEffect(() => {
     if (!prefetchKey) return;
