@@ -83,62 +83,96 @@ export async function GET(
   });
 
   const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
+
+  // CR #1234 on #1240 — pull-based streaming: the controller only asks for
+  // more data when the consumer has drained the queue, so a slow client can
+  // no longer accumulate 200k rows server-side, and request cancellation
+  // stops the findMany chain immediately.
+  let cursor: { createdAt: Date; id: string } | null = null;
+  let iterations = 0;
+  let headerSent = false;
+  let truncated = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!headerSent) {
+        headerSent = true;
         controller.enqueue(
           encoder.encode(
             "id,status,period_start,period_end,currency,gross_paise,platform_fee_paise,refunds_paise,tds_paise,net_pre_tds_paise,disbursed_paise,processed_at,created_at\n",
           ),
         );
-
-        let cursor: { createdAt: Date; id: string } | null = null;
-
-        for (let i = 0; i < MAX_ITERATIONS; i++) {
-          const rows: PayoutExportRow[] = await prisma.organizationPayout.findMany({
-            where: cursor
-              ? {
-                  organizationId: orgId,
-                  OR: [
-                    { createdAt: { lt: cursor.createdAt } },
-                    { createdAt: cursor.createdAt, id: { lt: cursor.id } },
-                  ],
-                }
-              : { organizationId: orgId },
-            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-            take: CSV_CHUNK_SIZE,
-            select: PAYOUT_EXPORT_SELECT,
-          });
-          if (rows.length === 0) break;
-
-          const lines = rows.map((r) =>
-            [
-              r.id,
-              r.status,
-              r.periodStart?.toISOString() ?? "",
-              r.periodEnd?.toISOString() ?? "",
-              r.currency,
-              r.grossRevenuePaise.toString(),
-              r.platformFeePaise.toString(),
-              r.refundsPaise.toString(),
-              r.tdsAmountPaise?.toString() ?? "",
-              r.netPayoutPaise.toString(),
-              r.amountPaise.toString(),
-              r.processedAt?.toISOString() ?? "",
-              r.createdAt.toISOString(),
-            ]
-              .map(csvEscape)
-              .join(","),
+      }
+      if (
+        _req.signal.aborted ||
+        iterations >= MAX_ITERATIONS ||
+        cursor === null && iterations > 0
+      ) {
+        if (truncated) {
+          controller.enqueue(
+            encoder.encode(
+              "\n# TRUNCATED: row limit reached — re-export with a narrower period via the API.\n",
+            ),
           );
-          controller.enqueue(encoder.encode(lines.join("\n") + "\n"));
-
-          const last = rows[rows.length - 1];
-          cursor = { createdAt: last.createdAt, id: last.id };
         }
         controller.close();
+        return;
+      }
+      iterations += 1;
+
+      try {
+        const rows: PayoutExportRow[] = await prisma.organizationPayout.findMany({
+          where: cursor
+            ? {
+                organizationId: orgId,
+                OR: [
+                  { createdAt: { lt: cursor.createdAt } },
+                  { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+                ],
+              }
+            : { organizationId: orgId },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: CSV_CHUNK_SIZE,
+          select: PAYOUT_EXPORT_SELECT,
+        });
+        if (rows.length === 0) {
+          controller.close();
+          return;
+        }
+
+        const lines = rows.map((r) =>
+          [
+            r.id,
+            r.status,
+            r.periodStart?.toISOString() ?? "",
+            r.periodEnd?.toISOString() ?? "",
+            r.currency,
+            r.grossRevenuePaise.toString(),
+            r.platformFeePaise.toString(),
+            r.refundsPaise.toString(),
+            r.tdsAmountPaise?.toString() ?? "",
+            r.netPayoutPaise.toString(),
+            r.amountPaise.toString(),
+            r.processedAt?.toISOString() ?? "",
+            r.createdAt.toISOString(),
+          ]
+            .map(csvEscape)
+            .join(","),
+        );
+        controller.enqueue(encoder.encode(lines.join("\n") + "\n"));
+
+        const last = rows.at(-1);
+        if (!last) {
+          controller.close();
+          return;
+        }
+        cursor = { createdAt: last.createdAt, id: last.id };
+        if (iterations >= MAX_ITERATIONS && rows.length === CSV_CHUNK_SIZE) {
+          // A full final page means more rows likely remain — say so rather
+          // than handing finance a complete-looking but partial file.
+          truncated = true;
+        }
       } catch (err) {
-        // Mid-stream errors can't change headers — surface in-band and close
-        // so the browser doesn't hang on an open stream.
         controller.enqueue(
           encoder.encode(`\n# EXPORT ERROR: ${(err as Error).message}\n`),
         );
