@@ -221,22 +221,33 @@ export const ConsultationPlanSchema = z.object({
       "Title contains nonsensical text or gibberish",
     )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  // Required at the validation edge even though the DB column stays nullable
+  // (relaxed so legacy rows survive); authoring always has a description.
   description: z
     .string()
-    .optional()
+    .min(1, "Description is required")
     .refine(
-      (val) => !val || meaningfulContentRefinement(val),
+      meaningfulContentRefinement,
       "Description contains nonsensical text or gibberish",
     )
     .refine(
-      (val) => !val || profanityFreeRefinement(val),
+      profanityFreeRefinement,
       "Description contains inappropriate language",
     ),
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")
-    .max(8, "Duration cannot exceed 8 hours"),
-  price: z.number().min(0, "Price must be non-negative"),
+    .max(8, "Duration cannot exceed 8 hours")
+    .refine(
+      (val) => (val * 60) % 30 === 0,
+      "Duration must be in 30-minute increments",
+    ),
+  // Paise at the API edge (#780): the form edits rupees and the services
+  // multiply by 100 before sending. Cap is ₹10,00,000.
+  price: z
+    .number()
+    .min(0, "Price must be non-negative")
+    .max(100000000, "Price cannot exceed ₹10,00,000"),
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   language: z.string().min(1, "Language is required"),
   level: planLevelSchema,
@@ -281,7 +292,8 @@ export const ConsultationPlanSchema = z.object({
     ),
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
-    .default([])
+    .min(1, "At least one topic is required")
+    .max(10, "At most 10 topics are allowed")
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
     .refine(
       meaningfulArrayContentRefinement,
@@ -291,6 +303,12 @@ export const ConsultationPlanSchema = z.object({
       profanityFreeArrayRefinement,
       "Topics contain inappropriate language",
     ),
+  // Mirrors WebinarPlan/ClassPlan (#1134 P1-6): recording is an explicit
+  // per-plan opt-in, defaulting off with stream-only storage.
+  recordingEnabled: z.boolean().default(false),
+  recordingStoragePolicy: z
+    .enum(["STREAM_ONLY", "SUPABASE_PERMANENT"])
+    .default("STREAM_ONLY"),
   ...planPositioningShape,
 });
 
@@ -305,22 +323,29 @@ export const SubscriptionPlanSchema = z.object({
       "Title contains nonsensical text or gibberish",
     )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  // Required at the validation edge even though the DB column stays nullable
+  // (relaxed so legacy rows survive); authoring always has a description.
   description: z
     .string()
-    .optional()
+    .min(1, "Description is required")
     .refine(
-      (val) => !val || meaningfulContentRefinement(val),
+      meaningfulContentRefinement,
       "Description contains nonsensical text or gibberish",
     )
     .refine(
-      (val) => !val || profanityFreeRefinement(val),
+      profanityFreeRefinement,
       "Description contains inappropriate language",
     ),
   durationInMonths: z
     .number()
     .min(1, "Duration must be at least 1 month")
     .max(24, "Duration cannot exceed 24 months"),
-  price: z.number().min(0, "Price must be non-negative"),
+  // Paise at the API edge (#780): the form edits rupees and the services
+  // multiply by 100 before sending. Cap is ₹10,00,000.
+  price: z
+    .number()
+    .min(0, "Price must be non-negative")
+    .max(100000000, "Price cannot exceed ₹10,00,000"),
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),
   trialDurationMinutes: z
@@ -337,14 +362,14 @@ export const SubscriptionPlanSchema = z.object({
     .optional(),
   sessionsPerWeek: z
     .number()
-    .min(0, "Sessions per week cannot be negative")
+    .min(1, "At least one session per week is required")
     .max(7, "Cannot exceed 7 sessions per week"),
   sessionDurationInHours: z
     .number()
     .min(0.5, "Session duration must be at least 30 minutes")
     .max(4, "Session duration cannot exceed 4 hours")
     .default(1),
-  emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
+  emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   language: z.string().min(1, "Language is required"),
   level: planLevelSchema,
   prerequisites: z
@@ -388,7 +413,8 @@ export const SubscriptionPlanSchema = z.object({
     ),
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
-    .default([])
+    .min(1, "At least one topic is required")
+    .max(10, "At most 10 topics are allowed")
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
     .refine(
       meaningfulArrayContentRefinement,
@@ -408,6 +434,12 @@ export const SubscriptionPlanSchema = z.object({
       const titles = contents.map((c) => c.title.trim().toLowerCase());
       return new Set(titles).size === titles.length;
     }, "Roadmap sessions must have unique titles"),
+  // Mirrors WebinarPlan/ClassPlan (#1134 P1-6): recording is an explicit
+  // per-plan opt-in, defaulting off with stream-only storage.
+  recordingEnabled: z.boolean().default(false),
+  recordingStoragePolicy: z
+    .enum(["STREAM_ONLY", "SUPABASE_PERMANENT"])
+    .default("STREAM_ONLY"),
   ...planPositioningShape,
 });
 
@@ -416,6 +448,7 @@ const BaseEventPlanSchema = z.object({
   title: z
     .string()
     .min(1, "Title is required")
+    .max(100, "Title must be 100 characters or less")
     .refine(
       meaningfulContentRefinement,
       "Title contains nonsensical text or gibberish",
@@ -432,11 +465,20 @@ const BaseEventPlanSchema = z.object({
       profanityFreeRefinement,
       "Description contains inappropriate language",
     ),
-  price: z.number().min(0, "Price must be non-negative"),
+  // Paise at the API edge (#780): the form edits rupees and the services
+  // multiply by 100 before sending. Cap is ₹10,00,000.
+  price: z
+    .number()
+    .min(0, "Price must be non-negative")
+    .max(100000000, "Price cannot exceed ₹10,00,000"),
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
-  maxParticipants: z.number().min(1, "At least one participant is required"),
+  maxParticipants: z
+    .number()
+    .min(1, "At least one participant is required")
+    .max(10000, "Cannot exceed 10,000 participants"),
   language: z
     .string()
+    .min(1, "Language is required")
     .default("English")
     .refine(
       meaningfulContentRefinement,
@@ -489,6 +531,7 @@ const BaseEventPlanSchema = z.object({
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
     .min(1, "At least one topic is required")
+    .max(10, "At most 10 topics are allowed")
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
     .refine(
       meaningfulArrayContentRefinement,
@@ -516,6 +559,7 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")
+    .max(8, "Duration cannot exceed 8 hours")
     .refine(
       (val) => (val * 60) % 30 === 0,
       "Duration must be in 30-minute increments",
@@ -565,7 +609,7 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .default("STREAM_ONLY"),
   sessionsPerWeek: z
     .number()
-    .min(0, "Sessions per week cannot be negative")
+    .min(1, "At least one session per week is required")
     .max(7, "Cannot exceed 7 sessions per week"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
