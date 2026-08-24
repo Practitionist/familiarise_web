@@ -75,6 +75,50 @@ export async function GET(
  * under the complexity budget. Behavior identical to the previous inline
  * version (cancel cascade vs guarded period edit).
  */
+/**
+ * S3776 — early-cancel branch of the patch, extracted.
+ */
+async function cancelAssignment(
+  tx: Tx,
+  ctx: {
+    orgId: string;
+    programId: string;
+    assignmentId: string;
+    actorMembershipId: string;
+  },
+  current: { membershipId: string; periodStart: Date },
+) {
+  const { orgId, programId, assignmentId, actorMembershipId } = ctx;
+  const cancelEnd = new Date(Math.max(Date.now(), current.periodStart.getTime()));
+  const claimed = await tx.programAssignment.updateMany({
+    where: { id: assignmentId, status: "ACTIVE" },
+    data: { status: "CANCELLED", periodEnd: cancelEnd },
+  });
+  if (claimed.count === 0) {
+    throw Object.assign(
+      new Error(
+        "Assignment is not active (already rolled, closed, or cancelled)",
+      ),
+      { httpStatus: 409, code: "ASSIGNMENT_NOT_ACTIVE" },
+    );
+  }
+  await adjustActiveSeatCount(tx, { programId, delta: -1 });
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: orgId,
+      actorMembershipId,
+      targetMembershipId: current.membershipId,
+      category: "PROGRAM",
+      action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
+      description: `Program assignment cancelled early for program ${programId}`,
+      details: { programId, assignmentId, cancelledEarly: true },
+    },
+  });
+  return tx.programAssignment.findUniqueOrThrow({
+    where: { id: assignmentId },
+  });
+}
+
 async function applyAssignmentPatch(
   tx: Tx,
   ctx: {
@@ -103,36 +147,7 @@ async function applyAssignmentPatch(
   // cancel / cycle-rollover can't double-free the seat. periodEnd clamps to
   // periodStart for a not-yet-started allocation (no negative period).
   if (body.cancel) {
-    const cancelEnd = new Date(
-      Math.max(Date.now(), current.periodStart.getTime()),
-    );
-    const claimed = await tx.programAssignment.updateMany({
-      where: { id: assignmentId, status: "ACTIVE" },
-      data: { status: "CANCELLED", periodEnd: cancelEnd },
-    });
-    if (claimed.count === 0) {
-      throw Object.assign(
-        new Error(
-          "Assignment is not active (already rolled, closed, or cancelled)",
-        ),
-        { httpStatus: 409, code: "ASSIGNMENT_NOT_ACTIVE" },
-      );
-    }
-    await adjustActiveSeatCount(tx, { programId, delta: -1 });
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId,
-        targetMembershipId: current.membershipId,
-        category: "PROGRAM",
-        action: AUDIT_ACTIONS.PROGRAM.PROGRAM_UNASSIGNED,
-        description: `Program assignment cancelled early for program ${programId}`,
-        details: { programId, assignmentId, cancelledEarly: true },
-      },
-    });
-    return tx.programAssignment.findUniqueOrThrow({
-      where: { id: assignmentId },
-    });
+    return cancelAssignment(tx, ctx, current);
   }
 
   const nextStart = body.periodStart ?? current.periodStart;

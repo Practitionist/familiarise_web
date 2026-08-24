@@ -70,30 +70,8 @@ export async function runIrpUploader(): Promise<{
   );
 }
 
-async function runIrpUploaderUnlocked(): Promise<{
-  processed: number;
-  failed: number;
-  skipped: number;
-}> {
-  console.log("[cron][irp-uploader] starting");
-  Sentry.logger.info("job:irp-uploader started");
-
-  // Config gate before any invoice is touched: a missing/malformed
-  // PLATFORM_GSTIN is an ENV outage, not a per-invoice defect — failing each
-  // candidate permanently (MAP: seller GSTIN missing) would burn the whole
-  // queue on a fixable config slip.
-  const sellerGstin = SELLER.gstin;
-  if (!sellerGstin) {
-    console.error(
-      "[cron][irp-uploader] PLATFORM_GSTIN missing or malformed — skipping run",
-    );
-    return { processed: 0, failed: 0, skipped: 0 };
-  }
-
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-  const candidates = await prisma.organizationInvoice.findMany({
+async function fetchIrpCandidates(thirtyDaysAgo: Date) {
+  return prisma.organizationInvoice.findMany({
     where: {
       irpStatus: "PENDING",
       issuedAt: { gte: thirtyDaysAgo, not: null },
@@ -136,6 +114,34 @@ async function runIrpUploaderUnlocked(): Promise<{
     },
     take: 50, // batch size
   });
+
+}
+
+async function runIrpUploaderUnlocked(): Promise<{
+  processed: number;
+  failed: number;
+  skipped: number;
+}> {
+  console.log("[cron][irp-uploader] starting");
+  Sentry.logger.info("job:irp-uploader started");
+
+  // Config gate before any invoice is touched: a missing/malformed
+  // PLATFORM_GSTIN is an ENV outage, not a per-invoice defect — failing each
+  // candidate permanently (MAP: seller GSTIN missing) would burn the whole
+  // queue on a fixable config slip.
+  const sellerGstin = SELLER.gstin;
+  if (!sellerGstin) {
+    console.error(
+      "[cron][irp-uploader] PLATFORM_GSTIN missing or malformed — skipping run",
+    );
+    return { processed: 0, failed: 0, skipped: 0 };
+  }
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const candidates = await fetchIrpCandidates(thirtyDaysAgo);
+
 
   let processed = 0;
   let failed = 0;
