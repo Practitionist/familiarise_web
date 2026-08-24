@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "The evidence deadline for this dispute has passed. Contact Razorpay support to resolve it manually.",
+            "The evidence deadline for this dispute has passed. Contact payment-gateway support to resolve it manually.",
           code: "EVIDENCE_DEADLINE_PASSED",
           dueBy: dispute.dueBy?.toISOString() ?? null,
         },
