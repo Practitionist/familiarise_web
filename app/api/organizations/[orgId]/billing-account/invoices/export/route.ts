@@ -25,7 +25,7 @@ function csvEscape(v: string | number | null | undefined): string {
 
 function csvNoticeRow(message: string): string {
   return (
-    [csvEscape(message), ...Array(INVOICE_EXPORT_COLUMNS - 1).fill("")].join(",") +
+    [csvEscape(message), ...new Array(INVOICE_EXPORT_COLUMNS - 1).fill("")].join(",") +
     "\n"
   );
 }
