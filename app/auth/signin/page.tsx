@@ -5,14 +5,69 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signIn, useSession, sendVerificationEmail } from "@/lib/auth-client";
+import {
+  signIn,
+  useSession,
+  sendVerificationEmail,
+  getSession,
+} from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense } from "react";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
+
+/**
+ * Resolve the redirect target for an already-authenticated visitor.
+ *
+ * `useSession()` can serve the ≤5-min cookie-cache payload, and acting on a
+ * stale `onboardingCompleted` sent us one way while the server guard (always
+ * force-fresh) immediately bounced the user back — the intermittent
+ * signin↔dashboard↔onboarding flicker. Re-reading the session with
+ * `disableCookieCache` aligns the client's decision with what the server
+ * guard will decide. Falls back to the cached value if the fresh read fails.
+ */
+function useAuthenticatedRedirectTarget(
+  onboardingCompleted: boolean | undefined,
+  isPending: boolean,
+  callbackUrl: string | null,
+  onboardingUrl: string,
+) {
+  const router = useRouter();
+  const navigatedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (isPending || onboardingCompleted === undefined) return;
+
+    let cancelled = false;
+    const resolveAndGo = (completed: boolean) => {
+      if (cancelled) return;
+      const target = completed ? callbackUrl || "/dashboard" : onboardingUrl;
+      // Idempotency guard: re-renders / Strict-Mode double-invocation /
+      // duplicate store emissions must not queue a second navigation.
+      // (A delayed-state callbackUrl used to fire this effect twice with
+      // different targets — flashing users through /dashboard en route to
+      // their real destination.)
+      if (navigatedRef.current === target) return;
+      navigatedRef.current = target;
+      router.replace(target);
+    };
+
+    getSession({ query: { disableCookieCache: true } })
+      .then(({ data }) => {
+        resolveAndGo(data?.user?.onboardingCompleted ?? !!onboardingCompleted);
+      })
+      .catch(() => {
+        resolveAndGo(!!onboardingCompleted);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingCompleted, isPending, router, callbackUrl, onboardingUrl]);
+}
 
 export default function SignIn() {
   return (
@@ -24,13 +79,11 @@ export default function SignIn() {
 
 function SignInContent() {
   const { toast } = useToast();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
@@ -40,12 +93,12 @@ function SignInContent() {
   const [needsVerification, setNeedsVerification] = useState(false);
   const [resending, setResending] = useState(false);
 
-  useEffect(() => {
+  // Validate callbackUrl synchronously from the URL (relative paths only —
+  // open-redirect guard). Deriving it via delayed state meant it landed one
+  // render after mount, which double-fired the redirect effect below.
+  const callbackUrl = useMemo(() => {
     const url = searchParams.get("callbackUrl");
-    // Only allow relative paths to prevent XSS (e.g. javascript:alert(1))
-    if (url && url.startsWith("/") && !url.startsWith("//")) {
-      setCallbackUrl(url);
-    }
+    return url && url.startsWith("/") && !url.startsWith("//") ? url : null;
   }, [searchParams]);
 
   // Thread the validated callbackUrl through the onboarding + sign-up hand-offs
@@ -59,16 +112,12 @@ function SignInContent() {
     ? `/auth/signup?callbackUrl=${encodeURIComponent(callbackUrl)}`
     : "/auth/signup";
 
-  // Redirect authenticated users based on onboarding status
-  useEffect(() => {
-    if (!isPending && session?.user) {
-      if (session.user.onboardingCompleted) {
-        router.push(callbackUrl || "/dashboard");
-      } else {
-        router.push(onboardingUrl);
-      }
-    }
-  }, [session, isPending, router, callbackUrl, onboardingUrl]);
+  useAuthenticatedRedirectTarget(
+    session?.user?.onboardingCompleted,
+    isPending,
+    callbackUrl,
+    onboardingUrl,
+  );
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
   if (isPending) {

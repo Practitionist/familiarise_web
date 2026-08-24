@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { signUp, useSession, sendVerificationEmail } from "@/lib/auth-client";
+import { signUp, useSession, sendVerificationEmail, getSession } from "@/lib/auth-client";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
 
 export default function SignUp() {
@@ -69,15 +69,42 @@ function SignUpContent() {
     ? `/auth/signin?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
     : "/auth/signin";
 
-  // Redirect authenticated users based on onboarding status
+  // Redirect authenticated users based on onboarding status.
+  //
+  // `useSession()` can serve the ≤5-min cookie-cache payload; acting on a
+  // stale `onboardingCompleted` sent the client one way while the server
+  // guard (always force-fresh) bounced the user back — an intermittent
+  // flicker. Re-verify with a force-fresh read before committing, and keep
+  // the navigation idempotent (single replace, never push: leaving /auth/*
+  // in history made Back from the dashboard ping-pong forward again).
+  const router = useRouter();
+  const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isPending && session?.user) {
-      if (session.user.onboardingCompleted) {
-        router.push(safeCallbackUrl || "/dashboard");
-      } else {
-        router.push(onboardingUrl);
-      }
-    }
+    if (isPending || !session?.user) return;
+
+    let cancelled = false;
+    const resolveAndGo = (completed: boolean) => {
+      if (cancelled) return;
+      const target = completed ? safeCallbackUrl || "/dashboard" : onboardingUrl;
+      if (navigatedRef.current === target) return;
+      navigatedRef.current = target;
+      router.replace(target);
+    };
+
+    getSession({ query: { disableCookieCache: true } })
+      .then(({ data }) => {
+        resolveAndGo(
+          data?.user?.onboardingCompleted ??
+            !!session.user?.onboardingCompleted,
+        );
+      })
+      .catch(() => {
+        resolveAndGo(!!session.user?.onboardingCompleted);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [session, isPending, router, safeCallbackUrl, onboardingUrl]);
 
   // Persist the referral code at first touch so it survives the OAuth redirect
