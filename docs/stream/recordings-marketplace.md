@@ -81,6 +81,14 @@ request. The public list API additionally sends a short CDN
 
 ## Deploy notes
 
+⚠️ **Schema drift hazard (hit twice on #1244):** until this branch squashes
+into `dev`, a `prisma db push` run from any checkout whose schema.prisma
+lacks these columns (i.e., plain `dev`) will silently DROP them — the
+marketplace listing then fails prerender with P2022
+(`Recording.listingStatus does not exist`). If a preview fails with that
+error, re-apply the additive SQL (see PR #1244 description / this file's
+history) rather than debugging the app.
+
 `/explore/recordings` is ISR-prerendered at build time and the page data
 fetch fails loudly on error (withBuildTimeRetry). A deploy-preview built before this
 PR's schema columns exist on the shared database will therefore fail during
