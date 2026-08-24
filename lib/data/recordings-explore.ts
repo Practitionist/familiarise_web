@@ -11,6 +11,7 @@
  * direct FK, so both list and detail queries flatten that path server-side.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
@@ -206,31 +207,38 @@ export async function listPublicRecordings(
     ...(params.tag && { tags: { has: params.tag } }),
   };
 
-  // Sequential reads, deliberately NOT a batch $transaction and deliberately
-  // NOT parallel: this page prerenders inside Next's build worker pool where
-  // lib/prisma caps the pg pool at ONE connection (buildPhase), so both the
-  // transaction API (P2028 "Unable to start a transaction" — which took down
-  // every Netlify preview for #1244) and even two concurrent queries would
-  // contend. A count/findMany skew between the reads is harmless here:
-  // totals on a public listing are advisory, and the guard test keeps
-  // genuine failures LOUD.
-  const total = await prisma.recording.count({ where });
-  const rows = await prisma.recording.findMany({
-    where,
-    select: recordingListingSelect,
-    orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }],
-    take: perPage,
-    skip: (page - 1) * perPage,
-  });
-
-  return {
-    items: rows
-      .map(flattenListing)
-      .filter((x): x is RecordingListing => x !== null),
-    total,
-    page,
-    perPage,
-  };
+  // Build-time transient shield: 262 pages generate concurrently against a
+  // one-connection pool. Retry bounded times, REPORT every attempt to Sentry
+  // (guard test #1125 requires bound catches), and rethrow if it never
+  // settles — the listing stays LOUD per isr-routes-never-fail-open.
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const total = await prisma.recording.count({ where });
+      const rows = await prisma.recording.findMany({
+        where,
+        select: recordingListingSelect,
+        orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }],
+        take: perPage,
+        skip: (page - 1) * perPage,
+      });
+      return {
+        items: rows
+          .map(flattenListing)
+          .filter((x): x is RecordingListing => x !== null),
+        total,
+        page,
+        perPage,
+      };
+    } catch (error) {
+      lastError = error;
+      Sentry.captureException(error, {
+        tags: { subsystem: "explore-recordings", attempt: String(attempt) },
+      });
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 export async function getPublicRecordingBySlug(
