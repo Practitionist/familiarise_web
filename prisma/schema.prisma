@@ -1909,6 +1909,8 @@ model OrganizationInvoice {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, invoiceNumber])
+  // CR #1243 — keyset pagination for the invoices CSV export.
+  @@index([organizationId, createdAt, id])
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
@@ -5957,4 +5959,39 @@ enum TaxJurisdiction {
   JP
   GB
   EU
+}
+
+// #1230 wave-4b — enterprise sales-lead capture. The contact form's
+// enterprise/team-training categories persist here BEFORE the email send so
+// a Resend outage can no longer silently discard six-figure deals (the
+// #1132 blocker-6 class). Status flows NEW → CONTACTED → QUALIFIED →
+// CLOSED_WON / CLOSED_LOST; admin surface lands with wave-4c.
+model Lead {
+  id             String     @id @default(cuid())
+  // SHA-256 over a canonical-JSON payload of every persisted field PLUS a
+  // UTC day bucket — retries within the day are idempotent at the DB layer
+  // (CR #1243); later genuine inquiries hash differently and create new
+  // rows instead of being swallowed by the unique constraint.
+  submissionKey  String     @unique
+  sourceCategory String
+  companyName    String?
+  contactName    String
+  contactEmail   String
+  phone          String?
+  subject        String
+  message        String     @db.Text
+  status         LeadStatus @default(NEW)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CLOSED_WON
+  CLOSED_LOST
 }
