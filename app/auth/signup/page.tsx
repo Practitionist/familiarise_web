@@ -82,7 +82,6 @@ function SignUpContent() {
   // flicker. Re-verify with a force-fresh read before committing, and keep
   // the navigation idempotent (single replace, never push: leaving /auth/*
   // in history made Back from the dashboard ping-pong forward again).
-  const router = useRouter();
   const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
     if (isPending || !session?.user) return;

@@ -9,7 +9,6 @@ import { sso } from "@better-auth/sso";
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { reportSentryError } from "@/lib/observability/report";
 import {
   sendWelcomeEmail,
   sendAccountLinkedEmail,

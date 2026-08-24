@@ -215,7 +215,7 @@ export function usePrefetchDashboard({
         }
       });
     },
-    [consultantId, consulteeId, safePrefetch],
+    [consultantId, consulteeId, safePrefetch, trackTimer],
   );
 
   // Auto-prefetch on hook initialization when aggressive prefetching is enabled
