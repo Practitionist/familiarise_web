@@ -17,14 +17,24 @@ import {
 import { getIndianFinancialYear } from "@/lib/payments/tax/tds-service";
 
 async function main() {
-  await runJob("tds-26q-draft-export", async () => {
+  // runJob returns void by design (it manages its own lifecycle) — no await.
+  runJob("tds-26q-draft-export", async () => {
     const financialYear = process.env.TDS_RETURN_FY || getIndianFinancialYear();
+    // CR #1234 r3.5 — fail fast on malformed overrides rather than emitting
+    // a mislabeled compliance draft from a workflow typo.
+    if (!/^\d{4}-\d{2}$/.test(financialYear)) {
+      throw new Error(`TDS_RETURN_FY must look like "2026-27", got "${financialYear}"`);
+    }
     const quarter = process.env.TDS_RETURN_QUARTER
-      ? parseInt(process.env.TDS_RETURN_QUARTER, 10)
+      ? Number.parseInt(process.env.TDS_RETURN_QUARTER, 10)
       : indianFyQuarterOf(new Date()).quarter;
+    if (!Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
+      throw new Error(`TDS_RETURN_QUARTER must be 1-4, got "${process.env.TDS_RETURN_QUARTER}"`);
+    }
 
     const records = await prisma.tDSRecord.findMany({
       where: { financialYear, quarter },
+      orderBy: { createdAt: "asc" },
       select: {
         consultantProfileId: true,
         tdsSection: true,
@@ -36,15 +46,39 @@ async function main() {
     });
 
     const alreadyReported = records.filter((r) => r.reportedInForm26Q).length;
-    const rows: TdsReturnSourceRow[] = records
-      .filter((r) => !r.reportedInForm26Q)
-      .map((r) => ({
-        consultantProfileId: r.consultantProfileId,
-        tdsSection: r.tdsSection,
-        amountCreditedPaise: Number(r.cumulativeAmountCredited),
-        tdsDeductedPaise: Number(r.tdsDeducted),
-        isReversal: r.isReversal,
-      }));
+
+    // CR #1234 r3.5 — `cumulativeAmountCredited` is an FY RUNNING TOTAL per
+    // record, so summing rows overstates credits on every second deduction.
+    // Per deductee: report the FINAL cumulative as the period's credited
+    // figure; deductions stay incremental (reversals are negative rows).
+    type Acc = {
+      finalCumulativePaise: number;
+      tdsNetPaise: number;
+      section: string | null;
+    };
+    const byDeductee = new Map<string, Acc>();
+    const rows: TdsReturnSourceRow[] = [];
+    for (const r of records.filter((x) => !x.reportedInForm26Q)) {
+      let acc = byDeductee.get(r.consultantProfileId);
+      if (!acc) {
+        acc = { finalCumulativePaise: 0, tdsNetPaise: 0, section: r.tdsSection };
+        byDeductee.set(r.consultantProfileId, acc);
+      }
+      acc.finalCumulativePaise = Math.max(
+        acc.finalCumulativePaise,
+        Number(r.cumulativeAmountCredited),
+      );
+      acc.tdsNetPaise += Number(r.tdsDeducted);
+    }
+    for (const [consultantProfileId, acc] of byDeductee) {
+      rows.push({
+        consultantProfileId,
+        tdsSection: acc.section,
+        amountCreditedPaise: acc.finalCumulativePaise,
+        tdsDeductedPaise: acc.tdsNetPaise,
+        isReversal: false,
+      });
+    }
 
     const draft = buildTdsReturnDraft(rows, financialYear, quarter);
     if (alreadyReported > 0) {

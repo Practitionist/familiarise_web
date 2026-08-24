@@ -740,6 +740,15 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
       400,
     );
   }
+  // CR #1234 r3.5 — a fund-account ID alone is not consent to move money:
+  // the PUT flow replaces ids while a fresh penny-drop is still in flight
+  // (row back at PENDING_VERIFICATION). Only a VERIFIED account may submit.
+  if (account?.status !== "VERIFIED") {
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: organization payout account is ${account?.status ?? "missing"}, not VERIFIED — refusing to submit`,
+      409,
+    );
+  }
 
   const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
   const sdk = getRazorpayPayoutsService();

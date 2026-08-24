@@ -17,7 +17,7 @@ import * as Sentry from "@sentry/nextjs";
 import { buildGstr8Draft, type Gstr8SourceRow } from "@/lib/compliance/gstr8";
 
 async function main() {
-  await runJob("gstr8-draft-export", async () => {
+  runJob("gstr8-draft-export", async () => {
     // Default: previous calendar month in IST terms.
     const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const monthStart = process.env.GSTR8_MONTH_START

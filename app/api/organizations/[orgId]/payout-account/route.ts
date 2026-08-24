@@ -149,6 +149,9 @@ export async function PUT(
         ifscCode: body.ifscCode ?? null,
         routingNumber: body.routingNumber ?? null,
         swiftCode: body.swiftCode ?? null,
+        // CR #1234 r3.5 — each PUT revision gets a distinct version, or the
+        // id+version CAS predicates below cannot tell revisions apart.
+        version: { increment: 1 },
         // Force re-verification on any verification-relevant change (CR
         // #1234 r2 — holder name and IFSC identify the destination as much
         // as the last-4 does; comparing last4 alone let a same-last-4
@@ -196,6 +199,20 @@ export async function PUT(
   // ("created") or failed validations leave PENDING_VERIFICATION — re-saving
   // bank details or a future reverify action retries it.
   if (isRazorpayPayoutsConfigured() && body.ifscCode) {
+    // CR #1234 r3.5 — a re-provisioning attempt must not leave the row
+    // VERIFIED while its new fund account is still unproven: demote first
+    // (VERIFIED→PENDING is a legal edge), then provision. If validation
+    // succeeds below, the CAS flips it back; if it fails, the row sits
+    // honestly at PENDING_VERIFICATION.
+    if (upserted.status === "VERIFIED") {
+      await prisma.$transaction(async (tx) => {
+        await transitionOrgPayoutAccount(tx, {
+          where: { id: upserted.id, version: upserted.version },
+          to: "PENDING_VERIFICATION",
+          data: { verifiedAt: null },
+        });
+      });
+    }
     try {
       const svc = getRazorpayPayoutsService();
       const contact = await svc.createContact({
