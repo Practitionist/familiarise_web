@@ -29,6 +29,7 @@ import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
+import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 
 export async function POST(
   _req: NextRequest,
@@ -44,6 +45,10 @@ export async function POST(
     requireActive: true,
   });
   if (access.error) return access.error;
+
+  // #677/PM-36 — pay initiates a gateway order for a statutory document.
+  const limited = await applyRateLimit(moneyOpsLimiter, orgId);
+  if (limited) return limited;
 
   const invoice = await prisma.organizationInvoice.findFirst({
     where: { id: invoiceId, organizationId: orgId },
