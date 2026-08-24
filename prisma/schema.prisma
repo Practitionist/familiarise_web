@@ -1909,6 +1909,8 @@ model OrganizationInvoice {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, invoiceNumber])
+  // CR #1243 — keyset pagination for the invoices CSV export.
+  @@index([organizationId, createdAt, id])
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
@@ -5966,6 +5968,10 @@ enum TaxJurisdiction {
 // CLOSED_WON / CLOSED_LOST; admin surface lands with wave-4c.
 model Lead {
   id             String     @id @default(cuid())
+  // SHA-256 of (email|subject|message) — makes retried submissions
+  // idempotent at the DB layer (CR #1243): a 502 retry re-hits P2002 and the
+  // route answers 202 against the existing row instead of duplicating.
+  submissionKey  String     @unique
   sourceCategory String
   companyName    String?
   contactName    String

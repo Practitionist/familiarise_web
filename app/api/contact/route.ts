@@ -11,8 +11,10 @@
  * through to the FailedEmail retry worker rather than being swallowed.
  */
 
+import { createHash } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
@@ -80,17 +82,45 @@ export async function POST(req: NextRequest) {
   // table FIRST; the email is notification, not the system of record.
   const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
   if (LEAD_CATEGORIES.has(parsed.data.category ?? "")) {
-    await prisma.lead.create({
-      data: {
-        sourceCategory: parsed.data.category ?? "",
-        companyName: null,
-        contactName: `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
-        contactEmail: parsed.data.email,
-        phone: parsed.data.phone || null,
-        subject: parsed.data.subject,
-        message: parsed.data.message,
-      },
-    });
+    // CR #1243 — idempotent lead capture. The key is a digest of the
+    // submission content itself, so a user retrying after a 502 (or a
+    // double-click) lands on the unique constraint and answers 202 against
+    // the EXISTING row — no duplicate sales records, no client changes.
+    const submissionKey = createHash("sha256")
+      .update(
+        [
+          parsed.data.email.toLowerCase(),
+          parsed.data.subject,
+          parsed.data.message,
+          parsed.data.category ?? "",
+        ].join("|"),
+      )
+      .digest("hex");
+    try {
+      await prisma.lead.create({
+        data: {
+          submissionKey,
+          sourceCategory: parsed.data.category ?? "",
+          companyName: null,
+          contactName: `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
+          contactEmail: parsed.data.email,
+          phone: parsed.data.phone || null,
+          subject: parsed.data.subject,
+          message: parsed.data.message,
+        },
+      });
+    } catch (err) {
+      if (
+        !(
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2002"
+        )
+      ) {
+        throw err;
+      }
+      // Duplicate of an existing lead — still answer success so the retry
+      // loop terminates.
+    }
   }
 
   const result = await sendContactInquiryEmail({

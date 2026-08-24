@@ -168,7 +168,18 @@ export async function GET(
           truncated = true;
         }
       } catch (err) {
-        controller.enqueue(encoder.encode(csvNoticeRow(`EXPORT ERROR: ${(err as Error).message}`)));
+        // CR #1243 r2 — Prisma messages can carry table/column fragments:
+        // the CLIENT gets a generic notice; the real error goes to logs.
+        console.error("[invoices-export] stream failed", {
+          organizationId: orgId,
+          iterations,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        controller.enqueue(
+          encoder.encode(
+            csvNoticeRow("EXPORT ERROR: export failed mid-stream — contact support."),
+          ),
+        );
         controller.close();
       }
     },

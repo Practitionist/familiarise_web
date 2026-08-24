@@ -181,7 +181,18 @@ export async function GET(
           truncated = true;
         }
       } catch (err) {
-        controller.enqueue(encoder.encode(csvNoticeRow(`EXPORT ERROR: ${(err as Error).message}`)));
+        // CR #1243 r2 — gateway/DB messages stay server-side; the client
+        // gets a generic in-band notice.
+        console.error("[payouts-export] stream failed", {
+          organizationId: orgId,
+          iterations,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        controller.enqueue(
+          encoder.encode(
+            csvNoticeRow("EXPORT ERROR: export failed mid-stream — contact support."),
+          ),
+        );
         controller.close();
       }
     },
