@@ -1764,6 +1764,10 @@ model OrganizationPayout {
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
+  // CR #1240 — keyset pagination for the payouts CSV export walks
+  // (organizationId, createdAt desc, id desc); the two-column index can't
+  // serve the id tiebreaker.
+  @@index([organizationId, createdAt, id])
 }
 
 // #781 §A — closed set of payout rails (was a free-string code bag).
@@ -2477,7 +2481,10 @@ model ConsultantProfile {
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
   // non-individuals are mis-withheld. This is the schema half of the deferred
   // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
-  taxEntityType                   TaxEntityType   @default(INDIVIDUAL)
+  // BLOCKER-0 dedup (#1230): the entity-type field lives canonically on
+  // ConsultantTaxInfo (nullable, fail-closed intake); this profile-level
+  // duplicate was deleted — its NOT-NULL INDIVIDUAL default wrongly granted
+  // every company the ₹5L exemption.
   tdsSection                      String? // "194J" | "194O" | "194C"
   // #781 §C — integer basis points (1000 = 10%): exact, RSC-boundary-safe,
   // and the same convention as every revenue-split *Bps field.

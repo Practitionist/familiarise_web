@@ -108,7 +108,9 @@ that turning the flag on does not become an archaeology exercise.
 | `DPDP_SWEEPER_DELETE`                                      | `consent-retention-sweeper`  | Absent means the documented default of `false`, so the sweeper reports without deleting. This is intentional.                |
 | `ENABLE_CONSOLIDATED_INVOICE`                              | `settle-invoice-accruals`    | Absent means off, which is the intended default.                                                                             |
 | `STREAM_SYNC_EXCLUDED_USERS`                               | `stream-sync`                | Absent means no exclusions, which is the intended default.                                                                   |
-| `LOAD_TEST_EMAIL`, `LOAD_TEST_PASSWORD`                    | `load-test`                  | The manual k6 load test cannot authenticate. The workflow is `workflow_dispatch`-only, so this never affects scheduled runs. |
+| `LOAD_TEST_EMAIL`, `LOAD_TEST_PASSWORD`                    | `load-test`                  | The manual k6 load test cannot authenticate. The workflow is `workflow_dispatch`-only, so this never affects scheduled runs.  |
+| `PLATFORM_LUT_NUMBER`, `PLATFORM_LUT_VALID_TILL`           | `lib/compliance/lut.ts` (checkout + invoicing tax gates)     | Absent or expired means international supplies are charged 18% IGST instead of zero-rated (#1230). That is the fail-closed default and is legally safe — it just costs foreign customers more until finance files Form RFD-11 for the current FY and sets both values. `VALID_TILL` is the inclusive ISO date, normally the FY end (`YYYY-03-31`). |
+| `SENTRY_AUTH_TOKEN` (GSTR-8 workflow)                      | `gstr8-draft-export`         | The job still runs and prints the draft, but its empty-period warning never reaches Sentry — an unattended silent zero.      |
 
 ## The second surface: Netlify runtime environment
 

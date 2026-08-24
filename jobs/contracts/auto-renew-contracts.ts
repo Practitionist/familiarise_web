@@ -34,6 +34,7 @@ import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const BATCH_SIZE = 500;
 
@@ -78,7 +79,10 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
     const newTo = new Date(oldTo.getTime() + durationMs);
 
     try {
-      const result = await prisma.$transaction(
+      // #1132 follow-up — transient P2034 aborts now retry; persistent ones
+      // keep the outer catch's skip semantics (next-day recovery).
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
         async (tx) => {
           // Claim: stamp autoRenewedAt only while still ACTIVE + unstamped.
           const claim = await tx.contract.updateMany({
@@ -142,6 +146,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
           return { renewed: true as const, successorId: successor.id };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
       );
 
       if (result.renewed) stats.renewed += 1;
