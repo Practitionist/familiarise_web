@@ -295,14 +295,25 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     });
   };
 
-  // #1230 wave-4 — MSME declaration has its own save so a partial tax-form
-  // fill never accidentally files an MSME classification.
-  const saveMsme = () => {
+  // #1230 wave-4 — MSME declaration has its own NARROW save so a partial
+  // tax-form fill never accidentally persists unrelated unsaved profile
+  // edits through the generic mutation (CR on PR #1240).
+  const [msmeSaving, setMsmeSaving] = useState(false);
+  const saveMsme = async () => {
     setError(null);
-    mutation.mutate({
-      msmeStatus,
-      msmeWrittenAgreementOnFile: msmeAgreement,
-    });
+    setMsmeSaving(true);
+    try {
+      await patchSettings(orgId, {
+        ...(data && { expectedVersion: data.profile.version }),
+        msmeStatus,
+        msmeWrittenAgreementOnFile: msmeAgreement,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save MSME declaration");
+    } finally {
+      setMsmeSaving(false);
+    }
   };
 
   if (!allowed) return null;
@@ -714,8 +725,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   </div>
                 )}
                 {msmeDirty && (
-                  <Button size="sm" onClick={saveMsme} disabled={mutation.isPending}>
-                    Save MSME declaration
+                  <Button size="sm" onClick={() => void saveMsme()} disabled={msmeSaving}>
+                    {msmeSaving ? "Saving…" : "Save MSME declaration"}
                   </Button>
                 )}
               </div>
