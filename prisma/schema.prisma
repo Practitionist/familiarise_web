@@ -812,6 +812,8 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
+  // #1021 — org-scoped support ticket routing.
+  supportTickets SupportTicket[]
   @@map("organizations")
 }
 

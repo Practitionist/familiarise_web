@@ -214,7 +214,7 @@ export async function POST(req: NextRequest) {
         priority: validatedData.priority || "MEDIUM",
         category: validatedData.category,
         issueType: validatedData.issueType,
-        organizationId: membership?.organizationId ?? null,
+        ...(membership && { organization: { connect: { id: membership.organizationId } } }),
         consultationId: resolvedConsultationId,
         subscriptionId: resolvedSubscriptionId,
         paymentId: validatedData.paymentId,
