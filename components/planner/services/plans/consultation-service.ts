@@ -99,7 +99,8 @@ export class ConsultationService {
         title: plan.title,
         description: plan.description,
         durationInHours: plan.durationInHours,
-        price: plan.price,
+        // The form edits rupees; the DB stores paise (#780 money model).
+        price: Math.round(plan.price * 100),
         priceCurrency: plan.priceCurrency,
         language: plan.language,
         level: plan.level,
@@ -115,6 +116,10 @@ export class ConsultationService {
         targetAudience: plan.targetAudience ?? [],
         whatsIncluded: plan.whatsIncluded ?? [],
         faqs: plan.faqs ?? [],
+        // #1134 P1-6 — recording is an explicit per-plan opt-in on all four
+        // types now; the endpoints persist both columns.
+        recordingEnabled: plan.recordingEnabled ?? false,
+        recordingStoragePolicy: plan.recordingStoragePolicy ?? "STREAM_ONLY",
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
