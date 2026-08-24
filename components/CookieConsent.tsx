@@ -42,15 +42,18 @@ export default function CookieConsentBanner() {
       .catch(() => setLoaded(true));
   }, []);
 
-  const save = async (p: Prefs) => {
+  const [saveError, setSaveError] = useState(false);
+
+  const save = async (p: Prefs): Promise<boolean> => {
     try {
-      await fetch("/api/cookie-preferences", {
+      const res = await fetch("/api/cookie-preferences", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(p),
       });
+      return res.ok;
     } catch {
-      // Non-fatal — the consent cookie is still set client-side.
+      return false;
     }
   };
 
