@@ -131,8 +131,13 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
 
   return (
     <Form {...form}>
+      {/*
+        No bottom padding: the sticky footer below rests at its natural
+        position at the end of the form when fully scrolled, so trailing
+        padding would only reopen dead run-out under it (DashboardContent's
+        py-6 already leaves the small breathing gap).
+      */}
       <form
-        className="pb-24"
         onSubmit={(e) => {
           // Both actions are explicit footer buttons; a stray Enter must not
           // publish an offering.
@@ -211,11 +216,13 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
         </div>
 
         {/*
-          Pin to the content column, not the viewport: inset-x-0 drew the bar
-          under the sidebar and made the page look wider than the shell.
-          md:left-64 matches CollapsibleSidebar's expanded width.
+          Sticky to <main> (the dashboard scrollport) rather than the viewport:
+          a fixed bar drew itself under the sidebar (needing md:left-64) and
+          forced a giant compensating pb-24 on the form, which is what let the
+          page scroll into dead space past its content. As the form's last
+          child it naturally clears the sidebar and every shell chrome.
         */}
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-background/95 backdrop-blur md:left-64">
+        <div className="sticky bottom-0 z-10 mt-8 border-t bg-background/95 backdrop-blur">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-3">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">

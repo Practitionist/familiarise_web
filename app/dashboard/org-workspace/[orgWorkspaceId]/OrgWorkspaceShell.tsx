@@ -166,15 +166,17 @@ export function OrgWorkspaceShell({
           }
         />
 
-        <main className="min-h-0 flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+        <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="p-6">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
         </main>
 
         {/* Mobile bottom tab bar — only visible below md breakpoint. The
-            safe-area inset keeps the tabs clear of the iPhone home indicator. */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex pb-[env(safe-area-inset-bottom)]">
+            safe-area inset keeps the tabs clear of the iPhone home indicator.
+            In normal flow at the column's end (not fixed), so it takes real
+            layout space and <main> needs no compensating bottom padding. */}
+        <nav className="md:hidden shrink-0 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex pb-[env(safe-area-inset-bottom)]">
           {sidebarItems.map(({ name, icon: Icon, path }) => {
             const isActive = isActiveRoute(pathname, basePath, path);
             return (
