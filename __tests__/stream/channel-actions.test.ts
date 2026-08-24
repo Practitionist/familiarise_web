@@ -605,9 +605,10 @@ describe("Entity Channel Creation", () => {
         await import("../../actions/stream/chat/channel.action");
 
       const result = await createConsultationChannel("consultation-789");
+      expect(result).not.toBeNull();
 
       // IDs sorted: "consultant-3" < "consultee-1" alphabetically
-      expect(result.channelId).toBe("dm-consultant-3-consultee-1");
+      expect(result!.channelId).toBe("dm-consultant-3-consultee-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
         "dm-consultant-3-consultee-1",
@@ -664,9 +665,10 @@ describe("Entity Channel Creation", () => {
         await import("../../actions/stream/chat/channel.action");
 
       const result = await createSubscriptionChannel("subscription-101");
+      expect(result).not.toBeNull();
 
       // IDs sorted: "consultant-4" < "subscriber-1" alphabetically
-      expect(result.channelId).toBe("dm-consultant-4-subscriber-1");
+      expect(result!.channelId).toBe("dm-consultant-4-subscriber-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
         "dm-consultant-4-subscriber-1",
