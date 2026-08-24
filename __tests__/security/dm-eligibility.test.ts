@@ -24,8 +24,8 @@ import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 // to state here, and it keeps what this suite depends on visible.
 const mockPrisma = {
   user: { findUnique: jest.fn() },
-  consultation: { findFirst: jest.fn() },
-  subscription: { findFirst: jest.fn() },
+  consultation: { findFirst: jest.fn(), findMany: jest.fn() },
+  subscription: { findFirst: jest.fn(), findMany: jest.fn() },
   slotOfAppointment: { findFirst: jest.fn() },
 };
 
@@ -273,5 +273,72 @@ describe("buildDirections is shared, not duplicated", () => {
     ).toEqual(
       subscriptionOr.map((d: { requestedById: string }) => d.requestedById),
     );
+  });
+});
+
+
+describe("pairBookingContexts (org-forgery guard)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    noRelationships();
+  });
+
+  it("returns only org contexts the pair actually holds", async () => {
+    bothUsersExist(CONSULTANT, CONSULTEE);
+    mockPrisma.consultation.findMany.mockResolvedValue([
+      { consultationPlan: { organizationId: "org-real" }, appointment: null },
+    ]);
+    mockPrisma.subscription.findMany.mockResolvedValue([]);
+
+    const { pairBookingContexts } = await load();
+    const ctx = await pairBookingContexts("a", "b");
+
+    // The whole point: an arbitrary org id ("org-fake") can never be named,
+    // because the allowed set is derived from the bookings themselves.
+    expect(ctx).toEqual({ personalAllowed: false, organizations: ["org-real"] });
+  });
+
+  it("marks personal context when a booking has no org", async () => {
+    bothUsersExist(CONSULTANT, CONSULTEE);
+    mockPrisma.consultation.findMany.mockResolvedValue([
+      {
+        consultationPlan: { organizationId: null },
+        appointment: { organizationId: null },
+      },
+    ]);
+    mockPrisma.subscription.findMany.mockResolvedValue([]);
+
+    const { pairBookingContexts } = await load();
+    const ctx = await pairBookingContexts("a", "b");
+
+    expect(ctx.personalAllowed).toBe(true);
+    expect(ctx.organizations).toEqual([]);
+  });
+
+  it("answers empty for strangers without querying bookings", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+
+    const { pairBookingContexts } = await load();
+    const ctx = await pairBookingContexts("ghost-a", "ghost-b");
+
+    expect(ctx).toEqual({ personalAllowed: false, organizations: [] });
+    expect(mockPrisma.consultation.findMany).not.toHaveBeenCalled();
+  });
+
+  it("uses bookingOrgId precedence — plan org wins over appointment org", async () => {
+    bothUsersExist(CONSULTANT, CONSULTEE);
+    mockPrisma.consultation.findMany.mockResolvedValue([
+      {
+        consultationPlan: { organizationId: "org-plan" },
+        appointment: { organizationId: "org-appointment" },
+      },
+    ]);
+    mockPrisma.subscription.findMany.mockResolvedValue([]);
+
+    const { pairBookingContexts } = await load();
+    const ctx = await pairBookingContexts("a", "b");
+
+    expect(ctx.organizations).toEqual(["org-plan"]);
+    expect(ctx.personalAllowed).toBe(false);
   });
 });

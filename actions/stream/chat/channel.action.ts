@@ -445,6 +445,16 @@ export async function createConsultationChannel(
   const consultantId = consultation.consultationPlan.consultantProfile.user.id;
   const consulteeId = consultation.requestedBy.user.id;
 
+  // Legacy self-booked row (checkout blocks these now): getDmChannelId throws
+  // on a self-pair, so skip rather than take the whole approval path down.
+  // Same guard the search routes apply per row.
+  if (consultantId === consulteeId) {
+    streamLogger.warn("Skipping consultation channel — consultant and consultee are the same user", {
+      consultationId,
+    });
+    return null;
+  }
+
   if (!consultantId || !consulteeId) {
     throw new Error(
       `Participants not found for consultation: ${consultationId}`,
@@ -533,6 +543,14 @@ export async function createSubscriptionChannel(
 
   const consultantId = subscription.subscriptionPlan.consultantProfile.user.id;
   const consulteeId = subscription.requestedBy.user.id;
+
+  // Same self-pair guard as the consultation path above.
+  if (consultantId === consulteeId) {
+    streamLogger.warn("Skipping subscription channel — consultant and consultee are the same user", {
+      subscriptionId,
+    });
+    return null;
+  }
 
   if (!consultantId || !consulteeId) {
     throw new Error(

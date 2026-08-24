@@ -213,10 +213,17 @@ async function deleteCandidates(
   // would otherwise leave a truncated pre-image where a previous run's valid
   // one used to be — losing the record of what an EARLIER purge deleted, which
   // is the only thing that makes this reversible at all.
-  const tmpPath = `${PRE_IMAGE_PATH}.tmp`;
+  // Per-RUN file, not a shared path: a retry after a partial batch failure
+  // scans only the remaining channels, so overwriting one stable filename
+  // would replace the record of what the EARLIER batches deleted. Each run's
+  // snapshot is preserved alongside the others.
+  const runPreImagePath = `${PRE_IMAGE_PATH}.${new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")}.json`;
+  const tmpPath = `${runPreImagePath}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(candidates, null, 2));
-  renameSync(tmpPath, PRE_IMAGE_PATH);
-  console.log(`\nPre-image written to ${PRE_IMAGE_PATH}`);
+  renameSync(tmpPath, runPreImagePath);
+  console.log(`\nPre-image written to ${runPreImagePath}`);
 
   let deleted = 0;
   for (let i = 0; i < candidates.length; i += DELETE_BATCH) {
@@ -230,12 +237,13 @@ async function deleteCandidates(
 
 export async function purgeMemberlessDms(
   opts: Options,
-): Promise<{ scanned: number; candidates: number; deleted: number }> {
+): Promise<{ scanned: number; candidates: number; deleted: number; ok: boolean }> {
   if (!isStreamConfigured()) {
     console.error(
       "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
     );
-    return { scanned: 0, candidates: 0, deleted: 0 };
+    // A failed cleanup must not read as a completed no-op to CI or an operator.
+    return { scanned: 0, candidates: 0, deleted: 0, ok: false };
   }
 
   const client = getStreamChatClient();
@@ -246,17 +254,17 @@ export async function purgeMemberlessDms(
 
   reportCandidates(candidates, scanned, dmScanned);
 
-  if (candidates.length === 0) return { scanned, candidates: 0, deleted: 0 };
+  if (candidates.length === 0) return { scanned, candidates: 0, deleted: 0, ok: true };
 
   if (!opts.apply) {
     console.log(
       `\n(dry run — pass --apply to delete these ${candidates.length})`,
     );
-    return { scanned, candidates: candidates.length, deleted: 0 };
+    return { scanned, candidates: candidates.length, deleted: 0, ok: true };
   }
 
   const deleted = await deleteCandidates(client, candidates);
-  return { scanned, candidates: candidates.length, deleted };
+  return { scanned, candidates: candidates.length, deleted, ok: true };
 }
 
 async function main() {
@@ -267,7 +275,7 @@ async function main() {
   );
   const result = await purgeMemberlessDms(opts);
   console.log("\nDone:", result);
-  process.exit(0);
+  process.exit(result.ok ? 0 : 1);
 }
 
 if (

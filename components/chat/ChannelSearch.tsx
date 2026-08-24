@@ -282,6 +282,11 @@ export const ChannelSearch = () => {
    * before the tap that opened a row could land.
    */
   const dismiss = useCallback(() => {
+    // Clear the TERM too, not just the rows: `isOpen`/`showNoResults` derive
+    // from the settled query, so leaving it set turned dismiss into "replace
+    // the results with No results found".
+    setQuery("");
+    setSettledQuery("");
     setSearchResults([]);
     setOpenError(null);
     setSearchError(null);

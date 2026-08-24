@@ -65,8 +65,11 @@ is what made the browser's `watch()` succeed at all.
 ### 1. Eligibility is "ever transacted", and permanent
 
 A consultation or subscription that reached `APPROVED`,
-`APPROVED_PENDING_PAYMENT`, `SCHEDULED` or `COMPLETED`, in either direction, or
-a shared non-deleted `SlotOfAppointment`, opens the thread and never closes it.
+`APPROVED_PENDING_PAYMENT`, `SCHEDULED` or `COMPLETED`, in either direction,
+opens the thread and never closes it. (An earlier draft also counted a shared
+non-deleted `SlotOfAppointment`; that group arm was removed before merge — see
+§4 — because `/api/stream/channels/open` would have made it a user-reachable
+path to consultee↔consultee DMs.)
 
 `PENDING` is excluded: a request the consultant has not accepted is not a
 relationship, or anyone opens a channel with anyone by requesting a booking they
@@ -183,11 +186,15 @@ blip would make a live channel look unexpected.
 was a sort key, so a two-character query returned every matching user on the
 platform — name, email, avatar, role — with connected ones merely listed first.
 
-The group arm of the gate makes any two attendees of the same event mutually
-eligible, which is wider than the consultee↔consultee block in the
-2026-07-11 ADR. That is currently harmless because no code path offers a
-consultee a way to open a DM. **If a "message this person" affordance is ever
-added to an attendee list, that arm must be split first.**
+The gate's original draft had a GROUP ARM: any two attendees of the same
+event slot were mutually eligible, on the theory that no code path offered a
+consultee a way to open a DM. Review proved that self-refuting — this PR's own
+`POST /api/stream/channels/open` is exactly such a path, and attendee ids are
+readable from team-channel member state. The arm was removed from
+`canDirectMessage` and from `searchUsersWithRelationships`' related-user
+builder before merge; peer DMs remain blocked per the 2026-07-11 ADR. If a
+"message the host" affordance is ever wanted, reintroduce it behind an explicit
+host-check, never blanket co-membership.
 
 Named follow-ups, none of which this change makes worse: there is still no path
 that pushes a name or avatar change to Stream (only the 5-minute TTL cache

@@ -104,8 +104,12 @@ export const ChannelInfoAndManageDialog = ({
   // from the plan's consultantProfile), so the ownership test already implies
   // the role. Adding a second source of truth would only create a way for the
   // two to disagree.
-  const isEventOwner =
-    isEvent && channel.data?.created_by_id === client?.userID;
+  // Queried channels expose the creator as `created_by` (object);
+  // `created_by_id` survives only on channels created in THIS session. Read
+  // both, prefer the reliable one.
+  const creatorId =
+    channel.data?.created_by?.id ?? channel.data?.created_by_id;
+  const isEventOwner = isEvent && creatorId === client?.userID;
 
   // Get the other user's ID for 1-on-1 DMs (for block/report)
   const otherUserId =
@@ -285,7 +289,7 @@ export const ChannelInfoAndManageDialog = ({
     // In 1-on-1 DMs, both users can clear their view
     if (isDirectMessage && !displayInfo.isGroupDM) return true;
     // In group DMs and channels, only creator or privileged roles
-    const isCreator = channel.data?.created_by_id === client?.userID;
+    const isCreator = creatorId === client?.userID;
     const userRole = client?.user?.role;
     const isPrivileged =
       userRole === "CONSULTANT" ||

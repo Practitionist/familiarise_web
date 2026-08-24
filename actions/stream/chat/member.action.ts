@@ -21,7 +21,7 @@ import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getChannelTypeFromId, isDMChannel } from "@/lib/stream-channel-ids";
 import * as Sentry from "@sentry/nextjs";
 
 const channelIdSchema = z.string().min(1, "Channel ID is required");
@@ -35,11 +35,19 @@ export async function addMemberToChannel(
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
 
-  // Bypass the cookie-session cache so a just-demoted staff/admin cannot ride
-  // a stale session when minting membership.
   const session = await getSession(true);
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to manage channel members");
+  }
+
+  // DM membership is pair-derived (`getDmChannelId` + `canDirectMessage`).
+  // Allowing a DM creator to name a third member here would bypass that
+  // eligibility gate with server credentials — so direct-message channels are
+  // out of scope for this action entirely.
+  if (isDMChannel(channelId)) {
+    throw new Error(
+      "Forbidden: members cannot be added to direct messages",
+    );
   }
 
   const client = getStreamChatClient();
