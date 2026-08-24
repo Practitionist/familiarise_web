@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import React, { use, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
+import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
 import {
   Home,
   Users,
@@ -198,6 +199,27 @@ export default function OrgDashboardShell({
   // separate structural conditions combined per item. Five clusters
   // (People / Commerce / Resources / Insights / Configuration) plus an
   // ungrouped Overview block; groups with zero remaining items drop out.
+
+  // Idle-warm the RSC payloads for the highest-traffic tabs so the first
+  // click doesn't pay a full RSC round trip after the Router Cache's 30s
+  // dynamic window. Mirrors the MOBILE_TABS permission gates exactly — a
+  // surface the sidebar hides is also not prefetched (prefetching it would
+  // burn a full guarded render that ends in "forbidden"). Home is
+  // universal for ACTIVE members. No-op until `org` resolves.
+  const prefetchPaths = useMemo(() => {
+    if (!org?.organization || org.organization.status !== "ACTIVE") return [];
+    const base = `/dashboard/organization/${orgId}`;
+    const can = (surface: OrgSurface) =>
+      hasOrgPermission(org.membership.role, surface);
+    const paths = [`${base}/home`, `${base}/appointments`];
+    if (can("members.read")) paths.push(`${base}/members`);
+    if (can("operations.read")) paths.push(`${base}/analytics`);
+    if (can("billing.read") && org.organization.canSponsor)
+      paths.push(`${base}/billing`);
+    return paths;
+  }, [org, orgId]);
+  usePrefetchNavPaths(prefetchPaths);
+
   const sidebarGroups: CollapsibleSidebarGroup[] = useMemo(() => {
     if (!org) return [];
     const { canSponsor, canHost, fundingSource, requiresPO } = org.organization;

@@ -468,13 +468,14 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   useEffect(() => {
     if (!userId || !consultantId || !hasConsultantAccess) return;
 
-    schedulePrefetch(() => {
-      if (!pathname.includes("/home")) {
-        router.prefetch(`${basePath}/home`);
-      }
+    // Once per access-resolution, NOT per navigation: `pathname` used to be
+    // a dep, re-scheduling this idle prefetch on every tab switch (even while
+    // already on the target route). App Router dedupes redundant prefetches.
+    return schedulePrefetch(() => {
+      router.prefetch(`${basePath}/home`);
       router.prefetch(`${basePath}/appointments`);
     }, 3000);
-  }, [userId, consultantId, pathname, router, hasConsultantAccess, basePath]);
+  }, [userId, consultantId, router, hasConsultantAccess, basePath]);
 
   // Verification state + reviewer feedback. The consultant-data payload
   // carries the coarse status; the verification query adds the latest

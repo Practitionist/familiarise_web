@@ -258,12 +258,15 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   useEffect(() => {
     if (!userId || !consulteeId || !hasConsulteeAccess) return;
 
-    schedulePrefetch(() => {
-      if (!pathname.includes("/home")) {
-        router.prefetch(`${basePath}/home`);
-      }
+    // Once per access-resolution, NOT per navigation: `pathname` used to be
+    // a dep, re-scheduling this idle prefetch on every tab switch. Prefetching
+    // /home while already on /home is deduped by the App Router, so the guard
+    // isn't needed. Cancelled on unmount / dep change via schedulePrefetch's
+    // cancel function (#1242).
+    return schedulePrefetch(() => {
+      router.prefetch(`${basePath}/home`);
     }, 3000);
-  }, [userId, consulteeId, pathname, router, hasConsulteeAccess, basePath]);
+  }, [userId, consulteeId, router, hasConsulteeAccess, basePath]);
 
   // Org memberships for the bottom chip's "Switch to organization" section
   const orgMemberships = useMemo(() => {
