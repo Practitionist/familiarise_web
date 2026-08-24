@@ -98,7 +98,7 @@ function SignInContent() {
   // render after mount, which double-fired the redirect effect below.
   const callbackUrl = useMemo(() => {
     const url = searchParams.get("callbackUrl");
-    return url && url.startsWith("/") && !url.startsWith("//") ? url : null;
+    return url?.startsWith("/") && !url.startsWith("//") ? url : null;
   }, [searchParams]);
 
   // Thread the validated callbackUrl through the onboarding + sign-up hand-offs
