@@ -12,6 +12,10 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
+  appointmentPlanArmsSelect,
+  resolveListingPlan,
+} from "@/lib/stream/recording-listing-access";
+import {
   uploadRecordingPreviewAsset,
   deleteRecordingPreviewAssets,
 } from "@/lib/supabase";
@@ -41,22 +45,7 @@ export async function POST(
           select: {
             slotOfAppointment: {
               select: {
-                appointment: {
-                  select: {
-                    webinar: {
-                      select: {
-                        webinarPlan: {
-                          select: { consultantProfileId: true },
-                        },
-                      },
-                    },
-                    class: {
-                      select: {
-                        classPlan: { select: { consultantProfileId: true } },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentPlanArmsSelect },
               },
             },
           },
@@ -67,11 +56,14 @@ export async function POST(
       return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
 
-    const apt = recording.meetingSession.slotOfAppointment.appointment;
-    const ownerId =
-      apt.webinar?.webinarPlan?.consultantProfileId ??
-      apt.class?.classPlan?.consultantProfileId;
-    if (!ownerId || ownerId !== consultantProfile?.id) {
+    const listingPlan = resolveListingPlan(
+      recording.meetingSession.slotOfAppointment.appointment,
+    );
+    if (
+      !listingPlan ||
+      !consultantProfile ||
+      listingPlan.plan.consultantProfileId !== consultantProfile.id
+    ) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
@@ -87,32 +79,7 @@ export async function POST(
 
     const clip = formData.get("clip");
     const thumb = formData.get("thumb");
-    const updates: Record<string, string | null> = {};
-
-    if (clip instanceof File && clip.size > 0) {
-      const result = await uploadRecordingPreviewAsset(recordingId, "clip", clip);
-      if (!result.success || !result.url || !result.storagePath) {
-        return NextResponse.json(
-          { error: result.error ?? "Preview upload failed", code: "UPLOAD_ERROR" },
-          { status: 400 },
-        );
-      }
-      updates.previewClipUrl = result.url;
-      updates.previewClipStoragePath = result.storagePath;
-    }
-
-    if (thumb instanceof File && thumb.size > 0) {
-      const result = await uploadRecordingPreviewAsset(recordingId, "thumb", thumb);
-      if (!result.success || !result.url || !result.storagePath) {
-        return NextResponse.json(
-          { error: result.error ?? "Thumbnail upload failed", code: "UPLOAD_ERROR" },
-          { status: 400 },
-        );
-      }
-      updates.thumbnailUrl = result.url;
-    }
-
-    if (Object.keys(updates).length === 0) {
+    if (!(clip instanceof File && clip.size > 0) && !(thumb instanceof File && thumb.size > 0)) {
       return NextResponse.json(
         {
           error: "Provide a `clip` (MP4/WebM ≤50MB) and/or `thumb` (image ≤5MB)",
@@ -122,14 +89,63 @@ export async function POST(
       );
     }
 
-    const updated = await prisma.recording.update({
+    // Typed payload (no Record<string,…> escape hatch) and PARTIAL-SUCCESS
+    // persistence: if the thumbnail fails after the clip landed, the clip is
+    // still committed before we 400 — otherwise it would sit orphaned in
+    // storage with no DB pointer to clean it up later.
+    const updates: {
+      previewClipUrl?: string;
+      previewClipStoragePath?: string;
+      thumbnailUrl?: string;
+    } = {};
+    let partialError: string | null = null;
+
+    if (clip instanceof File && clip.size > 0) {
+      const result = await uploadRecordingPreviewAsset(recordingId, "clip", clip);
+      if (result.success && result.url && result.storagePath) {
+        updates.previewClipUrl = result.url;
+        updates.previewClipStoragePath = result.storagePath;
+      } else {
+        return NextResponse.json(
+          { error: result.error ?? "Preview upload failed", code: "UPLOAD_ERROR" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (thumb instanceof File && thumb.size > 0) {
+      const result = await uploadRecordingPreviewAsset(recordingId, "thumb", thumb);
+      if (result.success && result.url && result.storagePath) {
+        updates.thumbnailUrl = result.url;
+      } else {
+        partialError = result.error ?? "Thumbnail upload failed";
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await prisma.recording.update({
+        where: { id: recordingId },
+        data: updates,
+        select: { id: true },
+      });
+    }
+
+    if (partialError) {
+      return NextResponse.json(
+        {
+          error: partialError,
+          code: "PARTIAL_UPLOAD",
+          message:
+            "Some assets uploaded successfully and were saved; retry the failed one.",
+          persisted: Object.keys(updates),
+        },
+        { status: 400 },
+      );
+    }
+
+    const updated = await prisma.recording.findUniqueOrThrow({
       where: { id: recordingId },
-      data: updates,
-      select: {
-        id: true,
-        previewClipUrl: true,
-        thumbnailUrl: true,
-      },
+      select: { id: true, previewClipUrl: true, thumbnailUrl: true },
     });
     return NextResponse.json({ data: updated });
   } catch (error) {
@@ -164,22 +180,7 @@ export async function DELETE(
           select: {
             slotOfAppointment: {
               select: {
-                appointment: {
-                  select: {
-                    webinar: {
-                      select: {
-                        webinarPlan: {
-                          select: { consultantProfileId: true },
-                        },
-                      },
-                    },
-                    class: {
-                      select: {
-                        classPlan: { select: { consultantProfileId: true } },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentPlanArmsSelect },
               },
             },
           },
@@ -190,11 +191,14 @@ export async function DELETE(
       return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
 
-    const apt = recording.meetingSession.slotOfAppointment.appointment;
-    const ownerId =
-      apt.webinar?.webinarPlan?.consultantProfileId ??
-      apt.class?.classPlan?.consultantProfileId;
-    if (!ownerId || ownerId !== consultantProfile?.id) {
+    const listingPlan = resolveListingPlan(
+      recording.meetingSession.slotOfAppointment.appointment,
+    );
+    if (
+      !listingPlan ||
+      !consultantProfile ||
+      listingPlan.plan.consultantProfileId !== consultantProfile.id
+    ) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 

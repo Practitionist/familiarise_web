@@ -176,6 +176,9 @@ export async function PATCH(
     const whereClause: Prisma.AppointmentDocumentWhereInput = {
       id: documentId,
       appointmentId,
+      // Tombstoned rows are awaiting nightly purge — reviewing a deleted
+      // document would resurrect it into the consultee's history.
+      deletedAt: null,
     };
 
     if (!isDevelopment) {

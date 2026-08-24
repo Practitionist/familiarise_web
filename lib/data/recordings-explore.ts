@@ -110,8 +110,9 @@ function flattenListing(row: ListingRow): RecordingListing | null {
   const webinarArm = apt.webinar?.webinarPlan;
   const classArm = apt.class?.classPlan;
   const plan = webinarArm ?? classArm;
-  if (!plan || !plan.consultantProfile) return null;
   if (!row.listingTitle || row.listPricePaise === null) return null;
+  const consultantProfile = plan?.consultantProfile;
+  if (!consultantProfile) return null;
 
   return {
     id: row.id,
@@ -131,10 +132,10 @@ function flattenListing(row: ListingRow): RecordingListing | null {
     planId: plan.id,
     planTitle: plan.title,
     consultant: {
-      profileId: plan.consultantProfile.id,
-      name: plan.consultantProfile.user.name,
-      image: plan.consultantProfile.user.image,
-      headline: plan.consultantProfile.headline,
+      profileId: consultantProfile.id,
+      name: consultantProfile.user.name,
+      image: consultantProfile.user.image,
+      headline: consultantProfile.headline,
     },
   };
 }

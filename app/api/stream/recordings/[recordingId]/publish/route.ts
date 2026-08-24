@@ -5,9 +5,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import {
+  appointmentPlanArmsSelect,
+  resolveListingPlan,
+} from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -21,7 +26,7 @@ const PublishSchema = z.object({
   slug: z
     .string()
     .trim()
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, digits, dashes")
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "Lowercase letters, digits, dashes")
     .min(3)
     .max(80)
     .optional(),
@@ -88,40 +93,7 @@ export async function POST(
           select: {
             slotOfAppointment: {
               select: {
-                appointment: {
-                  select: {
-                    consultation: {
-                      select: { consultationPlanId: true },
-                    },
-                    subscription: {
-                      select: { subscriptionPlanId: true },
-                    },
-                    webinar: {
-                      select: {
-                        webinarPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            organizationId: true,
-                            visibility: true,
-                            archivedAt: true,
-                          },
-                        },
-                      },
-                    },
-                    class: {
-                      select: {
-                        classPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            organizationId: true,
-                            visibility: true,
-                            archivedAt: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentPlanArmsSelect },
               },
             },
           },
@@ -138,13 +110,12 @@ export async function POST(
 
     const appointment =
       recording.meetingSession.slotOfAppointment.appointment;
-    const plan =
-      appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+    const listingPlan = resolveListingPlan(appointment);
 
     // Only group offerings can be resold. 1:1 consultations/subscriptions are
     // private by design (default-off recording policy) and must never reach
     // the marketplace even if a session was recorded in an org context.
-    if (!plan) {
+    if (!listingPlan) {
       return NextResponse.json(
         {
           error:
@@ -159,7 +130,10 @@ export async function POST(
       where: { userId: session.user.id },
       select: { id: true },
     });
-    if (!consultantProfile || plan.consultantProfileId !== consultantProfile.id) {
+    if (
+      !consultantProfile ||
+      listingPlan.plan.consultantProfileId !== consultantProfile.id
+    ) {
       return NextResponse.json(
         { error: "Not authorized to publish this recording" },
         { status: 403 },
@@ -180,8 +154,8 @@ export async function POST(
 
     // Org plans must opt into public discoverability.
     if (
-      plan.organizationId &&
-      !["PUBLIC", "ORG_AND_PUBLIC"].includes(plan.visibility)
+      listingPlan.plan.organizationId &&
+      !["PUBLIC", "ORG_AND_PUBLIC"].includes(listingPlan.plan.visibility)
     ) {
       return NextResponse.json(
         {
@@ -192,7 +166,7 @@ export async function POST(
         { status: 403 },
       );
     }
-    if (plan.archivedAt) {
+    if (listingPlan.plan.archivedAt) {
       return NextResponse.json(
         { error: "The parent plan has been withdrawn.", code: "PLAN_ARCHIVED" },
         { status: 400 },
@@ -211,22 +185,44 @@ export async function POST(
       );
     }
 
-    const updated = await prisma.recording.update({
-      where: { id: recording.id },
-      data: {
-        listingStatus: "PUBLISHED",
-        listingTitle,
-        listingDescription: listingDescription ?? null,
-        listPricePaise: BigInt(listPricePaise),
-        tags: tags ?? [],
-        slug: finalSlug,
-        publishedAt: new Date(),
-        unpublishedAt: null,
-        consentAttestedAt: new Date(),
-        consentAttestedById: session.user.id,
-      },
-      select: { id: true, slug: true, listingStatus: true, publishedAt: true },
-    });
+    let updated;
+    try {
+      updated = await prisma.recording.update({
+        where: { id: recording.id },
+        data: {
+          listingStatus: "PUBLISHED",
+          listingTitle,
+          listingDescription: listingDescription ?? null,
+          listPricePaise: BigInt(listPricePaise),
+          tags: tags ?? [],
+          slug: finalSlug,
+          publishedAt: new Date(),
+          unpublishedAt: null,
+          consentAttestedAt: new Date(),
+          consentAttestedById: session.user.id,
+        },
+        select: { id: true, slug: true, listingStatus: true, publishedAt: true },
+      });
+    } catch (updateError) {
+      // Two concurrent publishes can pass the pre-check above; the @unique
+      // constraint is the real gate. Surface it as a 409, not a 500.
+      if (
+        typeof updateError === "object" &&
+        updateError !== null &&
+        (updateError as { code?: string }).code === "P2002"
+      ) {
+        return NextResponse.json(
+          { error: "That link is taken — pick another.", code: "SLUG_TAKEN" },
+          { status: 409 },
+        );
+      }
+      throw updateError;
+    }
+
+    // ISR hygiene (#1244 review): stale explore cards must not outlive an
+    // unpublish elsewhere; revalidate both surfaces at the write site.
+    revalidatePath("/explore/recordings");
+    if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
 
     return NextResponse.json({ data: updated }, { status: 201 });
   } catch (error) {
@@ -261,20 +257,7 @@ export async function DELETE(
           select: {
             slotOfAppointment: {
               select: {
-                appointment: {
-                  select: {
-                    webinar: {
-                      select: {
-                        webinarPlan: { select: { consultantProfileId: true } },
-                      },
-                    },
-                    class: {
-                      select: {
-                        classPlan: { select: { consultantProfileId: true } },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentPlanArmsSelect },
               },
             },
           },
@@ -285,11 +268,14 @@ export async function DELETE(
       return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
 
-    const apt = recording.meetingSession.slotOfAppointment.appointment;
-    const ownerId =
-      apt.webinar?.webinarPlan?.consultantProfileId ??
-      apt.class?.classPlan?.consultantProfileId;
-    if (!ownerId || ownerId !== consultantProfile?.id) {
+    const listingPlan = resolveListingPlan(
+      recording.meetingSession.slotOfAppointment.appointment,
+    );
+    if (
+      !consultantProfile ||
+      !listingPlan ||
+      listingPlan.plan.consultantProfileId !== consultantProfile.id
+    ) {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
@@ -299,8 +285,13 @@ export async function DELETE(
         listingStatus: "UNPUBLISHED",
         unpublishedAt: new Date(),
       },
-      select: { id: true, listingStatus: true },
+      select: { id: true, listingStatus: true, slug: true },
     });
+
+    // Take the replay off the public library immediately (ISR hygiene).
+    revalidatePath("/explore/recordings");
+    if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
+
     return NextResponse.json({ data: updated });
   } catch (error) {
     console.error("Error unpublishing recording:", error);

@@ -63,10 +63,11 @@ signed URLs would expire under cache. Deterministic paths
 
 ## Caching
 
-`/explore/recordings` uses ISR (`revalidate=300`). Publish/unpublish should
-purge `/explore/recordings` (+ detail path) on demand at the write site —
-same pattern as profile purges on the experts pages. TODO if stale cards are
-reported: wire `revalidatePath` into publish/unpublish DELETE/POST handlers.
+`/explore/recordings` uses ISR (`revalidate=300`). Publish and unpublish call
+`revalidatePath("/explore/recordings")` (+ the affected detail path) at the
+write site, so listing cards never outlive an unpublish by more than one
+request. The public list API additionally sends a short CDN
+`Cache-Control` (`s-maxage=60, stale-while-revalidate=300`).
 
 ## Open items
 

@@ -47,14 +47,10 @@ export async function handleRecordingPurchaseSuccess(
 export async function handleRecordingPurchaseFailure(
   orderId: string,
 ): Promise<void> {
-  const purchase = await prisma.recordingPurchase.findUnique({
-    where: { gatewayOrderId: orderId },
-    select: { id: true, status: true },
-  });
-  if (!purchase || purchase.status !== "PENDING") return;
-
-  await prisma.recordingPurchase.update({
-    where: { id: purchase.id },
+  // Only PENDING → FAILED; a captured (SUCCEEDED) purchase can never be
+  // flipped to FAILED by an out-of-order failure event.
+  await prisma.recordingPurchase.updateMany({
+    where: { gatewayOrderId: orderId, status: "PENDING" },
     data: { status: "FAILED" },
   });
 }

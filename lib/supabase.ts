@@ -1111,9 +1111,13 @@ interface RecordingPreviewUpload {
 
 /**
  * Upload a public preview asset for a recording listing. `kind` picks the
- * validation profile (clip = short video, thumb = poster image). Paths are
- * deterministic per recording (`<recordingId>/<kind>-<uuid>.<ext>`) with
- * replaceFolder semantics so re-uploads never orphan old bytes.
+ * validation profile (clip = short video, thumb = poster image).
+ *
+ * Object names are DETERMINISTIC per recording (`<recordingId>/clip.<ext>`,
+ * `<recordingId>/thumb.<ext>`) and the upload upserts: a re-upload overwrites
+ * the previous bytes in place, so no orphaned public objects accumulate. (A
+ * random per-upload filename here would strand the old clip forever — the
+ * bucket is public and nothing sweeps it.)
  */
 const uploadRecordingPreviewAsset = async (
   recordingId: string,
@@ -1121,6 +1125,15 @@ const uploadRecordingPreviewAsset = async (
   file: File,
 ): Promise<RecordingPreviewUpload> => {
   const isClip = kind === "clip";
+  const ext = isClip
+    ? file.type === "video/webm"
+      ? "webm"
+      : "mp4"
+    : file.type === "image/png"
+      ? "png"
+      : file.type === "image/webp"
+        ? "webp"
+        : "jpg";
   return uploadAsset({
     bucket: RECORDING_PREVIEWS_BUCKET,
     folder: recordingId,
@@ -1135,6 +1148,8 @@ const uploadRecordingPreviewAsset = async (
     upsert: true,
     replaceFolder: false,
     cacheControl: "31536000",
+    // Fixed stem ⇒ upsert overwrites; extension follows the declared MIME.
+    fileNameFor: () => `${kind}.${ext}`,
     ensureBucket: { public: true },
     errors: {
       bucketNotReady: `Preview storage bucket '${RECORDING_PREVIEWS_BUCKET}' not found.`,

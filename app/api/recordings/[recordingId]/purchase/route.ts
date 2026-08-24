@@ -11,7 +11,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import {
+  cancelRazorpayOrder,
+  createRazorpayOrder,
+} from "@/lib/payments/core/razorpay";
+import {
+  appointmentPlanArmsSelect,
+  resolveListingPlan,
+} from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -37,22 +44,7 @@ export async function POST(
           select: {
             slotOfAppointment: {
               select: {
-                appointment: {
-                  select: {
-                    webinar: {
-                      select: {
-                        webinarPlan: {
-                          select: { consultantProfileId: true },
-                        },
-                      },
-                    },
-                    class: {
-                      select: {
-                        classPlan: { select: { consultantProfileId: true } },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentPlanArmsSelect },
               },
             },
           },
@@ -63,8 +55,8 @@ export async function POST(
     if (
       !recording ||
       recording.listingStatus !== "PUBLISHED" ||
-      !recording.listPricePaise ||
-      recording.listPricePaise <= BigInt(0)
+      recording.listPricePaise === null ||
+      !(recording.listPricePaise > BigInt(0))
     ) {
       return NextResponse.json(
         { error: "Recording is not available for purchase", code: "NOT_LISTED" },
@@ -72,15 +64,15 @@ export async function POST(
       );
     }
 
-    // Consultants don't buy their own (or other consultants') replays —
-    // owners already hold playback; anyone else in the profession should be
-    // a viewer, not a buyer-through-this-endpoint.
+    // Consultants don't buy their own replays — owners already hold playback.
     if (session.user.consultantProfileId) {
-      const apt = recording.meetingSession.slotOfAppointment.appointment;
-      const ownerId =
-        apt.webinar?.webinarPlan?.consultantProfileId ??
-        apt.class?.classPlan?.consultantProfileId;
-      if (ownerId === session.user.consultantProfileId) {
+      const listingPlan = resolveListingPlan(
+        recording.meetingSession.slotOfAppointment.appointment,
+      );
+      if (
+        listingPlan &&
+        listingPlan.plan.consultantProfileId === session.user.consultantProfileId
+      ) {
         return NextResponse.json(
           { error: "You already own this recording", code: "ALREADY_ENTITLED" },
           { status: 400 },
@@ -88,14 +80,34 @@ export async function POST(
       }
     }
 
-    const existing = await prisma.recordingPurchase.findFirst({
-      where: { recordingId, buyerId: session.user.id, status: "SUCCEEDED" },
-      select: { id: true },
-    });
-    if (existing) {
+    const [owned, pendingOrder] = await Promise.all([
+      prisma.recordingPurchase.findFirst({
+        where: { recordingId, buyerId: session.user.id, status: "SUCCEEDED" },
+        select: { gatewayOrderId: true },
+      }),
+      prisma.recordingPurchase.findFirst({
+        where: { recordingId, buyerId: session.user.id, status: "PENDING" },
+        select: { gatewayOrderId: true, amountPaise: true },
+      }),
+    ]);
+    if (owned) {
       return NextResponse.json(
         { error: "You already own this recording", code: "ALREADY_ENTITLED" },
         { status: 400 },
+      );
+    }
+    // Double-click guard: resume the still-live order instead of minting a
+    // second payable one for the same (buyer, recording) pair.
+    if (pendingOrder) {
+      return NextResponse.json(
+        {
+          data: {
+            orderId: pendingOrder.gatewayOrderId,
+            amount: Number(pendingOrder.amountPaise),
+            currency: "INR",
+          },
+        },
+        { status: 200 },
       );
     }
 
@@ -111,15 +123,27 @@ export async function POST(
       },
     });
 
-    await prisma.recordingPurchase.create({
-      data: {
-        recordingId,
-        buyerId: session.user.id,
-        gatewayOrderId: order.id,
-        amountPaise,
-        status: "PENDING",
-      },
-    });
+    try {
+      await prisma.recordingPurchase.create({
+        data: {
+          recordingId,
+          buyerId: session.user.id,
+          gatewayOrderId: order.id,
+          amountPaise,
+          status: "PENDING",
+        },
+      });
+    } catch (rowError) {
+      // A payable order must not outlive its ledger row — best-effort cancel
+      // at the gateway, then surface the failure.
+      console.error("Failed to persist replay purchase:", rowError);
+      try {
+        await cancelRazorpayOrder(order.id);
+      } catch (cancelError) {
+        console.error("Failed to cancel stranded order:", cancelError);
+      }
+      throw rowError;
+    }
 
     return NextResponse.json(
       {

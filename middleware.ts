@@ -300,6 +300,14 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
+    // #1244 review — public + query-parameter-driven DB reads need a gate so
+    // `search`/`tag` variation can't hammer Postgres unauthenticated.
+    label: "public: recordings library browse",
+    match: (p) => p.startsWith("/api/explore/recordings"),
+    limiter: searchLimiter,
+    skipLocalhost: false,
+  },
+  {
     label: "public: trial eligibility check",
     match: (p) => p.startsWith("/api/trials/check-eligibility"),
     limiter: eligibilityLimiter,

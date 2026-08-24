@@ -3846,6 +3846,10 @@ model AppointmentDocument {
   @@index([responseToDocumentId])
   @@index([reviewedById])
   @@index([isStorageMissing])
+  // NOTE: true uniqueness of (rootDocumentId|id, versionNo) among live rows
+  // is DB-enforced by the check-constraints sidecar
+  // ("appointment_doc_thread_version_unique") — Prisma can't express the
+  // COALESCE/partial form. Upload routes retry on its P2002.
   @@index([rootDocumentId, versionNo])
   @@index([deletedAt])
 }
@@ -4155,6 +4159,14 @@ model RecordingPurchase {
   id              String                 @id @default(cuid())
   recording       Recording              @relation(fields: [recordingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   recordingId     String
+  // Cascade (not SetNull like the audit relations above) is deliberate:
+  // buyerId is required so SetNull is impossible, and DPDP/GDPR erasure of a
+  // user must not leave purchase rows keyed to a ghost identity. The gateway
+  // order id survives in Razorpay's ledger; we don't need it locally.
+  // Cascade (not SetNull like the audit relations above) is deliberate:
+  // buyerId is required so SetNull is impossible, and DPDP/GDPR erasure of a
+  // user must not leave purchase rows keyed to a ghost identity. The gateway
+  // order id survives in Razorpay's ledger; we don't need it locally.
   buyer           User                   @relation("RecordingPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
   buyerId         String
 

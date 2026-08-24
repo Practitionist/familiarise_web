@@ -7,6 +7,9 @@ on:
     - cron: "34 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
+permissions:
+  contents: read
+
 jobs:
   purge-deleted-documents:
     runs-on: ubuntu-latest
@@ -19,6 +22,11 @@ jobs:
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      # The purge deletes bytes from the private `documents` bucket via the
+      # admin client (lib/supabase.ts) — without these the storage leg of
+      # every candidate silently no-ops and rows never reach deletion.
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
     steps:
       - name: Checkout code
@@ -31,7 +39,9 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        # --ignore-scripts is safe here: the only lifecycle script the tree
+        # relies on is prisma generate, run explicitly two steps below.
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
         run: npx prisma generate

@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ slug: string }>;
+  readonly params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
   const listing = await getPublicRecordingBySlug(slug);
@@ -28,10 +28,39 @@ export async function generateMetadata({
   };
 }
 
+function renderMedia(listing: {
+  previewClipUrl: string | null;
+  thumbnailUrl: string | null;
+  listingTitle: string;
+}) {
+  if (listing.previewClipUrl) {
+    return (
+      <video
+        src={listing.previewClipUrl}
+        poster={listing.thumbnailUrl ?? undefined}
+        controls
+        preload="metadata"
+        className="h-full w-full object-cover"
+      />
+    );
+  }
+  if (listing.thumbnailUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={listing.thumbnailUrl}
+        alt={listing.listingTitle}
+        className="h-full w-full object-cover"
+      />
+    );
+  }
+  return <PlayCircle className="h-16 w-16 text-muted-foreground/40" />;
+}
+
 export default async function RecordingDetailPage({
   params,
 }: {
-  params: Promise<{ slug: string }>;
+  readonly params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
   const listing = await getPublicRecordingBySlug(slug);
@@ -49,25 +78,7 @@ export default async function RecordingDetailPage({
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
       <div className="space-y-6">
         <div className="aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
-          {listing.previewClipUrl ? (
-            // eslint-disable-next-line jsx-a11y/media-has-caption
-            <video
-              src={listing.previewClipUrl}
-              poster={listing.thumbnailUrl ?? undefined}
-              controls
-              preload="metadata"
-              className="h-full w-full object-cover"
-            />
-          ) : listing.thumbnailUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={listing.thumbnailUrl}
-              alt={listing.listingTitle}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <PlayCircle className="h-16 w-16 text-muted-foreground/40" />
-          )}
+          {renderMedia(listing)}
         </div>
 
         <div className="space-y-3">

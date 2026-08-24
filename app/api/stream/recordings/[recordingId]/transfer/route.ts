@@ -9,6 +9,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { getRecordingOwnershipInfo } from "@/lib/stream/recording-utils";
+import {
+  appointmentStoragePolicySelect,
+  resolveAppointmentStoragePolicy,
+} from "@/lib/stream/recording-listing-access";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
@@ -46,50 +50,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           include: {
             slotOfAppointment: {
               include: {
-                appointment: {
-                  include: {
-                    consultation: {
-                      include: {
-                        consultationPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            recordingStoragePolicy: true,
-                          },
-                        },
-                      },
-                    },
-                    subscription: {
-                      include: {
-                        subscriptionPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            recordingStoragePolicy: true,
-                          },
-                        },
-                      },
-                    },
-                    webinar: {
-                      include: {
-                        webinarPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            recordingStoragePolicy: true,
-                          },
-                        },
-                      },
-                    },
-                    class: {
-                      include: {
-                        classPlan: {
-                          select: {
-                            consultantProfileId: true,
-                            recordingStoragePolicy: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentStoragePolicySelect },
               },
             },
           },
@@ -145,12 +106,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // that produced this session decides; a STREAM_ONLY plan must not be able
     // to mint permanent storage (and its costs) by hitting this endpoint.
     const apt = recording.meetingSession.slotOfAppointment.appointment;
-    const storagePolicy =
-      apt.consultation?.consultationPlan?.recordingStoragePolicy ??
-      apt.subscription?.subscriptionPlan?.recordingStoragePolicy ??
-      apt.webinar?.webinarPlan?.recordingStoragePolicy ??
-      apt.class?.classPlan?.recordingStoragePolicy ??
-      "STREAM_ONLY";
+    const { policy: storagePolicy } = resolveAppointmentStoragePolicy(apt);
 
     if (storagePolicy !== "SUPABASE_PERMANENT") {
       return NextResponse.json(

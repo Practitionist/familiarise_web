@@ -14,13 +14,12 @@ interface OrgMaterialRow {
 }
 
 export function OrgMaterialsClient({
-  orgId,
   items,
+  total,
 }: {
-  orgId: string;
-  items: OrgMaterialRow[];
+  readonly items: OrgMaterialRow[];
+  readonly total: number;
 }) {
-  void orgId;
   return (
     <div className="container mx-auto px-4 py-8 space-y-6">
       <header>
@@ -64,7 +63,10 @@ export function OrgMaterialsClient({
                     {(m.fileSize / (1024 * 1024)).toFixed(1)} MB
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
+                    {/* Explicit TZ — server (UTC) and browser must agree or
+                        hydration mismatches flash the wrong day. */}
                     {new Date(m.uploadedAt).toLocaleDateString("en-IN", {
+                      timeZone: "UTC",
                       dateStyle: "medium",
                     })}
                   </td>
@@ -73,6 +75,13 @@ export function OrgMaterialsClient({
             </tbody>
           </table>
         </div>
+      )}
+
+      {items.length < total && (
+        <p className="text-xs text-muted-foreground">
+          Showing the newest {items.length} of {total} materials — use the API
+          for full pagination.
+        </p>
       )}
     </div>
   );

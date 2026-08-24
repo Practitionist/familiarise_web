@@ -90,7 +90,7 @@ async function verifyMaterialManageAccess(
       };
     }
 
-    if (plan.consultantProfile.userId === userId) {
+    if (plan.consultantProfile?.userId === userId) {
       return { allowed: true, organizationId: plan.organizationId };
     }
 
@@ -160,9 +160,9 @@ async function resolveMaterialRowAccess(
     material.subscriptionPlan ??
     material.webinarPlan ??
     material.classPlan;
-  if (!plan || !plan.consultantProfile) return { status: "not_found" };
+  if (!plan) return { status: "not_found" };
 
-  if (isDevelopment() || plan.consultantProfile.userId === userId) {
+  if (isDevelopment() || plan.consultantProfile?.userId === userId) {
     return {
       status: "allowed",
       storagePath: material.storagePath,

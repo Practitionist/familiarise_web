@@ -11,6 +11,8 @@ import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  validateDocumentUpload,
+  withVersionConflictRetry,
 } from "@/lib/documents/document-review";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -209,39 +211,16 @@ export async function POST(
       );
     }
 
-    // Size/type parity with the consultee route — the lib-level check inside
-    // uploadConsultantDocument is not guaranteed on every path, and a 500
-    // after bytes hit storage is worse than a clean 400 before.
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size === 0 || file.size > maxSize) {
+    // Size/type parity with the consultee route — one shared gate so the two
+    // roles' limits can never drift apart again.
+    const validation = validateDocumentUpload(file);
+    if (!validation.ok) {
       return NextResponse.json(
         {
-          error: "File too large",
-          message:
-            "Please select a file smaller than 10MB and larger than 0 bytes.",
-          code: "FILE_TOO_LARGE",
-        },
-        { status: 400 },
-      );
-    }
-
-    const allowedTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/gif",
-      "text/plain",
-    ];
-    if (!allowedTypes.includes(file.type)) {
-      return NextResponse.json(
-        {
-          error: "Unsupported file type",
-          message:
-            "The file type is not supported. Please upload a PDF, Word document, image (JPG, PNG, GIF), or text file.",
-          code: "UNSUPPORTED_FILE_TYPE",
+          error:
+            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+          message: validation.message,
+          code: validation.code,
         },
         { status: 400 },
       );
@@ -305,7 +284,8 @@ export async function POST(
     // transaction as the insert (race-safe versioning).
     let document;
     try {
-      document = await prisma.$transaction(async (tx) => {
+      document = await withVersionConflictRetry(() =>
+        prisma.$transaction(async (tx) => {
         let rootDocumentId: string | null = null;
         let versionNo = 1;
         if (responseToDocumentId) {
@@ -341,7 +321,8 @@ export async function POST(
             reviewedAt: new Date(),
           },
         });
-      });
+        }),
+      );
     } catch (dbError) {
       console.error("Database error saving consultant document:", dbError);
       Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
@@ -383,16 +364,24 @@ export async function POST(
         organizationId: true,
         consultation: {
           select: {
-            requestedBy: { select: { id: true, user: { select: { id: true } } } },
+            requestedBy: {
+              select: { id: true, user: { select: { id: true, name: true } } },
+            },
           },
         },
         subscription: {
           select: {
-            requestedBy: { select: { id: true, user: { select: { id: true } } } },
+            requestedBy: {
+              select: { id: true, user: { select: { id: true, name: true } } },
+            },
           },
         },
       },
     });
+    const consulteeName =
+      apt?.consultation?.requestedBy?.user?.name ||
+      apt?.subscription?.requestedBy?.user?.name ||
+      "The consultee";
     const recipientId =
       apt?.consultation?.requestedBy?.user?.id ||
       apt?.subscription?.requestedBy?.user?.id;
@@ -410,11 +399,13 @@ export async function POST(
           fileName: file.name,
           isThreaded: Boolean(responseToDocumentId),
           versionNo: document.versionNo,
-          consultantName: "Your consultant",
-          consulteeName: "",
+          consultantName: session.user.name ?? "Your consultant",
+          consulteeName,
+          // Consultees have no /documents surface — their review threads live
+          // on the appointment detail page (matches the review notification).
           dashboardUrl: scopedHref({
             organizationId: apt?.organizationId,
-            surface: "documents",
+            surface: "appointments",
             personal:
               consulteeProfileId
                 ? { kind: "consultee", profileId: consulteeProfileId }

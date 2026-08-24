@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
+import { resolveMaterialPlanRef } from "@/lib/plans/material-plan-ref";
 import { OrgMaterialsClient } from "./OrgMaterialsClient";
 
 export const metadata = { title: "Materials | Organization Dashboard" };
@@ -12,16 +14,21 @@ export const metadata = { title: "Materials | Organization Dashboard" };
 export default async function OrgMaterialsPage({
   params,
 }: {
-  params: Promise<{ orgId: string }>;
+  readonly params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "operations.read",
   });
-  if (access.error) return access.error;
+  if (access.error) {
+    // Same denial UX as the sibling org pages: bounce to the org home,
+    // which renders the member-appropriate view.
+    redirect(`/dashboard/organization/${orgId}/home`);
+  }
 
-  const items = await prisma.planMaterial.findMany({
-    where: { organizationId: orgId },
+  const [items, total] = await Promise.all([
+    prisma.planMaterial.findMany({
+      where: { organizationId: orgId },
     select: {
       id: true,
       fileName: true,
@@ -35,29 +42,23 @@ export default async function OrgMaterialsPage({
       webinarPlan: { select: { id: true, title: true } },
       classPlan: { select: { id: true, title: true } },
     },
-    orderBy: { uploadedAt: "desc" },
-    take: 200,
-  });
+      orderBy: { uploadedAt: "desc" },
+      take: 200,
+    }),
+    prisma.planMaterial.count({ where: { organizationId: orgId } }),
+  ]);
 
   return (
     <OrgMaterialsClient
-      orgId={orgId}
-      items={items.map((m) => ({
-        ...m,
-        planTitle:
-          m.consultationPlan?.title ??
-          m.subscriptionPlan?.title ??
-          m.webinarPlan?.title ??
-          m.classPlan?.title ??
-          null,
-        planType: m.consultationPlan
-          ? "CONSULTATION"
-          : m.subscriptionPlan
-            ? "SUBSCRIPTION"
-            : m.webinarPlan
-              ? "WEBINAR"
-              : "CLASS",
-      }))}
+      total={total}
+      items={items.map((m) => {
+        const planRef = resolveMaterialPlanRef(m);
+        return {
+          ...m,
+          planTitle: planRef?.title ?? null,
+          planType: planRef?.planType ?? "CLASS",
+        };
+      })}
     />
   );
 }

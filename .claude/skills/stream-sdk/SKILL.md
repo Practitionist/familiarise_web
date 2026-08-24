@@ -82,7 +82,7 @@ under `script-src`.
 | Client connection (store, not wrapper) | `providers/StreamProviderImpl.tsx`, `lib/stream/connection-store.ts` |
 | Webhooks | `app/api/stream/webhooks/route.ts` → `lib/stream/{session,recording,chat-moderation}-handlers.ts` |
 | Recordings | `lib/stream/recording-service.ts`, `recording-transfer-service.ts` |
-| Replay marketplace (#366) | `lib/data/recordings-explore.ts`, `app/api/stream/recordings/[id]/{publish,preview}`, `app/api/recordings/[id]/purchase`, `lib/payments/webhooks/recording-purchase.ts`, `docs/stream/recordings-marketplace.md` |
+| Replay marketplace (#366) | `lib/data/recordings-explore.ts`, `app/api/stream/recordings/[recordingId]/{publish,preview}`, `app/api/recordings/[recordingId]/purchase`, `lib/payments/webhooks/recording-purchase.ts`, `docs/stream/recordings-marketplace.md` |
 | Media teardown | `lib/stream/media-teardown.ts` |
 | Crons | `.github/workflows/stream-sync.yml`, `mark-expired-recordings.yml`, `transfer-expiring-recordings.yml`, `cleanup-old-stream-recordings.yml` |
 

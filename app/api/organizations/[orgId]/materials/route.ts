@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { resolveMaterialPlanRef } from "@/lib/plans/material-plan-ref";
 
 const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -74,19 +75,7 @@ export async function GET(
     description: m.description,
     order: m.order,
     uploadedAt: m.uploadedAt,
-    plan:
-      m.consultationPlan ??
-      m.subscriptionPlan ??
-      m.webinarPlan ??
-      m.classPlan ??
-      null,
-    planType: m.consultationPlan
-      ? "CONSULTATION"
-      : m.subscriptionPlan
-        ? "SUBSCRIPTION"
-        : m.webinarPlan
-          ? "WEBINAR"
-          : "CLASS",
+    planRef: resolveMaterialPlanRef(m),
   }));
 
   return NextResponse.json({ items: shaped, total, page, perPage });

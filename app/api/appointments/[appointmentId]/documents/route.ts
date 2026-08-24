@@ -12,6 +12,8 @@ import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  validateDocumentUpload,
+  withVersionConflictRetry,
 } from "@/lib/documents/document-review";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -377,36 +379,15 @@ export async function POST(
       );
     }
 
-    // Enhanced file validation
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
+    // Shared size/MIME gate (same helper the consultant route uses).
+    const validation = validateDocumentUpload(file);
+    if (!validation.ok) {
       return NextResponse.json(
         {
-          error: "File too large",
-          message: `The selected file is ${Math.round(file.size / 1024 / 1024)}MB. Please select a file smaller than 10MB.`,
-          code: "FILE_TOO_LARGE",
-        },
-        { status: 400 },
-      );
-    }
-
-    const allowedTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/gif",
-      "text/plain",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      return NextResponse.json(
-        {
-          error: "Unsupported file type",
-          message: `The file type "${file.type}" is not supported. Please upload a PDF, Word document, image (JPG, PNG, GIF), or text file.`,
-          code: "UNSUPPORTED_FILE_TYPE",
+          error:
+            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+          message: validation.message,
+          code: validation.code,
         },
         { status: 400 },
       );
@@ -652,7 +633,8 @@ export async function POST(
     // revisions cannot compute the same versionNo from a stale max().
     let document;
     try {
-      document = await prisma.$transaction(async (tx) => {
+      document = await withVersionConflictRetry(() =>
+        prisma.$transaction(async (tx) => {
         let rootDocumentId: string | null = null;
         let versionNo = 1;
         if (revisionOf) {
@@ -684,7 +666,8 @@ export async function POST(
             versionNo,
           },
         });
-      });
+        }),
+      );
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
       Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });

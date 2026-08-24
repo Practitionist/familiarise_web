@@ -20,7 +20,7 @@ export function RecordingBuyButton({
   recordingId,
   listPricePaise,
   formattedPrice,
-}: BuyButtonProps) {
+}: Readonly<BuyButtonProps>) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -62,9 +62,11 @@ export function RecordingBuyButton({
           },
         },
         handler: () => {
+          // Entitlement is written by the capture webhook, which may land a
+          // beat after this client callback — don't promise instant access.
           setStatus("idle");
           setMessage(
-            "Purchase successful! The recording is now in your dashboard resources.",
+            "Payment successful! Your recording will appear in your dashboard library within a few minutes.",
           );
         },
       });
@@ -78,6 +80,7 @@ export function RecordingBuyButton({
   return (
     <div className="space-y-2">
       <button
+        type="button"
         onClick={handleBuy}
         disabled={status === "loading"}
         className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
