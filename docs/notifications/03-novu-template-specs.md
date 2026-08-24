@@ -1342,3 +1342,5 @@ These need Dashboard configuration after Tier 1 is done:
 - `collaborator-accepted` — CollaboratorAcceptedPayload
 - `collaborator-removed` — CollaboratorRemovedPayload
 - `new-consultant-application` — ConsultantApplicationPayload
+- `document-uploaded` — DocumentUploadedPayload (`lib/novu/workflows.ts`). In-app + email to the reviewer (consultant) on a new submission, or to the uploader on a consultant response. Payload carries `versionNo` + `isThreaded` so copy can say "Revision v3 uploaded" vs "New document".
+- `document-reviewed` — DocumentReviewedPayload. In-app to the consultee when their submission moves status; templates branch on `reviewStatus` (APPROVED / REJECTED / NEEDS_REVISION / IN_REVIEW). Both workflows must exist in the Novu dashboard with matching slugs before enabling in production.

@@ -64,6 +64,9 @@ export {
   notifyDisputeResolved,
   // Recordings
   notifyRecordingAvailable,
+  // Documents
+  notifyDocumentUploaded,
+  notifyDocumentReviewed,
   // Referrals
   notifyReferralBonusEarned,
   notifyRefereeWelcomeBonus,

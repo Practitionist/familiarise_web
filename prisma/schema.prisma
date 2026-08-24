@@ -145,6 +145,12 @@ model User {
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
   documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
+  // Soft-delete audit — who tombstoned an appointment document.
+  documentsDeleted         AppointmentDocument[] @relation("DocumentDeleter")
+  // #366 — publish-time redistribution-consent attestations made by consultants.
+  recordingsConsentAttested Recording[]          @relation("RecordingConsentAttestor")
+  // #366 — replay purchases this user made.
+  recordingPurchases       RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -753,6 +759,9 @@ model Organization {
   appointmentsByOrg   Appointment[]       @relation("AppointmentByOrg")
   rescheduleRequests  RescheduleRequest[] @relation("RescheduleByOrg")
   recordingsByOrg     Recording[]         @relation("RecordingByOrg")
+  // Org-tagged plan materials (mirrored from the owning plan's organizationId)
+  // so org dashboards manage handouts without polymorphic joins.
+  planMaterialsByOrg  PlanMaterial[]      @relation("PlanMaterialByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
   // `MeetingSession.organizationId` for the write-side rationale.
   streamSessionsByOrg MeetingSession[]    @relation("StreamSessionByOrg")
@@ -3801,6 +3810,16 @@ model AppointmentDocument {
   responseToDocument   AppointmentDocument?  @relation("DocumentResponse", fields: [responseToDocumentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   responseDocuments    AppointmentDocument[] @relation("DocumentResponse")
 
+  // Threaded review versions — every revision/response joins the thread rooted
+  // at the original upload (rootDocumentId = first row's id; the root row is
+  // self-rooted or null). versionNo is the 1-based sequence inside the thread;
+  // "current version" is derived as max(versionNo) via the composite index
+  // rather than a maintained boolean so concurrent uploads cannot skew it.
+  rootDocumentId String?
+  rootDocument   AppointmentDocument?  @relation("DocumentThreadRoot", fields: [rootDocumentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  threadVersions AppointmentDocument[] @relation("DocumentThreadRoot")
+  versionNo      Int                   @default(1)
+
   // Relations
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -3809,6 +3828,13 @@ model AppointmentDocument {
   // can badge them and they're held out of review until re-uploaded.
   isStorageMissing  Boolean   @default(false)
   missingDetectedAt DateTime? @db.Timestamptz
+
+  // Soft delete — rows are tombstoned first (hidden from lists/review); the
+  // nightly cleanup job removes the storage object after a grace window and
+  // then hard-deletes the row. Only PENDING consultee uploads are deletable.
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   User?     @relation("DocumentDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
 
   // Metadata
   uploadedAt DateTime @default(now())
@@ -3820,6 +3846,8 @@ model AppointmentDocument {
   @@index([responseToDocumentId])
   @@index([reviewedById])
   @@index([isStorageMissing])
+  @@index([rootDocumentId, versionNo])
+  @@index([deletedAt])
 }
 
 enum DocumentReviewStatus {
@@ -3860,6 +3888,13 @@ model PlanMaterial {
   webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
+  // Denormalized org tag mirrored from the owning plan's organizationId so org
+  // dashboards can scope materials without polymorphic joins. Null = personal
+  // (non-org) plan material. Management gated via catalog.manage; reads via
+  // the Scope system's participant/metadata split.
+  organization   Organization? @relation("PlanMaterialByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -3868,6 +3903,7 @@ model PlanMaterial {
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([order])
+  @@index([organizationId])
 }
 
 // Buyer-facing Q&A on an offering. Polymorphic across the four plan types the
@@ -4094,6 +4130,48 @@ enum RecordingStatus {
   EXPIRED // Stream S3 URL expired
 }
 
+// #366 curated marketplace listing lifecycle. DRAFT → PUBLISHED on consultant
+// publish; UNPUBLISHED retains listing copy (price/copy/slug) for re-publish.
+enum RecordingListingStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+}
+
+// Standalone replay purchase lifecycle. Deliberately NOT a Payment row:
+// bookings carry the ledger/appointment invariants, a replay sale is a
+// two-party digital good settled purely off the gateway order id.
+enum RecordingPurchaseStatus {
+  PENDING // Order minted, awaiting capture webhook
+  SUCCEEDED // Captured — buyer holds playback entitlement
+  FAILED // payment.failed arrived (terminal for this attempt)
+  REFUNDED // Manual support refund (v1 has no automated path)
+}
+
+// One row per attempted replay purchase. Entitlement = latest SUCCEEDED row
+// for (recordingId, buyerId); rebuys after refund create NEW rows, hence no
+// unique constraint on the pair.
+model RecordingPurchase {
+  id              String                 @id @default(cuid())
+  recording       Recording              @relation(fields: [recordingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  recordingId     String
+  buyer           User                   @relation("RecordingPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerId         String
+
+  // Razorpay order_id (`order_…`) — mirrors Payment.paymentIntent usage and is
+  // what the webhook's notes.type=recording_purchase branch resolves by.
+  gatewayOrderId    String                 @unique
+  gatewayPaymentId  String? // `pay_…`, stamped on capture
+  amountPaise    BigInt
+  status         RecordingPurchaseStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([recordingId, buyerId, status])
+  @@index([buyerId])
+}
+
 // Model for storing recording details with dual storage support
 
 model Recording {
@@ -4137,6 +4215,32 @@ model Recording {
   lastTransferError        String?
   transferFailureAlertedAt DateTime? @db.Timestamptz
 
+  // #366 curated marketplace listing — opt-in per recording. Publishing is
+  // only valid for status=AVAILABLE && storageType=SUPABASE (Stream URLs die
+  // in ≤14d, so a STREAM_ONLY recording must never be sold) on webinar/class
+  // plans, with consultant redistribution-consent attestation (audit-logged).
+  listingStatus      RecordingListingStatus @default(DRAFT)
+  listPricePaise     BigInt?
+  listingTitle       String?
+  listingDescription String?                @db.Text
+  tags               String[]
+  slug               String?                @unique
+  publishedAt        DateTime?
+  unpublishedAt      DateTime?
+
+  // Preview assets are copied into the PUBLIC `recordings-previews` bucket so
+  // ISR-cached explore cards never need signed URLs. Full media stays private.
+  previewClipStoragePath String?
+
+  // Publish-time attestation that attendees consented to the replay being
+  // resold (registration checkbox + publish checkbox; see publish route).
+  consentAttestedAt   DateTime?
+  consentAttestedById String?
+  consentAttestedBy   User?     @relation("RecordingConsentAttestor", fields: [consentAttestedById], references: [id], onDelete: SetNull)
+
+  // #366 — standalone replay purchases (see RecordingPurchase).
+  purchases RecordingPurchase[]
+
   meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingSessionId String
 
@@ -4154,6 +4258,7 @@ model Recording {
   @@index([status])
   @@index([storageType])
   @@index([streamUrlExpiresAt])
+  @@index([listingStatus, publishedAt])
 }
 
 enum Platform {

@@ -91,6 +91,7 @@ const ROUTE_PATTERNS = {
     "/api/user/reviews", // Public: consultant reviews
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
     "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
+    "/api/explore/recordings", // Public: #366 recordings library listing (metadata only; playback is authed)
     "/api/slots/availability/", // Public: consultant availability for booking page
     "/api/slots/availability-with-allocation/", // Public: consultant availability with allocation info
   ],
