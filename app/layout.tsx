@@ -78,6 +78,20 @@ export default function RootLayout({
         className={`${sora.className} flex flex-col min-h-screen antialiased`}
         suppressHydrationWarning
       >
+        {/*
+          Pre-paint document scroll lock for /dashboard/* — the same class the
+          DashboardScrollLock component manages after hydration. Blocking and
+          inline so the very first paint already has html.dashboard-scroll-locked
+          applied; without it the window over-scrolls body.min-h-screen into dead
+          white space before React mounts. Idempotent with the component:
+          classList.add is a no-op when present, and removal on leaving the
+          dashboard tree stays the component's cleanup job.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: 'try{if(location.pathname.startsWith("/dashboard"))document.documentElement.classList.add("dashboard-scroll-locked")}catch(e){}',
+          }}
+        />
         <ReactQueryProvider>
           <AuthSyncProvider />
           <MaintenanceProvider>
