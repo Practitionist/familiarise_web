@@ -195,6 +195,9 @@ model SupportTicket {
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
 
+  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
+  @@index([organizationId])
+
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
   subscriptionId String?
