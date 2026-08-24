@@ -35,20 +35,9 @@ import {
   uploadInvoicePdf,
   createInvoicePdfSignedUrl,
 } from "@/lib/pdf/storage";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
 const PDF_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h — matches signed-URL TTL
-
-// Platform-side supplier info for the invoice PDF. Kept here (not in
-// .env) so it's diffable in the repo; swap for an env-driven lookup
-// when we need per-region suppliers (RTN INDIA vs platform entity in
-// a future GCC expansion).
-const SUPPLIER = {
-  name: "Familiarise Technologies Private Limited",
-  gstin: process.env.PLATFORM_GSTIN ?? "29AAFCF1234Q1ZN",
-  address:
-    "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
-  email: "billing@familiarise.com",
-} as const;
 
 export async function GET(
   _req: NextRequest,
@@ -70,6 +59,21 @@ export async function GET(
     access.member?.id ?? orgId,
   );
   if (limited) return limited;
+
+  // Fail-closed supplier identity (#1132/#1230) — the old dummy-GSTIN
+  // fallback produced legal-looking invoices carrying a fabricated GSTIN
+  // when PLATFORM_GSTIN slipped. Ops gets an actionable 503 instead.
+  const supplier = getPlatformSupplier();
+  if (!supplier) {
+    return NextResponse.json(
+      {
+        error:
+          "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
+        code: "SUPPLIER_GSTIN_UNCONFIGURED",
+      },
+      { status: 503 },
+    );
+  }
 
   const invoice = await prisma.organizationInvoice.findFirst({
     where: { id: invoiceId, organizationId: orgId },
@@ -151,7 +155,7 @@ export async function GET(
         gstin: invoice.organization.taxInfo?.gstin ?? null,
         billingEmail: invoice.organization.billingEmail,
       },
-      supplier: SUPPLIER,
+      supplier,
       irn: {
         value: invoice.irn,
         ackNumber: invoice.ackNumber,

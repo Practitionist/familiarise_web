@@ -120,8 +120,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] credit_purchase ${walletEntryOrderId} notes.amountPaise=${paise} ≠ gatewayAmount=${gatewayAmountPaise}. Skipping wallet credit.`,
       );
       if (organizationId) {
-        prisma.orgAuditLog
-          .create({
+        await prisma.orgAuditLog.create({
             data: {
               organizationId,
               actorMembershipId: null,
@@ -155,8 +154,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] credit_purchase confirmed=${result.confirmed} order=${walletEntryOrderId} org=${organizationId ?? "?"} balanceAfter=${result.balanceAfter ?? "?"}`,
       );
       if (organizationId && result.confirmed) {
-        prisma.orgAuditLog
-          .create({
+        await prisma.orgAuditLog.create({
             data: {
               organizationId,
               actorMembershipId: null,
@@ -243,8 +241,7 @@ export async function handleOrgPaymentSuccess(
         `[Webhook] invoice_payment ${invoiceId} totalPaise=${invoiceRow.totalPaise} ≠ gatewayAmount=${gatewayAmountPaise}. Not marking PAID.`,
       );
       if (organizationId) {
-        prisma.orgAuditLog
-          .create({
+        await prisma.orgAuditLog.create({
             data: {
               organizationId,
               actorMembershipId: null,
@@ -356,8 +353,7 @@ export async function handleOrgPaymentSuccess(
     console.log(`[Webhook] Invoice paid: ${invoiceId}`);
 
     if (resolvedOrgId) {
-      prisma.orgAuditLog
-        .create({
+      await prisma.orgAuditLog.create({
           data: {
             organizationId: resolvedOrgId,
             actorMembershipId: null,
@@ -450,8 +446,7 @@ export async function handleOrgPaymentFailure(
       `[Webhook] credit_purchase.failed placeholder deleted (count=${deleted.count}) order=${walletEntryOrderId}`,
     );
     if (organizationId && deleted.count > 0) {
-      prisma.orgAuditLog
-        .create({
+      await prisma.orgAuditLog.create({
           data: {
             organizationId,
             actorMembershipId: null,
@@ -491,8 +486,7 @@ export async function handleOrgPaymentFailure(
       `[Webhook] invoice_payment.failed cleared provider order id for invoice ${invoiceId}`,
     );
     if (organizationId) {
-      prisma.orgAuditLog
-        .create({
+      await prisma.orgAuditLog.create({
           data: {
             organizationId,
             actorMembershipId: null,

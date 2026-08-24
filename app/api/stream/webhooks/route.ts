@@ -91,10 +91,10 @@ export async function POST(req: NextRequest) {
     streamLogger.error(
       "Neither STREAM_WEBHOOK_SECRET nor STREAM_API_SECRET is configured — Stream webhooks cannot be verified",
     );
-    Sentry.captureException(
-      new Error("Stream webhook secret not configured"),
-      { tags: { subsystem: "stream" }, level: "fatal" },
-    );
+    Sentry.captureException(new Error("Stream webhook secret not configured"), {
+      tags: { subsystem: "stream" },
+      level: "fatal",
+    });
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 },
@@ -135,31 +135,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", handled: false });
     }
 
-    // #1134 P1-9 — prefer Stream's own `X-Webhook-ID`, which is documented as
-    // stable across the retries of one delivery and unique between deliveries.
-    // The hand-rolled key collapsed to `stream_<type>_chat_<created_at>` for
-    // chat events, so two flags in the same second deduped to one; participant
-    // joined/left omitted the user id entirely, so two people joining in the
-    // same second collapsed into a single attendance write.
-    const webhookId = req.headers.get("x-webhook-id");
-    const eventId = webhookId
-      ? `stream_${webhookId}`
-      : // Fallback for a delivery without the header: include every field that
-        // distinguishes two legitimately-different events. NOT `.filter(Boolean)` —
-        // dropping the empty ones collapses the positions, so a participant event
-        // and a message event with the same timestamp could align their remaining
-        // fields into one key. Empty segments are what keep the slots meaningful.
-        [
-          "stream",
-          eventType,
-          baseEvent.call_cid ?? "chat",
-          (event as { session_id?: string }).session_id ?? "",
-          (event as { participant?: { user?: { id?: string } } }).participant
-            ?.user?.id ?? "",
-          (event as { user?: { id?: string } }).user?.id ?? "",
-          (event as { message?: { id?: string } }).message?.id ?? "",
-          baseEvent.created_at,
-        ].join("_");
+    // #1134 P1-9 — dedup key derived ONLY from HMAC-verified material.
+    //
+    // An earlier version preferred Stream's `X-Webhook-ID` header. That
+    // header is convenient operationally but is NOT covered by the signature
+    // (Stream signs the body only), so one captured `(body, signature)` pair
+    // could be replayed under N invented header values and mint N distinct
+    // dedup keys — N dispatches from one verified delivery. Razorpay made
+    // exactly this trade in the opposite direction for the same reason
+    // (razorpay/route.ts "dedup key derived only from signature-covered
+    // material").
+    //
+    // Keying on sha256(body) instead:
+    //   - Retries of one delivery redeliver byte-identical payloads → they
+    //     collapse to one key (the property X-Webhook-ID was bought for).
+    //   - Legitimately-different events differ somewhere in the body
+    //     (participant ids, message ids, timestamps) → never collapsed, which
+    //     fixes the old hand-rolled key's bug where two flags in the same
+    //     second deduped to one and participant joined/left dropped the user
+    //     id entirely.
+    const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
+    const eventId = `stream_${baseEvent.type}_${bodyHash}`;
 
     const signature = req.headers.get("x-signature") || undefined;
 
@@ -207,9 +203,16 @@ export async function POST(req: NextRequest) {
       // it, dispatch re-claims an id it already owns, sees its own IN-PROGRESS
       // row, and returns without handling anything — which left every event to
       // the sweeper, six to sixteen minutes later, instead of running inline.
-      await processStreamEvent(event, eventType, eventId, signature, baseEvent, {
-        claimAlreadyHeld: true,
-      });
+      await processStreamEvent(
+        event,
+        eventType,
+        eventId,
+        signature,
+        baseEvent,
+        {
+          claimAlreadyHeld: true,
+        },
+      );
     });
 
     return NextResponse.json({ status: "ok", accepted: true });
