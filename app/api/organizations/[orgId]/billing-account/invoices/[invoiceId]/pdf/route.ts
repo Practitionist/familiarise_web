@@ -63,7 +63,12 @@ export async function GET(
   if (access.error) return access.error;
 
   // #677/PM-36 — PDF rendering is expensive (puppeteer/HTML pipeline).
-  const limited = await applyRateLimit(moneyOpsLimiter, orgId);
+  // #1236-triage — key per ACTOR: orgId would let one manager's PDF browsing
+  // exhaust the bucket shared with a billing admin's pay/initiate calls.
+  const limited = await applyRateLimit(
+    moneyOpsLimiter,
+    access.member?.id ?? orgId,
+  );
   if (limited) return limited;
 
   const invoice = await prisma.organizationInvoice.findFirst({

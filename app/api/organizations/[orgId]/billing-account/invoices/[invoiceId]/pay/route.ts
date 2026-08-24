@@ -47,7 +47,11 @@ export async function POST(
   if (access.error) return access.error;
 
   // #677/PM-36 — pay initiates a gateway order for a statutory document.
-  const limited = await applyRateLimit(moneyOpsLimiter, orgId);
+  // #1236-triage — per-ACTOR key (see pdf route note).
+  const limited = await applyRateLimit(
+    moneyOpsLimiter,
+    access.member?.id ?? orgId,
+  );
   if (limited) return limited;
 
   const invoice = await prisma.organizationInvoice.findFirst({
