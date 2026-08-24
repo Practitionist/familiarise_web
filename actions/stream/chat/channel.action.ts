@@ -29,11 +29,7 @@ import {
   getDmChannelId,
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
-import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
-import * as Sentry from "@sentry/nextjs";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -717,67 +713,4 @@ export async function createCollaboratorChannel(
     members: expectedMemberIds,
     channelData,
   };
-}
-
-/**
- * Adds a user to a specific channel.
- *
- * Stream's server-side API bypasses its permission system entirely, so the
- * authz gate lives here (#899): ADMIN/STAFF may add to any channel; anyone
- * else only to a channel they created — mirroring the create-route checks.
- * Non-privileged callers never lazily create channels they don't own.
- */
-export async function addMemberToChannel(
-  channelId: string,
-  userId: string,
-  channelType?: "messaging" | "team",
-) {
-  channelIdSchema.parse(channelId);
-  memberIdSchema.parse(userId);
-
-  const session = await getSession();
-  if (!session?.user?.id) {
-    throw new Error("Unauthorized: sign in to manage channel members");
-  }
-
-  const client = getStreamChatClient();
-
-  const resolvedChannelType = channelType ?? getChannelTypeFromId(channelId);
-
-  streamLogger.debug("Adding member to channel", {
-    channelId,
-    userId,
-    channelType: resolvedChannelType,
-  });
-
-  try {
-    const channel = client.channel(resolvedChannelType, channelId);
-    const privileged = isPrivileged(session.user.role);
-    if (privileged) {
-      await channel.create(); // Creates if doesn't exist, no-op if exists
-    } else {
-      const state = await channel.query({});
-      const createdById = state.channel?.created_by?.id;
-      if (createdById !== session.user.id) {
-        throw new Error(
-          "Forbidden: only the channel creator or staff may add members",
-        );
-      }
-    }
-
-    const response = await channel.addMembers([userId]);
-
-    streamLogger.debug("Member added successfully", { channelId, userId });
-    return { success: true, response };
-  } catch (error) {
-    streamLogger.error("Failed to add member to channel", error, {
-      channelId,
-      userId,
-    });
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    throw error;
-  }
 }

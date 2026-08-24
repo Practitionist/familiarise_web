@@ -45,7 +45,7 @@ import { useChatContext } from "stream-chat-react";
 import { getChannelDisplayInfo } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
-import { addMemberToChannel } from "@/actions/stream/chat/channel.action";
+import { addMemberToChannel } from "@/actions/stream/chat/member.action";
 
 interface ChannelMember {
   id: string;

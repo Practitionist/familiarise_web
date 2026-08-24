@@ -348,7 +348,7 @@ describe("Channel Actions", () => {
   describe("addMemberToChannel", () => {
     it("should add member to existing channel", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       const result = await addMemberToChannel(
         "consultation-123",
@@ -361,7 +361,7 @@ describe("Channel Actions", () => {
 
     it("should infer messaging type for consultation channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("consultation-abc", "user123");
 
@@ -373,7 +373,7 @@ describe("Channel Actions", () => {
 
     it("should infer messaging type for subscription channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("subscription-xyz", "user456");
 
@@ -385,7 +385,7 @@ describe("Channel Actions", () => {
 
     it("should infer team type for other channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("webinar-123", "user789");
 
@@ -397,7 +397,7 @@ describe("Channel Actions", () => {
 
     it("should reject invalid inputs", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(addMemberToChannel("", "user")).rejects.toThrow();
       await expect(addMemberToChannel("channel", "")).rejects.toThrow();
@@ -409,7 +409,7 @@ describe("Channel Actions", () => {
       mockGetSession.mockResolvedValueOnce(null);
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(
         addMemberToChannel("consultation-123", "new-user-id"),
@@ -429,7 +429,7 @@ describe("Channel Actions", () => {
       });
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(
         addMemberToChannel("consultation-123", "new-user-id"),
@@ -448,7 +448,7 @@ describe("Channel Actions", () => {
       });
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       const result = await addMemberToChannel(
         "consultation-123",
@@ -721,7 +721,7 @@ describe("addMemberToChannel error handling", () => {
     mockChannel.addMembers.mockRejectedValueOnce(new Error("API error"));
 
     const { addMemberToChannel } =
-      await import("../../actions/stream/chat/channel.action");
+      await import("../../actions/stream/chat/member.action");
 
     await expect(
       addMemberToChannel("test-channel", "user-123"),
