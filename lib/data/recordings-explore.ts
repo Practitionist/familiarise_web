@@ -218,7 +218,9 @@ export async function listPublicRecordings(
       const rows = await prisma.recording.findMany({
         where,
         select: recordingListingSelect,
-        orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }],
+        // `id` as final key: offset pagination over non-unique timestamps can
+      // repeat/skip rows between requests otherwise.
+      orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }, { id: "asc" }],
         take: perPage,
         skip: (page - 1) * perPage,
       });

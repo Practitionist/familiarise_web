@@ -34,12 +34,11 @@ export async function POST(
 
     const { recordingId } = await params;
 
-    const loaded = await loadOwnedListingRecording(
-      recordingId,
-      // Buyers are consultees; a signed-in consultant profile only matters
-      // for the self-purchase check below.
-      null,
-    );
+    const loaded = await loadOwnedListingRecording(recordingId, null, {
+      // Buyers are consultees — no ownership requirement. Self-purchase by
+      // the owning consultant is rejected separately below.
+      requireOwnership: false,
+    });
     if (loaded.status !== "ok") {
       return NextResponse.json(
         { error: "Recording is not available for purchase", code: "NOT_LISTED" },

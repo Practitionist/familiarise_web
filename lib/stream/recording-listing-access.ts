@@ -155,8 +155,17 @@ export type OwnedRecordingLoad =
 export async function loadOwnedListingRecording(
   recordingId: string,
   consultantProfileId: string | null | undefined,
+  opts?: {
+    /** Buyer-safe mode (purchase route): resolve without an owner check. */
+    requireOwnership?: boolean;
+  },
 ): Promise<OwnedRecordingLoad> {
-  if (!consultantProfileId) return { status: "forbidden" };
+  // R3 review — a null profile is only disqualifying when ownership matters.
+  // The purchase path passes requireOwnership:false so CONSULTEE buyers
+  // resolve; with the old unconditional guard every purchase 404'd.
+  if (!consultantProfileId && opts?.requireOwnership !== false) {
+    return { status: "forbidden" };
+  }
 
   const recording = await prisma.recording.findUnique({
     where: { id: recordingId },
@@ -184,7 +193,10 @@ export async function loadOwnedListingRecording(
   );
   if (!plan) return { status: "not_found" };
 
-  if (plan.plan.consultantProfileId !== consultantProfileId) {
+  if (
+    opts?.requireOwnership !== false &&
+    plan.plan.consultantProfileId !== consultantProfileId
+  ) {
     return { status: "forbidden" };
   }
 

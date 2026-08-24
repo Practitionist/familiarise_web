@@ -81,8 +81,8 @@ request. The public list API additionally sends a short CDN
 
 ## Deploy notes
 
-`/explore/recordings` is ISR-prerendered at build time and its read FAILS
-LOUDLY on error (withBuildTimeRetry). A deploy-preview built before this
+`/explore/recordings` is ISR-prerendered at build time and the page data
+fetch fails loudly on error (withBuildTimeRetry). A deploy-preview built before this
 PR's schema columns exist on the shared database will therefore fail during
 prerender (`column Recording.listingStatus does not exist`). If a preview of
 this branch fails with a Prisma column error, apply the additive schema

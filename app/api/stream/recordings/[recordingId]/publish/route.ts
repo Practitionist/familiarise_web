@@ -186,7 +186,6 @@ export async function DELETE(
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
     if (!guard.ok) return guard.response;
-    const loaded = guard.loaded;
 
     const updated = await prisma.recording.update({
       where: { id: recordingId },
