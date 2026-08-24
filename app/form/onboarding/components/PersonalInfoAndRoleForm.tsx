@@ -66,6 +66,22 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   // `finally` re-enables the button for retry.
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // #840 — invitees skip the role-picker entirely when they have a pending
+  // org invitation; picking a B2C tile would create unwanted profiles.
+  const [pendingInvite, setPendingInvite] = useState<{
+    organizationName: string;
+    role: string;
+    organizationId: string;
+  } | null>(null);
+  useEffect(() => {
+    fetch("/api/user/pending-invites")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.invites?.length > 0) setPendingInvite(d.invites[0]);
+      })
+      .catch(() => {});
+  }, []);
+
   const {
     register,
     handleSubmit,
@@ -134,6 +150,25 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       setIsSubmitting(false);
     }
   };
+
+  // #840 — invitees with a pending org invitation see this instead of the
+  // role tiles, so they can't accidentally create a B2C profile.
+  if (pendingInvite) {
+    return (
+      <div className="mx-auto max-w-md space-y-4 py-8 text-center">
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-6">
+          <p className="text-lg font-semibold text-blue-900">
+            You&apos;ve been invited to join{" "}
+            <span className="underline">{pendingInvite.organizationName}</span>
+          </p>
+          <p className="mt-2 text-sm text-zinc-600">
+            Complete your profile below, then check your email for the
+            invitation link to accept.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">

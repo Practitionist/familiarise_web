@@ -180,6 +180,10 @@ model SupportTicket {
   priority    SupportPriority     @default(MEDIUM)
   status      SupportTicketStatus @default(OPEN)
   category    String?
+  // #1021 — org context so enterprise tickets can be routed, SLA-tracked,
+  // and counted per organisation instead of disappearing into the B2C queue.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   issueType   SupportIssueType?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)

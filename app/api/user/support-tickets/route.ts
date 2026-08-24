@@ -197,6 +197,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // #1021 — stamp the submitter's active org so enterprise tickets can be
+    // routed and SLA-tracked per organisation instead of vanishing into the
+    // B2C queue. First ACTIVE membership wins (users belong to one org in
+    // practice; multi-org members pick their primary dashboard context).
+    const membership = await prisma.membership.findFirst({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true },
+      orderBy: { createdAt: "asc" },
+    });
+
     const ticket = await prisma.supportTicket.create({
       data: {
         title: validatedData.title,
@@ -204,6 +214,7 @@ export async function POST(req: NextRequest) {
         priority: validatedData.priority || "MEDIUM",
         category: validatedData.category,
         issueType: validatedData.issueType,
+        organizationId: membership?.organizationId ?? null,
         consultationId: resolvedConsultationId,
         subscriptionId: resolvedSubscriptionId,
         paymentId: validatedData.paymentId,
