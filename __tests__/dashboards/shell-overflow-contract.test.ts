@@ -119,13 +119,14 @@ describe("dashboard shell overflow contract", () => {
     expect(rule).not.toMatch(/100vh(?![\w-])/);
   });
 
-  it("dashboard layout mounts a document scroll lock", () => {
+  it("dashboard layout renders the scroll-lock marker and CSS keys on it", () => {
     const layout = read("app/dashboard/layout.tsx");
-    const lock = read("components/dashboard/DashboardScrollLock.tsx");
     const css = read("app/globals.css");
-    expect(layout).toContain("DashboardScrollLock");
-    expect(lock).toContain("dashboard-scroll-locked");
-    expect(extractCssRule(css, "html.dashboard-scroll-locked")).toContain(
+    // The marker is server-rendered around every /dashboard/* route; the lock
+    // is pure CSS keyed on its presence (html:has([data-dashboard-shell])).
+    expect(layout).toContain("data-dashboard-shell");
+    expect(layout).not.toContain("DashboardScrollLock");
+    expect(extractCssRule(css, "html:has([data-dashboard-shell])")).toContain(
       "overflow: hidden",
     );
   });
@@ -136,7 +137,10 @@ describe("dashboard shell overflow contract", () => {
     // The selectors must survive stripping every @layer block — i.e. they are
     // declared outside any layer, so Tailwind always emits them and unlayered
     // precedence outranks the layered body.min-h-screen.
-    const docRule = extractCssRule(unlayered, "html.dashboard-scroll-locked");
+    const docRule = extractCssRule(
+      unlayered,
+      "html:has([data-dashboard-shell])",
+    );
     expect(docRule).toContain("overflow: hidden");
     expect(docRule).toContain("max-height: 100dvh");
     const afterDocRule = unlayered.slice(
@@ -144,16 +148,17 @@ describe("dashboard shell overflow contract", () => {
     );
     const bodyRule = extractCssRule(
       afterDocRule,
-      "html.dashboard-scroll-locked body",
+      "html:has([data-dashboard-shell]) body",
     );
     expect(bodyRule).toContain("min-height: 0");
   });
 
-  it("root layout carries the pre-paint scroll-lock script for /dashboard", () => {
+  it("root layout carries NO scroll-lock script (lock is CSS-only via :has())", () => {
     const layout = read("app/layout.tsx");
-    expect(layout).toContain("dashboard-scroll-locked");
-    expect(layout).toContain('location.pathname.startsWith("/dashboard")');
-    expect(layout).toContain("dangerouslySetInnerHTML");
+    // The JS lock (DashboardScrollLock + inline pre-paint script) was replaced
+    // by the :has()-based CSS lock; neither may quietly come back here.
+    expect(layout).not.toContain("dashboard-scroll-locked");
+    expect(layout).not.toContain("data-dashboard-shell");
   });
 
   it("OfferingEditor action bar is sticky inside main, not fixed to the viewport", () => {

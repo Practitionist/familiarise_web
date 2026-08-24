@@ -175,31 +175,43 @@
 }
 
 /*
- * Dashboard document scroll lock — see DashboardScrollLock.tsx and the
- * pre-paint script in app/layout.tsx.
+ * Dashboard document scroll lock — pure CSS, no JavaScript.
+ *
+ * app/dashboard/layout.tsx renders a `data-dashboard-shell` marker around
+ * everything under /dashboard/*, and these rules lock the document whenever
+ * that marker EXISTS in the DOM. Server-rendered from the first byte, so the
+ * very first paint is already locked; navigating away unmounts the marker and
+ * the browser unlocks automatically. No class toggling, no hydration timing,
+ * no flash.
  *
  * Beats body.min-h-screen from the root layout so the window cannot
  * scroll past the viewport-sized shell into empty white space.
  *
  * Deliberately UNLAYERED (outside every cascade layer): rules inside a
- * Tailwind layer are subject to the content-scan emission, so a stale
- * build that missed the class string in DashboardScrollLock.tsx silently
- * dropped the whole lock. Unlayered CSS is always emitted and always
- * outranks layered declarations.
+ * Tailwind layer are subject to content-scan emission, while unlayered CSS is
+ * always emitted verbatim and always outranks layered declarations. The
+ * selector lives entirely in this file, so no build step can drop it.
+ *
+ * :has() is Baseline "Widely available" (Chrome/Edge 105, Safari 15.4,
+ * Firefox 121 — all evergreen browsers since Dec 2023). A browser without it
+ * simply gets the old cosmetic over-scroll; nothing breaks. This is the
+ * standard CSS scroll-lock pattern (body:has(marker) { overflow: hidden }).
  */
-html.dashboard-scroll-locked,
-html.dashboard-scroll-locked body {
+html:has([data-dashboard-shell]) {
   overflow: hidden;
   height: 100%;
   max-height: 100dvh;
 }
 
-html.dashboard-scroll-locked body {
+html:has([data-dashboard-shell]) body {
+  overflow: hidden;
+  height: 100%;
+  max-height: 100dvh;
   /* Tailwind min-h-screen on <body> must not re-open a document scrollport */
   min-height: 0;
 }
 
-html.dashboard-scroll-locked body > .flex-1 {
+html:has([data-dashboard-shell]) body > .flex-1 {
   min-height: 0;
   height: 100%;
   overflow: hidden;
