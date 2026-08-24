@@ -18,6 +18,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { claimProgramAssignment } from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const CreateBodySchema = z.object({
   membershipId: z.string().min(1),
@@ -138,7 +139,13 @@ export async function POST(
     );
   }
 
-  const assignment = await prisma.$transaction(async (tx) => {
+  // CR #1234 r5 — Serializable shares the conflict boundary with the PATCH
+  // money-config tx (which re-checks configLockedAt in-scope): the stamp and
+  // the lock check can no longer interleave under READ COMMITTED. Conflicts
+  // retry via the house helper.
+  const assignment = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
     // claimProgramAssignment reports whether THIS call created the row (atomic
     // INSERT … ON CONFLICT DO NOTHING). Seat-count only on a genuine create, so
     // a re-claim or two concurrent identical POSTs increment activeSeatCount
@@ -180,7 +187,10 @@ export async function POST(
       },
     });
     return created;
-  });
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
 
-  return NextResponse.json({ assignment }, { status: 201 });
+    return NextResponse.json({ assignment }, { status: 201 });
 }

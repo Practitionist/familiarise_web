@@ -5,11 +5,14 @@ import { useEffect, useState } from "react";
 type CheckoutTaxContext = {
   buyerCountry: string;
   isInternational: boolean;
+  /** Server-decided (#1230): international AND a valid platform LUT exists. */
+  exportZeroRated: boolean;
 };
 
 const DEFAULT_CONTEXT: CheckoutTaxContext = {
   buyerCountry: "IN",
   isInternational: false,
+  exportZeroRated: false,
 };
 
 export function useCheckoutTaxContext() {

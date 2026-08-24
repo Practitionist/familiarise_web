@@ -24,11 +24,17 @@ export const useUserData = (userId: string) => {
   const { toast } = useToast();
 
   useEffect(() => {
+    // Cancelled-flag teardown: userId can flip (e.g. dev-only test-user
+    // fallback resolving to the real session id) and the component can
+    // unmount mid-flight — neither may set state afterwards.
+    let cancelled = false;
+
     const fetchUserInfo = async () => {
       setIsLoading(true);
       setError(null);
       try {
         const userData = await fetchUserDetails(userId);
+        if (cancelled) return;
         setUserDetails(userData);
 
         // The per-role profile fetches that used to follow are gone.
@@ -48,6 +54,7 @@ export const useUserData = (userId: string) => {
         // fetch it where it is used rather than reinstating it here: this hook
         // gates a socket, so anything added to it delays chat for everyone.
       } catch (err: unknown) {
+        if (cancelled) return;
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
         // 401 is expected after sign-out (session cleared before component unmounts)
@@ -67,13 +74,17 @@ export const useUserData = (userId: string) => {
           variant: "destructive",
         });
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     if (userId) {
       fetchUserInfo();
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [userId, toast]);
 
   return { userDetails, isLoading, error };

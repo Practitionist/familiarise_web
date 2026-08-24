@@ -25,7 +25,14 @@
 
 import { calculatePricing } from "@/app/checkout/plans/math";
 import { determineTax } from "@/lib/payments/tax/tax-engine";
+import { hasValidPlatformLut } from "@/lib/compliance/lut";
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+
+// The LUT gate is env-driven; these tests pin the NO-LUT default (fail-closed
+// ⇒ international supplies are charged 18% on both sides). A dedicated
+// lut-gate suite covers the zero-rated branch.
+delete process.env.PLATFORM_LUT_NUMBER;
+delete process.env.PLATFORM_LUT_VALID_TILL;
 
 type ServerInputs = {
   /** Plan price in paise. */
@@ -77,8 +84,14 @@ function serverAmount(input: ServerInputs): Amounts {
 
 /** The same booking as the checkout page computes it. */
 function clientAmount(input: ServerInputs): Amounts {
+  // #1230 — the client keys zero-rating off the server-decided
+  // `exportZeroRated` flag (platform LUT state), which the parity harness
+  // mirrors from the same env the real checkout context reads.
+  const exportZeroRated =
+    input.buyerCountry !== "IN" && hasValidPlatformLut();
   const breakdown = calculatePricing(input.basePaise, {
     isInternational: input.buyerCountry !== "IN",
+    exportZeroRated,
     discountPercent:
       input.discount?.type === "PERCENTAGE" && !input.discount.maxDiscount
         ? input.discount.value / 100
@@ -121,7 +134,7 @@ const FIXTURES: Array<{ name: string; input: ServerInputs }> = [
     input: { basePaise: 123457, buyerCountry: "IN" },
   },
   {
-    name: "base price, international (zero-rated export)",
+    name: "base price, international without LUT (fail-closed IGST)",
     input: { basePaise: 500000, buyerCountry: "US" },
   },
   {
@@ -210,10 +223,21 @@ describe("checkout price parity — page math vs server derivation", () => {
 });
 
 describe("checkout price parity — the edges that actually move money", () => {
-  it("zero-rates an international buyer on both sides", () => {
+  it("zero-rates an international buyer on both sides (valid platform LUT)", () => {
+    // #1230 — zero-rating now requires a current-FY LUT; this pin covers the
+    // WITH-LUT half of the gate (the no-LUT half is the fail-closed default
+    // asserted by the international fixtures above). Clock frozen inside the
+    // fixture window (CR #1234).
+    process.env.PLATFORM_LUT_NUMBER = "LUT/2627";
+    process.env.PLATFORM_LUT_VALID_TILL = "2027-03-31";
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2027-03-31T12:00:00Z"));
     const input: ServerInputs = { basePaise: 500000, buyerCountry: "DE" };
     expect(serverAmount(input).taxPaise).toBe(0);
     expect(clientAmount(input).taxPaise).toBe(0);
+    jest.useRealTimers();
+    delete process.env.PLATFORM_LUT_NUMBER;
+    delete process.env.PLATFORM_LUT_VALID_TILL;
   });
 
   it("charges 18% GST on the DISCOUNTED base, not the list price", () => {

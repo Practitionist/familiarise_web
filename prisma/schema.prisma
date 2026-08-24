@@ -1764,6 +1764,10 @@ model OrganizationPayout {
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
+  // CR #1240 — keyset pagination for the payouts CSV export walks
+  // (organizationId, createdAt desc, id desc); the two-column index can't
+  // serve the id tiebreaker.
+  @@index([organizationId, createdAt, id])
 }
 
 // #781 §A — closed set of payout rails (was a free-string code bag).
@@ -1905,6 +1909,8 @@ model OrganizationInvoice {
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, invoiceNumber])
+  // CR #1243 — keyset pagination for the invoices CSV export.
+  @@index([organizationId, createdAt, id])
   @@index([organizationId, status, dueDate])
   @@index([organizationId, fiscalYear, issuedAt])
   @@index([billingCycleStart, billingCycleEnd])
@@ -2477,7 +2483,10 @@ model ConsultantProfile {
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
   // non-individuals are mis-withheld. This is the schema half of the deferred
   // ₹50K/194J threshold path (#778 §E/§F). Threshold logic deferred.
-  taxEntityType                   TaxEntityType   @default(INDIVIDUAL)
+  // BLOCKER-0 dedup (#1230): the entity-type field lives canonically on
+  // ConsultantTaxInfo (nullable, fail-closed intake); this profile-level
+  // duplicate was deleted — its NOT-NULL INDIVIDUAL default wrongly granted
+  // every company the ₹5L exemption.
   tdsSection                      String? // "194J" | "194O" | "194C"
   // #781 §C — integer basis points (1000 = 10%): exact, RSC-boundary-safe,
   // and the same convention as every revenue-split *Bps field.
@@ -5950,4 +5959,39 @@ enum TaxJurisdiction {
   JP
   GB
   EU
+}
+
+// #1230 wave-4b — enterprise sales-lead capture. The contact form's
+// enterprise/team-training categories persist here BEFORE the email send so
+// a Resend outage can no longer silently discard six-figure deals (the
+// #1132 blocker-6 class). Status flows NEW → CONTACTED → QUALIFIED →
+// CLOSED_WON / CLOSED_LOST; admin surface lands with wave-4c.
+model Lead {
+  id             String     @id @default(cuid())
+  // SHA-256 over a canonical-JSON payload of every persisted field PLUS a
+  // UTC day bucket — retries within the day are idempotent at the DB layer
+  // (CR #1243); later genuine inquiries hash differently and create new
+  // rows instead of being swallowed by the unique constraint.
+  submissionKey  String     @unique
+  sourceCategory String
+  companyName    String?
+  contactName    String
+  contactEmail   String
+  phone          String?
+  subject        String
+  message        String     @db.Text
+  status         LeadStatus @default(NEW)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CLOSED_WON
+  CLOSED_LOST
 }
