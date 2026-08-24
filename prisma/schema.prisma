@@ -5968,9 +5968,10 @@ enum TaxJurisdiction {
 // CLOSED_WON / CLOSED_LOST; admin surface lands with wave-4c.
 model Lead {
   id             String     @id @default(cuid())
-  // SHA-256 of (email|subject|message) — makes retried submissions
-  // idempotent at the DB layer (CR #1243): a 502 retry re-hits P2002 and the
-  // route answers 202 against the existing row instead of duplicating.
+  // SHA-256 over a canonical-JSON payload of every persisted field PLUS a
+  // UTC day bucket — retries within the day are idempotent at the DB layer
+  // (CR #1243); later genuine inquiries hash differently and create new
+  // rows instead of being swallowed by the unique constraint.
   submissionKey  String     @unique
   sourceCategory String
   companyName    String?

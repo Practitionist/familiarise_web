@@ -86,14 +86,22 @@ export async function POST(req: NextRequest) {
     // submission content itself, so a user retrying after a 502 (or a
     // double-click) lands on the unique constraint and answers 202 against
     // the EXISTING row — no duplicate sales records, no client changes.
+    // Canonical JSON of EVERY persisted field + a UTC day bucket: unambiguous
+    // (no delimiter collisions) and time-scoped, so a genuine follow-up days
+    // later creates a fresh lead while transport retries stay idempotent.
+    const dayBucket = new Date().toISOString().slice(0, 10);
     const submissionKey = createHash("sha256")
       .update(
-        [
+        JSON.stringify([
+          dayBucket,
           parsed.data.email.toLowerCase(),
+          parsed.data.firstName,
+          parsed.data.lastName,
+          parsed.data.phone ?? "",
           parsed.data.subject,
           parsed.data.message,
           parsed.data.category ?? "",
-        ].join("|"),
+        ]),
       )
       .digest("hex");
     try {

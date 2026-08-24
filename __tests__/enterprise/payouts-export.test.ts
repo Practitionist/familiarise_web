@@ -49,7 +49,11 @@ const ROW = {
 };
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  // resetAllMocks (not clearAllMocks): the keyset contract can stop
+  // consuming a test's queued pages mid-queue, and clearAllMocks leaves
+  // stale ResolvedValueOnce entries that poison the NEXT test's first pull.
+  jest.resetAllMocks();
+  m.orgAuditLog.create.mockResolvedValue({});
   mockedAccess.mockResolvedValue({
     error: null,
     member: { id: "m-owner", role: "OWNER" },

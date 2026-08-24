@@ -63,11 +63,11 @@ export async function GET(
         iterations: ctx.iterations,
         err: err instanceof Error ? err.message : String(err),
       }),
-    fetchPage: async (cursor) => {
+    fetchPage: async (cursor, take) => {
       const rows = await prisma.organizationPayout.findMany({
         where: keysetWhere({ organizationId: orgId }, cursor),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 500,
+        take,
         select: {
           id: true,
           status: true,
@@ -84,10 +84,15 @@ export async function GET(
           createdAt: true,
         },
       });
+      // Short page ⇒ exhausted: null closes the stream after this page is
+      // emitted (see keyset-export contract).
       const last = rows.at(-1);
       return {
         rows,
-        nextCursor: last ? { createdAt: last.createdAt, id: last.id } : null,
+        nextCursor:
+          rows.length === take && last
+            ? { createdAt: last.createdAt, id: last.id }
+            : null,
       };
     },
     rowToCells: (r) => [

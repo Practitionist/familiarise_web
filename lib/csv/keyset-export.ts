@@ -15,7 +15,11 @@
 
 export function escapeCsvField(v: string | number | null | undefined): string {
   if (v === "" || v === null || v === undefined) return "";
-  const s = String(v);
+  // CR #1243 r3 — neutralize spreadsheet formula triggers BEFORE quoting:
+  // invoiceNumber carries an org-supplied prefix, so a crafted "=cmd" value
+  // would execute in Excel/LibreOffice on open.
+  const guarded = /^[=+\-@\t\r]/.test(String(v)) ? `'${v}` : `${v}`;
+  const s = String(guarded);
   if (!/[",\n\r]/.test(s)) return s;
   return `"${s.replace(/"/g, '""')}"`;
 }
@@ -27,13 +31,17 @@ export interface KeysetCsvOptions<TRow> {
   /** AbortSignal from the request; checked before every page fetch. */
   signal: AbortSignal;
   /**
-   * Fetch one page older than `cursor`. Return `{ rows, nextCursor }`, or
-   * `nextCursor: null` when the table is exhausted.
+   * Fetch up to `take` rows older than `cursor`. Return `{ rows,
+   * nextCursor }`; set `nextCursor: null` when fewer than `take` rows came
+   * back (table exhausted) — the stream emits that final page THEN closes.
    */
-  fetchPage: (cursor: {
-    createdAt: Date;
-    id: string;
-  } | null) => Promise<{ rows: TRow[]; nextCursor: { createdAt: Date; id: string } | null }>;
+  fetchPage: (
+    cursor: { createdAt: Date; id: string } | null,
+    take: number,
+  ) => Promise<{
+    rows: TRow[];
+    nextCursor: { createdAt: Date; id: string } | null;
+  }>;
   /** Convert one row to ordered CSV cells (pre-escaping). */
   rowToCells: (row: TRow) => Array<string | number | null | undefined>;
   /** Server-side sink for mid-stream failures (client only sees a notice). */
@@ -86,8 +94,12 @@ export function keysetCsvStream<TRow>(
       iterations += 1;
 
       try {
-        const page = await opts.fetchPage(cursor);
-        if (page.rows.length === 0 || page.nextCursor === null) {
+        // CR #1243 r3 — rows are emitted BEFORE the exhaustion check so a
+        // doc-compliant caller returning nextCursor:null never loses its
+        // final page. take flows in so truncation detection cannot drift
+        // from a route-side hardcode.
+        const page = await opts.fetchPage(cursor, chunkSize);
+        if (page.rows.length === 0) {
           controller.close();
           return;
         }
@@ -96,8 +108,12 @@ export function keysetCsvStream<TRow>(
         );
         controller.enqueue(encoder.encode(lines.join("\n") + "\n"));
         cursor = page.nextCursor;
-        if (iterations >= maxIterations && page.rows.length === chunkSize) {
-          truncated = true;
+        if (cursor === null || iterations >= maxIterations) {
+          if (page.rows.length === chunkSize && cursor !== null) {
+            truncated = true;
+          }
+          controller.close();
+          return;
         }
       } catch (err) {
         opts.onError?.(err, { iterations });
