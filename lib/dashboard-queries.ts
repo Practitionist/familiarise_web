@@ -343,12 +343,15 @@ export function createUserQueries(userId: string) {
 // =============================================================================
 
 /**
- * Schedule prefetch using requestIdleCallback when available
+ * Schedule prefetch using requestIdleCallback when available.
+ * Returns a cancel function so callers (hooks with teardown) can retract the
+ * callback if they unmount before the idle slot fires.
  */
-export function schedulePrefetch(callback: () => void, timeout = 2000): void {
+export function schedulePrefetch(callback: () => void, timeout = 2000): () => void {
   if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-    window.requestIdleCallback(callback, { timeout });
-  } else {
-    setTimeout(callback, 100);
+    const handle = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(handle);
   }
+  const timer = setTimeout(callback, 100);
+  return () => clearTimeout(timer);
 }

@@ -43,6 +43,15 @@ export function usePrefetchDashboard({
 }: PrefetchDashboardOptions = {}) {
   const queryClient = useQueryClient();
   const prefetchedRef = useRef(new Set<string>());
+  // Every delayed prefetch / throttle reset lands here so unmount can cancel
+  // them — otherwise post-unmount prefetchQuery calls (and mutations on the
+  // tracking Set) keep running for up to 5s after teardown.
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  const trackTimer = useCallback((handle: ReturnType<typeof setTimeout>) => {
+    timersRef.current.add(handle);
+    return handle;
+  }, []);
 
   // Utility function to safely prefetch queries
   const safePrefetch = useCallback(
@@ -87,12 +96,12 @@ export function usePrefetchDashboard({
         });
 
       if (delay > 0) {
-        setTimeout(runPrefetch, delay);
+        trackTimer(setTimeout(runPrefetch, delay));
       } else {
         runPrefetch();
       }
     },
-    [queryClient],
+    [queryClient, trackTimer],
   );
 
   // Enhanced consultant dashboard prefetching
@@ -165,7 +174,7 @@ export function usePrefetchDashboard({
         fn();
 
         // Clear throttle after 5 seconds
-        setTimeout(() => prefetchedRef.current.delete(key), 5000);
+        trackTimer(setTimeout(() => prefetchedRef.current.delete(key), 5000));
       };
 
       throttledPrefetch(() => {
@@ -211,13 +220,16 @@ export function usePrefetchDashboard({
   useEffect(() => {
     if (!enableAggressivePrefetch) return;
 
-    // Prefetch critical data immediately when component mounts
+    // Prefetch critical data immediately when component mounts; cancel the
+    // idle callbacks if we unmount first.
+    const cancels: Array<() => void> = [];
     if (consultantId) {
-      schedulePrefetch(() => prefetchAllConsultantData());
+      cancels.push(schedulePrefetch(() => prefetchAllConsultantData()));
     }
     if (consulteeId) {
-      schedulePrefetch(() => prefetchAllConsulteeData());
+      cancels.push(schedulePrefetch(() => prefetchAllConsulteeData()));
     }
+    return () => cancels.forEach((cancel) => cancel());
   }, [
     consultantId,
     consulteeId,
@@ -226,13 +238,17 @@ export function usePrefetchDashboard({
     prefetchAllConsulteeData,
   ]);
 
-  // Cleanup function to clear prefetch tracking on unmount
+  // Cleanup on unmount: cancel outstanding prefetch/throttle timers and clear
+  // the prefetch-tracking set.
   useEffect(() => {
     const trackedSet = prefetchedRef.current;
+    const timers = timersRef.current;
     return () => {
+      timers.forEach((handle) => clearTimeout(handle));
+      timers.clear();
       trackedSet.clear();
     };
-  }, []);
+  }, [trackTimer]);
 
   return {
     prefetchAllConsultantData,
