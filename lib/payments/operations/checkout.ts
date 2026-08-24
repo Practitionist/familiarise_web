@@ -362,7 +362,12 @@ export async function findReusablePendingOrderPayment(
  * Manages payment intent creation and cleanup with proper error handling
  */
 export class PaymentIntentManager {
+  // intentId -> userId. Bounded FIFO: this Map lives on module scope of a
+  // warm serverless instance, and an entry that never reaches cancelIntent
+  // (caller crash before cleanup) would otherwise grow monotonically for the
+  // life of the instance (#audit: unbounded-cache finding).
   private static activeIntents = new Map<string, string>(); // intentId -> userId
+  private static readonly MAX_TRACKED_INTENTS = 500;
 
   /**
    * Create payment intent with automatic cleanup tracking
@@ -380,6 +385,31 @@ export class PaymentIntentManager {
   }) {
     try {
       const paymentResponse = await createPaymentIntent(params);
+
+      // Evict oldest entries first (Map iterates in insertion order) so a
+      // warm instance can't accumulate unbounded tracked intents. Eviction
+      // drops cleanup ownership for that intent - only reachable at >500
+      // concurrent un-cancelled intents on one instance, and strictly better
+      // than the previous behaviour (no bound at all) - but surface it so a
+      // sustained-eviction pattern is visible in Sentry, not silent.
+      while (
+        this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS
+      ) {
+        const oldest = this.activeIntents.keys().next().value;
+        if (oldest === undefined) break;
+        this.activeIntents.delete(oldest);
+        reportSentryError(
+          new Error(
+            `PaymentIntentManager evicted tracked intent ${oldest} before cancellation`,
+          ),
+          {
+            subsystem: "payments",
+            level: "warning",
+            expected: true,
+            extra: { evictedIntentId: oldest },
+          },
+        );
+      }
 
       // Track the intent for potential cleanup
       this.activeIntents.set(
@@ -406,11 +436,15 @@ export class PaymentIntentManager {
   ) {
     try {
       await cancelPaymentIntent(intentId, reason);
-      this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
       reportSentryError(error, { subsystem: "payments", level: "warning" });
       // Don't throw - cleanup should be best-effort
+    } finally {
+      // Untrack regardless of outcome: the tracking map only decides whether
+      // a future cleanup() should re-attempt cancellation. Leaving failed
+      // cancels tracked was a slow memory leak on long-lived instances.
+      this.activeIntents.delete(intentId);
     }
   }
 
