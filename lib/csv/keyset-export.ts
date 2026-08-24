@@ -69,9 +69,17 @@ export function keysetCsvStream<TRow>(
         headerSent = true;
         controller.enqueue(encoder.encode(opts.header));
       }
-      // Abort or ceiling: close (with an honest marker when rows were left).
+      // Abort or ceiling: close. An honest marker only when the last page
+      // was FULL (rows likely remain); an exactly-exhausted table closes
+      // silently so complete exports never carry a false TRUNCATED row.
       if (opts.signal.aborted || iterations >= maxIterations) {
-        controller.enqueue(noticeRow("TRUNCATED: row limit reached — re-export with a narrower period via the API."));
+        if (truncated) {
+          controller.enqueue(
+            noticeRow(
+              "TRUNCATED: row limit reached — re-export with a narrower period via the API.",
+            ),
+          );
+        }
         controller.close();
         return;
       }
