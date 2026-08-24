@@ -47,6 +47,32 @@ function extractCssRule(css: string, selector: string): string {
   return css.slice(start, brace) + extractBlock(css, brace);
 }
 
+/**
+ * Remove every `@layer <ident> { ... }` block (balanced braces). What remains
+ * is the UNLAYERED CSS Tailwind always emits verbatim.
+ */
+function stripLayerBlocks(css: string): string {
+  let out = css;
+  for (;;) {
+    const at = out.search(/@layer\s/);
+    if (at < 0) return out;
+    const open = out.indexOf("{", at);
+    const closeIdx = (() => {
+      let depth = 0;
+      for (let i = open; i < out.length; i++) {
+        if (out[i] === "{") depth++;
+        else if (out[i] === "}") {
+          depth--;
+          if (depth === 0) return i;
+        }
+      }
+      return -1;
+    })();
+    if (open < 0 || closeIdx < 0) return out;
+    out = out.slice(0, at) + out.slice(closeIdx + 1);
+  }
+}
+
 /** Outer shell root: first `h-screen-maintenance` className in the file. */
 function extractShellRoot(src: string): string {
   const marker = "h-screen-maintenance";
@@ -102,6 +128,40 @@ describe("dashboard shell overflow contract", () => {
     expect(extractCssRule(css, "html.dashboard-scroll-locked")).toContain(
       "overflow: hidden",
     );
+  });
+
+  it("scroll-lock rules are UNLAYERED in globals.css (never content-scan purged)", () => {
+    const css = read("app/globals.css");
+    const unlayered = stripLayerBlocks(css);
+    // The selectors must survive stripping every @layer block — i.e. they are
+    // declared outside any layer, so Tailwind always emits them and unlayered
+    // precedence outranks the layered body.min-h-screen.
+    const docRule = extractCssRule(unlayered, "html.dashboard-scroll-locked");
+    expect(docRule).toContain("overflow: hidden");
+    expect(docRule).toContain("max-height: 100dvh");
+    const afterDocRule = unlayered.slice(
+      unlayered.indexOf(docRule) + docRule.length,
+    );
+    const bodyRule = extractCssRule(
+      afterDocRule,
+      "html.dashboard-scroll-locked body",
+    );
+    expect(bodyRule).toContain("min-height: 0");
+  });
+
+  it("root layout carries the pre-paint scroll-lock script for /dashboard", () => {
+    const layout = read("app/layout.tsx");
+    expect(layout).toContain("dashboard-scroll-locked");
+    expect(layout).toContain('location.pathname.startsWith("/dashboard")');
+    expect(layout).toContain("dangerouslySetInnerHTML");
+  });
+
+  it("OfferingEditor action bar is sticky inside main, not fixed to the viewport", () => {
+    const editor = read("components/offerings/editor/OfferingEditor.tsx");
+    expect(editor).toMatch(/sticky bottom-0/);
+    expect(editor).not.toMatch(/fixed\s+inset-x-0\s+bottom-0/);
+    // The giant fixed-bar compensator must not come back on the form.
+    expect(editor).not.toMatch(/className="[^"]*\bpb-24\b/);
   });
 
   it("HelpSkeleton does not nest min-h-screen inside the shell", () => {
