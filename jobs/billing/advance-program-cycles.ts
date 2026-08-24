@@ -116,6 +116,21 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
           // re-point or retire before this tx claims. Serializable cannot
           // protect rows the tx never reads, so re-read the contract facts
           // here and recompute before claiming.
+          // CR #1234 r5 — PROGRAM eligibility gets the same treatment: an
+          // operator archiving/disabling the program after the scan must not
+          // have a successor minted under it (the archive guard in the API
+          // route only sees new allocations).
+          const liveProgram = await tx.program.findUnique({
+            where: { id: a.programId },
+            select: { status: true, archivedAt: true },
+          });
+          if (
+            !liveProgram ||
+            liveProgram.status !== "ACTIVE" ||
+            liveProgram.archivedAt !== null
+          ) {
+            return { outcome: "skipped" as const };
+          }
           const liveContract = await tx.contract.findUnique({
             where: { id: a.program.contract.id },
             select: { status: true, autoRenew: true, effectiveTo: true },

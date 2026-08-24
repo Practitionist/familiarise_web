@@ -151,6 +151,73 @@ async function fetchIrpCandidates(thirtyDaysAgo: Date) {
 
 }
 
+/**
+ * S3776 (CR #1234 r5) — one candidate's full lifecycle: map to NIC payload
+ * (permanent failure on unmappable data), call the IRP, and persist the
+ * resulting state. Returns the counter bucket for the caller's aggregates.
+ */
+async function processIrpCandidate(
+  candidate: Awaited<ReturnType<typeof fetchIrpCandidates>>[number],
+  sellerGstin: string,
+): Promise<"processed" | "failed" | "skipped"> {
+  const mapped = buildPayloadFor(candidate, sellerGstin);
+
+  if (!mapped.ok) {
+    await prisma.organizationInvoice.update({
+      where: { id: candidate.id },
+      data: {
+        irpStatus: "FAILED", // permanent — do not loop
+        irpLastError: `MAP: ${mapped.reason}`.slice(0, 500),
+        irpLastAttemptAt: new Date(),
+      },
+    });
+    return "failed";
+  }
+
+  const result = await generateIrn({
+    invoiceId: candidate.id,
+    payload: mapped.payload,
+  });
+
+  if (result.status === "GENERATED" && result.irn) {
+    await prisma.organizationInvoice.update({
+      where: { id: candidate.id },
+      data: {
+        irn: result.irn,
+        ackNumber: result.ackNumber,
+        ackDate: result.ackDate,
+        signedQrPayload: result.signedQrPayload,
+        irpStatus: "GENERATED",
+        irpUploadedAt: new Date(),
+        irpLastError: null,
+        irpLastAttemptAt: new Date(),
+      },
+    });
+    return "processed";
+  }
+
+  // Retryable failure: stay PENDING with bounded attempts (≈12 daily ticks)
+  // before flipping FAILED past the 30-day IRN hard cut-off.
+  if (result.status === "FAILED") {
+    const MAX_RETRIES = 12;
+    const nextRetryCount = (candidate.irpRetryCount ?? 0) + 1;
+    const exhausted = nextRetryCount >= MAX_RETRIES;
+
+    await prisma.organizationInvoice.update({
+      where: { id: candidate.id },
+      data: {
+        irpStatus: exhausted ? "FAILED" : "PENDING",
+        irpLastError: result.reason.slice(0, 500),
+        irpLastAttemptAt: new Date(),
+        irpRetryCount: nextRetryCount,
+      },
+    });
+    return exhausted ? "failed" : "skipped";
+  }
+
+  return "skipped";
+}
+
 async function runIrpUploaderUnlocked(): Promise<{
   processed: number;
   failed: number;
@@ -170,6 +237,22 @@ async function runIrpUploaderUnlocked(): Promise<{
     );
     return { processed: 0, failed: 0, skipped: 0 };
   }
+  // CR #1234 r5 — preflight the FULL provider configuration. generateIrn
+  // marks rows FAILED on a missing CLEARTAX_* credential, so an auth outage
+  // would burn all twelve retries per pending invoice and permanently fail
+  // them before the environment is fixed. A missing setting is an ENV
+  // outage: skip the run, leave every row PENDING, recover automatically.
+  const missingCleartax = [
+    "CLEARTAX_API_KEY",
+    "CLEARTAX_GSP_TOKEN",
+    "CLEARTAX_GSTIN",
+  ].filter((k) => !process.env[k]?.trim());
+  if (missingCleartax.length > 0) {
+    console.error(
+      `[cron][irp-uploader] IRP provider config missing (${missingCleartax.join(", ")}) — skipping run; invoices stay PENDING`,
+    );
+    return { processed: 0, failed: 0, skipped: 0 };
+  }
 
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -182,80 +265,12 @@ async function runIrpUploaderUnlocked(): Promise<{
   let skipped = 0;
 
   for (const candidate of candidates) {
-    // #703 — build the NIC e-invoice payload from the fetched row. A
-    // mapping failure is PERMANENT (missing GSTIN / no line items / bad
-    // seller env): stamp the reason and flip straight to FAILED — retrying
-    // can't fix structurally-unmappable data, and the 30-day IRN window
-    // shouldn't be burned looping on it. (S3776: assembly lives in
-    // buildPayloadFor below.)
-    const mapped = buildPayloadFor(candidate, sellerGstin);
-
-    if (!mapped.ok) {
-      await prisma.organizationInvoice.update({
-        where: { id: candidate.id },
-        data: {
-          irpStatus: "FAILED", // permanent — do not loop
-          irpLastError: `MAP: ${mapped.reason}`.slice(0, 500),
-          irpLastAttemptAt: new Date(),
-        },
-      });
-      failed++;
-      continue;
-    }
-
-    const result = await generateIrn({
-      invoiceId: candidate.id,
-      payload: mapped.payload,
-    });
-
-    if (result.status === "GENERATED" && result.irn) {
-      await prisma.organizationInvoice.update({
-        where: { id: candidate.id },
-        data: {
-          irn: result.irn,
-          ackNumber: result.ackNumber,
-          ackDate: result.ackDate,
-          signedQrPayload: result.signedQrPayload,
-          irpStatus: "GENERATED",
-          irpUploadedAt: new Date(),
-          irpLastError: null,
-          irpLastAttemptAt: new Date(),
-        },
-      });
-      processed++;
-      continue;
-    }
-
-    // Persist the failure so operators can see which invoices are
-    // stuck and WHY. Previously we silently dropped these and the
-    // cron would just keep re-hitting the same rows indefinitely.
-    // `irpStatus` stays PENDING so the next cron tick retries; we only
-    // flip to FAILED after a bounded number of attempts (tracked via
-    // `irpRetryCount`). Past the threshold the admin UI surfaces these
-    // for manual review — IRN generation has a 30-day hard cut-off.
-    if (result.status === "FAILED") {
-      const MAX_RETRIES = 12; // ≈ 12 days of daily retries before giving up
-      const nextRetryCount = (candidate.irpRetryCount ?? 0) + 1;
-      const exhausted = nextRetryCount >= MAX_RETRIES;
-
-      await prisma.organizationInvoice.update({
-        where: { id: candidate.id },
-        data: {
-          irpStatus: exhausted ? "FAILED" : "PENDING",
-          irpLastError: result.reason.slice(0, 500),
-          irpLastAttemptAt: new Date(),
-          irpRetryCount: nextRetryCount,
-        },
-      });
-      if (exhausted) {
-        failed++;
-      } else {
-        skipped++;
-      }
-      continue;
-    }
-
-    skipped++;
+    // CR #1234 r5 — per-candidate mapping/submission/state-update lives in
+    // processIrpCandidate; this loop keeps only the aggregate counters.
+    const outcome = await processIrpCandidate(candidate, sellerGstin);
+    if (outcome === "processed") processed++;
+    else if (outcome === "failed") failed++;
+    else skipped++;
   }
 
   console.log(

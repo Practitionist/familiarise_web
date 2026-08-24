@@ -179,7 +179,14 @@ export async function PATCH(
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
+    // CR #1234 r5 — Serializable gives the configLockedAt re-check a shared
+    // conflict boundary with the assignment-creation tx (which stamps the
+    // lock): under READ COMMITTED both could commit, letting money terms
+    // change under a just-created allocation. Aborts one side with P2034,
+    // retried by the house helper.
+    const updated = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
       const current = await tx.program.findFirst({
         where: { id: programId, contract: { organizationId: orgId } },
         include: { licensedSeatConfig: true, creditPoolConfig: true },
@@ -433,7 +440,10 @@ export async function PATCH(
       }
 
       return next;
-    });
+        },
+        { isolationLevel: "Serializable" },
+      ),
+    );
     return NextResponse.json({ program: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {

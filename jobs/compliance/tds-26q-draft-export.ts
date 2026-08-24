@@ -47,34 +47,69 @@ async function main() {
 
     const alreadyReported = records.filter((r) => r.reportedInForm26Q).length;
 
-    // CR #1234 r3.5 — `cumulativeAmountCredited` is an FY RUNNING TOTAL per
-    // record, so summing rows overstates credits on every second deduction.
-    // Per deductee: report the FINAL cumulative as the period's credited
-    // figure; deductions stay incremental (reversals are negative rows).
+    // CR #1234 r5 — `cumulativeAmountCredited` is an FY RUNNING TOTAL, so a
+    // quarter-scoped export must report the QUARTER DELTA, not the absolute
+    // figure (Q1 ending at 10k then Q2 reaching 15k means Q2 credits are
+    // 5k). Baseline = each deductee's highest cumulative from EARLIER
+    // quarters of the same FY — deliberately INCLUDING already-reported
+    // rows, because they establish where the running total stood when the
+    // quarter opened. Deductions stay incremental (reversals negative);
+    // only unreported rows contribute theirs to this draft.
     type Acc = {
-      finalCumulativePaise: number;
+      windowMaxCumulativePaise: number;
       tdsNetPaise: number;
       section: string | null;
     };
     const byDeductee = new Map<string, Acc>();
-    const rows: TdsReturnSourceRow[] = [];
-    for (const r of records.filter((x) => !x.reportedInForm26Q)) {
+    for (const r of records) {
       let acc = byDeductee.get(r.consultantProfileId);
       if (!acc) {
-        acc = { finalCumulativePaise: 0, tdsNetPaise: 0, section: r.tdsSection };
+        acc = {
+          windowMaxCumulativePaise: 0,
+          tdsNetPaise: 0,
+          section: r.tdsSection,
+        };
         byDeductee.set(r.consultantProfileId, acc);
       }
-      acc.finalCumulativePaise = Math.max(
-        acc.finalCumulativePaise,
+      acc.windowMaxCumulativePaise = Math.max(
+        acc.windowMaxCumulativePaise,
         Number(r.cumulativeAmountCredited),
       );
-      acc.tdsNetPaise += Number(r.tdsDeducted);
+      if (!r.reportedInForm26Q) {
+        acc.tdsNetPaise += Number(r.tdsDeducted);
+      }
     }
+
+    const deducteeIds = [...byDeductee.keys()];
+    const baselines =
+      deducteeIds.length > 0
+        ? await prisma.tDSRecord.groupBy({
+            by: ["consultantProfileId"],
+            where: {
+              financialYear,
+              quarter: { lt: quarter },
+              consultantProfileId: { in: deducteeIds },
+            },
+            _max: { cumulativeAmountCredited: true },
+          })
+        : [];
+    const baselineByDeductee = new Map(
+      baselines.map((b) => [
+        b.consultantProfileId,
+        Number(b._max.cumulativeAmountCredited ?? 0),
+      ]),
+    );
+
+    const rows: TdsReturnSourceRow[] = [];
     for (const [consultantProfileId, acc] of byDeductee) {
+      const baseline = baselineByDeductee.get(consultantProfileId) ?? 0;
       rows.push({
         consultantProfileId,
         tdsSection: acc.section,
-        amountCreditedPaise: acc.finalCumulativePaise,
+        amountCreditedPaise: Math.max(
+          0,
+          acc.windowMaxCumulativePaise - baseline,
+        ),
         tdsDeductedPaise: acc.tdsNetPaise,
         isReversal: false,
       });
