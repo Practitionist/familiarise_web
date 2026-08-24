@@ -111,15 +111,23 @@ export default function CookieConsentBanner() {
                 ))}
                 <Button
                   size="sm"
-                  onClick={() => {
-                    void save(prefs);
-                    // Set the underlying consent cookie so the banner hides.
-                    document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
-                    window.location.reload();
+                  onClick={async () => {
+                    const ok = await save(prefs);
+                    if (ok) {
+                      document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
+                      window.location.reload();
+                    } else {
+                      setSaveError(true);
+                    }
                   }}
                 >
                   Save preferences
                 </Button>
+                {saveError && (
+                  <p className="text-xs text-red-600">
+                    Could not save — please try again.
+                  </p>
+                )}
               </div>
             )}
           </div>
