@@ -81,6 +81,8 @@ export const AUDIT_ACTIONS = {
     PURCHASE_ORDER_CANCELLED: "PURCHASE_ORDER_CANCELLED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
     INVOICE_ISSUED: "INVOICE_ISSUED",
+    // #1230 wave-4 — the CSV export self-audits like the audit-log exporter.
+    INVOICE_EXPORTED: "INVOICE_EXPORTED",
     // #779 — dunning cron flipped ISSUED → OVERDUE.
     INVOICE_OVERDUE: "INVOICE_OVERDUE",
     // #812 — dunning Stage 3 stamped dunningSuspendedAt; the org's sponsored
