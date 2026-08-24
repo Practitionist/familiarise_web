@@ -67,6 +67,8 @@ export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");
 // high-consequence endpoints: 10/min per user is far above legitimate ops
 // traffic but caps scripted abuse of the most dangerous buttons in the app.
 export const moneyOpsLimiter = makeLimiter(10, "1 m", "rl:money-ops");
+// #1230 wave-4c — admin pipeline mutations (lead status moves, etc.).
+export const adminMutationLimiter = makeLimiter(10, "1 m", "rl:admin-mutation");
 
 /** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
 export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
