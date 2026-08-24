@@ -149,13 +149,21 @@ export async function PUT(
         ifscCode: body.ifscCode ?? null,
         routingNumber: body.routingNumber ?? null,
         swiftCode: body.swiftCode ?? null,
-        // Force re-verification on any account-number change.
-        ...(existing?.accountNumberLast4 !== last4 && {
-          status: "PENDING_VERIFICATION",
-          verifiedAt: null,
-          razorpayContactId: null,
-          razorpayFundAccountId: null,
-        }),
+        // Force re-verification on any verification-relevant change (CR
+        // #1234 r2 — holder name and IFSC identify the destination as much
+        // as the last-4 does; comparing last4 alone let a same-last-4
+        // different-bank edit keep a stale VERIFIED stamp).
+        ...(existing &&
+        (existing.accountNumberLast4 !== last4 ||
+          existing.accountHolderName !== body.accountHolderName ||
+          (existing.ifscCode ?? null) !== (body.ifscCode ?? null))
+          ? {
+              status: "PENDING_VERIFICATION" as const,
+              verifiedAt: null,
+              razorpayContactId: null,
+              razorpayFundAccountId: null,
+            }
+          : {}),
       },
     });
 
@@ -207,19 +215,23 @@ export async function PUT(
       });
       const validation = await svc.validateBankAccount(fund.id);
 
-      await prisma.organizationPayoutAccount.update({
-        where: { organizationId: orgId },
+      // CR #1234 r2 — bind BOTH writes to the bank-detail revision this
+      // request created. A second PUT (new details, bumped version) landing
+      // while our Razorpay calls are in flight must never receive the first
+      // request's fund-account ids or a VERIFIED stamp it did not earn.
+      await prisma.organizationPayoutAccount.updateMany({
+        where: { id: upserted.id, version: upserted.version },
         data: {
           razorpayContactId: contact.id,
           razorpayFundAccountId: fund.id,
         },
       });
       if (validation.accountStatus === "valid") {
-        // CAS: refuses rows already flipped concurrently (PUT is OWNER-only,
-        // but a double-submit should never double-stamp verifiedAt).
+        // CAS on id+version: refuses rows already flipped concurrently or
+        // superseded by newer bank details.
         await prisma.$transaction(async (tx) => {
           await transitionOrgPayoutAccount(tx, {
-            where: { id: upserted.id },
+            where: { id: upserted.id, version: upserted.version },
             to: "VERIFIED",
             data: { verifiedAt: new Date() },
             audit: {
@@ -239,20 +251,26 @@ export async function PUT(
     }
   }
 
+  // CR #1234 r2 — respond with the POST-verification row: the transition
+  // above may have flipped status/verifiedAt after `upserted` was read.
+  const fresh = await prisma.organizationPayoutAccount.findUniqueOrThrow({
+    where: { organizationId: orgId },
+  });
+
   return NextResponse.json(
     {
       payoutAccount: {
-        id: upserted.id,
-        accountHolderName: upserted.accountHolderName,
-        accountNumberLast4: upserted.accountNumberLast4,
-        bankName: upserted.bankName,
-        ifscCode: upserted.ifscCode,
-        routingNumber: upserted.routingNumber,
-        swiftCode: upserted.swiftCode,
-        status: upserted.status,
-        verifiedAt: upserted.verifiedAt,
-        createdAt: upserted.createdAt,
-        updatedAt: upserted.updatedAt,
+        id: fresh.id,
+        accountHolderName: fresh.accountHolderName,
+        accountNumberLast4: fresh.accountNumberLast4,
+        bankName: fresh.bankName,
+        ifscCode: fresh.ifscCode,
+        routingNumber: fresh.routingNumber,
+        swiftCode: fresh.swiftCode,
+        status: fresh.status,
+        verifiedAt: fresh.verifiedAt,
+        createdAt: fresh.createdAt,
+        updatedAt: fresh.updatedAt,
       },
     },
     { status: 200 },

@@ -128,6 +128,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // CR #1234 round 2 — refuse Razorpay accounts when the gateway rail is
+    // down/unconfigured. Persisting one would store isVerified:false with no
+    // razorpayFundAccId and no retained full account number — permanently
+    // unverifiable, and the reverify action can only 400 it afterwards.
+    if (data.provider === "RAZORPAY" && !isRazorpayPayoutsConfigured()) {
+      return NextResponse.json(
+        {
+          error:
+            "RazorpayX payouts are not configured on the platform yet; bank details were not saved.",
+          code: "RAZORPAYX_UNCONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
+
     let razorpayContactId: string | undefined;
     let razorpayFundAccId: string | undefined;
     // #1230 — the verification loop used to be a dead end: accounts were
@@ -138,7 +153,9 @@ export async function POST(req: NextRequest) {
     let pennyDropVerified = false;
 
     // Create RazorpayX contact and fund account if using Razorpay
-    if (data.provider === "RAZORPAY" && isRazorpayPayoutsConfigured()) {
+    // Configuration was asserted above — this branch is purely the
+    // Razorpay provisioning path now.
+    if (data.provider === "RAZORPAY") {
       const razorpayPayouts = getRazorpayPayoutsService();
 
       // Check if contact already exists
