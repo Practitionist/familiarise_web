@@ -189,7 +189,12 @@ export async function listPublicRecordings(
     ...publicRecordingWhere(),
     ...(params.search && {
       OR: [
-        { listingTitle: { contains: params.search, mode: "insensitive" as const } },
+        {
+          listingTitle: {
+            contains: params.search,
+            mode: "insensitive" as const,
+          },
+        },
         {
           listingDescription: {
             contains: params.search,
@@ -201,16 +206,22 @@ export async function listPublicRecordings(
     ...(params.tag && { tags: { has: params.tag } }),
   };
 
-  const [total, rows] = await prisma.$transaction([
-    prisma.recording.count({ where }),
-    prisma.recording.findMany({
-      where,
-      select: recordingListingSelect,
-      orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }],
-      take: perPage,
-      skip: (page - 1) * perPage,
-    }),
-  ]);
+  // Sequential reads, deliberately NOT a batch $transaction and deliberately
+  // NOT parallel: this page prerenders inside Next's build worker pool where
+  // lib/prisma caps the pg pool at ONE connection (buildPhase), so both the
+  // transaction API (P2028 "Unable to start a transaction" — which took down
+  // every Netlify preview for #1244) and even two concurrent queries would
+  // contend. A count/findMany skew between the reads is harmless here:
+  // totals on a public listing are advisory, and the guard test keeps
+  // genuine failures LOUD.
+  const total = await prisma.recording.count({ where });
+  const rows = await prisma.recording.findMany({
+    where,
+    select: recordingListingSelect,
+    orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }],
+    take: perPage,
+    skip: (page - 1) * perPage,
+  });
 
   return {
     items: rows
