@@ -151,6 +151,7 @@ export async function POST(request: NextRequest) {
       topics: topicNames,
       scheduledAt,
       status,
+      certificateProvided,
       recordingEnabled,
       recordingStoragePolicy,
     } = validatedData;
