@@ -38,6 +38,12 @@ describe("PM-36 — moneyOpsLimiter wiring (source contract)", () => {
     expect(src).toContain("applyRateLimit(");
     // The limiter import comes from the shared module, not a local copy.
     expect(src).toContain('from "@/lib/rate-limit"');
+
+    // #1236-triage — pay/pdf must key per ACTOR (member id), not orgId:
+    // one manager's PDF browsing cannot exhaust a billing admin's bucket.
+    if (rel.includes("/pdf/") || rel.includes("/pay/")) {
+      expect(src).toMatch(/applyRateLimit\(\s*moneyOpsLimiter,\s*access\.member\?\.id \?\? orgId/);
+    }
   });
 
   it("moneyOpsLimiter exists with the documented budget", () => {
@@ -97,5 +103,9 @@ describe("PM-37 — disputes route enforces the guard before gateway push", () =
     // Typed rejection, not a bare message.
     expect(src).toContain("EVIDENCE_DEADLINE_PASSED");
     expect(src).toMatch(/status:\s*410/);
+    // Gateway-neutral guidance (this surface is Stripe-only; naming Razorpay
+    // here was wrong recovery advice).
+    expect(src).not.toContain("Contact Razorpay support");
+    expect(src).toContain("payment-gateway support");
   });
 });
