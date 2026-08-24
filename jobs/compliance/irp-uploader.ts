@@ -70,6 +70,40 @@ export async function runIrpUploader(): Promise<{
   );
 }
 
+/**
+ * S3776 — NIC payload assembly extracted from the run loop. The candidate is
+ * the fetched invoice row (with organization + lineItems); mapping failures
+ * are the caller's concern.
+ */
+function buildPayloadFor(
+  candidate: Awaited<ReturnType<typeof fetchIrpCandidates>>[number],
+  sellerGstin: string,
+) {
+  return buildIrpPayload({
+    invoice: {
+      invoiceNumber: candidate.invoiceNumber,
+      issuedAt: candidate.issuedAt,
+      reverseCharge: candidate.reverseCharge,
+      lutNumber: candidate.lutNumber,
+      subtotalPaise: candidate.subtotalPaise,
+      cgstPaise: candidate.cgstPaise,
+      sgstPaise: candidate.sgstPaise,
+      igstPaise: candidate.igstPaise,
+      totalPaise: candidate.totalPaise,
+      hsnCode: candidate.hsnCode,
+      placeOfSupply: candidate.placeOfSupply,
+    },
+    lineItems: candidate.lineItems,
+    buyer: {
+      name: candidate.organization.name,
+      gstin: candidate.organization.taxInfo?.gstin ?? null,
+      stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
+      hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
+    },
+    seller: { ...SELLER, gstin: sellerGstin },
+  });
+}
+
 async function fetchIrpCandidates(thirtyDaysAgo: Date) {
   return prisma.organizationInvoice.findMany({
     where: {
@@ -152,30 +186,9 @@ async function runIrpUploaderUnlocked(): Promise<{
     // mapping failure is PERMANENT (missing GSTIN / no line items / bad
     // seller env): stamp the reason and flip straight to FAILED — retrying
     // can't fix structurally-unmappable data, and the 30-day IRN window
-    // shouldn't be burned looping on it.
-    const mapped = buildIrpPayload({
-      invoice: {
-        invoiceNumber: candidate.invoiceNumber,
-        issuedAt: candidate.issuedAt,
-        reverseCharge: candidate.reverseCharge,
-        lutNumber: candidate.lutNumber,
-        subtotalPaise: candidate.subtotalPaise,
-        cgstPaise: candidate.cgstPaise,
-        sgstPaise: candidate.sgstPaise,
-        igstPaise: candidate.igstPaise,
-        totalPaise: candidate.totalPaise,
-        hsnCode: candidate.hsnCode,
-        placeOfSupply: candidate.placeOfSupply,
-      },
-      lineItems: candidate.lineItems,
-      buyer: {
-        name: candidate.organization.name,
-        gstin: candidate.organization.taxInfo?.gstin ?? null,
-        stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
-        hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
-      },
-      seller: { ...SELLER, gstin: sellerGstin },
-    });
+    // shouldn't be burned looping on it. (S3776: assembly lives in
+    // buildPayloadFor below.)
+    const mapped = buildPayloadFor(candidate, sellerGstin);
 
     if (!mapped.ok) {
       await prisma.organizationInvoice.update({

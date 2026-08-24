@@ -99,14 +99,9 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
     }
 
     const successorStart = a.periodEnd;
+    // S1854 — the scan-time decision was made dead by the wave-3 in-tx
+    // recompute; successor bounds are all the loop needs up front.
     const successorEnd = nextPeriodEnd(successorStart, cycle);
-    const decision = decideCycleTransition({
-      successorPeriodStart: successorStart,
-      successorPeriodEnd: successorEnd,
-      contractStatus: a.program.contract.status,
-      contractAutoRenew: a.program.contract.autoRenew,
-      contractEffectiveTo: a.program.contract.effectiveTo,
-    });
 
     const orgId = a.program.contract.organizationId;
 

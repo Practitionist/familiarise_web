@@ -150,6 +150,26 @@ async function applyAssignmentPatch(
     return cancelAssignment(tx, ctx, current);
   }
 
+  // S3776 — period-edit branch extracted (see editAssignmentPeriod).
+  return editAssignmentPeriod(tx, ctx, current);
+}
+
+/**
+ * S3776 — guarded period-edit branch of the patch, extracted. Claims only
+ * live rows (see the resurrection note inside) and writes the update audit.
+ */
+async function editAssignmentPeriod(
+  tx: Tx,
+  ctx: {
+    orgId: string;
+    programId: string;
+    assignmentId: string;
+    actorMembershipId: string;
+    body: z.infer<typeof PatchBodySchema>;
+  },
+  current: { membershipId: string; periodStart: Date; periodEnd: Date },
+) {
+  const { orgId, programId, assignmentId, actorMembershipId, body } = ctx;
   const nextStart = body.periodStart ?? current.periodStart;
   const nextEnd = body.periodEnd ?? current.periodEnd;
   if (nextEnd.getTime() <= nextStart.getTime()) {
