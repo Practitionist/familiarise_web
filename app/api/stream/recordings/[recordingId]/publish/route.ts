@@ -9,10 +9,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import {
-  appointmentPlanArmsSelect,
-  resolveListingPlan,
-} from "@/lib/stream/recording-listing-access";
+import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -83,57 +80,14 @@ export async function POST(
       parsed.data;
 
     const { recordingId } = await params;
-    const recording = await prisma.recording.findUnique({
-      where: { id: recordingId },
-      select: {
-        id: true,
-        status: true,
-        storageType: true,
-        meetingSession: {
-          select: {
-            slotOfAppointment: {
-              select: {
-                appointment: { select: appointmentPlanArmsSelect },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      );
+    const loaded = await loadOwnedListingRecording(
+      recordingId,
+      session.user.consultantProfileId,
+    );
+    if (loaded.status === "not_found") {
+      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
-
-    const appointment =
-      recording.meetingSession.slotOfAppointment.appointment;
-    const listingPlan = resolveListingPlan(appointment);
-
-    // Only group offerings can be resold. 1:1 consultations/subscriptions are
-    // private by design (default-off recording policy) and must never reach
-    // the marketplace even if a session was recorded in an org context.
-    if (!listingPlan) {
-      return NextResponse.json(
-        {
-          error:
-            "Only webinar and class recordings can be published to the library.",
-          code: "NOT_LISTABLE",
-        },
-        { status: 400 },
-      );
-    }
-
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-    if (
-      !consultantProfile ||
-      listingPlan.plan.consultantProfileId !== consultantProfile.id
-    ) {
+    if (loaded.status === "forbidden") {
       return NextResponse.json(
         { error: "Not authorized to publish this recording" },
         { status: 403 },
@@ -141,7 +95,7 @@ export async function POST(
     }
 
     // A sold replay must outlive any single session: Stream URLs die ≤14d.
-    if (recording.status !== "AVAILABLE" || recording.storageType !== "SUPABASE") {
+    if (loaded.recordingStatus !== "AVAILABLE" || loaded.storageType !== "SUPABASE") {
       return NextResponse.json(
         {
           error:
@@ -154,8 +108,8 @@ export async function POST(
 
     // Org plans must opt into public discoverability.
     if (
-      listingPlan.plan.organizationId &&
-      !["PUBLIC", "ORG_AND_PUBLIC"].includes(listingPlan.plan.visibility)
+      loaded.plan.plan.organizationId &&
+      !["PUBLIC", "ORG_AND_PUBLIC"].includes(loaded.plan.plan.visibility)
     ) {
       return NextResponse.json(
         {
@@ -166,19 +120,19 @@ export async function POST(
         { status: 403 },
       );
     }
-    if (listingPlan.plan.archivedAt) {
+    if (loaded.plan.plan.archivedAt) {
       return NextResponse.json(
         { error: "The parent plan has been withdrawn.", code: "PLAN_ARCHIVED" },
         { status: 400 },
       );
     }
 
-    const finalSlug = slug ?? buildSlug(listingTitle, recording.id);
+    const finalSlug = slug ?? buildSlug(listingTitle, loaded.recordingId);
     const slugClash = await prisma.recording.findUnique({
       where: { slug: finalSlug },
       select: { id: true },
     });
-    if (slugClash && slugClash.id !== recording.id) {
+    if (slugClash && slugClash.id !== loaded.recordingId) {
       return NextResponse.json(
         { error: "That link is taken — pick another.", code: "SLUG_TAKEN" },
         { status: 409 },
@@ -188,7 +142,7 @@ export async function POST(
     let updated;
     try {
       updated = await prisma.recording.update({
-        where: { id: recording.id },
+        where: { id: loaded.recordingId },
         data: {
           listingStatus: "PUBLISHED",
           listingTitle,
@@ -245,38 +199,20 @@ export async function DELETE(
     }
 
     const { recordingId } = await params;
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-
-    const recording = await prisma.recording.findUnique({
-      where: { id: recordingId },
-      select: {
-        meetingSession: {
-          select: {
-            slotOfAppointment: {
-              select: {
-                appointment: { select: appointmentPlanArmsSelect },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!recording) {
-      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
-    }
-
-    const listingPlan = resolveListingPlan(
-      recording.meetingSession.slotOfAppointment.appointment,
+    const loaded = await loadOwnedListingRecording(
+      recordingId,
+      session.user.consultantProfileId,
     );
-    if (
-      !consultantProfile ||
-      !listingPlan ||
-      listingPlan.plan.consultantProfileId !== consultantProfile.id
-    ) {
-      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
+    if (loaded.status !== "ok") {
+      return NextResponse.json(
+        {
+          error:
+            loaded.status === "not_found"
+              ? "Recording not found"
+              : "Not authorized",
+        },
+        { status: loaded.status === "not_found" ? 404 : 403 },
+      );
     }
 
     const updated = await prisma.recording.update({

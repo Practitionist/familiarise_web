@@ -82,7 +82,7 @@ async function verifyMaterialManageAccess(
         break;
     }
 
-    if (!plan || !plan.consultantProfile) {
+    if (!plan?.consultantProfile) {
       return {
         allowed: false,
         organizationId: null,

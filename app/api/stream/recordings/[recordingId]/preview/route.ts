@@ -11,10 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import {
-  appointmentPlanArmsSelect,
-  resolveListingPlan,
-} from "@/lib/stream/recording-listing-access";
+import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
 import {
   uploadRecordingPreviewAsset,
   deleteRecordingPreviewAssets,
@@ -33,37 +30,14 @@ export async function POST(
     }
 
     const { recordingId } = await params;
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-
-    const recording = await prisma.recording.findUnique({
-      where: { id: recordingId },
-      select: {
-        meetingSession: {
-          select: {
-            slotOfAppointment: {
-              select: {
-                appointment: { select: appointmentPlanArmsSelect },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!recording) {
+    const loaded = await loadOwnedListingRecording(
+      recordingId,
+      session.user.consultantProfileId,
+    );
+    if (loaded.status === "not_found") {
       return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
-
-    const listingPlan = resolveListingPlan(
-      recording.meetingSession.slotOfAppointment.appointment,
-    );
-    if (
-      !listingPlan ||
-      !consultantProfile ||
-      listingPlan.plan.consultantProfileId !== consultantProfile.id
-    ) {
+    if (loaded.status === "forbidden") {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 
@@ -168,37 +142,14 @@ export async function DELETE(
     }
 
     const { recordingId } = await params;
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-
-    const recording = await prisma.recording.findUnique({
-      where: { id: recordingId },
-      select: {
-        meetingSession: {
-          select: {
-            slotOfAppointment: {
-              select: {
-                appointment: { select: appointmentPlanArmsSelect },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!recording) {
+    const loaded = await loadOwnedListingRecording(
+      recordingId,
+      session.user.consultantProfileId,
+    );
+    if (loaded.status === "not_found") {
       return NextResponse.json({ error: "Recording not found" }, { status: 404 });
     }
-
-    const listingPlan = resolveListingPlan(
-      recording.meetingSession.slotOfAppointment.appointment,
-    );
-    if (
-      !listingPlan ||
-      !consultantProfile ||
-      listingPlan.plan.consultantProfileId !== consultantProfile.id
-    ) {
+    if (loaded.status === "forbidden") {
       return NextResponse.json({ error: "Not authorized" }, { status: 403 });
     }
 

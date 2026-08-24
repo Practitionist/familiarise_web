@@ -123,3 +123,77 @@ export function resolveAppointmentStoragePolicy(
     ownerProfileId: plan?.consultantProfileId ?? null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Shared route loader — the consultant-profile lookup + recording fetch +
+// ownership resolution scaffold that publish/preview/purchase each used to
+// inline (Sonar flagged the copies; duplicated authz is how endpoints drift).
+// ---------------------------------------------------------------------------
+
+import prisma from "@/lib/prisma";
+
+export type OwnedRecordingLoad =
+  | { status: "not_found" }
+  | { status: "forbidden" }
+  | {
+      status: "ok";
+      recordingId: string;
+      recordingStatus: string;
+      storageType: string;
+      listingStatus: string;
+      listPricePaise: bigint | null;
+      plan: ResolvedListingPlan;
+    };
+
+/**
+ * Load a recording that must (a) exist and (b) belong to the caller's
+ * consultant profile via its webinar/class plan. Consultation/subscription
+ * appointments resolve to `not_found` here — they are not marketplace
+ * surfaces and must be invisible to these endpoints.
+ */
+export async function loadOwnedListingRecording(
+  recordingId: string,
+  consultantProfileId: string | null | undefined,
+): Promise<OwnedRecordingLoad> {
+  if (!consultantProfileId) return { status: "forbidden" };
+
+  const recording = await prisma.recording.findUnique({
+    where: { id: recordingId },
+    select: {
+      id: true,
+      status: true,
+      storageType: true,
+      listingStatus: true,
+      listPricePaise: true,
+      meetingSession: {
+        select: {
+          slotOfAppointment: {
+            select: {
+              appointment: { select: appointmentPlanArmsSelect },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!recording) return { status: "not_found" };
+
+  const plan = resolveListingPlan(
+    recording.meetingSession.slotOfAppointment.appointment,
+  );
+  if (!plan) return { status: "not_found" };
+
+  if (plan.plan.consultantProfileId !== consultantProfileId) {
+    return { status: "forbidden" };
+  }
+
+  return {
+    status: "ok",
+    recordingId: recording.id,
+    recordingStatus: recording.status,
+    storageType: recording.storageType,
+    listingStatus: recording.listingStatus,
+    listPricePaise: recording.listPricePaise,
+    plan,
+  };
+}

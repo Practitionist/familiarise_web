@@ -15,10 +15,7 @@ import {
   cancelRazorpayOrder,
   createRazorpayOrder,
 } from "@/lib/payments/core/razorpay";
-import {
-  appointmentPlanArmsSelect,
-  resolveListingPlan,
-} from "@/lib/stream/recording-listing-access";
+import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -34,50 +31,27 @@ export async function POST(
 
     const { recordingId } = await params;
 
-    const recording = await prisma.recording.findUnique({
-      where: { id: recordingId },
-      select: {
-        id: true,
-        listingStatus: true,
-        listPricePaise: true,
-        meetingSession: {
-          select: {
-            slotOfAppointment: {
-              select: {
-                appointment: { select: appointmentPlanArmsSelect },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (
-      !recording ||
-      recording.listingStatus !== "PUBLISHED" ||
-      recording.listPricePaise === null ||
-      !(recording.listPricePaise > BigInt(0))
-    ) {
+    const loaded = await loadOwnedListingRecording(
+      recordingId,
+      // Buyers are consultees; a signed-in consultant profile only matters
+      // for the self-purchase check below.
+      null,
+    );
+    if (loaded.status !== "ok") {
       return NextResponse.json(
         { error: "Recording is not available for purchase", code: "NOT_LISTED" },
         { status: 404 },
       );
     }
-
     // Consultants don't buy their own replays — owners already hold playback.
-    if (session.user.consultantProfileId) {
-      const listingPlan = resolveListingPlan(
-        recording.meetingSession.slotOfAppointment.appointment,
+    if (
+      session.user.consultantProfileId &&
+      loaded.plan.plan.consultantProfileId === session.user.consultantProfileId
+    ) {
+      return NextResponse.json(
+        { error: "You already own this recording", code: "ALREADY_ENTITLED" },
+        { status: 400 },
       );
-      if (
-        listingPlan &&
-        listingPlan.plan.consultantProfileId === session.user.consultantProfileId
-      ) {
-        return NextResponse.json(
-          { error: "You already own this recording", code: "ALREADY_ENTITLED" },
-          { status: 400 },
-        );
-      }
     }
 
     const [owned, pendingOrder] = await Promise.all([
@@ -111,7 +85,7 @@ export async function POST(
       );
     }
 
-    const amountPaise = recording.listPricePaise;
+    const amountPaise = loaded.listPricePaise as bigint; // guarded non-null above
     const order = await createRazorpayOrder({
       amount: Number(amountPaise),
       currency: "INR",

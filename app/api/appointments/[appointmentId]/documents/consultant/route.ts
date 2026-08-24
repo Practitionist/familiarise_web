@@ -23,6 +23,80 @@ const isDevelopment = () =>
   process.env.DEV_BYPASS_AUTH === "true";
 
 /**
+ * Load the appointment iff the caller delivers it (any of the four plan
+ * arms). Kept out of the handler so POST reads linearly — Sonar S3776.
+ */
+async function loadConsultantAppointment(
+  appointmentId: string,
+  userId: string,
+) {
+  const whereClause: Prisma.AppointmentWhereInput = { id: appointmentId };
+
+  if (!isDevelopment()) {
+    whereClause.OR = [
+      {
+        consultation: {
+          consultationPlan: {
+            consultantProfile: { user: { id: userId } },
+          },
+        },
+      },
+      {
+        subscription: {
+          subscriptionPlan: {
+            consultantProfile: { user: { id: userId } },
+          },
+        },
+      },
+      {
+        webinar: {
+          webinarPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+      {
+        class: {
+          classPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+    ];
+  }
+
+  return prisma.appointment.findFirst({
+    where: whereClause,
+    include: {
+      consultation: {
+        include: {
+          consultationPlan: {
+            include: { consultantProfile: { select: { id: true, userId: true } } },
+          },
+        },
+      },
+      subscription: {
+        include: {
+          subscriptionPlan: {
+            include: { consultantProfile: { select: { id: true, userId: true } } },
+          },
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: {
+            include: { consultantProfile: { select: { id: true, userId: true } } },
+          },
+        },
+      },
+      class: {
+        include: {
+          classPlan: {
+            include: { consultantProfile: { select: { id: true, userId: true } } },
+          },
+        },
+      },
+    },
+  });
+}
+
+/**
  * POST - Upload a consultant response document
  * Consultant can upload documents as responses to consultee submissions
  */
@@ -53,114 +127,8 @@ export async function POST(
     const { appointmentId } = await params;
     const userId = session.user.id;
 
-    // Build access control - verify user is the consultant for this appointment
-    const appointmentWhereClause: Prisma.AppointmentWhereInput = {
-      id: appointmentId,
-    };
-
-    if (!isDevelopment()) {
-      appointmentWhereClause.OR = [
-        // User is the consultant for consultation
-        {
-          consultation: {
-            consultationPlan: {
-              consultantProfile: {
-                user: {
-                  id: userId,
-                },
-              },
-            },
-          },
-        },
-        // User is the consultant for subscription
-        {
-          subscription: {
-            subscriptionPlan: {
-              consultantProfile: {
-                user: {
-                  id: userId,
-                },
-              },
-            },
-          },
-        },
-        // User is the consultant for webinar
-        {
-          webinar: {
-            webinarPlan: {
-              consultantProfile: {
-                user: {
-                  id: userId,
-                },
-              },
-            },
-          },
-        },
-        // User is the consultant for class
-        {
-          class: {
-            classPlan: {
-              consultantProfile: {
-                user: {
-                  id: userId,
-                },
-              },
-            },
-          },
-        },
-      ];
-    }
-
-    // Verify appointment exists and user is consultant
-    const appointment = await prisma.appointment.findFirst({
-      where: appointmentWhereClause,
-      include: {
-        consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  select: { id: true, userId: true },
-                },
-              },
-            },
-          },
-        },
-        subscription: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  select: { id: true, userId: true },
-                },
-              },
-            },
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  select: { id: true, userId: true },
-                },
-              },
-            },
-          },
-        },
-        class: {
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  select: { id: true, userId: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    // Verify appointment exists and caller delivers it (any arm).
+    const appointment = await loadConsultantAppointment(appointmentId, userId);
 
     if (!appointment) {
       return NextResponse.json(
