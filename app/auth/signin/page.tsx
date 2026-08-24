@@ -381,13 +381,6 @@ function SignInContent() {
           <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Sign in to your account
           </h2>
-          {searchParams.get("sso_required") === "1" && (
-            <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
-              <p className="text-sm text-yellow-300">
-                Your organization requires SSO sign-in.
-              </p>
-            </div>
-          )}
           {needsVerification && (
             <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
               <p className="mb-2 text-sm text-yellow-300">

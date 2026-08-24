@@ -334,11 +334,9 @@ export const auth = betterAuth({
     },
     // Server-side SSO veto (issue #673). Runs on every session creation path
     // — credential signin, OAuth signin, SSO signin, signup — just before the
-    // cookie is issued. Reading-time enforcement via `ssoEnforcementFailed`
-    // in `customSession` below is kept for defense-in-depth but is not the
-    // primary gate: a direct POST to `/api/auth/sign-in/email` that bypasses
-    // our signin UI would previously create a valid session and only set the
-    // flag reactively. This hook rejects such requests at the source.
+    // cookie is issued, making this THE enforcement gate: a direct POST to
+    // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
+    // at the source rather than flagged reactively.
     //
     // Legitimate first-time SSO users are allowed because the SSO plugin
     // creates the `account` row with `providerId = ssoProvider.providerId`
@@ -644,56 +642,20 @@ export const auth = betterAuth({
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
         }));
 
-      // SSO enforcement: mark sessions that bypassed SSO for enforced
-      // domains. Read-time defense-in-depth; the primary gate is in
-      // `databaseHooks.session.create.before` (above). Keeping a single
-      // enforcement path via the shared `lookupEnforcedOrg` helper
-      // means credential-signin and read-time reconciliation can't
-      // disagree on who counts as "enforced" — historically this was
-      // issue #673.
+      // SSO enforcement: the primary gate lives in
+      // `databaseHooks.session.create.before` (above) — every session-creation
+      // path (credential, OAuth, SSO, signup) is vetoed there when the user's
+      // email domain is under an enforced org without a linked provider
+      // account (issue #673).
       //
-      // An account satisfies enforcement only if `account.providerId`
-      // matches one of the `ssoProvider.providerId` rows registered
-      // for the enforcing org. Checking against `providerId != "credential"`
-      // is NOT enough — that would treat a personal Google or GitHub
-      // OAuth account as a valid SSO sign-in, bypassing the policy.
-      let ssoEnforcementFailed = false;
-      try {
-        const email = user.email;
-        const domain = email?.split("@")[1]?.toLowerCase();
-        if (domain) {
-          const enforced = await lookupEnforcedOrg(prisma, domain);
-          // `lookupEnforcedOrg` returns null when enforcement doesn't
-          // apply (unverified claim, inactive org, allowlist mismatch,
-          // enforceSSO=false). It also returns an empty
-          // `registeredProviderIds` array when the org has flipped
-          // enforceSSO on but hasn't added a provider yet — fail-open
-          // there, matching `shouldRejectSession`'s behaviour, so a
-          // half-configured org doesn't flag every session as failed.
-          if (enforced && enforced.registeredProviderIds.length > 0) {
-            const linkedViaSSO = await prisma.account.findFirst({
-              where: {
-                userId: user.id,
-                providerId: { in: enforced.registeredProviderIds },
-              },
-              select: { id: true },
-            });
-            if (!linkedViaSSO) ssoEnforcementFailed = true;
-          }
-        }
-      } catch (error) {
-        // Still non-fatal — a session read must not 500 because a lookup
-        // blipped — but note WHICH way it fails: `ssoEnforcementFailed` stays
-        // false, so the session passes enforcement. Unlike the two fail-opens
-        // reasoned about above, that one was never a decision, and it was
-        // silent. An enforced org's policy going unenforced is exactly the
-        // event someone needs to see. (#1125)
-        reportSentryError(error, {
-          subsystem: "sso",
-          op: "customSession.enforcementRecheck",
-          extra: { userId: user.id },
-        });
-      }
+      // A read-time recheck that flagged bypassed sessions via
+      // `ssoEnforcementFailed` used to live here. It was removed: no layout,
+      // guard, or component ever consumed the flag (docs claimed layouts
+      // redirect on it — none did), so it cost two DB round-trips
+      // (lookupEnforcedOrg + account probe) on EVERY session resolution —
+      // the hottest read in the app — for a value nobody read. Re-introduce
+      // enforcement-at-read-time only with an actual consumer; see the SSO
+      // enforcement lifecycle issue for the full plan.
 
       return {
         user: {
@@ -713,7 +675,6 @@ export const auth = betterAuth({
           sessionGeneration: liveSessionGeneration,
           banned: effectivelyBanned,
           organizationMemberships,
-          ssoEnforcementFailed,
         },
         session,
       };
