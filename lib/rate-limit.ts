@@ -62,6 +62,12 @@ export const cancelPendingLimiter = makeLimiter(10, "1 m", "rl:cancel-pending");
 /** 10 per minute — POST /api/payments/discounts/validate */
 export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");
 
+// #677/PM-36 — money-operations limiter for admin/backoffice POST surfaces
+// (refunds, dispute evidence, invoice generation). These are low-frequency,
+// high-consequence endpoints: 10/min per user is far above legitimate ops
+// traffic but caps scripted abuse of the most dangerous buttons in the app.
+export const moneyOpsLimiter = makeLimiter(10, "1 m", "rl:money-ops");
+
 /** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
 export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
 

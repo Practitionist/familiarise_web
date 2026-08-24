@@ -461,6 +461,16 @@ async function reverseFreeCreditSettlement(
 
   const debitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
   const creditTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+  // #1218-triage — a fully-zero settlement (zero-share earnings rows only)
+  // produces empty postings on BOTH sides: that is a legitimate nothing-to-
+  // journal outcome, not an imbalance. Only a one-sided non-empty total is
+  // a real logic bug worth rolling back for.
+  if (debits.length === 0 && credits.length === 0) {
+    console.log(
+      `ℹ️ free-credit reversal for payment ${input.paymentId}: zero-value settlement — no journal posted`,
+    );
+    return;
+  }
   if (debitTotal === 0 || debitTotal !== creditTotal) {
     // Unreachable given the plug — a mismatch is a real logic bug. Throwing
     // rolls back the whole Serializable tx (Refund row included) for a clean

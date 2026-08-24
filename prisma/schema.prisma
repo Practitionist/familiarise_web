@@ -4984,6 +4984,11 @@ model WebhookEvent {
   processedAt DateTime?
   error       String?
   receivedAt  DateTime  @default(now())
+  // #1205-triage — sweeper claim stamp, SEPARATE from receivedAt: bumping
+  // receivedAt on every re-drive used to reset the event's age and let a
+  // permanently-failing row dodge the give-up cap forever. The stale selector
+  // reads (receivedAt, claimedAt) together; giveUp aging stays on receivedAt.
+  claimedAt   DateTime?
 
   @@index([provider])
   @@index([processed])

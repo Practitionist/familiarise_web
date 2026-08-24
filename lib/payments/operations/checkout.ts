@@ -193,6 +193,20 @@ function buildPaymentMetadata(
  * observes the winner's COMMITTED row; same-key duplicates stay covered by
  * the clientIdempotencyKey unique (#828 P2002 replay).
  */
+/** A resumable open order — the fields the resume response needs. */
+interface ReusableOrder {
+  id: string;
+  paymentIntent: string;
+  amount: number;
+  currency: string;
+  isMockPayment: boolean;
+  /** First slot of the booked window (consultation/class shape); empty for
+   *  subscription placeholders whose period lives on the slot rows too. */
+  appointment?: {
+    slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }>;
+  } | null;
+}
+
 export async function findReusablePendingOrderPayment(
   db: Pick<typeof prisma, "payment">,
   params: {
@@ -202,8 +216,26 @@ export async function findReusablePendingOrderPayment(
     eventId?: string;
     organizationId: string | null;
     paymentGateway: PaymentGateway;
+    /**
+     * #1220-triage — the CURRENT request's computed total. A candidate whose
+     * frozen amount differs (changed coupon, credit balance moved) is
+     * superseded instead of resumed, so a stale price can never be charged.
+     */
+    expectedAmountPaise: number;
+    /** Slot window for direct bookings — a resume must be for THIS time,
+     *  not just this plan (#1220-triage critical finding). */
+    slotWindow?: { startsAt: Date; endsAt: Date };
+    /** Subscription billing-period window; both-null rows only match a
+     *  both-null request. */
+    schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
   },
-) {
+): Promise<{
+  reusable: ReusableOrder | null;
+  /** Scope/freshness matches rejected by the window/amount gates — the caller
+   *  EXPIRES these ("superseded") so they can neither be resumed nor re-minted
+   *  into a parallel charge. */
+  supersede: Array<{ id: string; reason: string }>;
+}> {
   // Plan identity per type — events are identified by their event row (the
   // plan is 1:1 with it); direct bookings by their plan id. An undefined
   // eventId would make Prisma drop the filter entirely (matches ANY
@@ -225,9 +257,9 @@ export async function findReusablePendingOrderPayment(
     default:
       planScope = null;
   }
-  if (!planScope) return null;
+  if (!planScope) return { reusable: null, supersede: [] };
 
-  return db.payment.findFirst({
+  const candidates = await db.payment.findMany({
     where: {
       userId: params.userId,
       paymentStatus: PaymentStatus.PENDING,
@@ -240,14 +272,86 @@ export async function findReusablePendingOrderPayment(
       appointment: planScope,
     },
     orderBy: { createdAt: "desc" },
+    take: 5, // bounded: newest attempts first; older ones get superseded below
     select: {
       id: true,
       paymentIntent: true,
       amount: true,
       currency: true,
       isMockPayment: true,
+      appointment: {
+        select: {
+          slotsOfAppointment: {
+            select: { startsAt: true, endsAt: true },
+            orderBy: { startsAt: "asc" as const },
+            take: 1,
+          },
+        },
+      },
     },
   });
+
+  const reusable: ReusableOrder[] = [];
+  const supersede: Array<{ id: string; reason: string }> = [];
+
+  for (const candidate of candidates) {
+    const appt = candidate.appointment as
+      | { slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }> }
+      | null;
+
+    // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
+    // DIFFERENT appointment time must never resume the first attempt's order.
+    if (
+      params.appointmentType === "CONSULTATION"
+    ) {
+      const slot = appt?.slotsOfAppointment?.[0];
+      if (!params.slotWindow || !slot) {
+        supersede.push({ id: candidate.id, reason: "window-unmatchable" });
+        continue;
+      }
+      if (
+        slot.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
+        slot.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
+      ) {
+        supersede.push({ id: candidate.id, reason: "slot-window-mismatch" });
+        continue;
+      }
+    }
+    if (params.appointmentType === "SUBSCRIPTION") {
+      const reqPeriod = params.schedulingPeriod ?? null;
+      // Subscription windows ride the SAME slot rows as consultations — the
+      // minted placeholder's slot carries the scheduling-period bounds.
+      const subSlot = appt?.slotsOfAppointment?.[0];
+      const rowPeriod =
+        subSlot ? { startsAt: subSlot.startsAt, endsAt: subSlot.endsAt } : null;
+      if (!!reqPeriod !== !!rowPeriod) {
+        supersede.push({ id: candidate.id, reason: "period-mismatch" });
+        continue;
+      }
+      if (
+        reqPeriod &&
+        rowPeriod &&
+        (rowPeriod.startsAt.getTime() !== reqPeriod.startsAt.getTime() ||
+          rowPeriod.endsAt.getTime() !== reqPeriod.endsAt.getTime())
+      ) {
+        supersede.push({ id: candidate.id, reason: "period-mismatch" });
+        continue;
+      }
+    }
+
+    // Gate 2 — priced-input parity (#1220-triage Major): a changed coupon /
+    // credit balance / tax profile computes a DIFFERENT total for this
+    // request; resuming would charge the stale number. Expire-and-fresh.
+    if (candidate.amount !== params.expectedAmountPaise) {
+      supersede.push({ id: candidate.id, reason: "amount-mismatch" });
+      continue;
+    }
+
+    reusable.push(candidate);
+    break; // newest match wins
+  }
+
+  return { reusable: reusable[0] ?? null, supersede };
 }
 
 // ============================================================================
@@ -2368,21 +2472,72 @@ export async function handleCheckout(
     // a remount/new tab converges on the first attempt's order instead of
     // charging in parallel. Mock/zero-amount/org-sponsored flows are never
     // PENDING, so the lookup can only ever match a real gateway hold.
-    const reusableOrder = await findReusablePendingOrderPayment(prisma, {
-      userId,
-      appointmentType,
-      planId: validatedData.planId,
-      eventId: validatedData.eventId,
-      organizationId,
-      paymentGateway: validatedData.paymentGateway,
-    });
+    //
+    // #1220-triage — candidates are additionally gated on the slot window
+    // (a different appointment time must never resume) and on priced-input
+    // parity (amount must equal THIS request's computation). Rejections are
+    // superseded to EXPIRED so they can neither be resumed later nor re-minted
+    // into a parallel charge by a third tab.
+    const { reusable: reusableOrder, supersede: supersededOrders } =
+      await findReusablePendingOrderPayment(prisma, {
+        userId,
+        appointmentType,
+        planId: validatedData.planId,
+        eventId: validatedData.eventId,
+        organizationId,
+        paymentGateway: validatedData.paymentGateway,
+        expectedAmountPaise: amount,
+        ...(appointmentType === "CONSULTATION" &&
+        validatedData.startsAt &&
+        validatedData.endsAt
+          ? {
+              slotWindow: {
+                startsAt: new Date(validatedData.startsAt),
+                endsAt: new Date(validatedData.endsAt),
+              },
+            }
+          : {}),
+        ...(appointmentType === "SUBSCRIPTION"
+          ? {
+              schedulingPeriod:
+                validatedData.schedulingPeriodStartsAt &&
+                validatedData.schedulingPeriodEndsAt
+                  ? {
+                      startsAt: new Date(
+                        validatedData.schedulingPeriodStartsAt,
+                      ),
+                      endsAt: new Date(validatedData.schedulingPeriodEndsAt),
+                    }
+                  : null,
+            }
+          : {}),
+      });
+    if (supersededOrders.length > 0) {
+      await prisma.payment.updateMany({
+        where: { id: { in: supersededOrders.map((s) => s.id) } },
+        data: {
+          paymentStatus: PaymentStatus.EXPIRED,
+          expiresAt: new Date(),
+        },
+      });
+      console.log(
+        JSON.stringify({
+          event: "checkout_open_order_superseded",
+          appointmentType,
+          count: supersededOrders.length,
+          reason: supersededOrders[0].reason,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
     if (reusableOrder) {
       console.log(
         JSON.stringify({
           event: "checkout_open_order_reused",
           appointmentType,
           orderId: reusableOrder.paymentIntent,
-          userId,
+          // #1220-triage — payment row id, not raw userId (no PII pairing in logs).
+          paymentRowId: reusableOrder.id,
           timestamp: new Date().toISOString(),
         }),
       );

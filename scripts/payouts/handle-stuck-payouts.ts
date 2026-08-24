@@ -252,26 +252,35 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
       console.log(`   No provider payout ID - marking as FAILED`);
 
       if (payout.retryCount >= MAX_RETRIES) {
-        await prisma.consultantPayout.update({
-          where: { id: payout.id },
-          data: {
-            status: PayoutStatus.FAILED,
-            failureReason:
-              "Payout never sent to gateway after multiple attempts",
-          },
-        });
-        // Release the earnings like the webhook FAILED path does — without
-        // this, BATCHED earnings stayed welded to a permanently-FAILED
-        // payout: excluded from future batches by `payoutId: null`, never
-        // released, money held hostage with no actor.
-        const released = await prisma.consultantEarnings.updateMany({
-          where: { payoutId: payout.id, status: EarningStatus.BATCHED },
-          data: { payoutId: null, status: EarningStatus.READY },
+        // #1205-triage — CAS the terminal flip inside the same tx as the
+        // earnings release: without the PROCESSING guard, a concurrently
+        // completing gateway webhook could be overwritten by this FAILED.
+        const cas = await prisma.$transaction(async (tx) => {
+          const claimed = await tx.consultantPayout.updateMany({
+            where: { id: payout.id, status: PayoutStatus.PROCESSING },
+            data: {
+              status: PayoutStatus.FAILED,
+              failureReason:
+                "Payout never sent to gateway after multiple attempts",
+            },
+          });
+          if (claimed.count === 0) return { released: 0, claimed: false };
+          const released = await tx.consultantEarnings.updateMany({
+            where: { payoutId: payout.id, status: EarningStatus.BATCHED },
+            data: { payoutId: null, status: EarningStatus.READY },
+          });
+          return { released: released.count, claimed: true };
         });
         failedCount++;
-        console.log(
-          `   Marked as permanently FAILED (max retries reached); released ${released.count} earning(s)`,
-        );
+        if (!cas.claimed) {
+          console.log(
+            `   Skipped — payout left PROCESSING concurrently (webhook won)`,
+          );
+        } else {
+          console.log(
+            `   Marked as permanently FAILED (max retries reached); released ${cas.released} earning(s)`,
+          );
+        }
       } else {
         // Reset to APPROVED for retry
         await prisma.consultantPayout.update({

@@ -58,6 +58,7 @@ import { assertPayoutBalance } from "./balance-preflight";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -549,6 +550,34 @@ export async function processOrgPayout(
         };
       }
 
+      // #1020 — a payout whose earnings sit on a disputed payment must not
+      // leave the building. Checked inside the claim tx (READ COMMITTED —
+      // race-safety comes from the CAS claim below per ADR 13, and the
+      // residual window to gateway submit is backstopped by the LOST
+      // clawback); returning unclaimed keeps
+      // the row PENDING so a later cron run advances it once the dispute
+      // resolves. Residual window to gateway submit is backstopped by the
+      // LOST-handler clawback (#1020-2).
+      const disputedOrgEarning = await tx.organizationEarnings.findFirst({
+        where: {
+          orgPayoutId: payoutId,
+          payment: {
+            disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+          },
+        },
+        select: { id: true },
+      });
+      if (disputedOrgEarning) {
+        console.warn(
+          `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
+        );
+        return {
+          status: "PENDING" as PayoutStatus,
+          submittedToGateway: false,
+          claimed: false,
+        };
+      }
+
       const claim = await tx.organizationPayout.updateMany({
         where: { id: payoutId, status: "PENDING" },
         data: { status: "PROCESSING" },
@@ -944,8 +973,19 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
           break;
       }
     } catch (err) {
-      reportSentryError(err, { subsystem: "payments" });
+      // #1205-triage — PERMANENT rejections must terminate the row, not sit
+      // in PROCESSING forever: the redrive would retry a data rejection
+      // every hour indefinitely while its BATCHED earnings stay locked.
       const message = err instanceof Error ? err.message : String(err);
+      if (
+        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+        err instanceof PayoutValidationError
+      ) {
+        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+        result.advanced++;
+        continue;
+      }
+      reportSentryError(err, { subsystem: "payments" });
       result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
     }
   }

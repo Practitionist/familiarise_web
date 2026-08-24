@@ -111,16 +111,23 @@ export function withRazorpaySdkTimeout<T>(
         ),
       SDK_CALL_TIMEOUT_MS,
     );
-    call().then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
+    try {
+      call().then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    } catch (err) {
+      // call() threw SYNCHRONOUSLY — .then never attached, so the timer
+      // would linger for the full window. Clear and propagate.
+      clearTimeout(timer);
+      throw err;
+    }
   });
 }
 

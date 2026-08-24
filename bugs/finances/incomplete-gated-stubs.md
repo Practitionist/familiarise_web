@@ -41,7 +41,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 | Payment cancellation helper | Warn-only for unknown IDs | Orphan intents |
 | Export tax evidence (FIRC/LUT) | TODO in tax-engine | Audit weakness |
 
-Dec 2025 P0 checkout bugs in `tasks/payment-workflow-critical-bugs.md` appear largely fixed in code — the task file may still read “Awaiting Fix” (**doc drift**).
+Dec 2025 P0 checkout bugs appear fixed in code — the tracking file `tasks/payment-workflow-critical-bugs.md` was retired with the `tasks/` folder (commit e9471aea), closing that drift.
 
 ## Unhappy paths & user psychology
 
@@ -88,4 +88,4 @@ Stubs are mostly safe under load (they throw early). Gated live payouts under co
 
 ## Suggested directions
 
-Maintain a living “gates” table in finances README or ops Notion. Reconcile `tasks/payment-workflow-critical-bugs.md` status with current code.
+Maintain a living “gates” table in finances README or ops Notion (the retired `tasks/` register no longer needs reconciling).

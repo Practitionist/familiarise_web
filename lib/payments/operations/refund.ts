@@ -504,6 +504,31 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // Retire our placeholder: it is a pure reservation (cascadedAt null, no
       // legs reference it), and leaving it PENDING would double-count against
       // the refundable balance until the reconciler failed it at 24h.
+      // #1205-triage — carry Phase 1's audit keys onto the surviving row:
+      // the webhook that minted it had no knowledge of initiatedByUserId/
+      // source, and without this merge the adopt path is the one bind path
+      // that loses them.
+      const winnerFull = await prisma.refund.findUniqueOrThrow({
+        where: { id: winner.id },
+        select: { metadata: true },
+      });
+      await prisma.refund.update({
+        where: { id: winner.id },
+        data: {
+          metadata: {
+            ...(winnerFull.metadata &&
+            typeof winnerFull.metadata === "object" &&
+            !Array.isArray(winnerFull.metadata)
+              ? winnerFull.metadata
+              : {}),
+            ...(reserved.metadata &&
+            typeof reserved.metadata === "object" &&
+            !Array.isArray(reserved.metadata)
+              ? reserved.metadata
+              : {}),
+          } as Prisma.InputJsonValue,
+        },
+      });
       await prisma.refund.delete({ where: { id: reserved.id } });
       boundRefundRowId = winner.id;
       reportSentryMessage(

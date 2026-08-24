@@ -23,9 +23,13 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: jest.fn(async (fn: any, _opts?: unknown) => fn(txClient)),
     payment: {
-      findFirst: jest.fn(async ({ where }: any) =>
-        reuseState.rows.find((row) => matchesReuseWhere(row, where)) ?? null,
+      // #1220-triage — the reuse lookup fetches the newest scope-matching
+      // candidates; window/amount gates run in-code and rejects get
+      // superseded via updateMany.
+      findMany: jest.fn(async ({ where }: any) =>
+        reuseState.rows.filter((row) => matchesReuseWhere(row, where)),
       ),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     webinar: {
       findUnique: jest.fn(async () => webinarRow()),
@@ -239,7 +243,14 @@ function openSibling(overrides: Record<string, any> = {}) {
     amount: 100000,
     currency: "INR",
     appointmentId: "appt-w",
-    appointment: { webinarId: "evt-1" },
+    appointment: {
+      webinarId: "evt-1",
+      // Window gate reads the first slot (WEBINAR flow skips it, but keep the
+      // shape faithful for the direct unit cases below).
+      slotsOfAppointment: [
+        { startsAt: new Date("2026-09-01T10:00:00Z"), endsAt: new Date("2026-09-01T11:00:00Z") },
+      ],
+    },
     ...overrides,
   };
 }
@@ -327,7 +338,7 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
 
     // The lookup must be scoped tightly — user + PENDING + fresh window +
     // org equality + gateway + this event's appointment join.
-    const where = (prisma.payment.findFirst as jest.Mock).mock.calls[0][0]
+    const where = (prisma.payment.findMany as jest.Mock).mock.calls[0][0]
       .where;
     expect(where).toMatchObject({
       userId: "user-1",
@@ -376,5 +387,127 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
       }),
     );
     expect(res.paymentIntent?.id).toBe("order_NEW");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1220-triage — the gates themselves, exercised directly (the webinar flow
+// above cannot discriminate them: eventId already pins scope and its fixtures
+// share one price).
+// ---------------------------------------------------------------------------
+import {
+  findReusablePendingOrderPayment,
+} from "../../lib/payments/operations/checkout";
+
+const SLOT = { startsAt: new Date("2026-09-01T10:00:00Z"), endsAt: new Date("2026-09-01T11:00:00Z") };
+const OTHER_SLOT = { startsAt: new Date("2026-09-02T10:00:00Z"), endsAt: new Date("2026-09-02T11:00:00Z") };
+
+function gateDb(rows: Array<Record<string, unknown>>) {
+  return { payment: { findMany: async () => rows } };
+}
+
+describe("#1220-triage — reuse gates", () => {
+  test("CONSULTATION: a different slot time is superseded, never resumed", async () => {
+    const row = openSibling({
+      appointment: { consultationId: "cons_1", slotsOfAppointment: [OTHER_SLOT] },
+    });
+    const { reusable, supersede } = await findReusablePendingOrderPayment(
+      gateDb([row]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "CONSULTATION",
+        planId: "plan-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        slotWindow: SLOT,
+      },
+    );
+    expect(reusable).toBeNull();
+    expect(supersede).toEqual([{ id: "pay-open", reason: "slot-window-mismatch" }]);
+  });
+
+  test("CONSULTATION: identical slot window resumes", async () => {
+    const row = openSibling({
+      appointment: { consultationId: "cons_1", slotsOfAppointment: [SLOT] },
+    });
+    const { reusable, supersede } = await findReusablePendingOrderPayment(
+      gateDb([row]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "CONSULTATION",
+        planId: "plan-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        slotWindow: SLOT,
+      },
+    );
+    expect(reusable?.id).toBe("pay-open");
+    expect(supersede).toEqual([]);
+  });
+
+  test("amount parity gate: a stale frozen total is superseded, not resumed", async () => {
+    const row = openSibling({ amount: 80_000 }); // coupon changed since mint
+    const { reusable, supersede } = await findReusablePendingOrderPayment(
+      gateDb([row]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "WEBINAR",
+        planId: "plan-1",
+        eventId: "evt-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+      },
+    );
+    expect(reusable).toBeNull();
+    expect(supersede).toEqual([{ id: "pay-open", reason: "amount-mismatch" }]);
+  });
+
+  test("SUBSCRIPTION: period mismatch supersedes; both-null request matches both-null rows only", async () => {
+    const withPeriod = openSibling({
+      id: "pay-period",
+      appointment: {
+        subscriptionId: "sub_1",
+        slotsOfAppointment: [SLOT],
+      },
+    });
+    const withoutPeriod = openSibling({
+      id: "pay-noperiod",
+      appointment: { subscriptionId: "sub_2", slotsOfAppointment: [] },
+    });
+
+    // Request WITH a period must not resume a period-less hold.
+    const gated = await findReusablePendingOrderPayment(
+      gateDb([withoutPeriod, withPeriod]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "SUBSCRIPTION",
+        planId: "plan-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        schedulingPeriod: SLOT,
+      },
+    );
+    expect(gated.reusable?.id).toBe("pay-period");
+    expect(gated.supersede.map((s) => s.id)).toEqual(["pay-noperiod"]);
+
+    // Keyless request must not resume a hold that carries a period.
+    const keyless = await findReusablePendingOrderPayment(
+      gateDb([withPeriod]) as never,
+      {
+        userId: "user-1",
+        appointmentType: "SUBSCRIPTION",
+        planId: "plan-1",
+        organizationId: null,
+        paymentGateway: "RAZORPAY" as never,
+        expectedAmountPaise: 100_000,
+        schedulingPeriod: null,
+      },
+    );
+    expect(keyless.reusable).toBeNull();
+    expect(keyless.supersede.map((s) => s.id)).toEqual(["pay-period"]);
   });
 });

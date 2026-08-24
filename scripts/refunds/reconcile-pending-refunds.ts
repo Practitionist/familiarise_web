@@ -145,6 +145,7 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
         const bound = await bindGatewayRefundToPlaceholder(
           refund.id,
           matchingRefund,
+          prismaMetadataObject(refund.metadata),
         );
         if (bound === "bound") {
           console.log(
@@ -218,10 +219,15 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
   // ------------------------------------------------------------------
   // Pass 2 — real-id PENDING rows (gateway accepted, confirmation lost)
   // ------------------------------------------------------------------
+  const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
   const pendingRealId = await prisma.refund.findMany({
     where: {
       status: RefundStatus.PENDING,
-      NOT: { refundId: { startsWith: "pending_" } },
+      // booking-refund.ts mints internal_<uuid>/credits_<uuid> synthetic ids
+      // alongside the pending_ placeholders — none exist at any gateway.
+      AND: SYNTHETIC_PREFIXES.map((prefix) => ({
+        refundId: { not: { startsWith: prefix } },
+      })),
       createdAt: { lt: thresholdDate },
     },
     include: { payment: { select: { paymentGateway: true } } },
@@ -307,10 +313,11 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
 async function bindGatewayRefundToPlaceholder(
   placeholderRowId: string,
   gatewayRefund: RefundResult,
+  existingMetadata: Record<string, unknown>,
 ): Promise<"bound" | "superseded"> {
   const nextStatus = mapGatewayRefundStatus(gatewayRefund.status);
   const mergedMetadata = {
-    ...(prismaMetadataObject(await readRefundMetadata(placeholderRowId))),
+    ...existingMetadata,
     ...(gatewayRefund.metadata ?? {}),
     reconciled_at: new Date().toISOString(),
   } as Prisma.InputJsonValue;
@@ -352,14 +359,6 @@ async function bindGatewayRefundToPlaceholder(
   }
   await prisma.refund.delete({ where: { id: placeholderRowId } });
   return "superseded";
-}
-
-async function readRefundMetadata(refundRowId: string): Promise<unknown> {
-  const row = await prisma.refund.findUnique({
-    where: { id: refundRowId },
-    select: { metadata: true },
-  });
-  return row?.metadata;
 }
 
 function prismaMetadataObject(metadata: unknown): Record<string, unknown> {

@@ -24,6 +24,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import {
   renderOrgInvoicePdf,
   type OrgInvoicePdfData,
@@ -60,6 +61,15 @@ export async function GET(
   const { orgId, invoiceId } = await params;
   const access = await requireOrgAccess(orgId, "MANAGER");
   if (access.error) return access.error;
+
+  // #677/PM-36 — PDF rendering is expensive (puppeteer/HTML pipeline).
+  // #1236-triage — key per ACTOR: orgId would let one manager's PDF browsing
+  // exhaust the bucket shared with a billing admin's pay/initiate calls.
+  const limited = await applyRateLimit(
+    moneyOpsLimiter,
+    access.member?.id ?? orgId,
+  );
+  if (limited) return limited;
 
   const invoice = await prisma.organizationInvoice.findFirst({
     where: { id: invoiceId, organizationId: orgId },

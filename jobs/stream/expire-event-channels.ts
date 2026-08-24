@@ -45,14 +45,18 @@ import {
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
+// Lifecycle thresholds moved out of this job module (review F-HIGH-2): the
+// dashboard sync now applies the SAME age math when building its expected-set,
+// and importing constants from here would drag dotenv/job wiring into the
+// request path. Names are re-exported so existing consumers/tests are
+// unchanged.
+import {
+  DAY_MS,
+  DEFAULT_RETENTION_DAYS,
+  FREEZE_AFTER_DAYS,
+} from "../../lib/stream/channel-lifecycle";
 
-/** Grace period between a session ending and its chat going read-only. */
-export const FREEZE_AFTER_DAYS = 7;
-
-/** Fallback when an appointment has no org (B2C), matching the schema default. */
-export const DEFAULT_RETENTION_DAYS = 90;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+export { DEFAULT_RETENTION_DAYS, FREEZE_AFTER_DAYS };
 
 /**
  * How far back to look for events still needing a stage applied.
