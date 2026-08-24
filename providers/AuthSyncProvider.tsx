@@ -47,7 +47,10 @@ export default function AuthSyncProvider() {
     // where we fall back to the flag so an OAuth/SSO full-page redirect (new
     // load, no client fetch hook) still pings peers.
     const previous = previousAuthedRef.current ?? readAuthedFlag();
-    if (previous !== undefined && previous !== authed) {
+    // typeof check: with storage blocked, readAuthedFlag() returns null —
+    // `null !== undefined` would treat "no known before-state" as a transition
+    // and fire a spurious login/logout ping on first resolution.
+    if (typeof previous === "boolean" && previous !== authed) {
       postAuthSync({ type: authed ? "login" : "logout" });
     }
     previousAuthedRef.current = authed;

@@ -387,11 +387,28 @@ export class PaymentIntentManager {
       const paymentResponse = await createPaymentIntent(params);
 
       // Evict oldest entries first (Map iterates in insertion order) so a
-      // warm instance can't accumulate unbounded tracked intents.
-      while (this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS) {
+      // warm instance can't accumulate unbounded tracked intents. Eviction
+      // drops cleanup ownership for that intent - only reachable at >500
+      // concurrent un-cancelled intents on one instance, and strictly better
+      // than the previous behaviour (no bound at all) - but surface it so a
+      // sustained-eviction pattern is visible in Sentry, not silent.
+      while (
+        this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS
+      ) {
         const oldest = this.activeIntents.keys().next().value;
         if (oldest === undefined) break;
         this.activeIntents.delete(oldest);
+        reportSentryError(
+          new Error(
+            `PaymentIntentManager evicted tracked intent ${oldest} before cancellation`,
+          ),
+          {
+            subsystem: "payments",
+            level: "warning",
+            expected: true,
+            extra: { evictedIntentId: oldest },
+          },
+        );
       }
 
       // Track the intent for potential cleanup

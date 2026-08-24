@@ -289,6 +289,9 @@ export async function GET(
           include: {
             ...webinarInclude,
           },
+          // Deterministic truncation: take without orderBy is unspecified
+          // order, so >250 matches could page differently between requests.
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: PER_USER_TAKE,
         }),
         // Classes the consultee enrolled in

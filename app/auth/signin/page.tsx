@@ -12,6 +12,7 @@ import {
   getSession,
 } from "@/lib/auth-client";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
+import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
 import Link from "next/link";
@@ -27,7 +28,13 @@ import { AuthFormSkeleton } from "../AuthFormSkeleton";
  * force-fresh) immediately bounced the user back — the intermittent
  * signin↔dashboard↔onboarding flicker. Re-reading the session with
  * `disableCookieCache` aligns the client's decision with what the server
- * guard will decide. Falls back to the cached value if the fresh read fails.
+ * guard will decide.
+ *
+ * - Fresh read returns a user → trust its onboarding status.
+ * - Fresh read FAILS (network) → fall back to the cached value.
+ * - Fresh read returns NO user → the session is actually gone/revoked; do NOT
+ *   navigate to a protected route (the server would only bounce us back).
+ *   Stay put and let the session-store update drive the UI.
  */
 function useAuthenticatedRedirectTarget(
   onboardingCompleted: boolean | undefined,
@@ -57,7 +64,9 @@ function useAuthenticatedRedirectTarget(
 
     getSession({ query: { disableCookieCache: true } })
       .then(({ data }) => {
-        resolveAndGo(data?.user?.onboardingCompleted ?? !!onboardingCompleted);
+        // Session revoked between paint and check — no protected redirect.
+        if (!data?.user) return;
+        resolveAndGo(!!data.user.onboardingCompleted);
       })
       .catch(() => {
         resolveAndGo(!!onboardingCompleted);
@@ -93,13 +102,14 @@ function SignInContent() {
   const [needsVerification, setNeedsVerification] = useState(false);
   const [resending, setResending] = useState(false);
 
-  // Validate callbackUrl synchronously from the URL (relative paths only —
-  // open-redirect guard). Deriving it via delayed state meant it landed one
-  // render after mount, which double-fired the redirect effect below.
-  const callbackUrl = useMemo(() => {
-    const url = searchParams.get("callbackUrl");
-    return url?.startsWith("/") && !url.startsWith("//") ? url : null;
-  }, [searchParams]);
+  // Validate callbackUrl synchronously from the URL. safeSameOriginPath
+  // resolves against a probe origin to reject backslash/scheme-relative
+  // escapes ("/\attacker.example" passes naive prefix checks but parses to an
+  // external origin) and returns the canonical same-origin path.
+  const callbackUrl = useMemo(
+    () => safeSameOriginPath(searchParams.get("callbackUrl")),
+    [searchParams],
+  );
 
   // Thread the validated callbackUrl through the onboarding + sign-up hand-offs
   // so a first-timer who came here to book/buy returns to their destination

@@ -11,6 +11,7 @@ import {
   sendVerificationEmail,
   getSession,
 } from "@/lib/auth-client";
+import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
@@ -50,12 +51,10 @@ function SignUpContent() {
   const [verificationSent, setVerificationSent] = useState(false);
   const [resending, setResending] = useState(false);
 
-  // Validate the callbackUrl once (relative paths only — prevents open-redirect)
-  // and reuse the safe value across onboarding, verification, and social login.
-  const safeCallbackUrl =
-    callbackUrl && callbackUrl.startsWith("/") && !callbackUrl.startsWith("//")
-      ? callbackUrl
-      : null;
+  // Validate the callbackUrl once and reuse the safe value across onboarding,
+  // verification, and social login. safeSameOriginPath rejects backslash /
+  // scheme-relative escapes that naive prefix checks let through.
+  const safeCallbackUrl = safeSameOriginPath(callbackUrl);
 
   // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
   const onboardingUrl = safeCallbackUrl
@@ -99,10 +98,9 @@ function SignUpContent() {
 
     getSession({ query: { disableCookieCache: true } })
       .then(({ data }) => {
-        resolveAndGo(
-          data?.user?.onboardingCompleted ??
-            !!session.user?.onboardingCompleted,
-        );
+        // Session revoked between paint and check — no protected redirect.
+        if (!data?.user) return;
+        resolveAndGo(!!data.user.onboardingCompleted);
       })
       .catch(() => {
         resolveAndGo(!!session.user?.onboardingCompleted);

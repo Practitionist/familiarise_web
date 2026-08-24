@@ -44,12 +44,19 @@ export function usePrefetchDashboard({
   const prefetchedRef = useRef(new Set<string>());
   // Every delayed prefetch / throttle reset lands here so unmount can cancel
   // them — otherwise post-unmount prefetchQuery calls (and mutations on the
-  // tracking Set) keep running for up to 5s after teardown.
+  // tracking Set) keep running for up to 5s after teardown. Fired handles
+  // self-remove before their callback runs so the Set stays bounded no matter
+  // how long the dashboard stays open.
   const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-  const trackTimer = useCallback((handle: ReturnType<typeof setTimeout>) => {
+  const trackedTimeout = useCallback((fn: () => void, delay: number) => {
+    // The callback deletes its own handle first, so fired timers never
+    // accumulate; unmount clears whatever is still pending.
+    const handle = setTimeout(() => {
+      timersRef.current.delete(handle);
+      fn();
+    }, delay);
     timersRef.current.add(handle);
-    return handle;
   }, []);
 
   // Utility function to safely prefetch queries
@@ -98,12 +105,12 @@ export function usePrefetchDashboard({
         });
 
       if (delay > 0) {
-        trackTimer(setTimeout(runPrefetch, delay));
+        trackedTimeout(runPrefetch, delay);
       } else {
         runPrefetch();
       }
     },
-    [queryClient, trackTimer],
+    [queryClient, trackedTimeout],
   );
 
   // Enhanced consultant dashboard prefetching
@@ -176,7 +183,7 @@ export function usePrefetchDashboard({
         fn();
 
         // Clear throttle after 5 seconds
-        trackTimer(setTimeout(() => prefetchedRef.current.delete(key), 5000));
+        trackedTimeout(() => prefetchedRef.current.delete(key), 5000);
       };
 
       throttledPrefetch(() => {
@@ -215,7 +222,7 @@ export function usePrefetchDashboard({
         }
       });
     },
-    [consultantId, consulteeId, safePrefetch, trackTimer],
+    [consultantId, consulteeId, safePrefetch, trackedTimeout],
   );
 
   // Auto-prefetch on hook initialization when aggressive prefetching is enabled
@@ -250,7 +257,7 @@ export function usePrefetchDashboard({
       timers.clear();
       trackedSet.clear();
     };
-  }, [trackTimer]);
+  }, [trackedTimeout]);
 
   return {
     prefetchAllConsultantData,
