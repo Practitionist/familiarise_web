@@ -52,9 +52,20 @@ jest.mock("../../lib/auth-helpers", () => ({
   isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
 }));
 
+// The DM eligibility gate is exercised against real query shapes in
+// __tests__/security/dm-eligibility.test.ts. Here it is stubbed so these tests
+// keep asserting what they are about — id derivation and Stream call shape —
+// rather than turning into relationship fixtures. Default: permitted.
+const mockAssertCanDirectMessage = jest.fn();
+jest.mock("../../lib/stream/dm-eligibility", () => ({
+  assertCanDirectMessage: (...args: unknown[]) =>
+    mockAssertCanDirectMessage(...args),
+}));
+
 describe("Channel Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAssertCanDirectMessage.mockResolvedValue(undefined);
     mockStreamClient.channel.mockReturnValue(mockChannel);
     mockStreamClient.queryChannels.mockResolvedValue([]);
     mockGetSession.mockResolvedValue({
@@ -292,12 +303,52 @@ describe("Channel Actions", () => {
       await expect(createDirectMessageChannel("", "user2")).rejects.toThrow();
       await expect(createDirectMessageChannel("user1", "")).rejects.toThrow();
     });
+
+    it("consults the eligibility gate before creating anything", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockChannel.query.mockResolvedValue({ members: {} });
+      await createDirectMessageChannel("bob", "alice");
+
+      expect(mockAssertCanDirectMessage).toHaveBeenCalledWith("bob", "alice");
+    });
+
+    it("creates no channel when the pair has no booking link", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      mockAssertCanDirectMessage.mockRejectedValue(
+        new Error("Direct messages are only available between people who share a booking."),
+      );
+
+      await expect(
+        createDirectMessageChannel("stranger-a", "stranger-b"),
+      ).rejects.toThrow("share a booking");
+
+      // The gate has to run BEFORE the Stream call, not alongside it — a
+      // refusal that still creates the channel is not a refusal.
+      expect(mockStreamClient.channel).not.toHaveBeenCalled();
+    });
+
+    it("refuses a self-pair at id derivation", async () => {
+      const { createDirectMessageChannel } =
+        await import("../../actions/stream/chat/channel.action");
+
+      // The gate is stubbed permissive here, so this asserts the SECOND line of
+      // defence: getDmChannelId itself rejects `a === a` rather than producing
+      // `dm-a-a`, which createChannel would then de-duplicate into a
+      // one-member channel that renders as its own raw id.
+      await expect(
+        createDirectMessageChannel("same-user", "same-user"),
+      ).rejects.toThrow(/self-DM/i);
+    });
   });
 
   describe("addMemberToChannel", () => {
     it("should add member to existing channel", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       const result = await addMemberToChannel(
         "consultation-123",
@@ -310,7 +361,7 @@ describe("Channel Actions", () => {
 
     it("should infer messaging type for consultation channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("consultation-abc", "user123");
 
@@ -322,7 +373,7 @@ describe("Channel Actions", () => {
 
     it("should infer messaging type for subscription channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("subscription-xyz", "user456");
 
@@ -334,7 +385,7 @@ describe("Channel Actions", () => {
 
     it("should infer team type for other channels", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await addMemberToChannel("webinar-123", "user789");
 
@@ -346,7 +397,7 @@ describe("Channel Actions", () => {
 
     it("should reject invalid inputs", async () => {
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(addMemberToChannel("", "user")).rejects.toThrow();
       await expect(addMemberToChannel("channel", "")).rejects.toThrow();
@@ -358,7 +409,7 @@ describe("Channel Actions", () => {
       mockGetSession.mockResolvedValueOnce(null);
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(
         addMemberToChannel("consultation-123", "new-user-id"),
@@ -378,7 +429,7 @@ describe("Channel Actions", () => {
       });
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       await expect(
         addMemberToChannel("consultation-123", "new-user-id"),
@@ -397,7 +448,7 @@ describe("Channel Actions", () => {
       });
 
       const { addMemberToChannel } =
-        await import("../../actions/stream/chat/channel.action");
+        await import("../../actions/stream/chat/member.action");
 
       const result = await addMemberToChannel(
         "consultation-123",
@@ -554,9 +605,10 @@ describe("Entity Channel Creation", () => {
         await import("../../actions/stream/chat/channel.action");
 
       const result = await createConsultationChannel("consultation-789");
+      expect(result).not.toBeNull();
 
       // IDs sorted: "consultant-3" < "consultee-1" alphabetically
-      expect(result.channelId).toBe("dm-consultant-3-consultee-1");
+      expect(result!.channelId).toBe("dm-consultant-3-consultee-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
         "dm-consultant-3-consultee-1",
@@ -613,9 +665,10 @@ describe("Entity Channel Creation", () => {
         await import("../../actions/stream/chat/channel.action");
 
       const result = await createSubscriptionChannel("subscription-101");
+      expect(result).not.toBeNull();
 
       // IDs sorted: "consultant-4" < "subscriber-1" alphabetically
-      expect(result.channelId).toBe("dm-consultant-4-subscriber-1");
+      expect(result!.channelId).toBe("dm-consultant-4-subscriber-1");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
         "messaging",
         "dm-consultant-4-subscriber-1",
@@ -670,7 +723,7 @@ describe("addMemberToChannel error handling", () => {
     mockChannel.addMembers.mockRejectedValueOnce(new Error("API error"));
 
     const { addMemberToChannel } =
-      await import("../../actions/stream/chat/channel.action");
+      await import("../../actions/stream/chat/member.action");
 
     await expect(
       addMemberToChannel("test-channel", "user-123"),

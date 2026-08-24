@@ -30,11 +30,10 @@ export async function GET(req: NextRequest) {
 
     streamLogger.debug("Searching users", { searchTerm });
 
-    // Always use relationship-scoped search to prevent global user enumeration
-    const users = await searchUsersWithRelationships(
-      searchTerm,
-      session.user.id,
-    );
+    // Always use relationship-scoped search to prevent global user enumeration.
+    // The action now derives identity from the session itself — the second
+    // argument it used to take was a client-controlled impersonation handle.
+    const users = await searchUsersWithRelationships(searchTerm);
 
     streamLogger.debug("Search results", { count: users.length });
 

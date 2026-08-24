@@ -29,10 +29,7 @@ import {
   getDmChannelId,
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
-import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
-import * as Sentry from "@sentry/nextjs";
+import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -198,7 +195,21 @@ export async function createChannel(input: {
 }
 
 /**
- * Create a direct message channel between two users
+ * Create a direct message channel between two users.
+ *
+ * The eligibility check is the point of this function now. It used to validate
+ * two non-empty strings and nothing else — no session, no relationship query,
+ * not even `a !== b` — and was safe only by accident, because every caller
+ * happened to be a booking-approval or payment-success path where the link was
+ * already established. That is an invariant held by convention across five call
+ * sites in three files, which is not an invariant. It is enforced here so that
+ * adding a sixth caller cannot quietly reopen the hole.
+ *
+ * Note this deliberately gates on the RELATIONSHIP, not on the caller's
+ * session. Every legitimate caller is server-side and acts on behalf of the
+ * system (a Razorpay webhook has no session at all), so a session check here
+ * would break the create path while adding nothing — the user-initiated
+ * surface is `POST /api/stream/channels/dm`, which does both.
  */
 export async function createDirectMessageChannel(
   currentUserId: string,
@@ -214,6 +225,8 @@ export async function createDirectMessageChannel(
   // Validate inputs
   memberIdSchema.parse(currentUserId);
   memberIdSchema.parse(targetUserId);
+
+  await assertCanDirectMessage(currentUserId, targetUserId);
 
   const channelId = getDmChannelId(currentUserId, targetUserId, organizationId);
 
@@ -432,6 +445,16 @@ export async function createConsultationChannel(
   const consultantId = consultation.consultationPlan.consultantProfile.user.id;
   const consulteeId = consultation.requestedBy.user.id;
 
+  // Legacy self-booked row (checkout blocks these now): getDmChannelId throws
+  // on a self-pair, so skip rather than take the whole approval path down.
+  // Same guard the search routes apply per row.
+  if (consultantId === consulteeId) {
+    streamLogger.warn("Skipping consultation channel — consultant and consultee are the same user", {
+      consultationId,
+    });
+    return null;
+  }
+
   if (!consultantId || !consulteeId) {
     throw new Error(
       `Participants not found for consultation: ${consultationId}`,
@@ -520,6 +543,14 @@ export async function createSubscriptionChannel(
 
   const consultantId = subscription.subscriptionPlan.consultantProfile.user.id;
   const consulteeId = subscription.requestedBy.user.id;
+
+  // Same self-pair guard as the consultation path above.
+  if (consultantId === consulteeId) {
+    streamLogger.warn("Skipping subscription channel — consultant and consultee are the same user", {
+      subscriptionId,
+    });
+    return null;
+  }
 
   if (!consultantId || !consulteeId) {
     throw new Error(
@@ -700,67 +731,4 @@ export async function createCollaboratorChannel(
     members: expectedMemberIds,
     channelData,
   };
-}
-
-/**
- * Adds a user to a specific channel.
- *
- * Stream's server-side API bypasses its permission system entirely, so the
- * authz gate lives here (#899): ADMIN/STAFF may add to any channel; anyone
- * else only to a channel they created — mirroring the create-route checks.
- * Non-privileged callers never lazily create channels they don't own.
- */
-export async function addMemberToChannel(
-  channelId: string,
-  userId: string,
-  channelType?: "messaging" | "team",
-) {
-  channelIdSchema.parse(channelId);
-  memberIdSchema.parse(userId);
-
-  const session = await getSession();
-  if (!session?.user?.id) {
-    throw new Error("Unauthorized: sign in to manage channel members");
-  }
-
-  const client = getStreamChatClient();
-
-  const resolvedChannelType = channelType ?? getChannelTypeFromId(channelId);
-
-  streamLogger.debug("Adding member to channel", {
-    channelId,
-    userId,
-    channelType: resolvedChannelType,
-  });
-
-  try {
-    const channel = client.channel(resolvedChannelType, channelId);
-    const privileged = isPrivileged(session.user.role);
-    if (privileged) {
-      await channel.create(); // Creates if doesn't exist, no-op if exists
-    } else {
-      const state = await channel.query({});
-      const createdById = state.channel?.created_by?.id;
-      if (createdById !== session.user.id) {
-        throw new Error(
-          "Forbidden: only the channel creator or staff may add members",
-        );
-      }
-    }
-
-    const response = await channel.addMembers([userId]);
-
-    streamLogger.debug("Member added successfully", { channelId, userId });
-    return { success: true, response };
-  } catch (error) {
-    streamLogger.error("Failed to add member to channel", error, {
-      channelId,
-      userId,
-    });
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    throw error;
-  }
 }

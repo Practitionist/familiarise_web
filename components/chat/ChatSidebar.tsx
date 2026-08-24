@@ -18,7 +18,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../ui/tooltip";
-import { getChannelDisplayInfo } from "./utils/channelUtils";
+import {
+  getChannelDisplayInfo,
+  isUsableDmChannel,
+} from "./utils/channelUtils";
 import { useChatPane } from "./ChatPaneContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { useSession } from "@/lib/auth-client";
@@ -215,6 +218,19 @@ export const ChatSidebar = () => {
   // succeeds (not when a fetch is skipped) so a skipped/failed fetch never
   // marks a scope as done. Refetch still happens on a genuine client/scope change.
   const fetchedKeyRef = useRef<string | null>(null);
+  /**
+   * How many rows Stream has actually returned per list, before filtering.
+   *
+   * The pagination offset must count what the SERVER has handed over, not what
+   * survived `isUsableDmChannel`. Using `directMessages.length` meant every
+   * phantom dropped from a page shifted the next offset backwards by one, so
+   * page two re-fetched rows already on screen and the tail of the list became
+   * unreachable — the filter silently ate the pagination.
+   */
+  const fetchedCountRef = useRef<{ team: number; messaging: number }>({
+    team: 0,
+    messaging: 0,
+  });
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
@@ -295,10 +311,25 @@ export const ChatSidebar = () => {
         return;
       }
 
-      setTeamChannels(teamResponse);
-      setDirectMessages(dmResponse);
+      const usableDms = dmResponse.filter(isUsableDmChannel);
 
-      // Update pagination state
+      setTeamChannels(teamResponse);
+      // Phantoms filtered out here rather than hidden at render: a row that is
+      // merely styled as unavailable is still selectable, still opens, and still
+      // accepts a message. See isUsableDmChannel.
+      setDirectMessages(usableDms);
+
+      // Raw counts, for the next page's offset.
+      fetchedCountRef.current = {
+        team: teamResponse.length,
+        messaging: dmResponse.length,
+      };
+
+      // Update pagination state — measured against the RAW response length, not
+      // the filtered one. `response.length === limit` is Stream's
+      // "there may be more" signal, and comparing a filtered count to the limit
+      // would report no-more-pages the moment a single phantom is dropped from
+      // an otherwise full page.
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
 
@@ -310,7 +341,10 @@ export const ChatSidebar = () => {
       if (!initialSelectionDoneRef.current) {
         initialSelectionDoneRef.current = true;
         const mostRecentTeam = teamResponse[0];
-        const mostRecentDM = dmResponse[0];
+        // The FILTERED list — auto-selecting `dmResponse[0]` could open a
+        // phantom on load, which is the exact thing being filtered out
+        // everywhere else.
+        const mostRecentDM = usableDms[0];
         let channelToSelect = null;
         if (mostRecentTeam && mostRecentDM) {
           const teamTime = new Date(
@@ -353,7 +387,6 @@ export const ChatSidebar = () => {
     async (type: "team" | "messaging") => {
       if (!client?.userID || isLoadingMore) return;
 
-      const currentChannels = type === "team" ? teamChannels : directMessages;
       const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
 
       if (!hasMore) return;
@@ -376,7 +409,9 @@ export const ChatSidebar = () => {
         };
         const sort: { last_message_at: -1 } = { last_message_at: -1 };
 
-        const offset = currentChannels.length;
+        // Raw fetched count, never `currentChannels.length` — see
+        // fetchedCountRef.
+        const offset = fetchedCountRef.current[type];
 
         const options = {
           watch: true,
@@ -389,11 +424,17 @@ export const ChatSidebar = () => {
 
         const response = await client.queryChannels(filter, sort, options);
 
+        fetchedCountRef.current[type] += response.length;
+
         if (type === "team") {
           setTeamChannels((prev) => [...prev, ...response]);
           setHasMoreTeamChannels(response.length === options.limit);
         } else {
-          setDirectMessages((prev) => [...prev, ...response]);
+          setDirectMessages((prev) => [
+            ...prev,
+            ...response.filter(isUsableDmChannel),
+          ]);
+          // Raw length again — see fetchChannels.
           setHasMoreDMChannels(response.length === options.limit);
         }
       } catch (error) {
@@ -404,8 +445,9 @@ export const ChatSidebar = () => {
     },
     [
       client,
-      teamChannels,
-      directMessages,
+      // `teamChannels` / `directMessages` are deliberately absent: the offset
+      // now comes from `fetchedCountRef`, so this callback no longer reads
+      // either list. Keeping them would rebuild it on every incoming message.
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,
@@ -485,7 +527,7 @@ export const ChatSidebar = () => {
       setDirectMessages((prevChannels) => {
         const existingIds = new Set(prevChannels.map((ch) => ch.cid));
         const newChannels = recentDMChannels.filter(
-          (ch) => !existingIds.has(ch.cid),
+          (ch) => !existingIds.has(ch.cid) && isUsableDmChannel(ch),
         );
         if (newChannels.length > 0) {
           return [...newChannels, ...prevChannels]; // New channels at top
@@ -691,7 +733,15 @@ export const ChatSidebar = () => {
         <div className="px-4 py-2 flex justify-between items-center sticky top-0 bg-card z-10">
           <h2 className="font-semibold">Channels</h2>
           {canCreateChannels && (
-            <CreateChannelDialog onChannelCreated={handleChannelCreated} />
+            <CreateChannelDialog
+              onChannelCreated={handleChannelCreated}
+              // Custom (non-event) channels are admin/staff-only server-side.
+              // Without this the option renders for consultants and every
+              // submission 403s.
+              canCreateCustomChannel={
+                appRole === "ADMIN" || appRole === "STAFF"
+              }
+            />
           )}
         </div>
         {isLoading ? (
@@ -754,7 +804,18 @@ export const ChatSidebar = () => {
           <div className="p-4 text-center text-sm text-destructive">
             <p>Conversations could not be loaded.</p>
           </div>
-        ) : directMessages.length > 0 ? (
+        ) : (
+          // NOT `directMessages.length > 0 ? list : emptyState`.
+          //
+          // The list is filtered (phantom DMs are dropped, see
+          // isUsableDmChannel) but `hasMoreDMChannels` is measured against the
+          // RAW page length. So a page whose 20 rows are all phantoms leaves the
+          // list empty with more pages still to come — and with the load-more
+          // button living inside the non-empty branch, the empty state rendered
+          // "No conversations yet" over a stranded list the user could not
+          // reach. The button is now tied to `hasMoreDMChannels` alone, and the
+          // empty state only claims there is nothing when there is genuinely
+          // nothing left to fetch.
           <div>
             {directMessages.map((channel) => (
               <ChannelItem
@@ -764,6 +825,15 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+
+            {directMessages.length === 0 && !hasMoreDMChannels && (
+              <div className="p-4 text-center text-muted-foreground text-sm">
+                {isConsultant
+                  ? "No conversations yet. Conversations will appear here once clients book sessions."
+                  : "No conversations yet. Book a consultation to start chatting."}
+              </div>
+            )}
+
             {hasMoreDMChannels && (
               <div className="p-2">
                 <Button
@@ -775,16 +845,12 @@ export const ChatSidebar = () => {
                 >
                   {isLoadingMore
                     ? "Loading..."
-                    : `Showing ${directMessages.length} conversations — Load more`}
+                    : directMessages.length === 0
+                      ? "Load conversations"
+                      : `Showing ${directMessages.length} conversations — Load more`}
                 </Button>
               </div>
             )}
-          </div>
-        ) : (
-          <div className="p-4 text-center text-muted-foreground text-sm">
-            {isConsultant
-              ? "No conversations yet. Conversations will appear here once clients book sessions."
-              : "No conversations yet. Book a consultation to start chatting."}
           </div>
         )}
       </div>

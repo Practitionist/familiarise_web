@@ -10,6 +10,30 @@ export interface ChannelDisplayInfo {
 }
 
 /**
+ * Is this a direct message that actually has someone on the other end?
+ *
+ * A `messaging` channel with fewer than two members is a phantom. They exist
+ * because `channel.watch()` posts to the same endpoint `channel.create()` does,
+ * so watching a channel id that does not exist yet CREATES it — with the caller
+ * as `created_by` and no members at all. Every client-side path that could do
+ * that is now gone, and `ensure-chat-type-grants.ts` revokes `create-channel`
+ * from the `user` role so Stream itself refuses, but neither of those helps with
+ * the ones already sitting on the app: dev, preview and production share one
+ * Stream app, and a phantom is a real channel that a real message can be posted
+ * into. `scripts/stream/purge-memberless-dms.ts` deletes them; this keeps them
+ * off the screen in the meantime, and keeps any future one unreachable rather
+ * than merely mislabelled.
+ *
+ * Deliberately scoped to `messaging`. A `team` channel legitimately sits at one
+ * member — a webinar channel is created with its host before anyone registers —
+ * so applying this to events would hide real, working channels.
+ */
+export const isUsableDmChannel = (channel: Channel): boolean => {
+  if (channel.type !== "messaging") return true;
+  return Object.keys(channel.state?.members ?? {}).length >= 2;
+};
+
+/**
  * Get consistent display information for any channel across all chat components
  */
 export const getChannelDisplayInfo = (
@@ -85,13 +109,27 @@ export const getChannelDisplayInfo = (
     }
   }
 
-  // Fallback
+  // Fallback: a messaging channel with no counterparty, or no `currentUserId`
+  // yet because the client is still connecting.
+  //
+  // This branch used to end in `channel.id`, which is why a broken DM rendered
+  // its raw `dm-<cuid>-<cuid>` key as the conversation title. A channel id is an
+  // internal key — it is never a name, it leaks both participants' user ids into
+  // the UI, and showing it made a real defect (a channel created with no
+  // members, see lib/stream/dm-eligibility.ts) look like a formatting quirk.
+  //
+  // A one-member DM should not exist. If one is on screen, say so plainly
+  // instead of dressing it up, and keep the id out of the title.
+  const isOrphanedDm = isDirectMessage;
+
   return {
-    displayName: channel.data?.name || channel.id || "Unknown",
+    displayName:
+      (channel.data?.name as string | undefined) ||
+      (isOrphanedDm ? "Unavailable conversation" : channel.id || "Unknown"),
     displayImage: undefined,
     isGroupDM: false,
     memberCount: 0,
-    statusText: "No members",
+    statusText: isOrphanedDm ? "No other participants" : "No members",
   };
 };
 
