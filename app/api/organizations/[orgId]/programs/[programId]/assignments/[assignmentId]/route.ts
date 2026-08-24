@@ -129,7 +129,9 @@ async function applyAssignmentPatch(
     body: z.infer<typeof PatchBodySchema>;
   },
 ) {
-  const { orgId, programId, assignmentId, actorMembershipId, body } = ctx;
+  // actorMembershipId rides ctx for the extracted branches; this scope no
+  // longer consumes it directly (S1854).
+  const { orgId, programId, assignmentId, body } = ctx;
   const current = await tx.programAssignment.findFirst({
     where: {
       id: assignmentId,

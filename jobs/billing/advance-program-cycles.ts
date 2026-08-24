@@ -125,10 +125,10 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
             select: { status: true, archivedAt: true },
           });
           if (
-            !liveProgram ||
-            liveProgram.status !== "ACTIVE" ||
-            liveProgram.archivedAt !== null
+            liveProgram?.status !== "ACTIVE" ||
+            liveProgram?.archivedAt !== null
           ) {
+            // Also covers the not-found case via undefined !== "ACTIVE".
             return { outcome: "skipped" as const };
           }
           const liveContract = await tx.contract.findUnique({
