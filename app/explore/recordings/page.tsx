@@ -21,30 +21,19 @@ function formatPrice(paise: number): string {
 }
 
 async function RecordingsGrid() {
-  // Fail-open like every other explore listing (#1119): a saturated
-  // cross-region pooler during a cold prerender must not fail the whole
-  // build — the CDN serves an empty grid until the next revalidate window.
-  let items: Awaited<ReturnType<typeof listPublicRecordings>>["items"] = [];
-  let degraded = false;
-  try {
-    ({ items } = await withBuildTimeRetry(() =>
-      listPublicRecordings({ perPage: 48 }),
-    ));
-  } catch {
-    degraded = true;
-  }
+  // Deliberately LOUD: __tests__/explore/isr-routes-never-fail-open.test.ts
+  // enforces that ISR listings never mask data-layer failures.
+  const { items } = await withBuildTimeRetry(() =>
+    listPublicRecordings({ perPage: 48 }),
+  );
 
-  if (degraded || items.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="py-24 text-center text-muted-foreground">
         <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
-        <p className="text-lg font-medium">
-          {degraded ? "Recordings are temporarily unavailable" : "No published recordings yet"}
-        </p>
+        <p className="text-lg font-medium">No published recordings yet</p>
         <p className="mt-1 text-sm">
-          {degraded
-            ? "Please refresh in a moment."
-            : "Consultants can publish webinar and class replays from their dashboard."}
+          Consultants can publish webinar and class replays from their dashboard.
         </p>
       </div>
     );
