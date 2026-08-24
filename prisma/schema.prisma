@@ -1764,6 +1764,10 @@ model OrganizationPayout {
 
   @@index([organizationId, status])
   @@index([periodStart, periodEnd])
+  // CR #1240 — keyset pagination for the payouts CSV export walks
+  // (organizationId, createdAt desc, id desc); the two-column index can't
+  // serve the id tiebreaker.
+  @@index([organizationId, createdAt, id])
 }
 
 // #781 §A — closed set of payout rails (was a free-string code bag).

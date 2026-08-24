@@ -21,6 +21,16 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const CSV_CHUNK_SIZE = 500;
+// RFC 4180 has no comment syntax — a bare "# note" line would break strict
+// parsers on field-count. Notices ride as full-width single-cell rows.
+const PAYOUT_EXPORT_COLUMNS = 13;
+
+function csvNoticeRow(message: string): string {
+  return (
+    [csvEscape(message), ...Array(PAYOUT_EXPORT_COLUMNS - 1).fill("")].join(",") +
+    "\n"
+  );
+}
 const MAX_ITERATIONS = 400; // 400 × 500 = 200k rows ceiling
 
 function csvEscape(v: string | number | null | undefined): string {
@@ -103,15 +113,13 @@ export async function GET(
           ),
         );
       }
-      if (
-        _req.signal.aborted ||
-        iterations >= MAX_ITERATIONS ||
-        cursor === null && iterations > 0
-      ) {
+      if (_req.signal.aborted || iterations >= MAX_ITERATIONS) {
         if (truncated) {
           controller.enqueue(
             encoder.encode(
-              "\n# TRUNCATED: row limit reached — re-export with a narrower period via the API.\n",
+              csvNoticeRow(
+                "TRUNCATED: row limit reached — re-export with a narrower period via the API.",
+              ),
             ),
           );
         }
@@ -173,9 +181,7 @@ export async function GET(
           truncated = true;
         }
       } catch (err) {
-        controller.enqueue(
-          encoder.encode(`\n# EXPORT ERROR: ${(err as Error).message}\n`),
-        );
+        controller.enqueue(encoder.encode(csvNoticeRow(`EXPORT ERROR: ${(err as Error).message}`)));
         controller.close();
       }
     },
