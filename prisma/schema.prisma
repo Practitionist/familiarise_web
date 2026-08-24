@@ -5958,3 +5958,33 @@ enum TaxJurisdiction {
   GB
   EU
 }
+
+// #1230 wave-4b — enterprise sales-lead capture. The contact form's
+// enterprise/team-training categories persist here BEFORE the email send so
+// a Resend outage can no longer silently discard six-figure deals (the
+// #1132 blocker-6 class). Status flows NEW → CONTACTED → QUALIFIED →
+// CLOSED_WON / CLOSED_LOST; admin surface lands with wave-4c.
+model Lead {
+  id             String     @id @default(cuid())
+  sourceCategory String
+  companyName    String?
+  contactName    String
+  contactEmail   String
+  phone          String?
+  subject        String
+  message        String     @db.Text
+  status         LeadStatus @default(NEW)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CLOSED_WON
+  CLOSED_LOST
+}

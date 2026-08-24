@@ -13,6 +13,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import prisma from "@/lib/prisma";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
@@ -71,6 +72,25 @@ export async function POST(req: NextRequest) {
   // no signal, but do not send anything.
   if (parsed.data.website) {
     return NextResponse.json({ ok: true }, { status: 202 });
+  }
+
+  // #1230 wave-4b — enterprise funnel persistence. The #1132 blocker-6
+  // class was "email is the only record": a Resend outage discarded the
+  // deal entirely. Enterprise/team-training inquiries now land in the Lead
+  // table FIRST; the email is notification, not the system of record.
+  const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
+  if (LEAD_CATEGORIES.has(parsed.data.category ?? "")) {
+    await prisma.lead.create({
+      data: {
+        sourceCategory: parsed.data.category ?? "",
+        companyName: null,
+        contactName: `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
+        contactEmail: parsed.data.email,
+        phone: parsed.data.phone || null,
+        subject: parsed.data.subject,
+        message: parsed.data.message,
+      },
+    });
   }
 
   const result = await sendContactInquiryEmail({
