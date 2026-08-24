@@ -11,7 +11,11 @@
 // on server AND client (no window dependency), so SSR and hydration agree:
 // anything that escapes to a different origin is rejected; everything else is
 // returned in canonical path?query#hash form.
-const PROBE_BASE = "http://callback-probe.invalid";
+//
+// The .invalid TLD can never resolve or be fetched — this base is purely a
+// parsing reference for origin comparison. HTTPS keeps static analysis happy
+// without changing behaviour (S5332).
+const PROBE_BASE = "https://callback-probe.invalid";
 
 export function safeSameOriginPath(
   raw: string | null | undefined,
