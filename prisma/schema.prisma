@@ -5638,9 +5638,9 @@ model WebhookEndpoint {
   /// HMAC into `previousSecretHash` so the worker can verify deliveries
   /// signed with either secret for a 24-hour grace window. Receivers
   /// running the same body through both secrets stay green during the
-  /// rotation cutover. Today the rotate route still overwrites
-  /// `secret` directly; flipping it to grace-aware is a follow-up that
-  /// reads these columns.
+  /// rotation cutover. The rotate route stamps both columns and the worker
+  /// dual-signs inside that window (the old "still overwrites directly"
+  /// comment predates the #812 fix).
   secretRotatedAt       DateTime?
   previousSecretHash    String?
   createdByMembershipId String?
