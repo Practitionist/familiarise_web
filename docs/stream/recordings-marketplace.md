@@ -78,3 +78,12 @@ request. The public list API additionally sends a short CDN
   attendee join), feeding the publish attestation instead of relying on it.
 - Automated refunds for `RecordingPurchase` via the refund family.
 - Consultant-side publish UI (APIs are complete).
+
+## Deploy notes
+
+`/explore/recordings` is ISR-prerendered at build time and its read FAILS
+LOUDLY on error (withBuildTimeRetry). A deploy-preview built before this
+PR's schema columns exist on the shared database will therefore fail during
+prerender (`column Recording.listingStatus does not exist`). If a preview of
+this branch fails with a Prisma column error, apply the additive schema
+first (see migration notes in this repo's db:push flow), then retrigger.
