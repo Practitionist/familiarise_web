@@ -39,6 +39,7 @@ import { isActiveRoute } from "@/components/dashboard/route-active";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
 import { OrganizationSwitcher } from "@/components/dashboard/OrganizationSwitcher";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
+import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 
@@ -104,6 +105,17 @@ export function OrgWorkspaceShell({
     pathname = rawPathname;
   }
   const basePath = `/dashboard/org-workspace/${orgWorkspaceId}`;
+
+  // Idle-warm the RSC payloads for the workspace tree's top destinations —
+  // this shell previously had zero nav warming, so the first click on any
+  // tab always paid a full RSC round trip after the Router Cache's 30s
+  // dynamic window. Overview + Activity + Spend cover the operator's core
+  // loop; settings/support are low-frequency first-clicks.
+  usePrefetchNavPaths([
+    `${basePath}/home`,
+    `${basePath}/activity`,
+    `${basePath}/billing`,
+  ]);
 
   const displayName = userName ?? "Operator";
   const avatarFallback = displayName.charAt(0).toUpperCase();

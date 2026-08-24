@@ -227,6 +227,7 @@ export async function GET(
           },
           include: consultationInclude,
           orderBy: { requestedAt: "desc" },
+          take: 250,
         }),
 
         prisma.subscription.findMany({
@@ -236,6 +237,7 @@ export async function GET(
           },
           include: subscriptionInclude,
           orderBy: { requestedAt: "desc" },
+          take: 250,
         }),
 
         prisma.webinar.findMany({
@@ -280,6 +282,7 @@ export async function GET(
           },
           include: webinarInclude,
           orderBy: { createdAt: "desc" },
+          take: 250,
         }),
 
         prisma.class.findMany({
@@ -328,12 +331,14 @@ export async function GET(
           },
           include: classInclude,
           orderBy: { createdAt: "desc" },
+          take: 250,
         }),
 
         prisma.trialSession.findMany({
           where: { consulteeProfileId: consulteeId },
           include: trialInclude,
           orderBy: { requestedAt: "desc" },
+          take: 250,
         }),
       ]);
 

@@ -93,9 +93,11 @@ Three Prisma models support SSO:
 6. Check if user has an `Account` row with a matching `providerId`
 7. If no match → throw `FORBIDDEN` with `code: "SSO_REQUIRED"`
 
-**Layer 2: Read-time (defense-in-depth)**
+**Layer 2: Read-time (removed in #1242)**
 
-`customSession()` mirrors the same logic and sets `ssoEnforcementFailed: true` on the session. Page layouts check this flag and redirect. This catches sessions that were created before enforcement was configured.
+`customSession()` used to mirror this logic and set `ssoEnforcementFailed: true`, with the docs claiming layouts redirected on it. **No layout ever consumed the flag** — it cost 2 DB queries per session resolution for nothing, and was removed (see #1242 and the lifecycle spec in [#1241](https://github.com/Practitionist/familiarise_web/issues/1241)).
+
+Consequence: sessions created *before* an admin flips `enforceSSO` are not retroactively revoked — they persist until natural expiry/updateAge. Layer 1 catches every NEW session. If retroactive enforcement is needed, implement the Phase-1/2 plan from #1241 with an actual consumer.
 
 ### 3.4 Domain Check API
 

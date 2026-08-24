@@ -107,6 +107,9 @@ export async function GET(
             appointment: { select: { id: true, payment: frozenPaymentSelect } },
           },
           orderBy: { updatedAt: "desc" },
+          // Per-user pending set is naturally small; bound it so an anomaly
+          // can't inflate the payload (mirrors the main consultee route cap).
+          take: 100,
         }),
 
         // Source 2: Subscriptions with APPROVED_PENDING_PAYMENT status
@@ -142,6 +145,7 @@ export async function GET(
             },
           },
           orderBy: { updatedAt: "desc" },
+          take: 100,
         }),
 
         // Source 3: Payment records with PENDING gateway status (non-expired only)
@@ -180,6 +184,7 @@ export async function GET(
             },
           },
           orderBy: { createdAt: "desc" },
+          take: 100,
         }),
 
         // Source 4: Paid trials the consultant accepted but the learner hasn't
@@ -205,6 +210,7 @@ export async function GET(
             payment: { select: { amount: true, currency: true } },
           },
           orderBy: { updatedAt: "desc" },
+          take: 100,
         }),
       ]);
 

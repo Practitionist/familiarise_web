@@ -132,12 +132,16 @@ export async function GET(
           },
         },
         orderBy: { createdAt: "desc" },
+        // Per-user history; bound the payload (mirrors the main consultee
+        // route cap).
+        take: 250,
       }),
 
       // Referral credits
       prisma.referralCredit.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
+        take: 250,
       }),
 
       // Credit usages
@@ -155,6 +159,7 @@ export async function GET(
           },
         },
         orderBy: { createdAt: "desc" },
+        take: 250,
       }),
     ]);
 
