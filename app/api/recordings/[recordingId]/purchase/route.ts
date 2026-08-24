@@ -15,7 +15,10 @@ import {
   cancelRazorpayOrder,
   createRazorpayOrder,
 } from "@/lib/payments/core/razorpay";
-import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
+import {
+  isDiscoverablePlanPlan,
+  loadOwnedListingRecording,
+} from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -41,6 +44,23 @@ export async function POST(
       return NextResponse.json(
         { error: "Recording is not available for purchase", code: "NOT_LISTED" },
         { status: 404 },
+      );
+    }
+
+    // Sell-side eligibility (R2 review) — must match publicRecordingWhere at
+    // ORDER time: published, positively priced, still AVAILABLE on Supabase,
+    // under a live + discoverable plan.
+    if (
+      loaded.listingStatus !== "PUBLISHED" ||
+      loaded.listPricePaise === null ||
+      loaded.listPricePaise <= BigInt(0) ||
+      loaded.recordingStatus !== "AVAILABLE" ||
+      loaded.storageType !== "SUPABASE" ||
+      !isDiscoverablePlanPlan(loaded.plan.plan)
+    ) {
+      return NextResponse.json(
+        { error: "This recording is no longer available for purchase.", code: "NOT_ELIGIBLE" },
+        { status: 409 },
       );
     }
     // Consultants don't buy their own replays — owners already hold playback.
@@ -85,7 +105,7 @@ export async function POST(
       );
     }
 
-    const amountPaise = loaded.listPricePaise as bigint; // guarded non-null above
+    const amountPaise = loaded.listPricePaise;
     const order = await createRazorpayOrder({
       amount: Number(amountPaise),
       currency: "INR",

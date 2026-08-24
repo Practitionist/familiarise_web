@@ -9,7 +9,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
+import {
+  guardOwnedListingRecording,
+  isDiscoverablePlanPlan,
+} from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -80,19 +83,9 @@ export async function POST(
       parsed.data;
 
     const { recordingId } = await params;
-    const loaded = await loadOwnedListingRecording(
-      recordingId,
-      session.user.consultantProfileId,
-    );
-    if (loaded.status === "not_found") {
-      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
-    }
-    if (loaded.status === "forbidden") {
-      return NextResponse.json(
-        { error: "Not authorized to publish this recording" },
-        { status: 403 },
-      );
-    }
+    const guard = await guardOwnedListingRecording(recordingId);
+    if (!guard.ok) return guard.response;
+    const loaded = guard.loaded;
 
     // A sold replay must outlive any single session: Stream URLs die ≤14d.
     if (loaded.recordingStatus !== "AVAILABLE" || loaded.storageType !== "SUPABASE") {
@@ -106,24 +99,16 @@ export async function POST(
       );
     }
 
-    // Org plans must opt into public discoverability.
-    if (
-      loaded.plan.plan.organizationId &&
-      !["PUBLIC", "ORG_AND_PUBLIC"].includes(loaded.plan.plan.visibility)
-    ) {
+    // Org visibility + live-plan gate — same predicate the purchase route
+    // enforces before minting an order.
+    if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
       return NextResponse.json(
         {
           error:
-            "This plan's organization limits its visibility; publishing is disabled.",
-          code: "ORG_VISIBILITY",
+            "This recording's plan is archived or its organization limits visibility.",
+          code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
         },
         { status: 403 },
-      );
-    }
-    if (loaded.plan.plan.archivedAt) {
-      return NextResponse.json(
-        { error: "The parent plan has been withdrawn.", code: "PLAN_ARCHIVED" },
-        { status: 400 },
       );
     }
 
@@ -199,21 +184,9 @@ export async function DELETE(
     }
 
     const { recordingId } = await params;
-    const loaded = await loadOwnedListingRecording(
-      recordingId,
-      session.user.consultantProfileId,
-    );
-    if (loaded.status !== "ok") {
-      return NextResponse.json(
-        {
-          error:
-            loaded.status === "not_found"
-              ? "Recording not found"
-              : "Not authorized",
-        },
-        { status: loaded.status === "not_found" ? 404 : 403 },
-      );
-    }
+    const guard = await guardOwnedListingRecording(recordingId);
+    if (!guard.ok) return guard.response;
+    const loaded = guard.loaded;
 
     const updated = await prisma.recording.update({
       where: { id: recordingId },

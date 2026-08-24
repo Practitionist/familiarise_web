@@ -71,6 +71,9 @@ request. The public list API additionally sends a short CDN
 
 ## Open items
 
+- Preview-clip accessibility (#1244 R2): WebVTT caption track or transcript
+  alongside `previewClipUrl` for clips containing speech. Deferred — needs a
+  transcript asset pipeline; detail page currently renders clip without track.
 - Registration-time redistribution-consent checkbox (schema field on the
   attendee join), feeding the publish attestation instead of relying on it.
 - Automated refunds for `RecordingPurchase` via the refund family.

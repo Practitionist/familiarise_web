@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { loadOwnedListingRecording } from "@/lib/stream/recording-listing-access";
+import { guardOwnedListingRecording } from "@/lib/stream/recording-listing-access";
 import {
   uploadRecordingPreviewAsset,
   deleteRecordingPreviewAssets,
@@ -30,16 +30,9 @@ export async function POST(
     }
 
     const { recordingId } = await params;
-    const loaded = await loadOwnedListingRecording(
-      recordingId,
-      session.user.consultantProfileId,
-    );
-    if (loaded.status === "not_found") {
-      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
-    }
-    if (loaded.status === "forbidden") {
-      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
-    }
+    const guard = await guardOwnedListingRecording(recordingId);
+    if (!guard.ok) return guard.response;
+
 
     let formData: FormData;
     try {
@@ -142,16 +135,9 @@ export async function DELETE(
     }
 
     const { recordingId } = await params;
-    const loaded = await loadOwnedListingRecording(
-      recordingId,
-      session.user.consultantProfileId,
-    );
-    if (loaded.status === "not_found") {
-      return NextResponse.json({ error: "Recording not found" }, { status: 404 });
-    }
-    if (loaded.status === "forbidden") {
-      return NextResponse.json({ error: "Not authorized" }, { status: 403 });
-    }
+    const guard = await guardOwnedListingRecording(recordingId);
+    if (!guard.ok) return guard.response;
+
 
     await deleteRecordingPreviewAssets(recordingId);
     const updated = await prisma.recording.update({

@@ -197,3 +197,65 @@ export async function loadOwnedListingRecording(
     plan,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Route guard: session → owned-listing-recording, returning either the loaded
+// context or a ready-to-return error response. Publish/preview DELETE+POST
+// shared this 24-line preamble verbatim (Sonar duplication block).
+// ---------------------------------------------------------------------------
+
+import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth-server";
+
+export type OwnedRecordingGuard =
+  | { ok: true; loaded: Extract<OwnedRecordingLoad, { status: "ok" }> }
+  | { ok: false; response: NextResponse };
+
+export async function guardOwnedListingRecording(
+  recordingId: string,
+): Promise<OwnedRecordingGuard> {
+  const session = await getSession();
+  if (!session?.user?.id) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  const loaded = await loadOwnedListingRecording(
+    recordingId,
+    session.user.consultantProfileId,
+  );
+  if (loaded.status === "not_found") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Recording not found" },
+        { status: 404 },
+      ),
+    };
+  }
+  if (loaded.status === "forbidden") {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Not authorized" }, { status: 403 }),
+    };
+  }
+  return { ok: true, loaded };
+}
+
+/**
+ * Marketplace visibility predicate — ONE definition shared by the publish
+ * route (write side) and the purchase route (sell-side eligibility).
+ */
+export function isDiscoverablePlanPlan(plan: {
+  organizationId: string | null;
+  visibility: OrgPlanVisibility;
+  archivedAt: Date | null;
+}): boolean {
+  return (
+    plan.archivedAt === null &&
+    (!plan.organizationId ||
+      ["PUBLIC", "ORG_AND_PUBLIC"].includes(plan.visibility))
+  );
+}
