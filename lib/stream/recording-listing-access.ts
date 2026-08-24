@@ -141,7 +141,8 @@ export type OwnedRecordingLoad =
       recordingStatus: string;
       storageType: string;
       listingStatus: string;
-      listPricePaise: bigint | null;
+      // number via the #780 money extension map.
+      listPricePaise: number | null;
       plan: ResolvedListingPlan;
     };
 

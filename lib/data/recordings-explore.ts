@@ -77,9 +77,12 @@ const recordingListingSelect = {
   },
 } satisfies Prisma.RecordingSelect;
 
-type ListingRow = Prisma.RecordingGetPayload<{
-  select: typeof recordingListingSelect;
-}>;
+// listPricePaise arrives as number through the #780 money extension map —
+// accept either to stay honest about what the client returns.
+type ListingRow = Omit<
+  Prisma.RecordingGetPayload<{ select: typeof recordingListingSelect }>,
+  "listPricePaise"
+> & { listPricePaise: number | bigint | null };
 
 export interface RecordingListing {
   id: string;
