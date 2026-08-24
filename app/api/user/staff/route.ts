@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
           name,
           email,
           phone,
-          emailVerified: new Date(),
+          emailVerified: true,
           role: UserRole.STAFF,
           address,
           staffProfile: {

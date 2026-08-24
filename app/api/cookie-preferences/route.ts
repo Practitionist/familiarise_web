@@ -28,7 +28,7 @@ async function resolveIdentity(): Promise<{
   const session = await getSession();
   if (session?.user?.id) return { userId: session.user.id, sessionId: null };
 
-  const jar = cookies();
+  const jar = await cookies();
   let sid = jar.get(SESSION_COOKIE)?.value ?? null;
   if (!sid) {
     sid = crypto.randomUUID();
