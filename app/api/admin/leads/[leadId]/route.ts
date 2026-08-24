@@ -6,9 +6,9 @@
  * target) so two operators working the queue can't double-advance past
  * each other; zero rows ⇒ 409.
  *
- * Allowed flow: NEW → CONTACTED → QUALIFIED → CLOSED_WON | CLOSED_LOST.
- * NEW and CONTACTED may also be lost directly. Terminal states accept no
- * further moves.
+ * Allowed flow (authoritative): NEW → CONTACTED → QUALIFIED → CLOSED_WON |
+ * CLOSED_LOST. NEW and CONTACTED may also be lost directly. QUALIFIED cannot
+ * be skipped on the way to WON, and terminal states accept no further moves.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -22,14 +22,13 @@ const BodySchema = z.object({
   status: z.nativeEnum(LeadStatus),
 });
 
+// CR #1245 r1 — table tightened to match the documented flow exactly
+// (QUALIFIED could previously be reached from NEW, and WON from NEW/
+// CONTACTED, letting an operator skip the qualification step).
 const ALLOWED_FROM: Record<LeadStatus, LeadStatus[]> = {
   [LeadStatus.CONTACTED]: [LeadStatus.NEW],
-  [LeadStatus.QUALIFIED]: [LeadStatus.NEW, LeadStatus.CONTACTED],
-  [LeadStatus.CLOSED_WON]: [
-    LeadStatus.NEW,
-    LeadStatus.CONTACTED,
-    LeadStatus.QUALIFIED,
-  ],
+  [LeadStatus.QUALIFIED]: [LeadStatus.CONTACTED],
+  [LeadStatus.CLOSED_WON]: [LeadStatus.QUALIFIED],
   [LeadStatus.CLOSED_LOST]: [
     LeadStatus.NEW,
     LeadStatus.CONTACTED,

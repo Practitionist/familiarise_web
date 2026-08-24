@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { LeadStatus } from "@prisma/client";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,17 @@ const STATUSES: Array<LeadStatus | "ALL"> = [
   "CLOSED_WON",
   "CLOSED_LOST",
 ];
+
+// Mirrors ALLOWED_FROM in the PATCH route — the dropdown offers only
+// reachable targets so operators never see a 409 for picking NEW on an
+// already-new lead or skipping the qualification step.
+const NEXT_STATUSES: Record<LeadStatus, LeadStatus[]> = {
+  NEW: ["CONTACTED", "CLOSED_LOST"],
+  CONTACTED: ["QUALIFIED", "CLOSED_LOST"],
+  QUALIFIED: ["CLOSED_WON", "CLOSED_LOST"],
+  CLOSED_WON: [],
+  CLOSED_LOST: [],
+};
 
 const STATUS_LABEL: Record<LeadStatus, string> = {
   NEW: "New",
@@ -58,15 +69,25 @@ export function LeadsManagement() {
   );
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const query = useQuery({
+  // CR #1245 r1 — infinite scroll pagination: the API caps at 50 rows per
+  // page and older leads were unreachable past that.
+  const query = useInfiniteQuery({
     queryKey: ["admin-leads", statusFilter],
-    queryFn: async () => {
-      const qs = statusFilter === "ALL" ? "" : `?status=${statusFilter}`;
-      const res = await fetch(`/api/admin/leads${qs}`);
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }: { pageParam: string | null }) => {
+      const params = new URLSearchParams();
+      if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (pageParam) params.set("cursor", pageParam);
+      const res = await fetch(`/api/admin/leads?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to load leads");
-      return (await res.json()) as { leads: LeadRow[] };
+      return (await res.json()) as {
+        leads: LeadRow[];
+        nextCursor: string | null;
+      };
     },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
+  const leads = query.data?.pages.flatMap((p) => p.leads) ?? [];
 
   const transition = useCallback(
     async (id: string, status: LeadStatus) => {
@@ -124,10 +145,10 @@ export function LeadsManagement() {
         {query.isError && (
           <p className="text-sm text-red-600">Failed to load leads.</p>
         )}
-        {query.data?.leads.length === 0 && (
+        {leads.length === 0 && !query.isFetching && (
           <p className="text-sm text-zinc-500">No leads in this view.</p>
         )}
-        {query.data?.leads.map((lead) => (
+        {leads.map((lead) => (
           <div
             key={lead.id}
             className="rounded-lg border bg-card p-4 space-y-2"
@@ -153,26 +174,33 @@ export function LeadsManagement() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <Select
-                  value={lead.status}
-                  disabled={busyId === lead.id}
-                  onValueChange={(v) =>
-                    void transition(lead.id, v as LeadStatus)
-                  }
-                >
-                  <SelectTrigger className="w-36" id={`status-${lead.id}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(
-                      ["NEW", "CONTACTED", "QUALIFIED", "CLOSED_WON", "CLOSED_LOST"] as LeadStatus[]
-                    ).map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {NEXT_STATUSES[lead.status].length > 0 ? (
+                  <Select
+                    value={lead.status}
+                    disabled={busyId === lead.id}
+                    onValueChange={(v) =>
+                      void transition(lead.id, v as LeadStatus)
+                    }
+                  >
+                    <SelectTrigger className="w-36" id={`status-${lead.id}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* Only reachable targets — mirrors the route's
+                          ALLOWED_FROM table so the UI can't offer a move
+                          the API would reject. */}
+                      {NEXT_STATUSES[lead.status].map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {STATUS_LABEL[s]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <span className="text-xs text-zinc-500">
+                    {STATUS_LABEL[lead.status]} — closed
+                  </span>
+                )}
                 <Button size="sm" variant="outline" asChild>
                   <a href={`mailto:${lead.contactEmail}`}>Reply</a>
                 </Button>
@@ -195,6 +223,15 @@ export function LeadsManagement() {
           </div>
         ))}
       </div>
+      {query.hasNextPage && (
+        <Button
+          variant="outline"
+          disabled={query.isFetchingNextPage}
+          onClick={() => void query.fetchNextPage()}
+        >
+          {query.isFetchingNextPage ? "Loading…" : "Load more"}
+        </Button>
+      )}
     </>
   );
 }

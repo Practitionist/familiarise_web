@@ -53,6 +53,28 @@ beforeEach(() => {
 });
 
 describe("PATCH /api/admin/leads/[leadId]", () => {
+  it("gates on requirePrivilegedAuth (error propagates)", async () => {
+    mockedAuth.mockResolvedValue({
+      error: new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+      }),
+    });
+    const res = await drive("CONTACTED");
+    expect(res.status).toBe(403);
+  });
+
+  it("400s on an invalid body", async () => {
+    const req = new NextRequest("http://localhost/api/admin/leads/lead_1", {
+      method: "PATCH",
+      body: JSON.stringify({ nonsense: true }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await PATCH(req, {
+      params: Promise.resolve({ leadId: "lead_1" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("200s when the CAS claims the row and returns the fresh lead", async () => {
     m.lead.updateMany.mockResolvedValue({ count: 1 });
     m.lead.findUniqueOrThrow.mockResolvedValue({

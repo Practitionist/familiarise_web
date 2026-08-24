@@ -22,7 +22,11 @@ export async function GET(request: NextRequest): Promise<Response> {
     const status = searchParams.get("status");
     const cursor = searchParams.get("cursor");
 
-    if (status && !(status in LeadStatus)) {
+    // `in` accepts constructor/toString — validate against actual values.
+    if (
+      status &&
+      !Object.values(LeadStatus).includes(status as LeadStatus)
+    ) {
       return NextResponse.json(
         { error: `Unknown lead status "${status}"` },
         { status: 400 },

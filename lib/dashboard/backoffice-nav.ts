@@ -127,6 +127,8 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Target,
           path: "leads",
           surface: "leads.manage",
+          // Only /dashboard/admin/leads exists — the staff tree would 404.
+          only: "admin",
         },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
         // Support context for "why was my document rejected?" — read-only.
