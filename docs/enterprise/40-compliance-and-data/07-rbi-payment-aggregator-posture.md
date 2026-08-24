@@ -54,14 +54,15 @@ the Route eligibility questions never arise because Route is not used.
 One deliberate caveat on the tax sentence above: **withholding on consultant
 payouts is its own classification question and is NOT settled by
 supplier-of-record status.** The consultant rail still runs the legacy 194J
-engine pending a written CA decision to retire it in favour of Section
-194-O (the org rail's e-commerce-operator semantics); until that sign-off
+engine pending a written CA decision to retire it in favour of the
+e-commerce-operator rule (the org rail's semantics); until that sign-off
 lands, treat the consultant-path TDS treatment as conditional. Under the
 Income Tax Act 2025 renumbering effective for transactions from 1 April
-2026, the corresponding provisions are §393 (payments to non-residents,
-formerly s.195) and §397 (TDS on e-commerce participants, formerly 194-O) —
-the payment-code mapping for quarterly filings must be recorded against the
-new numbering when the switch is made (#738 tracks the decision).
+2026: non-resident withholding is **§393(2)** (formerly s.195); the
+e-commerce-operator rule formerly s.194-O lives in **§393(1), Table Sl.
+No. 8(v)**; and **§397(3)** governs quarterly filing/reporting mechanics
+rather than the withholding itself. Record the payment-code mapping against
+this numbering when the switch is made (#738 tracks the decision).
 
 ## The three conditions that keep this true
 

@@ -71,6 +71,16 @@ describe("readPlatformLut / hasValidPlatformLut", () => {
     expect(s.present).toBe(false);
     expect(s.valid).toBe(false);
   });
+
+  it("rejects calendar-impossible dates that Date would silently normalize", () => {
+    // CR #1234 r3 — "2027-02-30" normalizes to Mar 2; accepting it would let
+    // malformed config enable zero-rating on a date nobody declared.
+    setLut("LUT/2627", "2027-02-30");
+    freezeInsideLutWindow();
+    const s = readPlatformLut(new Date("2027-03-31T12:00:00Z"));
+    expect(s.present).toBe(false);
+    expect(s.valid).toBe(false);
+  });
 });
 
 describe("deriveGstBreakdown export branch", () => {

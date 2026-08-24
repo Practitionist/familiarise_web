@@ -39,13 +39,20 @@ export function readPlatformLut(now: Date = new Date()): PlatformLutStatus {
   // supplies made anywhere in IST on March 31, i.e. through
   // 2027-03-31T18:29:59.999Z. A UTC-midnight comparison let it lapse five and
   // a half hours early — the mirror image of the classic renewal trap.
-  // Strict calendar-date parse: anything that isn't YYYY-MM-DD is treated as
-  // unconfigured rather than guessed at.
+  // Strict CALENDAR-date validation (CR #1234 r3): a shape-valid string like
+  // "2027-02-30" would otherwise normalize to March 2 and silently extend
+  // validity; reject anything that doesn't round-trip.
   let validTill: Date | null = null;
   if (rawTill && /^\d{4}-\d{2}-\d{2}$/.test(rawTill)) {
-    const dayEndUtc = new Date(`${rawTill}T00:00:00.000Z`);
-    if (!Number.isNaN(dayEndUtc.getTime())) {
-      validTill = new Date(dayEndUtc.getTime() + (18 * 60 + 30) * 60 * 1000 - 1);
+    const [y, m, d] = rawTill.split("-").map(Number);
+    const dayStartUtc = new Date(`${rawTill}T00:00:00.000Z`);
+    const isRealCalendarDate =
+      !Number.isNaN(dayStartUtc.getTime()) &&
+      dayStartUtc.getUTCFullYear() === y &&
+      dayStartUtc.getUTCMonth() + 1 === m &&
+      dayStartUtc.getUTCDate() === d;
+    if (isRealCalendarDate) {
+      validTill = new Date(dayStartUtc.getTime() + (18 * 60 + 30) * 60 * 1000 - 1);
     }
   }
 

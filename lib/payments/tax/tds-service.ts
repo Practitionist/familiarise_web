@@ -122,12 +122,14 @@ export function getIndianFYQuarter(date: Date = new Date()): number {
  */
 export function getFYDateRange(fy: string): { start: Date; end: Date } {
   const startYear = parseInt(fy.split("-")[0]);
-  return {
-    start: new Date(startYear, 3, 1), // April 1
-    // EXCLUSIVE end (CR #1234): an inclusive Mar-31 23:59:59 dropped the
-    // final second's timestamps (.001–.999). Consumers must use `lt`.
-    end: new Date(startYear + 1, 3, 1),
-  };
+  // IST-anchored boundaries (CR #1234 r3): the fiscal year is an Indian
+  // legal construct, so Apr 1 00:00 means 18:30Z on Mar 31 — local-time
+  // components put each bound 5½h late on a UTC host, excluding early-April
+  // IST records and bleeding in next-FY ones. End stays EXCLUSIVE; callers
+  // must use `lt`.
+  const start = new Date(`${startYear}-03-31T18:30:00.000Z`);
+  const end = new Date(`${startYear + 1}-03-31T18:30:00.000Z`);
+  return { start, end };
 }
 
 // ============================================================================
