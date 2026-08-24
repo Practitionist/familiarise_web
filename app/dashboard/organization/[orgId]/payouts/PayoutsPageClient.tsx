@@ -286,6 +286,18 @@ export function PayoutsPageClient({
                 </div>
               )}
 
+            {/* Wave-4 (#1230) — CSV export for bank reconciliation. Plain
+                anchor: the endpoint streams a download and auth rides the
+                session cookie. */}
+            <div className="mt-4">
+              <a
+                href={`/api/organizations/${orgId}/payouts/export`}
+                className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-zinc-50"
+              >
+                Export CSV
+              </a>
+            </div>
+
             {/* Create payout button */}
             {can("payouts.manage") && (
               <div className="mt-4 flex items-center gap-3">
