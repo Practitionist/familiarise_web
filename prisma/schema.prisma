@@ -180,6 +180,10 @@ model SupportTicket {
   priority    SupportPriority     @default(MEDIUM)
   status      SupportTicketStatus @default(OPEN)
   category    String?
+  // #1021 — org context so enterprise tickets can be routed, SLA-tracked,
+  // and counted per organisation instead of disappearing into the B2C queue.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   issueType   SupportIssueType?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -190,6 +194,9 @@ model SupportTicket {
   // #appt-support — set when a per-appointment thread escalates to a human, so
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
+
+  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
+  @@index([organizationId])
 
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
@@ -808,6 +815,8 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
+  // #1021 — org-scoped support ticket routing.
+  supportTickets SupportTicket[]
   @@map("organizations")
 }
 
