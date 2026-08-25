@@ -175,47 +175,21 @@
 }
 
 /*
- * Dashboard document scroll lock — pure CSS, no JavaScript.
+ * Dashboard scroll architecture — no document lock, by construction.
  *
- * app/dashboard/layout.tsx renders a `data-dashboard-shell` marker around
- * everything under /dashboard/*, and these rules lock the document whenever
- * that marker EXISTS in the DOM. Server-rendered from the first byte, so the
- * very first paint is already locked; navigating away unmounts the marker and
- * the browser unlocks automatically. No class toggling, no hydration timing,
- * no flash.
+ * Role shells are exactly one viewport tall (`.h-screen-maintenance` =
+ * 100dvh − banner) and scroll inside their own `<main>`, so the DOCUMENT
+ * never grows past the viewport on /dashboard/*: body's floor is the
+ * stable small viewport (`min-h-svh`, root layout) and the shell already
+ * subtracts the banner it sits under. One scrollport, nothing to lock.
+ * If a future page breaks that arithmetic the window simply scrolls —
+ * a visible symptom — instead of content being silently clipped.
  *
- * Beats body.min-h-screen from the root layout so the window cannot
- * scroll past the viewport-sized shell into empty white space.
- *
- * Deliberately UNLAYERED (outside every cascade layer): rules inside a
- * Tailwind layer are subject to content-scan emission, while unlayered CSS is
- * always emitted verbatim and always outranks layered declarations. The
- * selector lives entirely in this file, so no build step can drop it.
- *
- * :has() is Baseline "Widely available" (Chrome/Edge 105, Safari 15.4,
- * Firefox 121 — all evergreen browsers since Dec 2023). A browser without it
- * simply gets the old cosmetic over-scroll; nothing breaks. This is the
- * standard CSS scroll-lock pattern (body:has(marker) { overflow: hidden }).
+ * Full-viewport states INSIDE the dashboard tree (auth gates, loading)
+ * must use `min-h-svh`, never the legacy `min-h-screen` floor, which on
+ * mobile is taller than the visible viewport and re-opens the dead scroll.
+ * Enforced by __tests__/dashboards/shell-overflow-contract.test.ts.
  */
-html:has([data-dashboard-shell]) {
-  overflow: hidden;
-  height: 100%;
-  max-height: 100dvh;
-}
-
-html:has([data-dashboard-shell]) body {
-  overflow: hidden;
-  height: 100%;
-  max-height: 100dvh;
-  /* Tailwind min-h-screen on <body> must not re-open a document scrollport */
-  min-height: 0;
-}
-
-html:has([data-dashboard-shell]) body > .flex-1 {
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
-}
 
 @layer utilities {
   /* Maintenance banner offset for fixed/sticky elements */

@@ -1,10 +1,12 @@
 /**
  * Dashboard shells must clip document scroll and keep overflow inside <main>.
- * Without overflow-hidden + min-h-0 on the flex chain, tall pages expand the
- * document past the shell into empty body white space.
+ * The scroll architecture has NO document lock: body's floor is the stable
+ * small viewport (min-h-svh) and shells are exactly one dynamic viewport tall
+ * (100dvh − banner), so the document never outgrows the window on /dashboard/*
+ * and `<main>` is the only scrollport. These tests pin that arithmetic.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
@@ -17,6 +19,18 @@ const SHELL_SOURCES = [
   "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
   "app/dashboard/org-workspace/[orgWorkspaceId]/OrgWorkspaceShell.tsx",
   "app/dashboard/organization/(switcher)/layout.tsx",
+] as const;
+
+/**
+ * Full-viewport states INSIDE the dashboard tree (auth gates, profile
+ * loading). They must fill the stable viewport, not 100vh — on mobile
+ * `min-h-screen` is taller than the visible viewport and re-opens the
+ * dead over-scroll the shells otherwise make impossible.
+ */
+const GATE_STATE_SOURCES = [
+  "app/dashboard/consultee/[consulteeId]/layout.tsx",
+  "app/dashboard/consultant/[consultantId]/layout.tsx",
+  "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
 ] as const;
 
 /** Extract a balanced `{ ... }` block starting at `from` (index of `{`). */
@@ -45,32 +59,6 @@ function extractCssRule(css: string, selector: string): string {
   if (start < 0) return "";
   const brace = css.indexOf("{", start);
   return css.slice(start, brace) + extractBlock(css, brace);
-}
-
-/**
- * Remove every `@layer <ident> { ... }` block (balanced braces). What remains
- * is the UNLAYERED CSS Tailwind always emits verbatim.
- */
-function stripLayerBlocks(css: string): string {
-  let out = css;
-  for (;;) {
-    const at = out.search(/@layer\s/);
-    if (at < 0) return out;
-    const open = out.indexOf("{", at);
-    const closeIdx = (() => {
-      let depth = 0;
-      for (let i = open; i < out.length; i++) {
-        if (out[i] === "{") depth++;
-        else if (out[i] === "}") {
-          depth--;
-          if (depth === 0) return i;
-        }
-      }
-      return -1;
-    })();
-    if (open < 0 || closeIdx < 0) return out;
-    out = out.slice(0, at) + out.slice(closeIdx + 1);
-  }
 }
 
 /** Outer shell root: first `h-screen-maintenance` className in the file. */
@@ -119,47 +107,39 @@ describe("dashboard shell overflow contract", () => {
     expect(rule).not.toMatch(/100vh(?![\w-])/);
   });
 
-  it("dashboard layout renders the scroll-lock marker and CSS keys on it", () => {
-    const layout = read("app/dashboard/layout.tsx");
+  it("document never outgrows the viewport on dashboards — no lock machinery", () => {
+    // The scroll architecture is lock-free: body's floor is the stable small
+    // viewport and shells are exactly 100dvh − banner, so document height
+    // equals the viewport on every /dashboard/* route. None of the previous
+    // lock mechanisms (JS class toggle, :has() rules, pre-paint script) may
+    // quietly come back — they all fought the arithmetic instead of fixing it.
+    const rootLayout = read("app/layout.tsx");
+    expect(rootLayout).toContain("min-h-svh");
+    expect(rootLayout).not.toContain("min-h-screen");
+    expect(rootLayout).not.toContain("suppressHydrationWarning");
+
     const css = read("app/globals.css");
-    // The marker is server-rendered around every /dashboard/* route; the lock
-    // is pure CSS keyed on its presence (html:has([data-dashboard-shell])).
-    expect(layout).toContain("data-dashboard-shell");
-    expect(layout).not.toContain("DashboardScrollLock");
-    expect(extractCssRule(css, "html:has([data-dashboard-shell])")).toContain(
-      "overflow: hidden",
-    );
+    expect(css).not.toContain("dashboard-scroll-locked");
+    expect(css).not.toContain("data-dashboard-shell");
+
+    const dashboardLayout = read("app/dashboard/layout.tsx");
+    expect(dashboardLayout).not.toContain("data-dashboard-shell");
+    expect(dashboardLayout).not.toContain("DashboardScrollLock");
+    expect(
+      existsSync(
+        join(process.cwd(), "components/dashboard/DashboardScrollLock.tsx"),
+      ),
+    ).toBe(false);
   });
 
-  it("scroll-lock rules are UNLAYERED in globals.css (never content-scan purged)", () => {
-    const css = read("app/globals.css");
-    const unlayered = stripLayerBlocks(css);
-    // The selectors must survive stripping every @layer block — i.e. they are
-    // declared outside any layer, so Tailwind always emits them and unlayered
-    // precedence outranks the layered body.min-h-screen.
-    const docRule = extractCssRule(
-      unlayered,
-      "html:has([data-dashboard-shell])",
-    );
-    expect(docRule).toContain("overflow: hidden");
-    expect(docRule).toContain("max-height: 100dvh");
-    const afterDocRule = unlayered.slice(
-      unlayered.indexOf(docRule) + docRule.length,
-    );
-    const bodyRule = extractCssRule(
-      afterDocRule,
-      "html:has([data-dashboard-shell]) body",
-    );
-    expect(bodyRule).toContain("min-height: 0");
-  });
-
-  it("root layout carries NO scroll-lock script (lock is CSS-only via :has())", () => {
-    const layout = read("app/layout.tsx");
-    // The JS lock (DashboardScrollLock + inline pre-paint script) was replaced
-    // by the :has()-based CSS lock; neither may quietly come back here.
-    expect(layout).not.toContain("dashboard-scroll-locked");
-    expect(layout).not.toContain("data-dashboard-shell");
-  });
+  it.each(GATE_STATE_SOURCES)(
+    "%s gate/loading states fill the STABLE viewport (svh), never 100vh",
+    (rel) => {
+      const src = read(rel);
+      expect(src).toContain("min-h-svh");
+      expect(src).not.toContain("min-h-screen");
+    },
+  );
 
   it("OfferingEditor action bar is sticky inside main, not fixed to the viewport", () => {
     const editor = read("components/offerings/editor/OfferingEditor.tsx");

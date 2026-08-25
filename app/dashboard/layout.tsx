@@ -66,19 +66,9 @@ export default async function DashboardLayout({
         session.user.organizationMemberships?.[0]?.organizationId ?? null
       }
     >
-      {/*
-        Scroll-lock marker for the whole /dashboard/* tree. The document lock
-        itself is pure CSS in globals.css (`html:has([data-dashboard-shell])`),
-        keyed on this attribute's mere presence: server-rendered before first
-        paint, and unmounting this element on leave unlocks the window with no
-        JavaScript involved. `contents` keeps the wrapper box invisible to
-        layout — it exists only to carry the attribute.
-      */}
-      <div data-dashboard-shell className="contents">
-        <HydrationBoundary state={dehydrate(queryClient)}>
-          {children}
-        </HydrationBoundary>
-      </div>
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        {children}
+      </HydrationBoundary>
     </ServerUserIdProvider>
   );
 }
