@@ -80,7 +80,7 @@ export async function POST(
 
   for (const entry of deduped) {
     const result = await importEntry(orgId, entry, access.member.id);
-    results.push({ email: entry.email, ...result });
+    results.push(result);
     if (result.ok) imported++;
   }
 
@@ -94,9 +94,11 @@ export async function POST(
   for (const entry of importedEmails) {
     try {
       await notifyOrgInviteSent(entry.email, {
-        organizationName: access.org.name,
         inviterName: access.member.id,
-        acceptUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+        orgName: access.org.name,
+        role: "LEARNER",
+        inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
       });
     } catch {
       // Non-fatal: the membership exists; admin can resend manually.
@@ -147,7 +149,7 @@ async function importEntry(
             select: { id: true, status: true, role: true },
           });
           if (existing && existing.status !== "REMOVED") {
-            return { ok: false as const, error: "Already a member" };
+            return { email: entry.email, ok: false as const, error: "Already a member" };
           }
 
           // Seat cap for unverified domains
@@ -158,6 +160,7 @@ async function importEntry(
             });
             if (activeCount >= UNVERIFIED_ORG_SEAT_CAP) {
               return {
+                email: entry.email,
                 ok: false as const,
                 error: `Seat cap (${UNVERIFIED_ORG_SEAT_CAP}) reached — verify a domain to add more`,
               };
@@ -182,7 +185,7 @@ async function importEntry(
                   "Cannot reactivate: non-LEARNER removed membership",
               };
             }
-            return { ok: true as const, membershipId: existing.id };
+            return { email: entry.email, ok: true as const, membershipId: existing.id };
           }
 
           const created = await tx.membership.create({
@@ -207,7 +210,7 @@ async function importEntry(
               description: `Bulk-imported ${entry.email} as LEARNER`,
             },
           });
-          return { ok: true as const, membershipId: created.id };
+          return { email: entry.email, ok: true as const, membershipId: created.id };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -216,6 +219,10 @@ async function importEntry(
     );
   } catch (err) {
     console.error("[bulk-import] entry failed:", err);
-    return { ok: false as const, error: "Internal error" };
+    return {
+      email: entry.email ?? "",
+      ok: false as const,
+      error: "Internal error",
+    };
   }
 }
