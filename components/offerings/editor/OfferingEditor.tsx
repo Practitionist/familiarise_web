@@ -132,12 +132,13 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   return (
     <Form {...form}>
       {/*
-        No bottom padding: the sticky footer below rests at its natural
-        position at the end of the form when fully scrolled, so trailing
-        padding would only reopen dead run-out under it (DashboardContent's
-        py-6 already leaves the small breathing gap).
+        No bottom padding: the save bar below is mt-auto inside this flex
+        column (see its comment), so trailing padding would only reopen dead
+        run-out under it (DashboardContent's py-6 already leaves the small
+        breathing gap).
       */}
       <form
+        className="flex flex-1 flex-col"
         onSubmit={(e) => {
           // Both actions are explicit footer buttons; a stray Enter must not
           // publish an offering.
@@ -177,7 +178,10 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           </nav>
         </div>
 
-        <div className="space-y-8">
+        {/* pb-8 keeps the standing gap above the save bar: the bar's mt-auto
+            collapses to 0 once the form is taller than <main>, so the spacer
+            lives here rather than on the bar. */}
+        <div className="space-y-8 pb-8">
           {manifest.sections.map((section) => (
             <div
               key={section.id}
@@ -221,8 +225,13 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           forced a giant compensating pb-24 on the form, which is what let the
           page scroll into dead space past its content. As the form's last
           child it naturally clears the sidebar and every shell chrome.
+          mt-auto is the other half: the form is a flex column stretched to
+          <main>'s full height, so on a short form (tall monitor, edit page)
+          the bar pins to the bottom edge instead of floating mid-air right
+          after the last section; on a long form mt-auto collapses to 0 and
+          plain sticky takes over.
         */}
-        <div className="sticky bottom-0 z-10 mt-8 border-t bg-background/95 backdrop-blur">
+        <div className="sticky bottom-0 z-10 mt-auto border-t bg-background/95 backdrop-blur">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-3">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">

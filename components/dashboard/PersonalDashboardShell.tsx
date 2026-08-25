@@ -121,7 +121,12 @@ export function PersonalDashboardShell({
         {banner}
 
         <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="p-4 sm:p-6 lg:p-8">
+          {/* Flex column with a viewport floor: pages that want a bottom-
+              pinned bar (the offering editor's save bar) declare flex-1 down
+              the chain; ordinary pages are unaffected — block children of a
+              flex column stack and stretch identically. min-h-full resolves
+              against <main>, whose height the shell fixes. */}
+          <div className="flex min-h-full flex-col p-4 sm:p-6 lg:p-8">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
         </main>

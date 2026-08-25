@@ -141,12 +141,46 @@ describe("dashboard shell overflow contract", () => {
     },
   );
 
+  it("Radix Select's hidden bubble input is pinned app-wide (globals.css)", () => {
+    // Radix renders `select[aria-hidden="true"]` with position:absolute and no
+    // top/left (primitives#3875, unfixed in 2.2.6). Uncontained, it anchors to
+    // the document and extended the dashboard's document scrollHeight ~620px
+    // past the viewport — the dead white over-scroll. FormItem is `relative`
+    // (form-bound case); this unlayered rule is the sweep for every other
+    // Select. It must never be removed or layered.
+    const css = read("app/globals.css");
+    const rule = extractCssRule(css, 'select[aria-hidden="true"]');
+    expect(rule).toContain("top: 0");
+    expect(rule).toContain("left: 0");
+    // The rule must sit OUTSIDE every @layer block (unlayered = always
+    // emitted): walking from the nearest preceding `@layer` opening, its
+    // block must be fully closed before the rule starts.
+    const ruleAt = css.indexOf(rule);
+    const layerAt = css.lastIndexOf("@layer", ruleAt);
+    let closedBeforeRule = true;
+    if (layerAt >= 0) {
+      closedBeforeRule = false;
+      let depth = 0;
+      for (let i = css.indexOf("{", layerAt); i < ruleAt; i++) {
+        if (css[i] === "{") depth++;
+        else if (css[i] === "}" && --depth === 0) {
+          closedBeforeRule = true;
+          break;
+        }
+      }
+    }
+    expect(closedBeforeRule).toBe(true);
+  });
+
   it("OfferingEditor action bar is sticky inside main, not fixed to the viewport", () => {
     const editor = read("components/offerings/editor/OfferingEditor.tsx");
     expect(editor).toMatch(/sticky bottom-0/);
     expect(editor).not.toMatch(/fixed\s+inset-x-0\s+bottom-0/);
     // The giant fixed-bar compensator must not come back on the form.
     expect(editor).not.toMatch(/className="[^"]*\bpb-24\b/);
+    // The bar must also pin to the bottom edge on SHORT forms (mt-auto inside
+    // the flex-column form), not float mid-air after the last section.
+    expect(editor).toMatch(/mt-auto/);
   });
 
   it("HelpSkeleton does not nest min-h-screen inside the shell", () => {

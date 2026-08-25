@@ -191,6 +191,35 @@
  * Enforced by __tests__/dashboards/shell-overflow-contract.test.ts.
  */
 
+/*
+ * Radix Select bubble-input containment — app-wide sweep.
+ *
+ * Radix Select renders a visually-hidden native <select> (BubbleSelect)
+ * beside its trigger for form autofill. Its VISUALLY_HIDDEN_STYLES use
+ * position:absolute WITHOUT a top/left pin (radix-ui/primitives#3875,
+ * unfixed in @radix-ui/react-select 2.2.6), so when no ancestor up the tree
+ * is positioned it anchors to the document at its static position — on the
+ * offerings editor three of them (Language, Level, Price currency) landed
+ * ~620px below the fold and extended document scrollHeight past the
+ * viewport-sized shell: the dead white over-scroll, live-measured at 1282px
+ * document vs a 662px viewport.
+ *
+ * Two layers of defense:
+ *   - `components/ui/form.tsx` FormItem carries `relative`, pinning the
+ *     bubble select inside its own field for every form-bound Select.
+ *   - This rule is the sweep for every other Select (explore filters,
+ *     toolbars, admin tables): top/left 0 is exactly the upstream fix
+ *     (primitives#3876). On a static (visible) select, top/left are no-ops —
+ *     they only apply to positioned elements — so this cannot misplace
+ *     anything; on the absolute bubble select it collapses it to a clipped
+ *     1px pixel at its containing block's origin instead of miles down the
+ *     page. Deliberately UNLAYERED so content-scan emission can never drop it.
+ */
+select[aria-hidden="true"] {
+  top: 0;
+  left: 0;
+}
+
 @layer utilities {
   /* Maintenance banner offset for fixed/sticky elements */
   .top-maintenance {
