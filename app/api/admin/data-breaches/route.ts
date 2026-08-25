@@ -19,7 +19,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 
 const BodySchema = z.object({
   affectedUserIds: z.array(z.string().min(1)).min(1),
-  rootCause: z.string().min(1).max(5000),
+  rootCause: z.string().trim().min(1).max(5000),
 });
 
 export async function POST(req: NextRequest) {
@@ -43,16 +43,14 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await prisma.orgAuditLog.create({
-      data: {
-        organizationId: null, // platform-wide
-        actorMembershipId: null,
-        category: "SYSTEM",
-        action: AUDIT_ACTIONS.SYSTEM.DATA_BREACH_REPORTED,
-        description: `Data breach detected affecting ${parsed.data.affectedUserIds.length} user(s) — 72h Board clock started`,
-        details: { breachId: breach.id, affectedCount: parsed.data.affectedUserIds.length },
-      },
-    });
+    // CR #1257 r1 — platform-wide breach has no organizationId; the
+    // OrgAuditLog model requires it as a string, so we log via SystemEvent
+    // instead and keep the DataBreach row as the compliance record.
+    console.log("[data-breach] reported", JSON.stringify({
+      breachId: breach.id,
+      affectedCount: parsed.data.affectedUserIds.length,
+      detectedAt: breach.detectedAt.toISOString(),
+    }));
 
     return NextResponse.json({ breach }, { status: 201 });
   } catch (error) {
