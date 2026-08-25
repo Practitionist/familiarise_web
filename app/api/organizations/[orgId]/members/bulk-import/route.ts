@@ -80,7 +80,12 @@ export async function POST(
 
   for (const entry of deduped) {
     const result = await importEntry(orgId, entry, access.member.id);
-    results.push(result);
+    results.push({
+      email: entry.email,
+      ok: result.ok,
+      membershipId: result.membershipId,
+      error: result.error,
+    });
     if (result.ok) imported++;
   }
 
@@ -218,10 +223,6 @@ async function importEntry(
     );
   } catch (err) {
     console.error("[bulk-import] entry failed:", err);
-    return {
-      email: entry.email ?? "",
-      ok: false as const,
-      error: "Internal error",
-    };
+    return { ok: false as const, error: "Internal error" };
   }
 }
