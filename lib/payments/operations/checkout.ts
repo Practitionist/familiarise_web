@@ -809,6 +809,27 @@ export async function validateSlotAvailability(
 ) {
   if (!data.startsAt || !data.endsAt) return;
 
+  // LCY-2 consent cascade (#701/#1230) — a consultant who withdrew
+  // SESSION_BOOKING consent must not receive new bookings. Fail-closed:
+  // no artifact or withdrawn artifact ⇒ block.
+  if (consultantUserId) {
+    const { checkConsent } = await import("@/lib/compliance/dpdp");
+    const { PURPOSE_CODES } = await import("@/lib/compliance/purpose-codes");
+    if (
+      !(await checkConsent({
+        userId: consultantUserId,
+        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+      }))
+    ) {
+      throw Object.assign(
+        new Error(
+          "This consultant has withdrawn session-delivery consent and cannot accept new bookings.",
+        ),
+        { httpStatus: 403, code: "CONSENT_WITHDRAWN" },
+      );
+    }
+  }
+
   const slotStart = new Date(data.startsAt);
   const slotEnd = new Date(data.endsAt);
 
