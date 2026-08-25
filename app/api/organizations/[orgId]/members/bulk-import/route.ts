@@ -123,7 +123,7 @@ async function importEntry(
   orgId: string,
   entry: { email: string; name: string },
   actorMembershipId: string,
-): Promise<RowResult> {
+): Promise<{ ok: boolean; membershipId?: string; error?: string }> {
   try {
     return await withSerializableRetry(() =>
       prisma.$transaction(
@@ -149,7 +149,7 @@ async function importEntry(
             select: { id: true, status: true, role: true },
           });
           if (existing && existing.status !== "REMOVED") {
-            return { email: entry.email, ok: false as const, error: "Already a member" };
+            return { ok: false as const, error: "Already a member" };
           }
 
           // Seat cap for unverified domains
@@ -160,7 +160,6 @@ async function importEntry(
             });
             if (activeCount >= UNVERIFIED_ORG_SEAT_CAP) {
               return {
-                email: entry.email,
                 ok: false as const,
                 error: `Seat cap (${UNVERIFIED_ORG_SEAT_CAP}) reached — verify a domain to add more`,
               };
@@ -185,7 +184,7 @@ async function importEntry(
                   "Cannot reactivate: non-LEARNER removed membership",
               };
             }
-            return { email: entry.email, ok: true as const, membershipId: existing.id };
+            return { ok: true as const, membershipId: existing.id };
           }
 
           const created = await tx.membership.create({
@@ -210,7 +209,7 @@ async function importEntry(
               description: `Bulk-imported ${entry.email} as LEARNER`,
             },
           });
-          return { email: entry.email, ok: true as const, membershipId: created.id };
+          return { ok: true as const, membershipId: created.id };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
