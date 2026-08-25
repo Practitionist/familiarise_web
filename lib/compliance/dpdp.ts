@@ -260,7 +260,7 @@ export async function withdrawConsent(params: {
 
   const where = purposeCode
     ? {
-        organizationId: null,
+        userId,
         withdrawnAt: null,
         purposeCodes: { has: purposeCode },
       }
