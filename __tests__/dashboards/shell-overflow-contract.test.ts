@@ -141,6 +141,16 @@ describe("dashboard shell overflow contract", () => {
     },
   );
 
+  it("dashboard loading skeleton never reintroduces a 100vh floor", () => {
+    // The consultant/consultee loading branches render
+    // PersonalDashboardShellSkeleton -> CollapsibleSidebarSkeleton. The
+    // gate-state checks above only read the layout FILES, so a min-h-screen
+    // inside the skeleton component would slip past them and re-open the
+    // mobile over-scroll. Pin the actual loading markup.
+    const skeleton = read("components/dashboard/CollapsibleSidebar.tsx");
+    expect(skeleton).not.toMatch(/\bmin-h-screen\b/);
+  });
+
   it("Radix Select's hidden bubble input is pinned app-wide (globals.css)", () => {
     // Radix renders `select[aria-hidden="true"]` with position:absolute and no
     // top/left (primitives#3875, unfixed in 2.2.6). Uncontained, it anchors to
