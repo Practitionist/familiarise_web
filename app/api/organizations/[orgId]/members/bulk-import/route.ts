@@ -23,6 +23,7 @@ import {
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const EntrySchema = z.object({
@@ -81,6 +82,25 @@ export async function POST(
     const result = await importEntry(orgId, entry, access.member.id);
     results.push({ email: entry.email, ...result });
     if (result.ok) imported++;
+  }
+
+  // Auto-send invite emails to successfully imported members (#1230 wave-8).
+  // Fire-and-forget per ADR-14 — email failures don't undo the membership.
+  const importedEmails = results
+    .filter((r) => r.ok && r.membershipId)
+    .map((r) => deduped.find((e) => e.email === r.email))
+    .filter((e): e is NonNullable<typeof e> => !!e);
+
+  for (const entry of importedEmails) {
+    try {
+      await notifyOrgInviteSent(entry.email, {
+        organizationName: access.org.name,
+        inviterName: access.member.id,
+        acceptUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+      });
+    } catch {
+      // Non-fatal: the membership exists; admin can resend manually.
+    }
   }
 
   return NextResponse.json(
@@ -170,7 +190,11 @@ async function importEntry(
               userId: user.id,
               organizationId: orgId,
               role: "LEARNER",
-              status: "ACTIVE",
+              // PENDING until the invitee completes signup and sets a
+              // password. The existing invitation-accept flow flips this to
+              // ACTIVE. Creating as ACTIVE would produce phantom members
+              // who appear on rosters but cannot log in.
+              status: "PENDING",
             },
           });
           await tx.orgAuditLog.create({
