@@ -32,7 +32,7 @@ export default function NewOfferingPage() {
         subtitle="Save a draft at any point; publishing needs the essentials filled in."
       />
       <DashboardContent
-        className="flex flex-1 flex-col"
+        className="content-flush-bottom flex flex-1 flex-col"
       >
         <DashboardErrorBoundary>
           <OfferingEditorContainer type={type} consultantId={consultantId} />

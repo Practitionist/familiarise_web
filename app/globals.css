@@ -220,6 +220,32 @@ select[aria-hidden="true"] {
   left: 0;
 }
 
+/*
+ * Flush-bottom chrome for pages with a bottom-docked bar (the offering
+ * editor's save bar). Opt in by adding `content-flush-bottom` to the page's
+ * <DashboardContent className="...">.
+ *
+ * Why this exists: the save bar is `sticky bottom-0 mt-auto` inside <main>,
+ * but two stacked paddings sat BETWEEN the bar and main's bottom edge —
+ * DashboardContent's py-6 (24px) and this file's shell wrapper p-4/6/8
+ * (16/24/32px, responsive). Sticky can never pull an element past its
+ * containing block, so at full scroll the bar rested ~40-56px above the
+ * bottom edge: the "still not fully sticky" float.
+ *
+ * Both rules are deliberately UNLAYERED (always emitted, always outrank the
+ * layered p-*/py-* utilities at every breakpoint). The :has() form lets the
+ * wrapper drop its bottom padding only on opt-in pages — every other
+ * dashboard page keeps its scrolled-end breathing room. :has() is Baseline
+ * widely-available; a browser without it simply keeps the small float.
+ */
+.content-flush-bottom {
+  padding-bottom: 0;
+}
+
+main > div:has(> .content-flush-bottom) {
+  padding-bottom: 0;
+}
+
 @layer utilities {
   /* Maintenance banner offset for fixed/sticky elements */
   .top-maintenance {

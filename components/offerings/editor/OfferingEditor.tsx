@@ -230,6 +230,9 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           the bar pins to the bottom edge instead of floating mid-air right
           after the last section; on a long form mt-auto collapses to 0 and
           plain sticky takes over.
+          REQUIRES the page's <DashboardContent> to carry `content-flush-bottom`
+          (see globals.css): without it, the stacked chrome paddings below this
+          bar leave a ~40-56px float above the true bottom edge.
         */}
         <div className="sticky bottom-0 z-10 mt-auto border-t bg-background/95 backdrop-blur">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-3">

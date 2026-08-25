@@ -183,6 +183,27 @@ describe("dashboard shell overflow contract", () => {
     expect(editor).toMatch(/mt-auto/);
   });
 
+  it("editor pages opt into flush-bottom chrome so the bar reaches the edge", () => {
+    // Sticky can't pull the bar past its containing block, so the stacked
+    // bottom paddings (DashboardContent py-6 + shell wrapper p-4/6/8) left a
+    // ~40-56px float below the save bar even when fully scrolled. The
+    // content-flush-bottom opt-in zeroes both, for editor pages only.
+    const css = read("app/globals.css");
+    expect(extractCssRule(css, ".content-flush-bottom")).toContain(
+      "padding-bottom: 0",
+    );
+    expect(
+      extractCssRule(css, "main > div:has(> .content-flush-bottom)"),
+    ).toContain("padding-bottom: 0");
+    for (const rel of [
+      "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
+      "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/[offeringId]/edit/page.tsx",
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+    ]) {
+      expect(read(rel)).toContain("content-flush-bottom");
+    }
+  });
+
   it("HelpSkeleton does not nest min-h-screen inside the shell", () => {
     const fn = extractFunction(
       read("components/dashboard/DashboardSkeletons.tsx"),

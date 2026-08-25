@@ -38,7 +38,7 @@ export default function NewOrgOfferingPage() {
         title={`New ${OFFERING_MANIFESTS[type].noun}`}
         subtitle="Save a draft at any point; publishing needs the essentials filled in."
       />
-      <DashboardContent className="flex flex-1 flex-col">
+      <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
         <DashboardErrorBoundary>
           {expertId ? (
             <OfferingEditorContainer
