@@ -233,10 +233,11 @@ select[aria-hidden="true"] {
  * bottom edge: the "still not fully sticky" float.
  *
  * Both rules are deliberately UNLAYERED (always emitted, always outrank the
- * layered p-*/py-* utilities at every breakpoint). The :has() form lets the
- * wrapper drop its bottom padding only on opt-in pages — every other
- * dashboard page keeps its scrolled-end breathing room. :has() is Baseline
- * widely-available; a browser without it simply keeps the small float.
+ * layered wrapper and content spacing utilities at every breakpoint). The
+ * :has() form lets the wrapper drop its bottom padding only on opt-in pages
+ * — every other dashboard page keeps its scrolled-end breathing room.
+ * :has() is Baseline widely-available; a browser without it simply keeps the
+ * small float.
  */
 .content-flush-bottom {
   padding-bottom: 0;
