@@ -81,6 +81,39 @@ request. The public list API additionally sends a short CDN
 
 ## Deploy notes
 
+### Merge-order rule: schema BEFORE build, not after merge
+
+The usual house rule is "merge the PR, then `npm run db:push` from `dev`".
+**That rule is wrong for this PR**, and following it deadlocks CI.
+
+`/explore/recordings` is ISR-prerendered during `next build`, so the build
+reads the shared database (#932). Its columns arrive with this PR. Push after
+merging and the build fails before the merge can happen:
+
+```
+The column `Recording.listingStatus` does not exist in the current database.
+Export encountered an error on /explore/recordings/page — exiting the build.
+```
+
+The order for any PR that adds columns AND prerenders a page that reads them:
+
+1. Bring the branch fully up to date with `dev` (`git merge origin/dev`), so
+   its schema is a strict superset — a push from a branch reconciles the DB to
+   THAT branch's schema, and anything missing from it is dropped.
+2. Verify the delta is additive: `npx prisma migrate diff
+   --from-config-datasource --to-schema prisma/schema.prisma --script` and
+   confirm there is no `DROP TABLE`, `DROP COLUMN` or `SET NOT NULL`.
+3. `npx prisma db push` from the branch, then `npm run db:sidecars`.
+4. Re-run CI and the deploy preview, then merge.
+
+On step 3, `db push` warns that adding the `Recording.slug` unique constraint
+"will fail if there are existing duplicate values". For a NEW nullable column
+that warning is a false positive — every existing row gets NULL, and Postgres
+unique indexes permit unlimited NULLs. Confirm the column does not yet exist,
+then `--accept-data-loss` is safe. Confirm first; do not reach for the flag by
+reflex.
+
+
 ⚠️ **Schema drift hazard (hit twice on #1244):** until this branch squashes
 into `dev`, a `prisma db push` run from any checkout whose schema.prisma
 lacks these columns (i.e., plain `dev`) will silently DROP them — the
