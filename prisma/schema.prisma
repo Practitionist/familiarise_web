@@ -136,25 +136,25 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invitations              Invitation[]
-  ssoproviders             SsoProvider[]
-  erasureRequests          ErasureRequest[]
+  invitations               Invitation[]
+  ssoproviders              SsoProvider[]
+  erasureRequests           ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed ErasureRequest[]      @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed  ErasureRequest[]      @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned         Dispute[]             @relation("DisputeAssignee")
+  disputesAssigned          Dispute[]             @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed        AppointmentDocument[] @relation("DocumentReviewer")
+  documentsReviewed         AppointmentDocument[] @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted         AppointmentDocument[] @relation("DocumentDeleter")
+  documentsDeleted          AppointmentDocument[] @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested Recording[]          @relation("RecordingConsentAttestor")
+  recordingsConsentAttested Recording[]           @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases       RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
+  recordingPurchases        RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -233,17 +233,17 @@ model Feedback {
 }
 
 model SupportTicket {
-  id          String              @id @default(uuid())
-  title       String
-  description String              @db.Text
-  priority    SupportPriority     @default(MEDIUM)
-  status      SupportTicketStatus @default(OPEN)
-  category    String?
+  id             String              @id @default(uuid())
+  title          String
+  description    String              @db.Text
+  priority       SupportPriority     @default(MEDIUM)
+  status         SupportTicketStatus @default(OPEN)
+  category       String?
   // #1021 — org context so enterprise tickets can be routed, SLA-tracked,
   // and counted per organisation instead of disappearing into the B2C queue.
   organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  issueType   SupportIssueType?
+  organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  issueType      SupportIssueType?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
@@ -253,9 +253,6 @@ model SupportTicket {
   // #appt-support — set when a per-appointment thread escalates to a human, so
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
-
-  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
-  @@index([organizationId])
 
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
@@ -269,6 +266,8 @@ model SupportTicket {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
+  @@index([organizationId])
   @@index([userId])
   @@index([status])
   @@index([assignedToId])
@@ -867,8 +866,10 @@ model Organization {
   // to the IRP. Flag frozen now; enforcement deferred.
   aatoAboveEinvoiceThreshold Boolean @default(false)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  // #1021 — org-scoped support ticket routing.
+  supportTickets SupportTicket[]
 
   @@index([status])
   @@index([canSponsor, canHost])
@@ -877,8 +878,6 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
-  // #1021 — org-scoped support ticket routing.
-  supportTickets SupportTicket[]
   @@map("organizations")
 }
 
@@ -1743,8 +1742,8 @@ model OrganizationEarnings {
   orgBpsApplied        Int?
   consultantBpsApplied Int?
 
-  status    EarningStatus
-  holdUntil DateTime?     @db.Timestamptz
+  status           EarningStatus
+  holdUntil        DateTime?      @db.Timestamptz
   // #1020-1 — mirror of ConsultantEarnings.preDisputeStatus: prior state
   // preserved when a dispute HELDs the row so release restores it faithfully.
   preDisputeStatus EarningStatus?
@@ -3495,7 +3494,7 @@ model Class {
   status                   ClassStatus @default(SCHEDULED)
 
   // Freeze ledger — see Webinar.chatFrozenAt.
-  chatFrozenAt             DateTime?   @db.Timestamptz
+  chatFrozenAt DateTime? @db.Timestamptz
 
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
@@ -4243,9 +4242,9 @@ enum RecordingPurchaseStatus {
 // for (recordingId, buyerId); rebuys after refund create NEW rows, hence no
 // unique constraint on the pair.
 model RecordingPurchase {
-  id              String                 @id @default(cuid())
-  recording       Recording              @relation(fields: [recordingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  recordingId     String
+  id          String    @id @default(cuid())
+  recording   Recording @relation(fields: [recordingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  recordingId String
   // Cascade (not SetNull like the audit relations above) is deliberate:
   // buyerId is required so SetNull is impossible, and DPDP/GDPR erasure of a
   // user must not leave purchase rows keyed to a ghost identity. The gateway
@@ -4254,15 +4253,15 @@ model RecordingPurchase {
   // buyerId is required so SetNull is impossible, and DPDP/GDPR erasure of a
   // user must not leave purchase rows keyed to a ghost identity. The gateway
   // order id survives in Razorpay's ledger; we don't need it locally.
-  buyer           User                   @relation("RecordingPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
-  buyerId         String
+  buyer       User      @relation("RecordingPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerId     String
 
   // Razorpay order_id (`order_…`) — mirrors Payment.paymentIntent usage and is
   // what the webhook's notes.type=recording_purchase branch resolves by.
-  gatewayOrderId    String                 @unique
-  gatewayPaymentId  String? // `pay_…`, stamped on capture
-  amountPaise    BigInt
-  status         RecordingPurchaseStatus @default(PENDING)
+  gatewayOrderId   String                  @unique
+  gatewayPaymentId String? // `pay_…`, stamped on capture
+  amountPaise      BigInt
+  status           RecordingPurchaseStatus @default(PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4326,6 +4325,13 @@ model Recording {
   slug               String?                @unique
   publishedAt        DateTime?
   unpublishedAt      DateTime?
+
+  // #1244 review — accessibility gate. A preview clip that carries SPEECH is
+  // inaccessible to anyone who needs text, so publishing one requires a text
+  // alternative and the detail page renders it beside the player. Plain text
+  // rather than WebVTT: this is a transcript, not timed captions (those are
+  // the follow-up), and a consultant can paste one without tooling.
+  previewTranscript String? @db.Text
 
   // Preview assets are copied into the PUBLIC `recordings-previews` bucket so
   // ISR-cached explore cards never need signed URLs. Full media stays private.
@@ -4736,9 +4742,9 @@ model ConsultantEarnings {
   shareBps Int         @default(10000)
 
   // Status tracking
-  status    EarningStatus @default(PENDING)
-  holdUntil DateTime      @db.Timestamptz // Release after hold period
-  paidAt    DateTime?     @db.Timestamptz
+  status           EarningStatus  @default(PENDING)
+  holdUntil        DateTime       @db.Timestamptz // Release after hold period
+  paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
   // instead of force-maturing a PENDING row into READY prematurely. Null =

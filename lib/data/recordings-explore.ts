@@ -26,6 +26,7 @@ const recordingListingSelect = {
   tags: true,
   thumbnailUrl: true,
   previewClipUrl: true,
+  previewTranscript: true,
   previewClipDuration: true,
   durationInMinutes: true,
   recordedAt: true,
@@ -94,6 +95,7 @@ export interface RecordingListing {
   tags: string[];
   thumbnailUrl: string | null;
   previewClipUrl: string | null;
+  previewTranscript: string | null;
   previewClipDuration: number | null;
   durationInMinutes: number;
   recordedAt: Date;
@@ -128,6 +130,7 @@ function flattenListing(row: ListingRow): RecordingListing | null {
     tags: row.tags,
     thumbnailUrl: row.thumbnailUrl,
     previewClipUrl: row.previewClipUrl,
+    previewTranscript: row.previewTranscript,
     previewClipDuration: row.previewClipDuration,
     durationInMinutes: row.durationInMinutes,
     recordedAt: row.recordedAt,

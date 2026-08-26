@@ -12,6 +12,7 @@ import { getSession } from "@/lib/auth-server";
 import {
   guardOwnedListingRecording,
   isDiscoverablePlanPlan,
+  resolvePreviewTranscript,
 } from "@/lib/stream/recording-listing-access";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
@@ -32,6 +33,13 @@ const PublishSchema = z.object({
     .optional(),
   /** Explicit redistribution-consent attestation — required, audit-logged. */
   consentAttested: z.literal(true),
+  /**
+   * #1244 review — text alternative for the preview clip. REQUIRED whenever a
+   * preview clip exists (enforced in the handler, which can see the recording;
+   * the schema cannot). A clip with speech and no text shuts out anyone who
+   * relies on reading, and "the consultant will add one later" is not a gate.
+   */
+  previewTranscript: z.string().trim().min(1).max(20_000).optional(),
 });
 
 function buildSlug(title: string, id: string): string {
@@ -79,7 +87,7 @@ export async function POST(
         { status: 400 },
       );
     }
-    const { listingTitle, listingDescription, listPricePaise, tags, slug } =
+    const { listingTitle, listingDescription, listPricePaise, tags, slug, previewTranscript } =
       parsed.data;
 
     const { recordingId } = await params;
@@ -112,6 +120,26 @@ export async function POST(
       );
     }
 
+    // #1244 review — a preview clip cannot go public without a text
+    // alternative. Checked here rather than in the Zod schema because only the
+    // loaded recording knows whether a clip exists. An already-stored
+    // transcript satisfies the gate on re-publish.
+    const transcriptGate = resolvePreviewTranscript({
+      previewClipUrl: loaded.previewClipUrl,
+      storedTranscript: loaded.previewTranscript,
+      submittedTranscript: previewTranscript,
+    });
+    if (!transcriptGate.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
+          code: "PREVIEW_TRANSCRIPT_REQUIRED",
+        },
+        { status: 422 },
+      );
+    }
+
     const finalSlug = slug ?? buildSlug(listingTitle, loaded.recordingId);
     const slugClash = await prisma.recording.findUnique({
       where: { slug: finalSlug },
@@ -139,6 +167,7 @@ export async function POST(
           unpublishedAt: null,
           consentAttestedAt: new Date(),
           consentAttestedById: session.user.id,
+          previewTranscript: transcriptGate.transcript,
         },
         select: { id: true, slug: true, listingStatus: true, publishedAt: true },
       });

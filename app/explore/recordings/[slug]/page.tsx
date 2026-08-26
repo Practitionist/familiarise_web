@@ -30,6 +30,7 @@ export async function generateMetadata({
 
 function renderMedia(listing: {
   previewClipUrl: string | null;
+  previewTranscript: string | null;
   thumbnailUrl: string | null;
   listingTitle: string;
 }) {
@@ -41,6 +42,11 @@ function renderMedia(listing: {
         controls
         preload="metadata"
         className="h-full w-full object-cover"
+        // The transcript below the player is the text alternative; publishing
+        // a clip without one is refused at the publish route (#1244 review).
+        aria-describedby={
+          listing.previewTranscript ? "preview-transcript" : undefined
+        }
       />
     );
   }
@@ -80,6 +86,24 @@ export default async function RecordingDetailPage({
         <div className="aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
           {renderMedia(listing)}
         </div>
+
+        {/* #1244 review — the preview clip's text alternative. Open by
+            default is wrong (it would bury the listing), but it must be
+            present, findable and selectable rather than hidden behind a
+            player nobody can hear. Timed captions are the follow-up. */}
+        {listing.previewClipUrl && listing.previewTranscript && (
+          <details className="rounded-lg border bg-card/50 p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Preview transcript
+            </summary>
+            <p
+              id="preview-transcript"
+              className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
+            >
+              {listing.previewTranscript}
+            </p>
+          </details>
+        )}
 
         <div className="space-y-3">
           <span className="text-xs uppercase tracking-wide text-muted-foreground">

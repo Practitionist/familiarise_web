@@ -143,8 +143,39 @@ export type OwnedRecordingLoad =
       listingStatus: string;
       // number via the #780 money extension map.
       listPricePaise: number | null;
+      // #1244 review — the publish gate needs to know whether a preview clip
+      // exists and whether a text alternative is already stored for it.
+      previewClipUrl: string | null;
+      previewTranscript: string | null;
       plan: ResolvedListingPlan;
     };
+
+/**
+ * #1244 review — the preview-clip accessibility gate.
+ *
+ * A preview clip that carries speech is unusable by anyone who relies on
+ * text, so a listing cannot go PUBLIC until a transcript exists. Kept pure and
+ * separate from the route so the rule is testable and so any future publish
+ * surface (a consultant UI, a bulk tool) enforces the same thing rather than
+ * reimplementing it.
+ *
+ * A previously stored transcript satisfies the gate on re-publish, so editing
+ * a listing's title does not demand the transcript be pasted again.
+ *
+ * Returns the transcript to persist, or null when there is nothing to gate.
+ */
+export function resolvePreviewTranscript(args: {
+  previewClipUrl: string | null;
+  storedTranscript: string | null;
+  submittedTranscript?: string | null;
+}): { ok: true; transcript: string | null } | { ok: false } {
+  const effective =
+    args.submittedTranscript?.trim() || args.storedTranscript?.trim() || null;
+  // No clip means nothing to describe — a thumbnail-only listing is fine.
+  if (!args.previewClipUrl) return { ok: true, transcript: effective };
+  if (!effective) return { ok: false };
+  return { ok: true, transcript: effective };
+}
 
 /**
  * Load a recording that must (a) exist and (b) belong to the caller's
@@ -175,6 +206,8 @@ export async function loadOwnedListingRecording(
       storageType: true,
       listingStatus: true,
       listPricePaise: true,
+      previewClipUrl: true,
+      previewTranscript: true,
       meetingSession: {
         select: {
           slotOfAppointment: {
@@ -207,6 +240,8 @@ export async function loadOwnedListingRecording(
     storageType: recording.storageType,
     listingStatus: recording.listingStatus,
     listPricePaise: recording.listPricePaise,
+    previewClipUrl: recording.previewClipUrl,
+    previewTranscript: recording.previewTranscript,
     plan,
   };
 }
