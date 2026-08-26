@@ -96,6 +96,10 @@ model User {
   referral        Referral?        @relation("ReferredUser")
   referralCredits ReferralCredit[]
 
+  // In-progress onboarding wizard state (resumable drafts). At most one row
+  // per user; deleted when onboarding completes. See OnboardingDraft below.
+  onboardingDraft OnboardingDraft?
+
   // Session-generation marker: increments on every membership role
   // change so the next request through `customSession` (see
   // `lib/auth.ts`) detects "I'm out of date" and refetches memberships
@@ -154,6 +158,55 @@ model User {
   @@index([orgWorkspaceProfileId])
   @@index([erasedAt])
   @@map("users")
+}
+
+/// Server-side draft of an in-progress onboarding wizard run. The wizard
+/// autosaves after every step so a refresh, navigation, or device switch can
+/// resume instead of restarting. One row per user (userId @unique); the row is
+/// deleted when onboarding completes and is never read by any guard —
+/// `onboardingCompleted` remains the single source of truth for access.
+///
+/// Additive under the #705 schema freeze: new model + one nullable relation,
+/// no existing column touched.
+model OnboardingDraft {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+
+  /// Role picked at step 0 (null until then). Mirrors User.role's enum but is
+  /// informational only — the authoritative role flip still happens through
+  /// setOnboardingRoleAction / processOnboardingData.
+  role UserRole?
+
+  /// Zero-based index into the role's step registry.
+  currentStep Int @default(0)
+
+  /// JSON-serialized Partial<OnboardingFormData> with non-JSON values
+  /// (File/Blob/Date instances) sanitized by the writer. Dates are stored as
+  /// ISO strings and revived by the reader's Zod schema.
+  ///
+  /// Why JSONB here and not normalized tables (deliberate, per the
+  /// #onboarding-ux decision record in docs/onboarding):
+  ///   * The payload's shape MIRRORS THE WIZARD UI, so it changes whenever
+  ///     the wizard does — normalizing would couple DB migrations to form
+  ///     tweaks; an EAV key/value table was rejected as strictly worse
+  ///     (untyped values AND row explosion).
+  ///   * It is always read/written AS A WHOLE document — no code filters,
+  ///     joins, or aggregates inside it. The queryable keys (userId, role,
+  ///     currentStep) ARE real columns above; this is the standard
+  ///     "stable columns + volatile blob" hybrid.
+  ///   * It never becomes truth. The single writer of real data remains the
+  ///     Zod-validated big-bang transaction into fully-normalized tables;
+  ///     this row is a convenience cache deleted on completion.
+  ///
+  /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
+  /// promote that key to a real column instead of querying the blob.
+  payload Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("onboarding_drafts")
 }
 
 model Feedback {
