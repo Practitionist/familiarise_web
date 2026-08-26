@@ -111,6 +111,15 @@ function SignInContent() {
     [searchParams],
   );
 
+  // #booking-journey — is this sign-in a detour out of a purchase? Derived
+  // from the ALREADY-VALIDATED callbackUrl, never the raw param, so a crafted
+  // "/\\evil.example/checkout/..." cannot light up a trust banner. Drives
+  // only reassurance copy; nothing is authorized on the strength of it.
+  const isPurchaseReturn = useMemo(
+    () => callbackUrl?.startsWith("/checkout/") ?? false,
+    [callbackUrl],
+  );
+
   // Thread the validated callbackUrl through the onboarding + sign-up hand-offs
   // so a first-timer who came here to book/buy returns to their destination
   // after finishing onboarding, instead of being dropped on the dashboard
@@ -428,6 +437,19 @@ function SignInContent() {
           <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
             Sign in to your account
           </h2>
+          {/* #booking-journey — when the callback is a checkout return, say
+              so: a guest bounced from a Buy/Subscribe click must see that
+              their purchase survived the detour, or they read this page as an
+              error and abandon. */}
+          {isPurchaseReturn && (
+            <div className="mb-4 rounded-md border border-emerald-600/60 bg-emerald-900/30 p-3">
+              <p className="text-sm text-emerald-300">
+                You&apos;re almost there — sign in to continue your booking.
+                Your selection is saved and will resume right where you left
+                off.
+              </p>
+            </div>
+          )}
           {needsVerification && (
             <div className="mb-4 rounded-md border border-yellow-600 bg-yellow-900/40 p-3">
               <p className="mb-2 text-sm text-yellow-300">
