@@ -306,6 +306,17 @@ export async function POST(
           );
         }
 
+        // E2E-audit fix — whole-series flows must act on LIVE slots only.
+        // The 24-hour gate and the proposal-count check used to iterate every
+        // historical row (COMPLETED/CANCELLED sessions included), so any
+        // past session made hoursUntilSlot negative and the aggregate
+        // reschedule was bricked with a guaranteed 400 after the first
+        // delivery. SLOT_RESCHEDULABLE_FROM is the canonical live set — a
+        // requested-but-completed id now correctly reports as missing.
+        allSubscriptionSlots = allSubscriptionSlots.filter((s) =>
+          (SLOT_RESCHEDULABLE_FROM as string[]).includes(s.completionStatus),
+        );
+
         // Determine which slots will be affected
         // For multi-appointment types (SUBSCRIPTION, CLASS) without slotIds, check all slots
         let slotsToReschedule =

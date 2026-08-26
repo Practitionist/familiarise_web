@@ -898,6 +898,32 @@ export class SlotAllocationService {
         if (!(err instanceof IllegalTransitionError)) throw err;
       }
     }
+
+    // E2E-audit P1 fix — times-bearing proposals must not dangle when the
+    // consultant answers a concrete-times proposal by placing DIFFERENT times
+    // directly on the calendar grid. The proposal used to stay PENDING_REVIEW
+    // for up to its 72h lifetime with openForAppointmentId reserved — and a
+    // stale Accept still passed every guard, re-ran the allocator at the
+    // originally proposed times, and silently deleted the just-placed
+    // confirmed slots. The manual placement IS the answer: close these as
+    // DECLINED so the reschedule machine releases the reservation.
+    const superseded = await tx.rescheduleRequest.findMany({
+      where: {
+        releasedSlotIds: { hasSome: releasedSlotIds },
+        status: { in: [...RESCHEDULE_OPEN_STATUSES] },
+      },
+      select: { id: true },
+    });
+    for (const request of superseded) {
+      try {
+        await transitionRescheduleRequest(tx, {
+          where: { id: request.id },
+          to: "DECLINED",
+        });
+      } catch (err) {
+        if (!(err instanceof IllegalTransitionError)) throw err;
+      }
+    }
   }
 
   private static async autoAllocate(
