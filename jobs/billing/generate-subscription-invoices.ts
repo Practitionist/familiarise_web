@@ -60,6 +60,13 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
       nextInvoiceDate: { lte: now },
       contract: {
         organization: { status: { in: BILLABLE_ORG_STATUSES } },
+        // E2E-audit P0 fix — only bill contracts that are ACTIVE and within
+        // their term. This cron used to filter on org status alone, so a
+        // TERMINATED / EXPIRED / superseded contract kept issuing invoices
+        // every cycle forever (its docstring even claimed the expire cron
+        // enforced this — it doesn't; that cron only stamps contract status).
+        status: "ACTIVE",
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
       },
     },
     include: {
@@ -127,6 +134,12 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             where: {
               id: sub.id,
               nextInvoiceDate: { lte: now },
+              // Re-checked AT CLAIM TIME: the contract may have terminated
+              // (or its term ended) between the cohort read and this write.
+              contract: {
+                status: "ACTIVE",
+                OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+              },
             },
             data: {
               currentCycleStart: nextStart,
