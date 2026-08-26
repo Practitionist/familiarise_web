@@ -84,6 +84,7 @@ import {
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 // Re-export for backward compatibility
@@ -494,6 +495,42 @@ export async function calculateAmountAndValidate(
     }
 
     // Get plan and validate availability without creating records
+    // E2E-audit P1 fix — purchase-path storefront gates. Detail pages hide
+    // unverified consultants' profiles and archived (withdrawn-from-sale)
+    // plans, but this transaction looked rows up by bare id, so a stale or
+    // hand-built URL could still pay an unverified seller or buy a pulled
+    // plan. Mirror lib/data/consultant-detail.ts's VERIFIED rule and
+    // eventPlanDiscoverableWhere's archivedAt/marketplace rules here, inside
+    // the lock. Non-marketplace (ORG_ONLY) plans stay purchasable only via
+    // the org-sponsored path — whose membership/assignment/contract gates
+    // run below and inside revalidateInsideLock.
+    const assertPlanPurchasable = (
+      p: {
+        archivedAt: Date | null;
+        visibility: string;
+        consultantProfile: { verificationStatus: string } | null;
+      },
+      label: string,
+    ) => {
+      if (
+        p.consultantProfile &&
+        p.consultantProfile.verificationStatus !== "VERIFIED"
+      ) {
+        throw new Error(`${label} is not available`);
+      }
+      if (p.archivedAt) {
+        throw new Error(`${label} is no longer available`);
+      }
+      if (
+        !MARKETPLACE_VISIBILITY.includes(
+          p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
+        ) &&
+        !validatedData.organizationId
+      ) {
+        throw new Error(`${label} is not available`);
+      }
+    };
+
     switch (validatedData.appointmentType) {
       case "CONSULTATION":
         plan = await tx.consultationPlan.findUnique({
@@ -513,6 +550,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Consultation plan not found");
         }
+
+        assertPlanPurchasable(plan, "This consultation");
 
         await validateSlotAvailability(
           tx,
@@ -542,6 +581,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Subscription plan not found");
         }
+
+        assertPlanPurchasable(plan, "This subscription");
 
         await validateSlotAvailability(
           tx,
@@ -587,6 +628,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Webinar not found");
         }
+
+        assertPlanPurchasable(plan, "This webinar");
 
         const consultantUserId = plan.consultantProfile?.userId;
         const webinarCapacity = getWebinarCapacity({
@@ -636,6 +679,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Class not found");
         }
+
+        assertPlanPurchasable(plan, "This class");
 
         const classConsultantUserId = plan.consultantProfile?.userId;
         const classCapacity = getClassCapacity({
@@ -2889,6 +2934,36 @@ export async function handleCheckout(
           // from. This is the runtime source of truth for sponsorship
           // attribution — analytics / invoicing / cap enforcement all read
           // these rows rather than back-deriving from `paymentMethod`.
+          //
+          // E2E-audit F-1 fix — the FUNDING LEG is written for every
+          // org-sponsored payment, INCLUDING SUBSCRIPTION. Subscriptions
+          // meter engagements lazily (at allocation), but their money moves
+          // HERE: the wallet debit above journals against the WALLET leg in
+          // the ledger, the invoice rollup only collects INVOICE_ACCRUAL
+          // legs, and refunds credit wallets back leg-proportionally.
+          // Skipping the leg made (SUBSCRIPTION × WALLET) journal real
+          // money as platform CASH (guaranteed WALLET_BALANCE_DRIFT →
+          // auto-frozen wallet), left (SUBSCRIPTION × INVOICE) permanently
+          // unbilled, and gave (SUBSCRIPTION × LICENSE) no fulfillment
+          // proof. Utilization metering stays gated on engagementsForCap.
+          if (programAssignmentId && isOrgSponsoredPayment) {
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: isOrgWalletPayment
+                  ? "WALLET"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : "INVOICE_ACCRUAL",
+                // LICENSE absorbs the cost entirely at the contract level
+                // — the per-booking leg is zero so totals across all legs
+                // still reconcile to the Payment amount.
+                amountPaise: isOrgLicensedPayment ? 0 : amount,
+                sourceRef: programAssignmentId,
+              },
+            });
+          }
+
           if (
             programAssignmentId &&
             isOrgSponsoredPayment &&
@@ -2979,22 +3054,6 @@ export async function handleCheckout(
               }
               throw err;
             }
-
-            await tx.paymentLeg.create({
-              data: {
-                paymentId: payment.id,
-                source: isOrgWalletPayment
-                  ? "WALLET"
-                  : isOrgLicensedPayment
-                    ? "LICENSE"
-                    : "INVOICE_ACCRUAL",
-                // LICENSE absorbs the cost entirely at the contract level
-                // — the per-booking leg is zero so totals across all legs
-                // still reconcile to the Payment amount.
-                amountPaise: isOrgLicensedPayment ? 0 : amount,
-                sourceRef: programAssignmentId,
-              },
-            });
 
             // #768 #22 — 80% cap-near early warning. Fire ONCE per cycle on
             // the <80% → >=80% transition (not on every booking past 80%).

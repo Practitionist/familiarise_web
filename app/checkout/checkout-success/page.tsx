@@ -257,7 +257,7 @@ function CheckoutSuccessContent() {
           <p>
             Need help? Contact our{" "}
             <a
-              href="/support"
+              href="/dashboard"
               className="text-foreground font-medium hover:underline"
             >
               support team

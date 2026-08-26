@@ -74,6 +74,10 @@ function makeSlot(id: string, startsAt: Date, appointmentId = "apt-1") {
     startsAt,
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000),
     isTentative: false,
+    // Whole-series flows filter on SLOT_RESCHEDULABLE_FROM so a delivered
+    // session can no longer brick the aggregate 24h gate. The column is
+    // `@default(SCHEDULED)` and non-nullable, so real rows always carry it.
+    completionStatus: "SCHEDULED",
     appointmentId,
     createdAt: new Date(),
   };

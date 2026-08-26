@@ -7,6 +7,7 @@ import {
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
@@ -251,11 +252,42 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
+    // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee
+    // could reject their own PAID direct-checkout booking and ride the
+    // consultant-initiated 100% refund tier on demand. Mirrors the hardened
+    // [consultationId] PATCH route.
+    if (
+      status === AppointmentStatus.REJECTED &&
+      !isConsultant &&
+      !isPrivileged(session.user.role)
+    ) {
+      return forbiddenResponse(
+        "Only the consultant can decline a request. Cancel it instead.",
+      );
+    }
+
     // #836 — allowed-from guard rides the WHERE; updateMany returns no row,
     // so re-read for the heavy include.
     await prisma.$transaction((tx) =>
       transitionConsultationRequest(tx, { where: { id }, to: status }),
     );
+
+    // #1004 — a rejected request that was already paid has to give the money
+    // back. Direct checkout captures BEFORE the request exists, so a
+    // consultant declining a paid booking is the buyer's only exit; the
+    // transition's allowed-from guard makes this at-most-once. Never throws
+    // (failures surface in Sentry + system events).
+    const rejectionRefund =
+      status === AppointmentStatus.REJECTED
+        ? await refundRejectedRequest({
+            kind: "consultation",
+            requestId: id,
+            initiatedByUserId: session.user.id,
+            actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+          })
+        : null;
+
     const consultation = await prisma.consultation.findUniqueOrThrow({
       where: { id },
       include: {
@@ -286,7 +318,7 @@ export async function PATCH(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ data: consultation });
+    return NextResponse.json({ data: consultation, rejectionRefund });
   } catch (error) {
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json(
