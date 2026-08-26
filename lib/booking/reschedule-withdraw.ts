@@ -4,6 +4,7 @@ import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
   transitionRescheduleRequest,
+  transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { notifyAppointmentRescheduled } from "@/lib/novu";
@@ -88,9 +89,7 @@ export async function withdrawRescheduleRequest(args: {
       // A consultation reschedule sends the booking back to PENDING so it
       // re-enters the consultant's queue; withdrawing has to undo that or the
       // consultee is left with a confirmed-looking booking still sitting in
-      // someone's inbox. A subscription is deliberately NOT flipped on
-      // reschedule (#448 — it has no per-session status), so there is nothing
-      // to put back there.
+      // someone's inbox.
       //
       // fromIn narrows to PENDING rather than the map's default: this edge is
       // only ever undoing the reschedule's own flip, so an APPROVED booking
@@ -102,6 +101,30 @@ export async function withdrawRescheduleRequest(args: {
           to: "APPROVED",
           fromIn: ["PENDING"],
         });
+      }
+
+      // E2E-audit P1 fix — subscriptions need the same undo. #448 kept
+      // PARTIAL subscription reschedules from flipping the parent, but the
+      // whole-booking reschedule (no slotIds) DOES flip it to PENDING via the
+      // reschedule route. Leaving a withdrawn, paid plan in PENDING strands
+      // it in the consultant's request queue, where expirePendingSubscriptions
+      // can EXPIRE + refund a plan that still owes (or already delivered)
+      // sessions. Restore only when the parent actually sits in PENDING —
+      // i.e., this proposal was a whole-booking flip; partial proposals left
+      // the parent APPROVED and must not be touched (#448). The CAS keeps the
+      // concurrent-answer race modelled.
+      if (request.appointment?.subscriptionId) {
+        const sub = await tx.subscription.findUnique({
+          where: { id: request.appointment.subscriptionId },
+          select: { status: true },
+        });
+        if (sub?.status === "PENDING") {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: request.appointment.subscriptionId },
+            to: "APPROVED",
+            fromIn: ["PENDING"],
+          });
+        }
       }
     });
   } catch (err) {

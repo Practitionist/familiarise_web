@@ -93,8 +93,21 @@ function subscriptionAppointment() {
  * the row's appointmentId is not a safe key for the preference.
  */
 const SIBLING_SLOTS = [
-  { id: "slot-1", appointmentId: APPOINTMENT_ID, startsAt: FUTURE },
-  { id: "slot-2", appointmentId: "apt-2", startsAt: FUTURE },
+  // `completionStatus` is `@default(SCHEDULED)` and non-nullable; whole-series
+  // flows now filter on SLOT_RESCHEDULABLE_FROM so a delivered session cannot
+  // brick the aggregate request, and an unset fixture reads as not-live.
+  {
+    id: "slot-1",
+    appointmentId: APPOINTMENT_ID,
+    startsAt: FUTURE,
+    completionStatus: "SCHEDULED",
+  },
+  {
+    id: "slot-2",
+    appointmentId: "apt-2",
+    startsAt: FUTURE,
+    completionStatus: "SCHEDULED",
+  },
 ];
 
 let createdData: Record<string, unknown> | null = null;

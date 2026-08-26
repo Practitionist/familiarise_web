@@ -1,6 +1,12 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  CONSULTANT_JOIN_WINDOW_MS,
+  getCurrentOrNextSession,
+  getSessionJoinState,
+} from "@/lib/appointments/slots";
 
 /**
  * #1134 P0-1 — the single definition of "may this user join this meeting".
@@ -123,6 +129,9 @@ const MEETING_SESSION_INCLUDE = {
                   },
                 },
               },
+              trialSession: {
+                select: { consultantProfileId: true, status: true },
+              },
             },
           },
         },
@@ -134,6 +143,95 @@ function loadMeetingSession(meetingId: string) {
     where: { streamCallId: meetingId },
     include: MEETING_SESSION_INCLUDE,
   });
+}
+
+/**
+ * Booking states from which a join is refused outright, regardless of time.
+ */
+const TERMINAL_APPOINTMENT_STATUSES = new Set([
+  "CANCELLED",
+  "REJECTED",
+  "EXPIRED",
+]);
+
+/**
+ * How long after the scheduled run end a disconnected participant may still
+ * re-enter. Calls overrun; without grace a reconnect at endsAt+1s would hit
+ * a locked door mid-consultation. Past this — or once the host has ended the
+ * call (meetingSession.endedAt) — the room is closed for good.
+ */
+const REJOIN_GRACE_MS = 30 * 60 * 1000;
+
+/**
+ * E2E-audit P1 fix — the SERVER-side policy gate. Identity ("are you on this
+ * appointment?") was necessary but not sufficient: nothing refused a valid
+ * participant days early, hours after the host ended the call, after
+ * cancellation, or on an unpaid tentative booking — every one of those rules
+ * lived only in React. This answers "is this session live/open yet?" from the
+ * same run/window helpers the dashboards use, so the gate and the affordance
+* cannot drift.
+ *
+ * Returns null when joining is permitted; otherwise a user-facing refusal.
+ */
+async function meetingPolicyRefusal(args: {
+  appointmentId: string;
+  role: Exclude<MeetingRole, null>;
+}): Promise<string | null> {
+  const now = new Date();
+
+  const slots = await prisma.slotOfAppointment.findMany({
+    where: { appointmentId: args.appointmentId, deletedAt: null },
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      isTentative: true,
+      completionStatus: true,
+      appointmentId: true,
+      meetingSession: { select: { id: true, endedAt: true } },
+    },
+  });
+
+  const run = getCurrentOrNextSession(slots, now);
+  if (!run) return "This session has no active time slot.";
+
+  const state = getSessionJoinState(run, {
+    joinWindowMs:
+      args.role === "host"
+        ? CONSULTANT_JOIN_WINDOW_MS
+        : CONSULTEE_JOIN_WINDOW_MS,
+    now,
+  });
+
+  switch (state) {
+    case "disabled":
+      return run.anchor.isTentative
+        ? "This session is not confirmed yet."
+        : "This session is no longer available.";
+    case "countdown":
+      return `Join opens ${
+        (args.role === "host"
+          ? CONSULTANT_JOIN_WINDOW_MS
+          : CONSULTEE_JOIN_WINDOW_MS) / 60000
+      } minutes before the start time.`;
+    case "ended": {
+      // Host ended the call → closed for everyone. Time-passed → brief
+      // rejoin grace for reconnects during an overrun.
+      const hostEndedEarly = run.slots.some(
+        (slot) => Boolean(slot.meetingSession?.endedAt),
+      );
+      if (
+        !hostEndedEarly &&
+        now.getTime() <= run.endsAt.getTime() + REJOIN_GRACE_MS
+      ) {
+        return null;
+      }
+      return "This session has ended.";
+    }
+    default:
+      return null;
+  }
 }
 
 export async function resolveMeetingAccess(
@@ -169,21 +267,72 @@ export async function resolveMeetingAccess(
     appointment.subscription?.subscriptionPlan?.consultantProfileId ??
     appointment.webinar?.webinarPlan?.consultantProfileId ??
     appointment.class?.classPlan?.consultantProfileId ??
+    appointment.trialSession?.consultantProfileId ??
     null;
 
-  if (
-    consultantProfileId &&
-    userProfile?.consultantProfileId === consultantProfileId
-  ) {
+  /**
+   * Every grant funnels through the policy gate — identity alone is no longer
+   * sufficient (see meetingPolicyRefusal above).
+   */
+  const grant = async (
+    role: Exclude<MeetingRole, null>,
+    message: string,
+  ): Promise<MeetingAccess> => {
+    // The booking's status lives on its parent row, not on Appointment.
+    const bookingStatus =
+      appointment.consultation?.status ??
+      appointment.subscription?.status ??
+      appointment.webinar?.status ??
+      appointment.class?.status ??
+      (appointment.trialSession?.status === "CANCELLED" ||
+      appointment.trialSession?.status === "REJECTED"
+        ? "CANCELLED"
+        : null);
+    if (
+      (bookingStatus && TERMINAL_APPOINTMENT_STATUSES.has(bookingStatus)) ||
+      appointment.deletedAt
+    ) {
+      return {
+        hasAccess: false,
+        role: null,
+        message: "This booking is no longer active.",
+        reason: "unauthorized",
+        streamCallId,
+        meetingSessionId,
+        appointment,
+      };
+    }
+    const refusal = await meetingPolicyRefusal({
+      appointmentId: appointment.id,
+      role,
+    });
+    if (refusal) {
+      return {
+        hasAccess: false,
+        role: null,
+        message: refusal,
+        reason: "unauthorized",
+        streamCallId,
+        meetingSessionId,
+        appointment,
+      };
+    }
     return {
       hasAccess: true,
-      role: "host",
-      message: "Access granted as meeting host",
+      role,
+      message,
       reason: "granted",
       streamCallId,
       meetingSessionId,
       appointment,
     };
+  };
+
+  if (
+    consultantProfileId &&
+    userProfile?.consultantProfileId === consultantProfileId
+  ) {
+    return grant("host", "Access granted as meeting host");
   }
 
   // An accepted collaborator on the webinar/class hosts alongside the owner.
@@ -201,15 +350,7 @@ export async function resolveMeetingAccess(
         select: { id: true },
       });
       if (collab) {
-        return {
-          hasAccess: true,
-          role: "host",
-          message: "Access granted as accepted collaborator",
-          reason: "granted",
-          streamCallId,
-      meetingSessionId,
-      appointment,
-        };
+        return grant("host", "Access granted as accepted collaborator");
       }
     }
   }
@@ -232,15 +373,7 @@ export async function resolveMeetingAccess(
   }
 
   if (isParticipant) {
-    return {
-      hasAccess: true,
-      role: "participant",
-      message: "Access granted as participant",
-      reason: "granted",
-      streamCallId,
-      meetingSessionId,
-      appointment,
-    };
+    return grant("participant", "Access granted as participant");
   }
 
   return {

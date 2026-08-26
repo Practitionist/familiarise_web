@@ -2,8 +2,14 @@
  * #771 / #749 — monthly consolidated rollup cron: roll each org's unbilled
  * INVOICE_ACCRUAL / OVERAGE_INVOICE_ACCRUAL bookings into one
  * OrganizationInvoice per org. Thin wrapper over `rollupOrgInvoiceAccruals`,
- * scheduled monthly alongside `generate-subscription-invoices`. Gated by
- * ENABLE_CONSOLIDATED_INVOICE so the monthly job is a no-op until enabled.
+ * scheduled monthly alongside `generate-subscription-invoices`.
+ *
+ * E2E-audit P0 fix — this job is now ENABLED BY DEFAULT (opt-out via
+ * ENABLE_CONSOLIDATED_INVOICE="false"). It shipped default-off while being
+ * the ONLY path from INVOICE_ACCRUAL legs to an actual invoice, so with the
+ * shipped config org INVOICE-rail bookings and CHARGE_ORG overages accrued
+ * forever, grew unbounded credit-limit exposure in checkout, and produced no
+ * GST document — a money black hole.
  *
  * #813 — two real defences against double-billing, not the unimplemented
  * "lock discipline" the old docstring claimed: (1) the workflow `concurrency`
@@ -25,9 +31,9 @@ export async function settleInvoiceAccruals(): Promise<{
 }> {
   await abortIfMaintenance("settle-invoice-accruals");
 
-  if (process.env.ENABLE_CONSOLIDATED_INVOICE !== "true") {
+  if (process.env.ENABLE_CONSOLIDATED_INVOICE === "false") {
     console.log(
-      "[settle-invoice-accruals] ENABLE_CONSOLIDATED_INVOICE != \"true\" — skipping",
+      "[settle-invoice-accruals] ENABLE_CONSOLIDATED_INVOICE === \"false\" — skipping (explicit opt-out)",
     );
     return { orgsProcessed: 0, invoicesCreated: 0 };
   }

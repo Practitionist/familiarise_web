@@ -6,7 +6,7 @@ import {
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   EventCheckoutLockUnavailableError,
   BookingLockUnavailableError,
@@ -28,11 +28,11 @@ export async function POST(req: NextRequest) {
   let replayUserId: string | undefined;
   let replayKey: string | undefined;
   try {
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Check authentication — force-fresh (auth-helpers doctrine): the cookie
+    // cache can trail a revocation by up to its TTL, and this is a money path.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const session = authResult.session!;
     replayUserId = session.user.id;
 
     // Rate limit: 5 checkouts per minute per user

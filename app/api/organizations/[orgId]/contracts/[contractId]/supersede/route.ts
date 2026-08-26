@@ -18,6 +18,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 
 const BodySchema = z.object({
   reason: z.enum(["AMENDMENT", "RENEWAL"]),
@@ -27,6 +28,10 @@ const BodySchema = z.object({
   paymentTermsDays: z.coerce.number().int().min(1).max(120).optional(),
   autoRenew: z.coerce.boolean().optional(),
   rateCardId: z.string().min(1).nullable().optional(),
+  // License overrides (E2E-audit P0 fix): when present, the carried-over
+  // BillingSubscription is re-priced with these instead of the old terms.
+  licenseCycle: z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]).optional(),
+  licenseFeePaise: z.coerce.number().int().positive().optional(),
 });
 
 export async function POST(
@@ -148,6 +153,40 @@ export async function POST(
         where: { contractId: old.id },
         data: { contractId: successor.id },
       });
+
+      // E2E-audit P0 fix — LICENSE CONTINUITY. The BillingSubscription is
+      // 1:1 with the contract (contractId @unique) AND with the billing
+      // account, and supersession used to leave it stranded on the retired
+      // term: the successor was unlicensed while the dead row kept its seat
+      // count frozen (and, before the invoice-cron guard, kept billing).
+      // Re-point the row onto the successor in the same tx — programs get
+      // the same treatment — re-pricing from the override fields when given
+      // and restarting the billing clock at the new effectiveFrom. No row is
+      // deleted; the money trail on invoices stays untouched.
+      const oldSubscription = await tx.billingSubscription.findUnique({
+        where: { contractId: old.id },
+      });
+      if (oldSubscription) {
+        const subCycle = body.licenseCycle ?? oldSubscription.cycle;
+        const subCycleEnd = nextPeriodEnd(effectiveFrom, subCycle);
+        await tx.billingSubscription.update({
+          where: { id: oldSubscription.id },
+          data: {
+            contractId: successor.id,
+            cycle: subCycle,
+            flatFeePaise:
+              body.licenseFeePaise !== undefined
+                ? BigInt(body.licenseFeePaise)
+                : oldSubscription.flatFeePaise,
+            currentCycleStart: effectiveFrom,
+            currentCycleEnd: subCycleEnd,
+            nextInvoiceDate: subCycleEnd,
+            startsAt: effectiveFrom,
+            endsAt: effectiveTo ?? null,
+            renewalReminderSentAt: null,
+          },
+        });
+      }
 
       await tx.orgAuditLog.create({
         data: {

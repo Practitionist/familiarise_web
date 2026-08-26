@@ -37,6 +37,7 @@ import {
   resolveProgramCycle,
 } from "@/lib/enterprise/cycle-engine";
 import { Prisma } from "@prisma/client";
+import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
@@ -62,7 +63,16 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
       status: "ACTIVE",
       rolledAt: null,
       periodEnd: { lte: now },
-      program: { status: "ACTIVE", archivedAt: null },
+      // E2E-audit P1 fix — never roll assignments for an org that is no
+      // longer billable (SUSPENDED/DEACTIVATED). A suspended org used to get
+      // fresh successor cycles minted every period end.
+      program: {
+        status: "ACTIVE",
+        archivedAt: null,
+        contract: {
+          organization: { status: { in: BILLABLE_ORG_STATUSES } },
+        },
+      },
     },
     take: BATCH_SIZE,
     select: {

@@ -32,6 +32,7 @@ import {
   UNVERIFIED_ORG_SEAT_CAP,
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
+import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveRoleFromGroupNames } from "./resource-user";
@@ -323,6 +324,20 @@ export async function deprovisionScimUser(
       where: { id: membership.id, status: { in: ["PENDING", "ACTIVE"] } },
       data: { status: "SUSPENDED" },
     });
+    // E2E-audit P1 fix — a deprovisioned member's live ProgramAssignments
+    // used to keep counting against program caps AND against the contract's
+    // billed activeSeatCount. Terminate the live assignments (same cascade
+    // as member removal) and release the seats.
+    const now = new Date();
+    await tx.programAssignment.updateMany({
+      where: {
+        membershipId: membership.id,
+        periodEnd: { gte: now },
+        status: { in: ["ACTIVE", "PAUSED"] },
+      },
+      data: { periodEnd: now, status: "CANCELLED" },
+    });
+    await releaseSeatsForTerminatedAssignments(tx, [membership.id]);
     const updated = await tx.membership.findUniqueOrThrow({
       where: { id: membership.id },
     });

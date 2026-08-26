@@ -16,6 +16,7 @@ import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
+import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import React, { useEffect, useState } from "react";
@@ -509,25 +510,33 @@ const MultiStepForm: React.FC = () => {
         });
       }
 
-      // Check for a pending org invitation token stored by the invite page.
-      // This bridges the signup → onboarding → dashboard chain where the
-      // callbackUrl would otherwise be lost.
+      // E2E-audit fix — callbackUrl FIRST, and the stashed invite token is
+      // consumed unconditionally. Previously the token was checked first with
+      // no TTL: clicking an org invite once, then weeks later signing up via
+      // "Book now" (callbackUrl = checkout URL), diverted the completed
+      // onboarding to a likely-expired invite instead of the checkout. An
+      // explicit deep link always outranks a stale side-effect; the redirect
+      // also now uses the hardened same-origin validator.
+      const callbackUrlParam = new URLSearchParams(window.location.search).get(
+        "callbackUrl",
+      );
+      const safeCallback = safeSameOriginPath(callbackUrlParam);
+
       const pendingToken =
         typeof window !== "undefined"
           ? localStorage.getItem("pendingOrgInviteToken")
           : null;
       if (pendingToken) {
         localStorage.removeItem("pendingOrgInviteToken");
-        router.push(`/organizations/invite/${pendingToken}`);
+      }
+
+      if (safeCallback) {
+        router.push(safeCallback);
         return;
       }
 
-      // Check for a callbackUrl query param (passed through from signup page)
-      const callbackUrl = new URLSearchParams(window.location.search).get(
-        "callbackUrl",
-      );
-      if (callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//")) {
-        router.push(callbackUrl);
+      if (pendingToken) {
+        router.push(`/organizations/invite/${pendingToken}`);
         return;
       }
 
