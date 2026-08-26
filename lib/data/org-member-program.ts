@@ -171,7 +171,8 @@ export async function getMyProgramData(params: {
 
   // #777 §C.2 (SCHEMA-FREE) — active programs under the org's active contracts
   // this learner is NOT yet assigned to. Read-only discovery; assignment stays
-  // a MAINTAINER action (no enrollment-request model).
+  // a MAINTAINER action — single or bulk (#1230 wave-9 auto-enroll) — with no
+  // self-service enrollment-request model.
   const assignedProgramIds = new Set(assignments.map((a) => a.program.id));
   const eligiblePrograms = (
     await prisma.program.findMany({

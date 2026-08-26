@@ -198,6 +198,19 @@ export const orgWalletTopUpLimiter = makeLimiter(
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
 
 /**
+ * 10 per hour per org — POST /api/organizations/[orgId]/programs/[programId]/auto-enroll
+ * (#1230 wave-9). One call provisions up to 200 ProgramAssignment rows, each
+ * writing an audit row and (for LICENSED_SEAT) bumping activeSeatCount.
+ * Org-keyed so a stuck automation loop can't churn seats/audit all day and one
+ * tenant's provisioning burst can't crowd out others on the shared bucket.
+ */
+export const orgAutoEnrollLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:org-auto-enroll",
+);
+
+/**
  * 5 per minute per org — POST /api/organizations/[orgId]/webhooks
  * + PATCH endpoint + rotate-secret. Org-keyed to keep a misconfigured
  * automation from chewing through the audit log (every CRUD writes a

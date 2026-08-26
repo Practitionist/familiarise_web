@@ -80,7 +80,7 @@ export async function GET(
 
     // Per-Payment invoices stay out of this response since the v0 lockdown
     // (#768) — v1.1 re-introduces a per-Payment invoice flow.
-    const [payments, credits, creditUsages] = await Promise.all([
+    const [payments, credits, creditAgg, creditUsages] = await Promise.all([
       // All payments for this user, scoped to the selected org context
       prisma.payment.findMany({
         where: { userId, ...orgFilter },
@@ -132,12 +132,24 @@ export async function GET(
           },
         },
         orderBy: { createdAt: "desc" },
+        // Per-user history; bound the payload (mirrors the main consultee
+        // route cap).
+        take: 250,
       }),
 
       // Referral credits
       prisma.referralCredit.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
+        take: 250,
+      }),
+
+      // Credit summary totals — computed via _sum over the UNCAPPED table.
+      // The display list above is capped; deriving balances from it would
+      // silently underreport for users with >250 credits (PR #1247 review).
+      prisma.referralCredit.aggregate({
+        where: { userId },
+        _sum: { amount: true, usedAmount: true, remainingAmount: true },
       }),
 
       // Credit usages
@@ -155,6 +167,7 @@ export async function GET(
           },
         },
         orderBy: { createdAt: "desc" },
+        take: 250,
       }),
     ]);
 
@@ -222,13 +235,15 @@ export async function GET(
       };
     });
 
-    // Calculate credit summary
-    const totalCredits = credits.reduce((sum, c) => sum + c.amount, 0);
-    const usedCredits = credits.reduce((sum, c) => sum + c.usedAmount, 0);
-    const remainingCredits = credits.reduce(
-      (sum, c) => sum + c.remainingAmount,
-      0,
-    );
+    // Calculate credit summary from the uncapped aggregate (BigInt sums →
+    // number), NOT from the capped display list. `?? 0` on the nullable
+    // sums; Number() because aggregations bypass the money result
+    // extensions and return raw BigInt.
+    const totalCredits = creditAgg._sum.amount ? Number(creditAgg._sum.amount) : 0;
+    const usedCredits = creditAgg._sum.usedAmount ? Number(creditAgg._sum.usedAmount) : 0;
+    const remainingCredits = creditAgg._sum.remainingAmount
+      ? Number(creditAgg._sum.remainingAmount)
+      : 0;
 
     return NextResponse.json({
       data: {
@@ -244,7 +259,10 @@ export async function GET(
       success: true,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching consultee payments:", error);
     return NextResponse.json(
       { error: "Failed to fetch payments" },

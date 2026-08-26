@@ -285,6 +285,22 @@ export function createConsulteeQueries(
       refetchOnWindowFocus: true,
     },
 
+    // Same dataset as `events`, tuned for the Home tab: the SSR-dehydrated
+    // seed must survive first paint without an immediate refetch waterfall,
+    // and a background tab regaining focus while the user reads their
+    // overview shouldn't churn the list. Appointments keeps the fresher
+    // `events` config above — same key base, different refresh posture.
+    // Keep this paired with `events`: if you change one's queryKey shape,
+    // change both (the server seed pins the key base).
+    eventsHome: {
+      queryKey: ["consultee-events", consulteeId, scopeKey] as const,
+      queryFn: () => consulteeFetchers.events(consulteeId, orgScope),
+      staleTime: 60_000,
+      gcTime: GC_TIME,
+      retry: 2,
+      refetchOnWindowFocus: false,
+    },
+
     // Consultee profile
     profile: {
       queryKey: ["consultee-profile", consulteeId] as const,
