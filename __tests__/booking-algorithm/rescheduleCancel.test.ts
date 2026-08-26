@@ -128,6 +128,10 @@ function makeSlot(id: string, startsAt: Date, overrides: any = {}) {
     startsAt,
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000),
     isTentative: false,
+    // `@default(SCHEDULED)`, non-nullable. Whole-series flows filter on
+    // SLOT_RESCHEDULABLE_FROM so a delivered session cannot brick the
+    // aggregate 24h gate; an unset fixture reads as not-live.
+    completionStatus: "SCHEDULED",
     appointmentId: "apt-1",
     createdAt: new Date("2025-01-01T00:00:00.000Z"),
     ...overrides,
@@ -544,7 +548,12 @@ describe("Reschedule Route Handler - POST", () => {
             ],
           },
         },
-        data: { status: "PENDING" },
+        // E2E-audit P0 — the PENDING flip MUST refresh requestedAt. The
+        // stale-request expiry sweep keys its PENDING cohort on that column,
+        // so a reschedule that left the original timestamp made any booking
+        // older than 48h read as stale: the next hourly run EXPIRED and fully
+        // refunded a live booking whose proposal was still open.
+        data: { status: "PENDING", requestedAt: expect.any(Date) },
       });
     });
   });
@@ -603,7 +612,12 @@ describe("Reschedule Route Handler - POST", () => {
             ],
           },
         },
-        data: { status: "PENDING" },
+        // E2E-audit P0 — the PENDING flip MUST refresh requestedAt. The
+        // stale-request expiry sweep keys its PENDING cohort on that column,
+        // so a reschedule that left the original timestamp made any booking
+        // older than 48h read as stale: the next hourly run EXPIRED and fully
+        // refunded a live booking whose proposal was still open.
+        data: { status: "PENDING", requestedAt: expect.any(Date) },
       });
     });
 

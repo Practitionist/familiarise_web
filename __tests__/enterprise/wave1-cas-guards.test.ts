@@ -39,6 +39,13 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
     },
     program: { updateMany: jest.fn() },
+    // E2E-audit P0 — supersession carries the licence onto the successor
+    // contract (BillingSubscription is contractId @unique, so the row used to
+    // strand on the retired term: successor unlicensed, seat count frozen).
+    billingSubscription: {
+      findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
     membership: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
@@ -100,6 +107,7 @@ function wireTxShim(extraTxModels: string[] = []) {
       "programAssignment",
       "contract",
       "program",
+      "billingSubscription",
       "membership",
       "user",
       "orgAuditLog",
@@ -228,10 +236,56 @@ describe("POST contracts/[contractId]/supersede — claim-before-repoint", () =>
     expect(m.program.updateMany).not.toHaveBeenCalled();
   });
 
+  it("carries the BillingSubscription onto the successor contract", async () => {
+    // Without this the successor is unlicensed while the dead contract keeps
+    // a frozen seat count — and, before the invoice-cron guard, kept billing.
+    wireTxShim();
+    setupOldContract();
+    m.contract.updateMany.mockResolvedValue({ count: 1 });
+    m.billingSubscription.findUnique.mockResolvedValue({
+      id: "bsub-1",
+      cycle: "MONTHLY",
+      flatFeePaise: BigInt(500000),
+    });
+
+    const res = await supersedeContract(
+      makeReq({ reason: "RENEWAL" }),
+      routeParams,
+    );
+
+    expect(res.status).toBe(201);
+    expect(m.billingSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "bsub-1" },
+        data: expect.objectContaining({
+          contractId: "c-2",
+          // The billing clock restarts at the successor's effectiveFrom.
+          renewalReminderSentAt: null,
+        }),
+      }),
+    );
+  });
+
+  it("supersedes cleanly when the contract carries no licence at all", async () => {
+    wireTxShim();
+    setupOldContract();
+    m.contract.updateMany.mockResolvedValue({ count: 1 });
+    m.billingSubscription.findUnique.mockResolvedValue(null);
+
+    const res = await supersedeContract(
+      makeReq({ reason: "AMENDMENT" }),
+      routeParams,
+    );
+
+    expect(res.status).toBe(201);
+    expect(m.billingSubscription.update).not.toHaveBeenCalled();
+  });
+
   it("claims the old contract first, then re-points programs, then 201s", async () => {
     wireTxShim();
     setupOldContract();
     m.contract.updateMany.mockResolvedValue({ count: 1 });
+    m.billingSubscription.findUnique.mockResolvedValue(null);
 
     const res = await supersedeContract(makeReq({ reason: "AMENDMENT" }), routeParams);
     expect(res.status).toBe(201);
