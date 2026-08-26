@@ -59,7 +59,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { applyRateLimit } from "@/lib/rate-limit";
 import type { NextRequest } from "next/server";
-import { POST as autoEnrollPOST } from "@/app/api/organizations/[orgId]/programs/[programId]/auto-enroll/route";
+import { POST as autoEnrollPOST, AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/app/api/organizations/[orgId]/programs/[programId]/auto-enroll/route";
 
 const mockedPrisma = prisma as unknown as {
   program: {
@@ -177,18 +177,35 @@ describe("auto-enroll gates", () => {
     expect(mockedPrisma.program.findFirst).not.toHaveBeenCalled();
   });
 
-  it.each(["SUSPENDED", "DEACTIVATED"] as const)(
-    "rejects a %s org with ORG_NOT_ACTIVE",
-    async (status) => {
-      mockedRequireOrgAccess.mockResolvedValueOnce(accessFixture(status));
-      const res = await autoEnrollPOST(
-        makeRequest({ membershipIds: ["m-1"], ...PERIOD }),
-        routeArgs(),
-      );
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({ error: "ORG_NOT_ACTIVE" });
-    },
-  );
+  it("rejects a SUSPENDED org with ORG_NOT_ACTIVE", async () => {
+    // DEACTIVATED is deliberately absent: requireOrgAccess answers it with a
+    // 403 before this route body runs, so a DEACTIVATED arm here would be
+    // dead code pinned by a mocked gate (PR #1234 invitations precedent).
+    mockedRequireOrgAccess.mockResolvedValueOnce(accessFixture("SUSPENDED"));
+    const res = await autoEnrollPOST(
+      makeRequest({ membershipIds: ["m-1"], ...PERIOD }),
+      routeArgs(),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "ORG_NOT_ACTIVE" });
+  });
+
+  it("passes through requireOrgAccess's 403 for a DEACTIVATED org", async () => {
+    const errRes = Response.json(
+      { error: "Organization has been deactivated" },
+      { status: 403 },
+    );
+    mockedRequireOrgAccess.mockResolvedValueOnce({
+      ...accessFixture("DEACTIVATED"),
+      error: errRes,
+    });
+    const res = await autoEnrollPOST(
+      makeRequest({ membershipIds: ["m-1"], ...PERIOD }),
+      routeArgs(),
+    );
+    expect(res.status).toBe(403);
+    expect(mockedPrisma.program.findFirst).not.toHaveBeenCalled();
+  });
 
   it("rate-limits before touching the database", async () => {
     const tooMany = Response.json({ error: "Too many requests." }, {
@@ -436,5 +453,37 @@ describe("auto-enroll enrollment loop", () => {
     expect(body.enrolled).toBe(2);
     expect(body.failed).toBe(1);
     expect(body.results[1].error).toBe("Internal error");
+  });
+
+  it("stops before the platform function limit and answers truncated:true with committed rows only", async () => {
+    seedHappyPath();
+    // Date.now call order inside POST: (1) periodEnd-future check,
+    // (2) startedAt capture, then (3+) one loop-check per entry. Let the
+    // first three read real base time, then jump past the deadline so entry
+    // #2's pre-flight check trips and the batch stops BEFORE enrolling m-2.
+    const base = Date.now();
+    let calls = 0;
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => {
+      calls++;
+      return calls <= 3
+        ? base
+        : base + AUTO_ENROLL_BATCH_DEADLINE_MS + 60_000;
+    });
+    try {
+      const res = await autoEnrollPOST(
+        makeRequest({ membershipIds: ["m-1", "m-2", "m-3"], ...PERIOD }),
+        routeArgs(),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.truncated).toBe(true);
+      expect(body.enrolled).toBe(1);
+      expect(body.results.map((r: { membershipId: string }) => r.membershipId)).toEqual([
+        "m-1",
+      ]);
+      expect(mockedPrisma.orgAuditLog.create).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
