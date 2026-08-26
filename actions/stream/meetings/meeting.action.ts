@@ -585,6 +585,13 @@ async function refuseMeetingCreation(
     return "This session was cancelled or moved.";
   }
   const appt = dbSlot.appointment;
+  // The relation is required in the schema, so a null here is corrupt data
+  // rather than any real booking. There is no booking state to judge, and
+  // entitlement cannot be established either — `requireEntitledCaller` runs
+  // immediately after this and owns that refusal, so the caller still gets
+  // one message for "nothing links you to this session" instead of a
+  // TypeError surfacing as an opaque 500.
+  if (!appt) return null;
   const bookingStatus =
     appt.consultation?.status ??
     appt.subscription?.status ??
