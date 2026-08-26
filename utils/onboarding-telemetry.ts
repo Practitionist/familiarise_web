@@ -17,6 +17,8 @@ export function trackOnboardingEvent(
     | "step_advance"
     | "step_back"
     | "draft_save_failed"
+    | "draft_save_skipped"
+    | "draft_load_failed"
     | "submit_success"
     | "submit_error"
     | "verification_deferred",

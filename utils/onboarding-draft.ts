@@ -167,12 +167,38 @@ export function sanitizeDraftValue(
  * into writing unsanitized payloads.
  *
  * Returns null when validation fails or the serialized form exceeds budget.
+ * Callers that need to TELL THOSE APART (to report a stuck draft rather than
+ * skipping in silence) should use `prepareDraftForPersistDetailed`.
  */
 export function prepareDraftForPersist(
   input: unknown,
 ): SaveOnboardingDraftInput | null {
+  const result = prepareDraftForPersistDetailed(input);
+  return result.ok ? result.value : null;
+}
+
+/** Why a draft snapshot could not be persisted. */
+export type DraftRejectionReason =
+  /** Failed the wire schema — includes a role outside the three public flows. */
+  | "INVALID"
+  /** Sanitized fine, but the serialized form exceeds ONBOARDING_DRAFT_MAX_BYTES. */
+  | "OVER_BUDGET";
+
+export type PrepareDraftResult =
+  | { ok: true; value: SaveOnboardingDraftInput }
+  | { ok: false; reason: DraftRejectionReason; bytes?: number };
+
+/**
+ * The reason-carrying form. A silent `null` conflates "this payload is
+ * malformed" with "this user has simply written too much", and only the
+ * second one means an otherwise-healthy wizard has stopped saving — so the
+ * caller needs to know which it got.
+ */
+export function prepareDraftForPersistDetailed(
+  input: unknown,
+): PrepareDraftResult {
   const parsed = SaveOnboardingDraftInputSchema.safeParse(input);
-  if (!parsed.success) return null;
+  if (!parsed.success) return { ok: false, reason: "INVALID" };
 
   const sanitizedPayload = sanitizeDraftValue(
     parsed.data.payload,
@@ -186,12 +212,11 @@ export function prepareDraftForPersist(
   // Web-standard byte sizing: Buffer is a Node global present in client
   // bundles only via Next.js's incidental polyfill; TextEncoder is baseline
   // across runtimes and returns identical UTF-8 byte counts.
-  if (
-    new TextEncoder().encode(serialized).length > ONBOARDING_DRAFT_MAX_BYTES
-  ) {
-    return null;
+  const bytes = new TextEncoder().encode(serialized).length;
+  if (bytes > ONBOARDING_DRAFT_MAX_BYTES) {
+    return { ok: false, reason: "OVER_BUDGET", bytes };
   }
-  return prepared;
+  return { ok: true, value: prepared };
 }
 
 /**
@@ -217,6 +242,13 @@ export function encodeDraftForSave(
   input: SaveOnboardingDraftInput,
 ): SaveOnboardingDraftInput | null {
   return prepareDraftForPersist(input);
+}
+
+/** `encodeDraftForSave` with the rejection reason kept. */
+export function encodeDraftForSaveDetailed(
+  input: SaveOnboardingDraftInput,
+): PrepareDraftResult {
+  return prepareDraftForPersistDetailed(input);
 }
 
 /**

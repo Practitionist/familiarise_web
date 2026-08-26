@@ -65,22 +65,35 @@ export async function saveOnboardingDraftAction(
 }
 
 export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult> {
-  const session = await getSession(true);
-  if (!session?.user?.id) return unauthorized();
+  // A REJECTION here is not equivalent to "no draft": the wizard arms its
+  // autosave only once this call settles, so an escaping error (a pooler
+  // blip on the very first read, a session lookup failure) left the flag
+  // unset for the whole mount and silently disabled saving for the entire
+  // run — the user finished onboarding with nothing persisted and no signal.
+  // Resolve a failure into the ordinary "no draft" answer instead.
+  try {
+    const session = await getSession(true);
+    if (!session?.user?.id) return unauthorized();
 
-  const draft = await prisma.onboardingDraft.findUnique({
-    where: { userId: session.user.id },
-    select: { role: true, currentStep: true, payload: true },
-  });
+    const draft = await prisma.onboardingDraft.findUnique({
+      where: { userId: session.user.id },
+      select: { role: true, currentStep: true, payload: true },
+    });
 
-  if (!draft) return { success: true, draft: null };
+    if (!draft) return { success: true, draft: null };
 
-  const snapshot: OnboardingDraftSnapshot = {
-    role: draft.role,
-    currentStep: draft.currentStep,
-    payload: reviveDraftPayload(draft.payload),
-  };
-  return { success: true, draft: snapshot };
+    const snapshot: OnboardingDraftSnapshot = {
+      role: draft.role,
+      currentStep: draft.currentStep,
+      payload: reviveDraftPayload(draft.payload),
+    };
+    return { success: true, draft: snapshot };
+  } catch (error) {
+    // Losing a draft is recoverable (the user re-enters this step); losing
+    // autosave for the session is not, so this degrades rather than throws.
+    console.error("onboarding: draft load failed", error);
+    return { success: false, error: "Draft unavailable" };
+  }
 }
 
 /** Idempotent by design — called after successful completion and whenever the

@@ -36,6 +36,8 @@ import {
   ONBOARDING_DRAFT_MAX_BYTES,
   createDraftSaveQueue,
   encodeDraftForSave,
+  encodeDraftForSaveDetailed,
+  prepareDraftForPersistDetailed,
   reviveDraftPayload,
   sanitizeDraftValue,
 } from "../../utils/onboarding-draft";
@@ -347,3 +349,73 @@ function validInput(
     ...overrides,
   };
 }
+
+
+/**
+ * The byte gate must count UTF-8 BYTES, not UTF-16 code units. Every existing
+ * size test uses `"x".repeat(...)`, which is pure ASCII — those pass
+ * identically against a `.length` implementation, so the property was correct
+ * but unpinned. A Devanagari name, a CJK company or an emoji in a bio makes
+ * the two differ by up to 4x, and getting it wrong writes payloads several
+ * times over the intended cap.
+ */
+describe("byte gate counts UTF-8 bytes, not JS string length", () => {
+  const under = (payload: Record<string, unknown>) =>
+    encodeDraftForSave({ role: null, currentStep: 0, payload }) !== null;
+
+  it("rejects a payload that is under the cap in code units but over it in bytes", () => {
+    // "क" is 1 UTF-16 code unit but 3 UTF-8 bytes. 30k of them is ~30k
+    // .length and ~90k bytes — a `.length` gate would wave this through.
+    const devanagari = "\u0915".repeat(30_000);
+    expect(devanagari.length).toBeLessThan(ONBOARDING_DRAFT_MAX_BYTES);
+    expect(new TextEncoder().encode(devanagari).length).toBeGreaterThan(
+      ONBOARDING_DRAFT_MAX_BYTES,
+    );
+    expect(under({ description: devanagari })).toBe(false);
+  });
+
+  it("counts an astral emoji as 4 bytes", () => {
+    // Two code units each, four bytes each.
+    const emoji = "\u{1F680}".repeat(20_000);
+    expect(emoji.length).toBe(40_000);
+    expect(new TextEncoder().encode(emoji).length).toBe(80_000);
+    expect(under({ description: emoji })).toBe(false);
+  });
+
+  it("still accepts an equivalent-length ASCII payload that fits", () => {
+    expect(under({ description: "x".repeat(20_000) })).toBe(true);
+  });
+});
+
+describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
+  it("reports OVER_BUDGET with the byte count, so a stuck draft is diagnosable", () => {
+    const tooBig = prepareDraftForPersistDetailed({
+      role: null,
+      currentStep: 0,
+      payload: { description: "x".repeat(ONBOARDING_DRAFT_MAX_BYTES + 1) },
+    });
+    // The byte count rides along so the breadcrumb can show how far over.
+    expect(tooBig).toMatchObject({ ok: false, reason: "OVER_BUDGET" });
+    expect((tooBig as { bytes: number }).bytes).toBeGreaterThan(
+      ONBOARDING_DRAFT_MAX_BYTES,
+    );
+  });
+
+  it("reports INVALID for a role outside the three draftable flows", () => {
+    // STAFF is invite-only and deliberately not draftable — but the caller
+    // must be able to tell that apart from "the user wrote too much".
+    expect(
+      prepareDraftForPersistDetailed({ role: "STAFF", currentStep: 0, payload: {} }),
+    ).toMatchObject({ ok: false, reason: "INVALID" });
+  });
+
+  it("encodeDraftForSaveDetailed returns the prepared value on success", () => {
+    expect(
+      encodeDraftForSaveDetailed({
+        role: null,
+        currentStep: 1,
+        payload: { firstName: "Asha" },
+      }),
+    ).toMatchObject({ ok: true, value: { payload: { firstName: "Asha" } } });
+  });
+});

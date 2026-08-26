@@ -13,7 +13,7 @@ import {
 } from "@/actions/onboarding-draft.action";
 import {
   createDraftSaveQueue,
-  encodeDraftForSave,
+  encodeDraftForSaveDetailed,
   type DraftSaveQueue,
 } from "@/utils/onboarding-draft";
 import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
@@ -29,7 +29,7 @@ import { signOut, useSession } from "@/lib/auth-client";
 import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // Step 0 stays eager — every user sees Personal Info first.
@@ -298,8 +298,30 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   ADMIN: [personalInfoStep],
 };
 
-/** Autosave debounce for wizard drafts. Long enough to batch rapid typing in
- *  react-hook-form merges, short enough that a tab close loses nothing. */
+/**
+ * Pick the step registry for a role, defaulting to the consultee flow.
+ *
+ * `Object.hasOwn` rather than `role in ONBOARDING_STEPS`: `in` walks the
+ * prototype chain, so "constructor", "toString" and "__proto__" all answer
+ * true and yield an Object.prototype member instead of a step array. The
+ * draft payload is stored as an unconstrained JSON blob, so that value is
+ * reachable — and the resulting `steps.map(...)` throws during render, taking
+ * the "Start over" button down with it.
+ */
+function resolveRegistryRole(role: unknown): OnboardingRole {
+  return typeof role === "string" && Object.hasOwn(ONBOARDING_STEPS, role)
+    ? (role as OnboardingRole)
+    : "CONSULTEE";
+}
+
+/** Autosave debounce for wizard drafts.
+ *
+ *  NOTE: `formData` only changes on a STEP TRANSITION — react-hook-form owns
+ *  intra-step state and `setFormData` is called from `handleNext`, not on
+ *  keystrokes. So this debounce coalesces rapid Next/Back clicks, not typing,
+ *  and a step's contents are persisted when the user advances out of it.
+ *  The pagehide flush below covers the window between the click and the
+ *  timer firing. */
 const DRAFT_SAVE_DEBOUNCE_MS = 800;
 
 const MultiStepForm: React.FC = () => {
@@ -318,6 +340,10 @@ const MultiStepForm: React.FC = () => {
   const draftReadyRef = useRef(false);
   const draftCompletedRef = useRef(false);
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest step/state for the pagehide flush, which must read current values
+  // without re-registering its listener on every keystroke-free re-render.
+  const stepRef = useRef(0);
+  const formDataRef = useRef<Partial<OnboardingFormData>>({});
   // Serialized saves (review round 1): a later keystroke must land after an
   // earlier in-flight upsert, and the row must never be deleted while a save
   // is still unsettled — otherwise the upsert recreates it after the clear.
@@ -355,20 +381,53 @@ const MultiStepForm: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     async function hydrate() {
-      const result = await loadOnboardingDraftAction();
+      let result: Awaited<ReturnType<typeof loadOnboardingDraftAction>>;
+      try {
+        result = await loadOnboardingDraftAction();
+      } catch {
+        // Autosave must arm even when the read fails, or one transient error
+        // disables saving for the whole session (the effect has [] deps, so
+        // there is no second chance). Losing the RESTORE is acceptable;
+        // losing every subsequent SAVE is not.
+        if (!cancelled) draftReadyRef.current = true;
+        trackOnboardingEvent("draft_load_failed", { reason: "threw" });
+        return;
+      }
       if (cancelled) return;
       draftReadyRef.current = true;
-      if (!result.success || !result.draft) return;
+      if (!result.success) {
+        trackOnboardingEvent("draft_load_failed", { reason: "action_error" });
+        return;
+      }
+      if (!result.draft) return;
       const { payload, currentStep, role } = result.draft;
       const hasPayload = Object.keys(payload).length > 0;
       if (!hasPayload && !(role && currentStep > 0)) return;
-      setFormData((prev) => ({ ...payload, ...prev }) as Partial<OnboardingFormData>);
-      // Registry length depends on the restored role; clamp defensively so a
-      // registry change between sessions can never point past the last step.
-      const registry =
-        role && role in ONBOARDING_STEPS ? ONBOARDING_STEPS[role as OnboardingRole] : null;
-      if (registry && currentStep > 0) {
-        setStep(Math.min(currentStep, registry.length - 1));
+      // Whatever the user has already committed (a step-0 submit that beat this
+      // load) still outranks the stored draft. Read it from the latest-value
+      // ref, which is assigned during render: a functional `setFormData` would
+      // not give us the merged result synchronously, and this effect needs the
+      // effective role NOW to clamp the step against the right registry.
+      const merged = {
+        ...payload,
+        ...formDataRef.current,
+      } as Partial<OnboardingFormData>;
+      setFormData(merged);
+      // Clamp against the registry the RENDER will actually select, which
+      // reads formData.role (the payload), not the stored column. The two can
+      // disagree — the merge above lets an in-flight step-0 submit win over a
+      // slower load — and clamping against the wrong one produces a step index
+      // past the end of the rendered registry ("Step 5 of 2", blank body).
+      //
+      // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so a stored
+      // role of "constructor"/"toString"/"__proto__" would pass and hand back
+      // an Object.prototype member instead of a step array — `steps.map(...)`
+      // then throws during render, and "Start over" lives inside the subtree
+      // that threw, so the wizard cannot be recovered from the UI.
+      const effectiveRole = resolveRegistryRole(merged.role);
+      const registry = ONBOARDING_STEPS[effectiveRole];
+      if (currentStep > 0) {
+        setStep(Math.max(0, Math.min(currentStep, registry.length - 1)));
       }
       if (currentStep > 0 || hasPayload) setDraftRestored(true);
       trackOnboardingEvent("draft_restored", { currentStep, role });
@@ -379,20 +438,30 @@ const MultiStepForm: React.FC = () => {
     };
   }, []);
 
-  // Autosave: debounce every step/data transition into a single upsert.
-  useEffect(() => {
-    if (!draftReadyRef.current || draftCompletedRef.current) return;
-    if (!session?.user?.id) return;
-
-    const queue = draftSaveQueueRef.current;
-    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
-    draftSaveTimerRef.current = setTimeout(() => {
-      const encoded = encodeDraftForSave({
-        role: formData.role ?? null,
-        currentStep: step,
-        payload: formData as Record<string, unknown>,
+  // The one place a draft snapshot is dispatched. Shared by the debounce timer
+  // and the pagehide flush so both go through the same sanitize/gate/queue path.
+  const dispatchDraftSave = useCallback(
+    (snapshotStep: number, snapshot: Partial<OnboardingFormData>) => {
+      const queue = draftSaveQueueRef.current;
+      if (!queue) return;
+      const prepared = encodeDraftForSaveDetailed({
+        role: snapshot.role ?? null,
+        currentStep: snapshotStep,
+        payload: snapshot as Record<string, unknown>,
       });
-      if (!encoded || !queue) return; // invalid/over-budget payloads are skipped, never fatal
+      // Skipping stays non-fatal, but it is no longer silent. OVER_BUDGET in
+      // particular is sticky: once the payload crosses the cap every later
+      // save is a no-op while the resume banner still promises saved progress,
+      // so it has to be visible somewhere.
+      if (!prepared.ok) {
+        trackOnboardingEvent("draft_save_skipped", {
+          reason: prepared.reason,
+          bytes: prepared.bytes ?? null,
+          currentStep: snapshotStep,
+        });
+        return;
+      }
+      const encoded = prepared.value;
       void queue
         .enqueue(() => saveOnboardingDraftAction(encoded))
         .then((result) => {
@@ -403,12 +472,56 @@ const MultiStepForm: React.FC = () => {
         .catch(() => {
           trackOnboardingEvent("draft_save_failed", { error: "unreachable" });
         });
+    },
+    [],
+  );
+
+  stepRef.current = step;
+  formDataRef.current = formData;
+
+  // Autosave: debounce every step/data transition into a single upsert.
+  useEffect(() => {
+    if (!draftReadyRef.current || draftCompletedRef.current) return;
+    if (!session?.user?.id) return;
+
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      draftSaveTimerRef.current = null;
+      dispatchDraftSave(step, formData);
     }, DRAFT_SAVE_DEBOUNCE_MS);
 
     return () => {
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     };
-  }, [step, formData, session?.user?.id]);
+  }, [step, formData, session?.user?.id, dispatchDraftSave]);
+
+  // Flush a pending save when the page is being hidden or torn down.
+  //
+  // Without this, the debounce window after a Next click is simply lost if the
+  // user closes the tab inside it. This does not make delivery guaranteed —
+  // a server action is a normal fetch and the browser may abandon it during
+  // unload — but firing immediately is strictly better than a certain loss.
+  // `pagehide` (not `beforeunload`) because bfcache and iOS Safari only fire
+  // the former; `visibilitychange` catches tab-switches and app backgrounding.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const flush = () => {
+      if (!draftReadyRef.current || draftCompletedRef.current) return;
+      if (!draftSaveTimerRef.current) return; // nothing pending
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+      dispatchDraftSave(stepRef.current, formDataRef.current);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [session?.user?.id, dispatchDraftSave]);
 
   /** Cancel pending autosave and let every dispatched-but-unsettled save land
    *  BEFORE the caller deletes the draft row — an upsert arriving after the
@@ -694,10 +807,7 @@ const MultiStepForm: React.FC = () => {
   // `role` is only trustworthy once step 0 has been submitted; before that (and
   // for anything the registry does not cover) the consultee flow is the
   // default, as it was when the labels lived in their own map.
-  const currentRole: OnboardingRole =
-    formData.role && formData.role in ONBOARDING_STEPS
-      ? (formData.role as OnboardingRole)
-      : "CONSULTEE";
+  const currentRole: OnboardingRole = resolveRegistryRole(formData.role);
   const steps = ONBOARDING_STEPS[currentRole];
   const totalSteps = steps.length;
   const activeStep = steps[step];
