@@ -59,7 +59,8 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { applyRateLimit } from "@/lib/rate-limit";
 import type { NextRequest } from "next/server";
-import { POST as autoEnrollPOST, AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/app/api/organizations/[orgId]/programs/[programId]/auto-enroll/route";
+import { POST as autoEnrollPOST } from "@/app/api/organizations/[orgId]/programs/[programId]/auto-enroll/route";
+import { AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/lib/api/organizations/auto-enroll-config";
 
 const mockedPrisma = prisma as unknown as {
   program: {

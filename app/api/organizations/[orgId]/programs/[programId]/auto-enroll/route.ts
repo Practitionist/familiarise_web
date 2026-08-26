@@ -41,6 +41,7 @@ import { claimProgramAssignment, ProgramAssignmentOverlapError } from "@/lib/api
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/lib/api/organizations/auto-enroll-config";
 import {
   applyRateLimit,
   orgAutoEnrollLimiter,
@@ -51,14 +52,6 @@ const BodySchema = z.object({
   periodStart: z.coerce.date(),
   periodEnd: z.coerce.date(),
 });
-
-/**
- * Wall-clock budget for the sequential enrollment loop. Netlify hard-kills
- * synchronous functions at 60s; 45s leaves headroom for the response and a
- * safety margin over the worst per-entry retry chain (3 × ~275ms backoff).
- * Exported for tests.
- */
-export const AUTO_ENROLL_BATCH_DEADLINE_MS = 45_000;
 
 interface RowResult {
   membershipId: string;
