@@ -438,7 +438,10 @@ export async function GET(
 
     return NextResponse.json({ data: transform, success: true });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching consultee resources:", error);
     return NextResponse.json(
       { error: "Failed to fetch resources" },

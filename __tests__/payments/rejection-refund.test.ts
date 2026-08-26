@@ -22,6 +22,7 @@
 
 const mockResolveContext = jest.fn();
 const mockRefundBookingPayment = jest.fn();
+const mockIsFreeCreditIntent = jest.fn();
 const mockNotifyRefundProcessed = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockCaptureException = jest.fn();
@@ -33,6 +34,7 @@ jest.mock("../../lib/booking/cancellation-scope", () => ({
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
+  isFreeCreditIntent: (...a: unknown[]) => mockIsFreeCreditIntent(...a),
 }));
 
 jest.mock("../../lib/novu", () => ({
@@ -57,7 +59,12 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
 
 const PAID = {
-  paidPayment: { id: "pay-1", amountPaise: 100_000, refundablePaise: 100_000 },
+  paidPayment: {
+    id: "pay-1",
+    amountPaise: 100_000,
+    refundablePaise: 100_000,
+    paymentIntent: "pay_ABC",
+  },
   policySnapshot: null,
   hoursUntilNextSession: null,
   sessionsCompleted: 0,
@@ -68,6 +75,7 @@ const PAID = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockResolveContext.mockResolvedValue(PAID);
+  mockIsFreeCreditIntent.mockReturnValue(false);
   mockRefundBookingPayment.mockResolvedValue({
     refundId: "r1",
     amountRefundedPaise: 100_000,
@@ -197,7 +205,12 @@ describe("refundRejectedRequest", () => {
     // nothing instead of the remainder.
     mockResolveContext.mockResolvedValue({
       ...PAID,
-      paidPayment: { id: "pay-1", amountPaise: 100_000, refundablePaise: 30_000 },
+      paidPayment: {
+        id: "pay-1",
+        amountPaise: 100_000,
+        refundablePaise: 30_000,
+        paymentIntent: "pay_ABC",
+      },
     });
     mockRefundBookingPayment.mockResolvedValue({
       refundId: "r1",
@@ -238,6 +251,40 @@ describe("refundRejectedRequest", () => {
       "user-1",
       expect.objectContaining({ amount: 90_000 }),
     );
+  });
+
+  it("sends a credit-funded payment through the front door with no amount (#1161)", async () => {
+    // amount 0 means the refundable clamp reads 0 and used to skip the refund
+    // entirely — the buyer's credits stayed consumed. The credits rail takes
+    // no partial amount, so it routes around the clamp.
+    mockResolveContext.mockResolvedValue({
+      ...PAID,
+      paidPayment: {
+        id: "pay-free-1",
+        amountPaise: 0,
+        refundablePaise: 0,
+        paymentIntent: "free_1730000000_abc",
+      },
+    });
+    mockIsFreeCreditIntent.mockReturnValue(true);
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 0,
+      rail: "CREDITS",
+    });
+
+    const result = await refundRejectedRequest({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
+    });
+
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay-free-1" }),
+    );
+    expect(mockRefundBookingPayment.mock.calls[0][0].amountPaise).toBeUndefined();
+    expect(result).toEqual({ refundPct: 100, amountRefundedPaise: 0 });
   });
 
   it("leaves the rejection standing when the refund fails", async () => {

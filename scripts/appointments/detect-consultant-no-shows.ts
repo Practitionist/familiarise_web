@@ -31,9 +31,10 @@ import {
 } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
-import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { CANCELLABLE_FROM } from "@/lib/booking/transitions";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 // Conservative grace window: a session must have ended at least this long ago
 // before we treat a missing consultant as a no-show. Well past the slot end so
@@ -73,7 +74,11 @@ function findNoShowCandidates(graceCutoff: Date) {
         payment: {
           some: {
             paymentStatus: PaymentStatus.SUCCEEDED,
-            amount: { gt: 0 },
+            // E2E-audit P1 fix — amount > 0 used to exclude fully
+            // credit-funded (free_) bookings, so a consultant no-showing a
+            // credits-paid session silently skipped BOTH the cancellation
+            // and the credit restoration. The front door routes those to the
+            // credits rail on its own.
             deletedAt: null,
           },
         },
@@ -208,7 +213,7 @@ async function refundNoShowConsultation(
   paidPayment: PaidPayment | undefined;
 }> {
   const paidPayment = consultation.appointment?.payment?.find(
-    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED && p.amount > 0,
+    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED,
   );
   if (!paidPayment) {
     const msg = `No refundable payment for no-show consultation ${consultation.id}`;
@@ -217,12 +222,18 @@ async function refundNoShowConsultation(
     return { refundedPaise: 0, succeeded: false, paidPayment: undefined };
   }
   try {
-    const r = await refundPayment({
+    // E2E-audit P1 fix — route through the booking front door (doctrine
+    // rule 3). Raw refundPayment throws UNKNOWN_GATEWAY on org-funded
+    // internal intents (org_wallet_/org_invoice_/org_license_), which used
+    // to strand the refund as a PENDING placeholder until the reconcile cron
+    // failed it a day later — with the booking already CANCELLED. The front
+    // door splits gateway / in-ledger-org / credits rails correctly.
+    const r = await refundBookingPayment({
       paymentId: paidPayment.id,
       reason: "consultant no-show (#471)",
       initiatedByUserId: null,
     });
-    console.log(`   💸 Refunded ${r.amountRefundedPaise}p`);
+    console.log(`   💸 Refunded ${r.amountRefundedPaise}p via ${r.rail}`);
     return {
       refundedPaise: r.amountRefundedPaise,
       succeeded: true,
@@ -232,6 +243,15 @@ async function refundNoShowConsultation(
     const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
     console.error(`   ❌ ${msg}`);
     errors.push(msg);
+    // Ops parity with every other refund-failure path: durable signal, not
+    // just this job's stdout.
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `No-show refund failed for consultation ${consultation.id}`,
+      err: refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
+      context: { paymentId: paidPayment.id },
+    }).catch(() => {});
     return { refundedPaise: 0, succeeded: false, paidPayment };
   }
 }

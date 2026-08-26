@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
+import { cascadeRunFailed } from "@/scripts/refunds/cascade-run-outcome";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
 
@@ -43,7 +44,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       errorCount: result.errorCount,
     });
 
-    return NextResponse.json(result);
+    // PM-34 — result.success === false means some SUCCEEDED refunds failed
+    // their cascade; an unconditional 200 told the cron's health check
+    // everything was fine and it never paged. Mirror the other money crons
+    // (e.g. appointment-reminders) with a 500 on a failed run.
+    return NextResponse.json(result, {
+      status: cascadeRunFailed(result) ? 500 : 200,
+    });
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
     // skips with a 409 instead of double-running.

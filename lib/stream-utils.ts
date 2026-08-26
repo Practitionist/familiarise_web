@@ -70,6 +70,20 @@ export function getDmChannelId(
   userId2: string,
   organizationId?: string | null,
 ): string {
+  // A pair of one is not a pair. `createChannel` de-duplicates its member array
+  // through a Set, so `[a, a]` silently collapsed to a one-member `messaging`
+  // channel that rendered as its own raw id (channelUtils has no branch for
+  // zero counterparties) and that nothing could ever reply in. Checkout already
+  // refuses self-booking, so reaching here with a self-pair means a caller
+  // resolved the two sides wrongly — which is worth a stack trace, not a
+  // channel. Callers that iterate over untrusted pair lists must filter first;
+  // `getDmPairsForUser` does.
+  if (userId1 === userId2) {
+    throw new Error(
+      `getDmChannelId: refusing to derive a self-DM id for ${userId1}`,
+    );
+  }
+
   // Code-unit ordering, NOT localeCompare. #1134 P0-3: localeCompare sorts by
   // ICU collation — case-insensitive at the primary level and dependent on the
   // runtime's ICU build and default locale — so the same pair yielded different
@@ -135,4 +149,22 @@ export function bookingOrgId(booking: {
     booking.appointments?.find((a) => a.organizationId)?.organizationId ??
     null
   );
+}
+
+/**
+ * Belt-and-braces detector for a duplicate-channel rejection so concurrent
+ * create-on-miss paths can ADOPT the winner's channel instead of failing the
+ * user journey (architecture review F-HIGH-3).
+ *
+ * Deliberately NARROW (message text only). Stream's official API error table
+ * defines no "already exists" code — code 17 is `Not Allowed Error` (HTTP 403)
+ * and v9's channel.create() is an idempotent get-or-create via the /query
+ * endpoint, so duplicates normally RESOLVE rather than reject. Matching by
+ * code or status would misclassify documented failures (notably 17/403) as
+ * benign races and silently skip creation. Only an error whose text names the
+ * collision is treated as adoptable; anything else propagates.
+ */
+export function isChannelAlreadyExistsError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /already exists/i.test(error.message);
 }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/payments/operations/refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import { withIdempotency } from "@/lib/api/idempotency";
+import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
   try {
@@ -123,6 +124,11 @@ export async function POST(req: NextRequest) {
     // privileged: staff read every money surface for ticket context.
     const auth = await requireBackofficeSurface("refunds.manage");
     if (auth.error) return auth.error;
+
+    // #677/PM-36 — throttle the most dangerous button in the app. Keyed per
+    // admin user; 10/min is far above legitimate ops cadence.
+    const limited = await applyRateLimit(moneyOpsLimiter, auth.session.user.id);
+    if (limited) return limited;
 
     const initiatedByUserId = auth.session?.user?.id ?? null;
 

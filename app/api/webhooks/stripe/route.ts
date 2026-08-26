@@ -49,7 +49,27 @@ export async function POST(req: NextRequest) {
 
   try {
     const event = JSON.parse(body);
-    const { type: eventType } = stripeBaseEventSchema.parse(event);
+    // A validly-signed but structurally-invalid payload is a BAD REQUEST, not
+    // a server error: returning 500 makes Stripe burn its full exponential
+    // retry schedule on an event that can never succeed and eventually
+    // disables the endpoint — the exact failure mode the Razorpay route
+    // avoids by reserving non-2xx for transient failures.
+    let eventType: string;
+    try {
+      eventType = stripeBaseEventSchema.parse(event).type;
+    } catch (parseError) {
+      console.error(
+        "Stripe webhook payload failed envelope validation:",
+        parseError,
+      );
+      Sentry.captureException(parseError, {
+        tags: { subsystem: "payments", provider: "stripe" },
+      });
+      return NextResponse.json(
+        { error: "Unrecognized webhook payload shape" },
+        { status: 400 },
+      );
+    }
 
     // Log webhook event for audit trail (idempotency check).
     // Stripe always sends a unique `evt_...` id, but if it's missing we
@@ -132,9 +152,15 @@ export async function POST(req: NextRequest) {
         // Refund events
         case "charge.refunded": {
           const refundEvent = event.data.object;
-          // Stripe includes refunds array in the charge object
-          if (refundEvent.refunds && refundEvent.refunds.data.length > 0) {
-            const latestRefund = refundEvent.refunds.data[0];
+          // Stripe includes the refunds array in the charge object, newest
+          // first. Drive EVERY refund in the array, not just data[0]: with
+          // two refunds on one charge and delayed/out-of-order delivery,
+          // both events resolved data[0] to the newer refund and refund #1
+          // never got a row or a cascade. handleRefundCreated is idempotent
+          // per gateway refund id (unique + terminal-status guard), so
+          // re-processing an already-booked entry is a no-op.
+          const refunds = refundEvent.refunds?.data ?? [];
+          for (const latestRefund of refunds) {
             await handleRefundCreated(
               latestRefund.id,
               refundEvent.payment_intent || refundEvent.id,

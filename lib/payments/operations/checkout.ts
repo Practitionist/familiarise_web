@@ -84,6 +84,7 @@ import {
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 
 // Re-export for backward compatibility
@@ -165,6 +166,196 @@ function buildPaymentMetadata(
 }
 
 // ============================================================================
+// Open-Order Reuse (rec C, checkout dossier Q2)
+// ============================================================================
+
+/**
+ * Rec C (bugs/finances/checkout-webhooks-idempotency.md Q2) — a checkout
+ * remount or new tab mints a FRESH clientIdempotencyKey, so #828's same-key
+ * replay sees nothing and a naive flow mints a PARALLEL Razorpay order for
+ * the same user+plan — parallel charges. Before any gateway call we adopt an
+ * open PENDING payment for the same user+plan(+org) whose expiresAt window
+ * is still live and hand its orderId back so every mount resumes the SAME
+ * order.
+ *
+ * The scope is deliberately tight: userId equality, status PENDING,
+ * expiresAt strictly in the future (respect the minted window), same routed
+ * gateway (a Razorpay order cannot be resumed through Stripe.js or vice
+ * versa — the replay path refuses cross-gateway resume for the same reason),
+ * soft-deletes excluded, and plan identity resolved through the appointment
+ * join (Payment carries no planId column). Legitimate repeat purchases are
+ * unaffected: once the hold expires or is cancelled, the row is no longer
+ * (PENDING ∧ fresh) and the next attempt mints fresh.
+ *
+ * Race-safe without a claim column: every schema-valid checkout input takes
+ * a distributed lock keyed identically for the same user+plan (consultee +
+ * slot atoms for slot shapes, event-checkout:<type>:<event|plan> otherwise),
+ * so two concurrent remounts serialize before reaching here and the loser
+ * observes the winner's COMMITTED row; same-key duplicates stay covered by
+ * the clientIdempotencyKey unique (#828 P2002 replay).
+ */
+/** A resumable open order — the fields the resume response needs. */
+interface ReusableOrder {
+  id: string;
+  paymentIntent: string;
+  amount: number;
+  currency: string;
+  isMockPayment: boolean;
+  /** First slot of the booked window (consultation/class shape); empty for
+   *  subscription placeholders whose period lives on the slot rows too. */
+  appointment?: {
+    slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }>;
+  } | null;
+}
+
+export async function findReusablePendingOrderPayment(
+  db: Pick<typeof prisma, "payment">,
+  params: {
+    userId: string;
+    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+    planId: string;
+    eventId?: string;
+    organizationId: string | null;
+    paymentGateway: PaymentGateway;
+    /**
+     * #1220-triage — the CURRENT request's computed total. A candidate whose
+     * frozen amount differs (changed coupon, credit balance moved) is
+     * superseded instead of resumed, so a stale price can never be charged.
+     */
+    expectedAmountPaise: number;
+    /** Slot window for direct bookings — a resume must be for THIS time,
+     *  not just this plan (#1220-triage critical finding). */
+    slotWindow?: { startsAt: Date; endsAt: Date };
+    /** Subscription billing-period window; both-null rows only match a
+     *  both-null request. */
+    schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
+  },
+): Promise<{
+  reusable: ReusableOrder | null;
+  /** Scope/freshness matches rejected by the window/amount gates — the caller
+   *  EXPIRES these ("superseded") so they can neither be resumed nor re-minted
+   *  into a parallel charge. */
+  supersede: Array<{ id: string; reason: string }>;
+}> {
+  // Plan identity per type — events are identified by their event row (the
+  // plan is 1:1 with it); direct bookings by their plan id. An undefined
+  // eventId would make Prisma drop the filter entirely (matches ANY
+  // appointment), which is exactly the over-broad reuse we must never do.
+  let planScope: Record<string, unknown> | null;
+  switch (params.appointmentType) {
+    case "CONSULTATION":
+      planScope = { consultation: { consultationPlanId: params.planId } };
+      break;
+    case "SUBSCRIPTION":
+      planScope = { subscription: { subscriptionPlanId: params.planId } };
+      break;
+    case "WEBINAR":
+      planScope = params.eventId ? { webinarId: params.eventId } : null;
+      break;
+    case "CLASS":
+      planScope = params.eventId ? { classId: params.eventId } : null;
+      break;
+    default:
+      planScope = null;
+  }
+  if (!planScope) return { reusable: null, supersede: [] };
+
+  const candidates = await db.payment.findMany({
+    where: {
+      userId: params.userId,
+      paymentStatus: PaymentStatus.PENDING,
+      // Freshness — respect the minted window exactly; never resume a stale hold.
+      expiresAt: { gt: new Date() },
+      // Null-safe org equality: personal stays personal, sponsored matches sponsor.
+      organizationId: params.organizationId,
+      paymentGateway: params.paymentGateway,
+      deletedAt: null,
+      appointment: planScope,
+    },
+    orderBy: { createdAt: "desc" },
+    take: 5, // bounded: newest attempts first; older ones get superseded below
+    select: {
+      id: true,
+      paymentIntent: true,
+      amount: true,
+      currency: true,
+      isMockPayment: true,
+      appointment: {
+        select: {
+          slotsOfAppointment: {
+            select: { startsAt: true, endsAt: true },
+            orderBy: { startsAt: "asc" as const },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  const reusable: ReusableOrder[] = [];
+  const supersede: Array<{ id: string; reason: string }> = [];
+
+  for (const candidate of candidates) {
+    const appt = candidate.appointment as
+      | { slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }> }
+      | null;
+
+    // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
+    // DIFFERENT appointment time must never resume the first attempt's order.
+    if (
+      params.appointmentType === "CONSULTATION"
+    ) {
+      const slot = appt?.slotsOfAppointment?.[0];
+      if (!params.slotWindow || !slot) {
+        supersede.push({ id: candidate.id, reason: "window-unmatchable" });
+        continue;
+      }
+      if (
+        slot.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
+        slot.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
+      ) {
+        supersede.push({ id: candidate.id, reason: "slot-window-mismatch" });
+        continue;
+      }
+    }
+    if (params.appointmentType === "SUBSCRIPTION") {
+      const reqPeriod = params.schedulingPeriod ?? null;
+      // Subscription windows ride the SAME slot rows as consultations — the
+      // minted placeholder's slot carries the scheduling-period bounds.
+      const subSlot = appt?.slotsOfAppointment?.[0];
+      const rowPeriod =
+        subSlot ? { startsAt: subSlot.startsAt, endsAt: subSlot.endsAt } : null;
+      if (!!reqPeriod !== !!rowPeriod) {
+        supersede.push({ id: candidate.id, reason: "period-mismatch" });
+        continue;
+      }
+      if (
+        reqPeriod &&
+        rowPeriod &&
+        (rowPeriod.startsAt.getTime() !== reqPeriod.startsAt.getTime() ||
+          rowPeriod.endsAt.getTime() !== reqPeriod.endsAt.getTime())
+      ) {
+        supersede.push({ id: candidate.id, reason: "period-mismatch" });
+        continue;
+      }
+    }
+
+    // Gate 2 — priced-input parity (#1220-triage Major): a changed coupon /
+    // credit balance / tax profile computes a DIFFERENT total for this
+    // request; resuming would charge the stale number. Expire-and-fresh.
+    if (candidate.amount !== params.expectedAmountPaise) {
+      supersede.push({ id: candidate.id, reason: "amount-mismatch" });
+      continue;
+    }
+
+    reusable.push(candidate);
+    break; // newest match wins
+  }
+
+  return { reusable: reusable[0] ?? null, supersede };
+}
+
+// ============================================================================
 // Payment Intent Manager
 // ============================================================================
 
@@ -172,7 +363,12 @@ function buildPaymentMetadata(
  * Manages payment intent creation and cleanup with proper error handling
  */
 export class PaymentIntentManager {
+  // intentId -> userId. Bounded FIFO: this Map lives on module scope of a
+  // warm serverless instance, and an entry that never reaches cancelIntent
+  // (caller crash before cleanup) would otherwise grow monotonically for the
+  // life of the instance (#audit: unbounded-cache finding).
   private static activeIntents = new Map<string, string>(); // intentId -> userId
+  private static readonly MAX_TRACKED_INTENTS = 500;
 
   /**
    * Create payment intent with automatic cleanup tracking
@@ -190,6 +386,31 @@ export class PaymentIntentManager {
   }) {
     try {
       const paymentResponse = await createPaymentIntent(params);
+
+      // Evict oldest entries first (Map iterates in insertion order) so a
+      // warm instance can't accumulate unbounded tracked intents. Eviction
+      // drops cleanup ownership for that intent - only reachable at >500
+      // concurrent un-cancelled intents on one instance, and strictly better
+      // than the previous behaviour (no bound at all) - but surface it so a
+      // sustained-eviction pattern is visible in Sentry, not silent.
+      while (
+        this.activeIntents.size >= PaymentIntentManager.MAX_TRACKED_INTENTS
+      ) {
+        const oldest = this.activeIntents.keys().next().value;
+        if (oldest === undefined) break;
+        this.activeIntents.delete(oldest);
+        reportSentryError(
+          new Error(
+            `PaymentIntentManager evicted tracked intent ${oldest} before cancellation`,
+          ),
+          {
+            subsystem: "payments",
+            level: "warning",
+            expected: true,
+            extra: { evictedIntentId: oldest },
+          },
+        );
+      }
 
       // Track the intent for potential cleanup
       this.activeIntents.set(
@@ -216,11 +437,15 @@ export class PaymentIntentManager {
   ) {
     try {
       await cancelPaymentIntent(intentId, reason);
-      this.activeIntents.delete(intentId);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
       reportSentryError(error, { subsystem: "payments", level: "warning" });
       // Don't throw - cleanup should be best-effort
+    } finally {
+      // Untrack regardless of outcome: the tracking map only decides whether
+      // a future cleanup() should re-attempt cancellation. Leaving failed
+      // cancels tracked was a slow memory leak on long-lived instances.
+      this.activeIntents.delete(intentId);
     }
   }
 
@@ -270,6 +495,42 @@ export async function calculateAmountAndValidate(
     }
 
     // Get plan and validate availability without creating records
+    // E2E-audit P1 fix — purchase-path storefront gates. Detail pages hide
+    // unverified consultants' profiles and archived (withdrawn-from-sale)
+    // plans, but this transaction looked rows up by bare id, so a stale or
+    // hand-built URL could still pay an unverified seller or buy a pulled
+    // plan. Mirror lib/data/consultant-detail.ts's VERIFIED rule and
+    // eventPlanDiscoverableWhere's archivedAt/marketplace rules here, inside
+    // the lock. Non-marketplace (ORG_ONLY) plans stay purchasable only via
+    // the org-sponsored path — whose membership/assignment/contract gates
+    // run below and inside revalidateInsideLock.
+    const assertPlanPurchasable = (
+      p: {
+        archivedAt: Date | null;
+        visibility: string;
+        consultantProfile: { verificationStatus: string } | null;
+      },
+      label: string,
+    ) => {
+      if (
+        p.consultantProfile &&
+        p.consultantProfile.verificationStatus !== "VERIFIED"
+      ) {
+        throw new Error(`${label} is not available`);
+      }
+      if (p.archivedAt) {
+        throw new Error(`${label} is no longer available`);
+      }
+      if (
+        !MARKETPLACE_VISIBILITY.includes(
+          p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
+        ) &&
+        !validatedData.organizationId
+      ) {
+        throw new Error(`${label} is not available`);
+      }
+    };
+
     switch (validatedData.appointmentType) {
       case "CONSULTATION":
         plan = await tx.consultationPlan.findUnique({
@@ -289,6 +550,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Consultation plan not found");
         }
+
+        assertPlanPurchasable(plan, "This consultation");
 
         await validateSlotAvailability(
           tx,
@@ -318,6 +581,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Subscription plan not found");
         }
+
+        assertPlanPurchasable(plan, "This subscription");
 
         await validateSlotAvailability(
           tx,
@@ -363,6 +628,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Webinar not found");
         }
+
+        assertPlanPurchasable(plan, "This webinar");
 
         const consultantUserId = plan.consultantProfile?.userId;
         const webinarCapacity = getWebinarCapacity({
@@ -412,6 +679,8 @@ export async function calculateAmountAndValidate(
         if (plan.consultantProfile?.deletedAt) {
           throw new Error("Class not found");
         }
+
+        assertPlanPurchasable(plan, "This class");
 
         const classConsultantUserId = plan.consultantProfile?.userId;
         const classCapacity = getClassCapacity({
@@ -584,6 +853,27 @@ export async function validateSlotAvailability(
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
 ) {
   if (!data.startsAt || !data.endsAt) return;
+
+  // LCY-2 consent cascade (#701/#1230) — a consultant who withdrew
+  // SESSION_BOOKING consent must not receive new bookings. Fail-closed:
+  // no artifact or withdrawn artifact ⇒ block.
+  if (consultantUserId) {
+    const { checkConsent } = await import("@/lib/compliance/dpdp");
+    const { PURPOSE_CODES } = await import("@/lib/compliance/purpose-codes");
+    if (
+      !(await checkConsent({
+        userId: consultantUserId,
+        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+      }))
+    ) {
+      throw Object.assign(
+        new Error(
+          "This consultant has withdrawn session-delivery consent and cannot accept new bookings.",
+        ),
+        { httpStatus: 403, code: "CONSENT_WITHDRAWN" },
+      );
+    }
+  }
 
   const slotStart = new Date(data.startsAt);
   const slotEnd = new Date(data.endsAt);
@@ -2139,6 +2429,10 @@ export async function handleCheckout(
       const assignment = await prisma.programAssignment.findFirst({
         where: {
           membershipId: callerMembership.id,
+          // #1132 follow-up — only a live assignment may sponsor new spend.
+          // The period window alone matched ROLLED / CLOSED / CANCELLED rows
+          // whose periods a stale PATCH could extend.
+          status: "ACTIVE",
           periodStart: { lte: now },
           periodEnd: { gte: now },
           program: {
@@ -2275,6 +2569,98 @@ export async function handleCheckout(
     const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
 
     // STEP 4: Create payment intent (INSIDE LOCK)
+
+    // Rec C — adopt an open fresh PENDING order for this user+plan(+org)
+    // BEFORE minting anything at the gateway. Runs under the checkout lock
+    // (see findReusablePendingOrderPayment for the race-safety argument), so
+    // a remount/new tab converges on the first attempt's order instead of
+    // charging in parallel. Mock/zero-amount/org-sponsored flows are never
+    // PENDING, so the lookup can only ever match a real gateway hold.
+    //
+    // #1220-triage — candidates are additionally gated on the slot window
+    // (a different appointment time must never resume) and on priced-input
+    // parity (amount must equal THIS request's computation). Rejections are
+    // superseded to EXPIRED so they can neither be resumed later nor re-minted
+    // into a parallel charge by a third tab.
+    const { reusable: reusableOrder, supersede: supersededOrders } =
+      await findReusablePendingOrderPayment(prisma, {
+        userId,
+        appointmentType,
+        planId: validatedData.planId,
+        eventId: validatedData.eventId,
+        organizationId,
+        paymentGateway: validatedData.paymentGateway,
+        expectedAmountPaise: amount,
+        ...(appointmentType === "CONSULTATION" &&
+        validatedData.startsAt &&
+        validatedData.endsAt
+          ? {
+              slotWindow: {
+                startsAt: new Date(validatedData.startsAt),
+                endsAt: new Date(validatedData.endsAt),
+              },
+            }
+          : {}),
+        ...(appointmentType === "SUBSCRIPTION"
+          ? {
+              schedulingPeriod:
+                validatedData.schedulingPeriodStartsAt &&
+                validatedData.schedulingPeriodEndsAt
+                  ? {
+                      startsAt: new Date(
+                        validatedData.schedulingPeriodStartsAt,
+                      ),
+                      endsAt: new Date(validatedData.schedulingPeriodEndsAt),
+                    }
+                  : null,
+            }
+          : {}),
+      });
+    if (supersededOrders.length > 0) {
+      await prisma.payment.updateMany({
+        where: { id: { in: supersededOrders.map((s) => s.id) } },
+        data: {
+          paymentStatus: PaymentStatus.EXPIRED,
+          expiresAt: new Date(),
+        },
+      });
+      console.log(
+        JSON.stringify({
+          event: "checkout_open_order_superseded",
+          appointmentType,
+          count: supersededOrders.length,
+          reason: supersededOrders[0].reason,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+    if (reusableOrder) {
+      console.log(
+        JSON.stringify({
+          event: "checkout_open_order_reused",
+          appointmentType,
+          orderId: reusableOrder.paymentIntent,
+          // #1220-triage — payment row id, not raw userId (no PII pairing in logs).
+          paymentRowId: reusableOrder.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      // Same shape as replayByIdempotencyKey's PENDING branch so clients
+      // handle both resume paths identically.
+      return {
+        success: true,
+        reused: true,
+        orderId: reusableOrder.paymentIntent,
+        paymentIntent: {
+          id: reusableOrder.paymentIntent,
+          client_secret: null,
+        },
+        amount: Number(reusableOrder.amount),
+        currency: reusableOrder.currency,
+        isMockPayment: reusableOrder.isMockPayment,
+        message: "Resuming your in-progress checkout.",
+      };
+    }
 
     // #832 — one checked renewal at the long-latency boundary (gateway call
     // + tentative-booking tx still ahead). A false return means the lock
@@ -2548,6 +2934,36 @@ export async function handleCheckout(
           // from. This is the runtime source of truth for sponsorship
           // attribution — analytics / invoicing / cap enforcement all read
           // these rows rather than back-deriving from `paymentMethod`.
+          //
+          // E2E-audit F-1 fix — the FUNDING LEG is written for every
+          // org-sponsored payment, INCLUDING SUBSCRIPTION. Subscriptions
+          // meter engagements lazily (at allocation), but their money moves
+          // HERE: the wallet debit above journals against the WALLET leg in
+          // the ledger, the invoice rollup only collects INVOICE_ACCRUAL
+          // legs, and refunds credit wallets back leg-proportionally.
+          // Skipping the leg made (SUBSCRIPTION × WALLET) journal real
+          // money as platform CASH (guaranteed WALLET_BALANCE_DRIFT →
+          // auto-frozen wallet), left (SUBSCRIPTION × INVOICE) permanently
+          // unbilled, and gave (SUBSCRIPTION × LICENSE) no fulfillment
+          // proof. Utilization metering stays gated on engagementsForCap.
+          if (programAssignmentId && isOrgSponsoredPayment) {
+            await tx.paymentLeg.create({
+              data: {
+                paymentId: payment.id,
+                source: isOrgWalletPayment
+                  ? "WALLET"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : "INVOICE_ACCRUAL",
+                // LICENSE absorbs the cost entirely at the contract level
+                // — the per-booking leg is zero so totals across all legs
+                // still reconcile to the Payment amount.
+                amountPaise: isOrgLicensedPayment ? 0 : amount,
+                sourceRef: programAssignmentId,
+              },
+            });
+          }
+
           if (
             programAssignmentId &&
             isOrgSponsoredPayment &&
@@ -2638,22 +3054,6 @@ export async function handleCheckout(
               }
               throw err;
             }
-
-            await tx.paymentLeg.create({
-              data: {
-                paymentId: payment.id,
-                source: isOrgWalletPayment
-                  ? "WALLET"
-                  : isOrgLicensedPayment
-                    ? "LICENSE"
-                    : "INVOICE_ACCRUAL",
-                // LICENSE absorbs the cost entirely at the contract level
-                // — the per-booking leg is zero so totals across all legs
-                // still reconcile to the Payment amount.
-                amountPaise: isOrgLicensedPayment ? 0 : amount,
-                sourceRef: programAssignmentId,
-              },
-            });
 
             // #768 #22 — 80% cap-near early warning. Fire ONCE per cycle on
             // the <80% → >=80% transition (not on every booking past 80%).

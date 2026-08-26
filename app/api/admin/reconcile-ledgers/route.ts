@@ -12,7 +12,10 @@
  *  - `GET` lists the most recent reports (paginated). Useful for the
  *    admin UI to render a timeline of "ledger health" runs.
  *
- * Access: platform admins only via `requirePrivilegedAuth`. Does NOT
+ * Access: platform admins only via `requireBackofficeSurface("payouts.read")`
+ * (ADMIN-only — STAFF is deliberately excluded: the reports expose cross-org
+ * ledger aggregates incl. per-org wallet balances, which the settlement
+ * surfaces keep ADMIN-only). Does NOT
  * grant org admins the ability to run reconciliation on their own org —
  * intentionally, because the reconcile output exposes cross-org
  * aggregate shapes that we don't want leaking through an in-app UI.
@@ -22,7 +25,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { runReconcileLedgers } from "@/scripts/reconcile/reconcile-ledgers";
 
 const RunBodySchema = z.object({
@@ -30,7 +33,7 @@ const RunBodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("payouts.read");
   if (auth.error) return auth.error;
 
   const raw = await req.json().catch(() => ({}));
@@ -73,7 +76,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("payouts.read");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);

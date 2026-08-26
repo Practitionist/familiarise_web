@@ -81,6 +81,8 @@ export const AUDIT_ACTIONS = {
     PURCHASE_ORDER_CANCELLED: "PURCHASE_ORDER_CANCELLED",
     INVOICE_GENERATED: "INVOICE_GENERATED",
     INVOICE_ISSUED: "INVOICE_ISSUED",
+    // #1230 wave-4 — the CSV export self-audits like the audit-log exporter.
+    INVOICE_EXPORTED: "INVOICE_EXPORTED",
     // #779 — dunning cron flipped ISSUED → OVERDUE.
     INVOICE_OVERDUE: "INVOICE_OVERDUE",
     // #812 — dunning Stage 3 stamped dunningSuspendedAt; the org's sponsored
@@ -104,6 +106,8 @@ export const AUDIT_ACTIONS = {
     PAYOUT_COMPLETED: "PAYOUT_COMPLETED",
     PAYOUT_CANCELLED: "PAYOUT_CANCELLED",
     PAYOUT_FAILED: "PAYOUT_FAILED",
+    // #1230 wave-4 — the CSV export self-audits like the audit-log exporter.
+    PAYOUT_EXPORTED: "PAYOUT_EXPORTED",
     EARNINGS_HELD: "EARNINGS_HELD",
     EARNINGS_RELEASED: "EARNINGS_RELEASED",
     /// Emitted by `applyRefundCascade` when a refund hits an
