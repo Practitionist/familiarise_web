@@ -67,6 +67,8 @@ export const discountLimiter = makeLimiter(10, "1 m", "rl:discount");
 // high-consequence endpoints: 10/min per user is far above legitimate ops
 // traffic but caps scripted abuse of the most dangerous buttons in the app.
 export const moneyOpsLimiter = makeLimiter(10, "1 m", "rl:money-ops");
+// #1230 wave-4c — admin pipeline mutations (lead status moves, etc.).
+export const adminMutationLimiter = makeLimiter(10, "1 m", "rl:admin-mutation");
 
 /** 3 per hour — POST /api/waitlist newsletter signup (IP-based) */
 export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
@@ -194,6 +196,19 @@ export const orgWalletTopUpLimiter = makeLimiter(
  * (orgId-keyed; prevents a malicious OWNER from flooding audit logs and
  *  Novu ORG_INVITE_SENT workflows via rapid-fire invite spam) */
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
+
+/**
+ * 10 per hour per org — POST /api/organizations/[orgId]/programs/[programId]/auto-enroll
+ * (#1230 wave-9). One call provisions up to 200 ProgramAssignment rows, each
+ * writing an audit row and (for LICENSED_SEAT) bumping activeSeatCount.
+ * Org-keyed so a stuck automation loop can't churn seats/audit all day and one
+ * tenant's provisioning burst can't crowd out others on the shared bucket.
+ */
+export const orgAutoEnrollLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:org-auto-enroll",
+);
 
 /**
  * 5 per minute per org — POST /api/organizations/[orgId]/webhooks

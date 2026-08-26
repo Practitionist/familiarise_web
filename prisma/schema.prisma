@@ -96,6 +96,10 @@ model User {
   referral        Referral?        @relation("ReferredUser")
   referralCredits ReferralCredit[]
 
+  // In-progress onboarding wizard state (resumable drafts). At most one row
+  // per user; deleted when onboarding completes. See OnboardingDraft below.
+  onboardingDraft OnboardingDraft?
+
   // Session-generation marker: increments on every membership role
   // change so the next request through `customSession` (see
   // `lib/auth.ts`) detects "I'm out of date" and refetches memberships
@@ -162,6 +166,55 @@ model User {
   @@map("users")
 }
 
+/// Server-side draft of an in-progress onboarding wizard run. The wizard
+/// autosaves after every step so a refresh, navigation, or device switch can
+/// resume instead of restarting. One row per user (userId @unique); the row is
+/// deleted when onboarding completes and is never read by any guard —
+/// `onboardingCompleted` remains the single source of truth for access.
+///
+/// Additive under the #705 schema freeze: new model + one nullable relation,
+/// no existing column touched.
+model OnboardingDraft {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+
+  /// Role picked at step 0 (null until then). Mirrors User.role's enum but is
+  /// informational only — the authoritative role flip still happens through
+  /// setOnboardingRoleAction / processOnboardingData.
+  role UserRole?
+
+  /// Zero-based index into the role's step registry.
+  currentStep Int @default(0)
+
+  /// JSON-serialized Partial<OnboardingFormData> with non-JSON values
+  /// (File/Blob/Date instances) sanitized by the writer. Dates are stored as
+  /// ISO strings and revived by the reader's Zod schema.
+  ///
+  /// Why JSONB here and not normalized tables (deliberate, per the
+  /// #onboarding-ux decision record in docs/onboarding):
+  ///   * The payload's shape MIRRORS THE WIZARD UI, so it changes whenever
+  ///     the wizard does — normalizing would couple DB migrations to form
+  ///     tweaks; an EAV key/value table was rejected as strictly worse
+  ///     (untyped values AND row explosion).
+  ///   * It is always read/written AS A WHOLE document — no code filters,
+  ///     joins, or aggregates inside it. The queryable keys (userId, role,
+  ///     currentStep) ARE real columns above; this is the standard
+  ///     "stable columns + volatile blob" hybrid.
+  ///   * It never becomes truth. The single writer of real data remains the
+  ///     Zod-validated big-bang transaction into fully-normalized tables;
+  ///     this row is a convenience cache deleted on completion.
+  ///
+  /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
+  /// promote that key to a real column instead of querying the blob.
+  payload Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("onboarding_drafts")
+}
+
 model Feedback {
   id          String         @id @default(uuid())
   title       String
@@ -186,6 +239,10 @@ model SupportTicket {
   priority    SupportPriority     @default(MEDIUM)
   status      SupportTicketStatus @default(OPEN)
   category    String?
+  // #1021 — org context so enterprise tickets can be routed, SLA-tracked,
+  // and counted per organisation instead of disappearing into the B2C queue.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   issueType   SupportIssueType?
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -196,6 +253,9 @@ model SupportTicket {
   // #appt-support — set when a per-appointment thread escalates to a human, so
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
+
+  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
+  @@index([organizationId])
 
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
@@ -817,6 +877,8 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
+  // #1021 — org-scoped support ticket routing.
+  supportTickets SupportTicket[]
   @@map("organizations")
 }
 
@@ -3247,7 +3309,7 @@ model WebinarPlan {
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   durationInHours        Float                  @default(1) // Duration in hours
   maxParticipants        Int                    @default(100)
-  language               String?                @default("English")
+  language               String                 @default("English")
   level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
   materialProvided       String?                @default("None")
@@ -3258,6 +3320,9 @@ model WebinarPlan {
   imageUrl               String?
   slug                   String?                @unique
 
+  // Nullable by design: org-curated catalog plans may have no single owning
+  // consultant (the org is the owner), unlike ConsultationPlan/SubscriptionPlan
+  // which always name exactly one expert.
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
 
@@ -3345,7 +3410,10 @@ model ClassPlan {
   title                  String
   // See ConsultationPlan.subtitle.
   subtitle               String?                @db.VarChar(160)
-  description            String                 @db.Text
+  // Nullable in the DB (relaxed for legacy rows) but REQUIRED by
+  // ClassPlanSchema — authoring always supplies one; the relaxation exists so
+  // pre-validation rows don't block migrations.
+  description            String?                @db.Text
   topics                 Topic[]                @relation("TopicToClassPlan")
   classContents          ClassContent[]
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
@@ -3360,8 +3428,10 @@ model ClassPlan {
   totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
   totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport       @default(GENERAL)
-  maxParticipants        Int                    @default(1)
-  language               String?                @default("English")
+  // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
+  // consultation); per-instance capacity lives on Class.maxParticipants.
+  maxParticipants        Int                    @default(30)
+  language               String                 @default("English")
   level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
   materialProvided       String?                @default("None")
@@ -3372,6 +3442,8 @@ model ClassPlan {
   imageUrl               String?
   slug                   String?                @unique
 
+  // Nullable by design: org-curated catalog plans may have no single owning
+  // consultant. See the mirror comment on WebinarPlan.
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
 
@@ -3412,6 +3484,9 @@ model ClassPlan {
 // feedbackSummary. Asymmetry is intentional; do not "fix" it with columns.
 model Class {
   id                       String      @id @default(cuid())
+  // Nullable while a Subscription's window is required: class draft authoring
+  // allows saving a plan run with no start date yet (the editor gates publish,
+  // not draft, on one). Deliberate asymmetry — do not "fix" it to NOT NULL.
   schedulingPeriodStartsAt DateTime?   @db.Timestamptz
   schedulingPeriodEndsAt   DateTime?   @db.Timestamptz
   // #1076 — stamped from the host consultant's user.timezone at creation. See
@@ -3425,6 +3500,9 @@ model Class {
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
 
+  // Legacy parallel path to the Recording model; deprecated for new writes.
+  // Kept (and rows kept readable) because historical classes still resolve
+  // their recordings through it.
   recordingUrls   String[]
   feedbackSummary String?  @db.Text
 
@@ -5755,9 +5833,9 @@ model WebhookEndpoint {
   /// HMAC into `previousSecretHash` so the worker can verify deliveries
   /// signed with either secret for a 24-hour grace window. Receivers
   /// running the same body through both secrets stay green during the
-  /// rotation cutover. Today the rotate route still overwrites
-  /// `secret` directly; flipping it to grace-aware is a follow-up that
-  /// reads these columns.
+  /// rotation cutover. The rotate route stamps both columns and the worker
+  /// dual-signs inside that window (the old "still overwrites directly"
+  /// comment predates the #812 fix).
   secretRotatedAt       DateTime?
   previousSecretHash    String?
   createdByMembershipId String?

@@ -212,7 +212,17 @@ function webinarRow() {
       price: 100000,
       priceCurrency: "INR",
       organizationId: null,
-      consultantProfile: { id: "cp-1", userId: "consultant-u1" },
+      // Storefront gates (E2E audit): the checkout transaction re-checks
+      // seller verification, archival and marketplace visibility that the
+      // browse surfaces already enforce. `include:` returns every scalar in
+      // production, so the fixture carries them too.
+      archivedAt: null,
+      visibility: "PUBLIC",
+      consultantProfile: {
+        id: "cp-1",
+        userId: "consultant-u1",
+        verificationStatus: "VERIFIED",
+      },
     },
     appointment: {
       id: "appt-w",

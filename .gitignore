@@ -111,3 +111,4 @@ prompts/
 # app. These are snapshots of production configuration (role grants, channel
 # rosters) and rollback material for an operator's machine — not source.
 .stream-backups/
+opencode.json
