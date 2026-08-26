@@ -15,6 +15,47 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 // Razorpay Client Initialization
 // ============================================================================
 
+// PM-10 — nothing downstream distinguishes test mode from live mode, so a
+// TEST key in a production posture boots cleanly and fails only at the first
+// customer: charges decline, refunds dead-end, webhooks never verify, while
+// every Payment row still reads as gateway-authoritative. Fail the boot
+// loudly instead. Dev / preview / test keep legitimate access to test keys —
+// this fires on the production posture only.
+//
+// This guard runs AT MODULE LOAD — it is an env read, not SDK construction,
+// so #1221's lazy-client change keeps its cost at microseconds. Do NOT move
+// it inside the lazy initializer: the fail-fast contract (razorpay-test-key-
+// guard.test.ts) is that a misconfigured production posture dies at require
+// time, before any route boots.
+//
+// EXCEPT during `next build`: builds run with NODE_ENV=production (and CI /
+// Netlify build environments legitimately hold test keys — a build moves no
+// money), and this module loads while Next collects page data, so an
+// unconditional throw broke every deploy preview + the CI build job. The
+// guard still fires on the first real runtime boot in production, which is
+// where the customer-facing failure it exists for would happen. (The
+// RazorpayX payouts client carries the same guard keyed to
+// ENABLE_LIVE_PAYOUTS instead of NODE_ENV — see getRazorpayPayoutsService
+// in lib/payments/payouts/razorpay-payouts.ts.)
+{
+  const guardKeyId = process.env.RAZORPAY_KEY_ID;
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    guardKeyId &&
+    /^rzp_test_/.test(guardKeyId)
+  ) {
+    throw new PaymentError(
+      `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${guardKeyId}) while NODE_ENV=production. ` +
+        "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
+        "Fix: replace RAZORPAY_KEY_ID and RAZORPAY_SECRET with the account's LIVE keys " +
+        "(dashboard.razorpay.com → Settings → API Keys → Live mode) and redeploy.",
+      "RAZORPAY_TEST_KEY_IN_PRODUCTION",
+      "RAZORPAY",
+    );
+  }
+}
+
 // L2 FIX: Removed module-load console.warn — per-call errors are more actionable
 const initializeRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
@@ -22,13 +63,73 @@ const initializeRazorpayClient = () => {
   if (!keyId || !keySecret) {
     return null;
   }
+
   return new Razorpay({
     key_id: keyId,
     key_secret: keySecret,
   });
 };
 
-export const razorpayClient = initializeRazorpayClient();
+// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// module scope put the SDK constructor on every cold boot of any route whose
+// import graph reaches this file. MEASURED 2026-08-23 (#1221): this does NOT
+// shrink the #1124 concurrent-instance event-loop stall — that reproduced
+// 12/12 at full strength on a build carrying exactly this change. Keep the
+// lazy pattern as boot hygiene; do not cite it as stall mitigation.
+let razorpayClientInstance: Razorpay | null | undefined;
+
+export function getRazorpayClient(): Razorpay | null {
+  if (razorpayClientInstance === undefined) {
+    razorpayClientInstance = initializeRazorpayClient();
+  }
+  return razorpayClientInstance;
+}
+
+// ============================================================================
+// SDK call timeout
+// ============================================================================
+
+// razorpay-node exposes no timeout option — a hung connection to
+// api.razorpay.com would hang the caller forever. Webhook after() callbacks
+// and the refund phases all await these calls, and the stuck-event sweeper
+// re-drives any event whose callback outlives its 6-minute staleness window,
+// so an unbounded hang is a correctness problem, not just a latency one.
+// Bound every SDK call; the raw-HTTP refund path already uses AbortSignal.
+const SDK_CALL_TIMEOUT_MS = 30_000;
+
+export function withRazorpaySdkTimeout<T>(
+  op: string,
+  call: () => Promise<T>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Razorpay SDK ${op} timed out after ${SDK_CALL_TIMEOUT_MS}ms`,
+          ),
+        ),
+      SDK_CALL_TIMEOUT_MS,
+    );
+    try {
+      call().then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    } catch (err) {
+      // call() threw SYNCHRONOUSLY — .then never attached, so the timer
+      // would linger for the full window. Clear and propagate.
+      clearTimeout(timer);
+      throw err;
+    }
+  });
+}
 
 // ============================================================================
 // Helper Functions
@@ -49,6 +150,7 @@ export async function createRazorpayOrder({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new PaymentError(
       "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
@@ -70,14 +172,16 @@ export async function createRazorpayOrder({
     const order = await Sentry.startSpan(
       { op: "http.client", name: "razorpay.createOrder" },
       () =>
-        razorpayClient.orders.create({
-          amount: amount, // already in smallest currency unit (paise)
-          currency,
-          notes: metadata,
-          // PM-11 — Date.now() collides for two orders in the same ms; the uuid
-          // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
-          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
-        }),
+        withRazorpaySdkTimeout("orders.create", () =>
+          razorpayClient.orders.create({
+            amount: amount, // already in smallest currency unit (paise)
+            currency,
+            notes: metadata,
+            // PM-11 — Date.now() collides for two orders in the same ms; the uuid
+            // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
+            receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+          }),
+        ),
     );
 
     return {
@@ -102,6 +206,7 @@ export async function createRazorpayOrder({
  * Cancel a Razorpay order (best effort - cannot actually cancel after payment)
  */
 export async function cancelRazorpayOrder(orderId: string): Promise<void> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     console.warn("Razorpay client not initialized - cannot cancel order");
     return;
@@ -109,7 +214,9 @@ export async function cancelRazorpayOrder(orderId: string): Promise<void> {
 
   try {
     // Check if there are any payments for this order
-    const payments = await razorpayClient.orders.fetchPayments(orderId);
+    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+      razorpayClient.orders.fetchPayments(orderId),
+    );
     if (payments.count === 0) {
       console.log(
         `✅ Razorpay order had no payments, safe to ignore: ${orderId}`,
@@ -258,6 +365,7 @@ export async function createRazorpayRefund({
   metadata,
   idempotencyKey,
 }: RefundParams): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized - cannot process refund",
@@ -268,7 +376,9 @@ export async function createRazorpayRefund({
 
   try {
     // First, get the payment ID from the order
-    const payments = await razorpayClient.orders.fetchPayments(paymentIntentId);
+    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+      razorpayClient.orders.fetchPayments(paymentIntentId),
+    );
 
     if (payments.count === 0) {
       throw new RefundError(
@@ -326,6 +436,7 @@ export async function createRazorpayRefund({
 export async function getRazorpayRefund(
   refundId: string,
 ): Promise<RefundResult> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",
@@ -335,7 +446,9 @@ export async function getRazorpayRefund(
   }
 
   try {
-    const refund = await razorpayClient.refunds.fetch(refundId);
+    const refund = await withRazorpaySdkTimeout("refunds.fetch", () =>
+      razorpayClient.refunds.fetch(refundId),
+    );
 
     return {
       refundId: refund.id,
@@ -364,6 +477,7 @@ export async function listRazorpayRefunds(
   orderId: string,
   limit: number = 10,
 ): Promise<RefundResult[]> {
+  const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new RefundError(
       "Razorpay client not initialized",
@@ -374,7 +488,9 @@ export async function listRazorpayRefunds(
 
   try {
     // First, get the payment ID from the order ID
-    const payments = await razorpayClient.orders.fetchPayments(orderId);
+    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+      razorpayClient.orders.fetchPayments(orderId),
+    );
     if (payments.count === 0) {
       return []; // No payments for this order, so no refunds
     }
@@ -384,11 +500,15 @@ export async function listRazorpayRefunds(
     ).id;
 
     // Fetch refunds for the specific payment using the SDK method
-    const refundsResponse = await razorpayClient.payments.fetchMultipleRefund(
-      paymentId,
-      {
-        count: limit,
-      },
+    const refundsResponse = await withRazorpaySdkTimeout(
+      "payments.fetchMultipleRefund",
+      () =>
+        razorpayClient.payments.fetchMultipleRefund(
+          paymentId,
+          {
+            count: limit,
+          },
+        ),
     );
 
     return refundsResponse.items.map((refund) => ({

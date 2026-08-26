@@ -314,6 +314,69 @@ CREATE UNIQUE INDEX "erasure_request_active_user_key"
   ON "ErasureRequest" ("userId")
   WHERE "status" IN ('PENDING', 'IN_PROGRESS');
 
+-- SPLIT
+-- ============================================================================
+-- Statutory-document and billing-amount guards (money-hardening pass).
+-- These tables had NO DB-level guard at all: every other money model got a
+-- CHECK in this file, but the GST documents (invoice / credit note / line
+-- items), wallet top-ups, per-earning share bps and seat-config pricing were
+-- writable to nonsense by any direct write or future code path that skipped
+-- app validation. Amounts use >= 0 where zero is legitimate (free lines,
+-- zero-rated); top-ups must be strictly positive (a zero top-up is a bug,
+-- not a state).
+ALTER TABLE "OrganizationInvoice" DROP CONSTRAINT IF EXISTS "org_invoice_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "OrganizationInvoice" ADD CONSTRAINT "org_invoice_amounts_nonnegative"
+  CHECK (
+    "subtotalPaise" >= 0
+    AND "igstPaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0
+    AND "totalPaise" >= 0
+    AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
+  );
+-- SPLIT
+ALTER TABLE "InvoiceLineItem" DROP CONSTRAINT IF EXISTS "invoice_line_item_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "InvoiceLineItem" ADD CONSTRAINT "invoice_line_item_amounts_nonnegative"
+  CHECK ("quantity" > 0 AND "unitPricePaise" >= 0 AND ("taxPaise" IS NULL OR "taxPaise" >= 0));
+-- SPLIT
+ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
+  CHECK (
+    "subtotalPaise" >= 0
+    AND "igstPaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0
+    AND "totalPaise" >= 0
+    AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
+  );
+-- SPLIT
+ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
+-- SPLIT
+ALTER TABLE "WalletTopUp" ADD CONSTRAINT "wallet_topup_amount_positive"
+  CHECK ("amountPaise" > 0);
+-- SPLIT
+-- The RateCard bps sum got rate_card_bps_sum_is_whole; the per-earning
+-- snapshot of that split had nothing — a direct write could record a 150%
+-- share against an earning.
+ALTER TABLE "ConsultantEarnings" DROP CONSTRAINT IF EXISTS "consultant_earnings_share_bps_range";
+-- SPLIT
+ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_share_bps_range"
+  CHECK ("shareBps" >= 0 AND "shareBps" <= 10000);
+-- SPLIT
+ALTER TABLE "LicensedSeatConfig" DROP CONSTRAINT IF EXISTS "licensed_seat_config_pricing_sane";
+-- SPLIT
+ALTER TABLE "LicensedSeatConfig" ADD CONSTRAINT "licensed_seat_config_pricing_sane"
+  CHECK (
+    "ratePerSeatPaise" >= 0
+    AND ("priceCapPerEngagementPaise" IS NULL OR "priceCapPerEngagementPaise" >= 0)
+    AND ("maxOveragePerCyclePaise" IS NULL OR "maxOveragePerCyclePaise" >= 0)
+    AND ("overageSurchargeBps" IS NULL OR ("overageSurchargeBps" >= 0 AND "overageSurchargeBps" <= 10000))
+  );
+-- SPLIT
+ALTER TABLE "Contract" DROP CONSTRAINT IF EXISTS "contract_payment_terms_nonnegative";
+-- SPLIT
+ALTER TABLE "Contract" ADD CONSTRAINT "contract_payment_terms_nonnegative"
+  CHECK ("paymentTermsDays" >= 0);
+
 -- ============================================================================
 -- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
 -- Each of these can fail against pre-reset data (existing nulls, historical

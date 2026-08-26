@@ -58,6 +58,7 @@ import { assertPayoutBalance } from "./balance-preflight";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
@@ -549,6 +550,34 @@ export async function processOrgPayout(
         };
       }
 
+      // #1020 — a payout whose earnings sit on a disputed payment must not
+      // leave the building. Checked inside the claim tx (READ COMMITTED —
+      // race-safety comes from the CAS claim below per ADR 13, and the
+      // residual window to gateway submit is backstopped by the LOST
+      // clawback); returning unclaimed keeps
+      // the row PENDING so a later cron run advances it once the dispute
+      // resolves. Residual window to gateway submit is backstopped by the
+      // LOST-handler clawback (#1020-2).
+      const disputedOrgEarning = await tx.organizationEarnings.findFirst({
+        where: {
+          orgPayoutId: payoutId,
+          payment: {
+            disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+          },
+        },
+        select: { id: true },
+      });
+      if (disputedOrgEarning) {
+        console.warn(
+          `[OrgPayoutService] payout ${payoutId} blocked — an earning's payment has a live dispute`,
+        );
+        return {
+          status: "PENDING" as PayoutStatus,
+          submittedToGateway: false,
+          claimed: false,
+        };
+      }
+
       const claim = await tx.organizationPayout.updateMany({
         where: { id: payoutId, status: "PENDING" },
         data: { status: "PROCESSING" },
@@ -711,6 +740,15 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
       400,
     );
   }
+  // CR #1234 r3.5 — a fund-account ID alone is not consent to move money:
+  // the PUT flow replaces ids while a fresh penny-drop is still in flight
+  // (row back at PENDING_VERIFICATION). Only a VERIFIED account may submit.
+  if (account?.status !== "VERIFIED") {
+    throw new PayoutValidationError(
+      `Payout ${payoutId}: organization payout account is ${account?.status ?? "missing"}, not VERIFIED — refusing to submit`,
+      409,
+    );
+  }
 
   const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
   const sdk = getRazorpayPayoutsService();
@@ -857,6 +895,107 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
       reportSentryError(err, { subsystem: "payments" });
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push(`OrgPayout ${p.id}: ${message}`);
+    }
+  }
+
+  const redrive = await redriveStaleProcessingOrgPayouts();
+  result.scanned += redrive.scanned;
+  result.advanced += redrive.advanced;
+  result.errors.push(...redrive.errors);
+
+  return result;
+}
+
+/**
+ * Re-drive stale PROCESSING org payouts — the actor the transient-error
+ * contract ("leave row in PROCESSING and re-throw so the cron retries with
+ * the same idempotency key") was missing: this driver scanned PENDING only,
+ * so a single 5xx (or a balance-hold / Stripe-deferred early return) stranded
+ * the row in PROCESSING forever with no recovery path except a webhook that
+ * may never come.
+ *
+ * Two shapes:
+ *   * gatewayPayoutId null — submission never confirmed. Resubmit through
+ *     submitOrgPayoutToGateway; the deterministic X-Payout-Idempotency key
+ *     makes RazorpayX return the ORIGINAL payout if the first attempt landed,
+ *     so this can never double-disburse.
+ *   * gatewayPayoutId set — submitted but confirmation lost. Poll the gateway
+ *     once and route through the mark* handlers (first-writer CAS), covering
+ *     the lost-webhook case where the org's money arrived while the row sat
+ *     in PROCESSING.
+ */
+const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000; // 1h
+
+async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> {
+  const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
+  const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
+  const stale = await prisma.organizationPayout.findMany({
+    where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
+    select: { id: true, gatewayPayoutId: true, paymentGateway: true },
+    orderBy: { updatedAt: "asc" },
+    take: 100,
+  });
+  result.scanned = stale.length;
+
+  for (const p of stale) {
+    try {
+      if (p.paymentGateway !== "RAZORPAY") continue; // Stripe rail deferred
+
+      if (!p.gatewayPayoutId) {
+        await submitOrgPayoutToGateway(p.id);
+        result.advanced++;
+        continue;
+      }
+
+      const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
+      const sdk = getRazorpayPayoutsService();
+      const remote = await sdk.fetchPayout(p.gatewayPayoutId);
+      switch (remote.status) {
+        case "processed":
+          await markOrgPayoutCompleted(p.id);
+          result.advanced++;
+          break;
+        case "failed":
+          await markOrgPayoutFailed(
+            p.id,
+            remote.failureReason ?? "Gateway reports the payout failed",
+          );
+          result.advanced++;
+          break;
+        case "cancelled":
+        case "rejected":
+          await markOrgPayoutFailed(
+            p.id,
+            `Gateway reports the payout ${remote.status}`,
+          );
+          result.advanced++;
+          break;
+        case "reversed":
+          await markOrgPayoutReversed(
+            p.id,
+            "Gateway reports the payout reversed",
+          );
+          result.advanced++;
+          break;
+        default:
+          // queued/pending/processing — still in flight; leave for the next run.
+          break;
+      }
+    } catch (err) {
+      // #1205-triage — PERMANENT rejections must terminate the row, not sit
+      // in PROCESSING forever: the redrive would retry a data rejection
+      // every hour indefinitely while its BATCHED earnings stay locked.
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+        err instanceof PayoutValidationError
+      ) {
+        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+        result.advanced++;
+        continue;
+      }
+      reportSentryError(err, { subsystem: "payments" });
+      result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
     }
   }
 

@@ -145,6 +145,8 @@ export async function PUT(
         targetAudience: validatedData.targetAudience,
         whatsIncluded: validatedData.whatsIncluded,
         faqs: faqReplaceNested(validatedData.faqs),
+        recordingEnabled: validatedData.recordingEnabled,
+        recordingStoragePolicy: validatedData.recordingStoragePolicy,
         ...topicsUpdate,
       },
       include: {

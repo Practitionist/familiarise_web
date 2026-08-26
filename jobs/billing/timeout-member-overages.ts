@@ -93,7 +93,7 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
         // return it to the org's parent accrual in the same tx.
         return restoreOverageBaseCarve(tx, { overageEventId: ev.id });
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     );
 
     if (claimed === null) continue;

@@ -271,5 +271,22 @@ export async function withdrawConsent(params: {
     data: { withdrawnAt: now },
   });
 
+  // LCY-2 consent cascade (#701 / #1230) — after withdrawal, downstream
+  // effects fire so the withdrawal actually takes effect on the platform.
+  // Currently: log a WARN SystemEvent so ops can see who withdrew what and
+  // when. The checkout path (validateSlotAvailability) independently
+  // checks this consent fail-closed at booking time.
+  if (purposeCode === "SESSION_BOOKING" && count > 0) {
+    const { recordSystemEvent } = await import("@/lib/enterprise/system-events");
+    void recordSystemEvent({
+      organizationId: null,
+      category: "CONSENT",
+      severity: "WARN",
+      message: `User ${userId} withdrew SESSION_BOOKING consent — new bookings will be blocked at checkout`,
+      context: { purposeCode, withdrawnCount: count },
+      correlationId: userId,
+    });
+  }
+
   return { withdrawnCount: count };
 }

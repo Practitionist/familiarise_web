@@ -6,6 +6,7 @@ import { UserRole, Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
+import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -226,6 +227,44 @@ export async function DELETE(
     const user = await prisma.user.findUnique({ where: { id: id } });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Money-history gate (#781 §B parity with the consultant route). A hard
+    // delete cascades Payment → PaymentLeg / BookingUtilization /
+    // ReferralCreditUsage away and 500s on the first Restrict (Refund,
+    // Dispute) — destroying financial records the schema's own DPDP comment
+    // says are retained per IT Act 5–7y obligations. Users whose money ever
+    // moved get the §12 erasure scrub instead: PII pseudonymised, erasedAt
+    // tombstone set, financial rows intact.
+    // Consultant-side money lives on ConsultantProfile (earnings/payouts/TDS
+    // Restrict-delete through it), not on Payment — a consultant with payout
+    // history but no payer-side rows must also take the scrub path, or the
+    // hard delete 500s on the first Restrict (#1205-triage).
+    const [paymentCount, referralCreditCount, profile] = await Promise.all([
+      prisma.payment.count({ where: { userId: id } }),
+      prisma.referralCredit.count({ where: { userId: id } }),
+      prisma.consultantProfile.findFirst({
+        where: { userId: id },
+        select: {
+          _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
+        },
+      }),
+    ]);
+    const consultantMoneyCount = profile
+      ? profile._count.earnings +
+        profile._count.payouts +
+        profile._count.tdsRecords
+      : 0;
+    const hasMoneyHistory =
+      paymentCount + referralCreditCount + consultantMoneyCount > 0;
+
+    if (hasMoneyHistory) {
+      await scrubUser(prisma, id);
+      return NextResponse.json({
+        message:
+          "Account erased (PII scrubbed; financial history retained per statutory retention)",
+        softDeleted: true,
+      });
     }
 
     // Revoke all sessions for the user before deletion (atomic)

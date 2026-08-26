@@ -43,8 +43,12 @@ describe("buildConsultantOccupancyWhere", () => {
     expect(arms).toHaveLength(2);
 
     // Participation: the consultant is on the slot, whatever plan it belongs to.
+    // deletedAt: null — a tombstoned slot is not a booking (defense-in-depth;
+    // RESCHEDULED rows stay occupied, a pending reschedule is a live hold).
     expect(arms[0]).toEqual({
-      slotsOfAppointment: { some: { user: { some: { id: USER } } } },
+      slotsOfAppointment: {
+        some: { user: { some: { id: USER } }, deletedAt: null },
+      },
     });
 
     // Ownership: the appointment is delivered under one of their own plans,
@@ -75,7 +79,9 @@ describe("buildConsultantOccupancyWhere", () => {
 
     expect(arms).toHaveLength(1);
     expect(arms[0]).toEqual({
-      slotsOfAppointment: { some: { user: { some: { id: USER } } } },
+      slotsOfAppointment: {
+        some: { user: { some: { id: USER } }, deletedAt: null },
+      },
     });
   });
 

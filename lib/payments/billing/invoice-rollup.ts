@@ -246,5 +246,5 @@ export async function rollupOrgInvoiceAccruals(params: {
       subtotalPaise: gst.subtotalPaise,
       totalPaise: gst.totalPaise,
     };
-  }, { isolationLevel: "Serializable" });
+  }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 });
 }

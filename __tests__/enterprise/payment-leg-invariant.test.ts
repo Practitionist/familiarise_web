@@ -146,3 +146,94 @@ describe("assertPaymentLegsSumToAmount", () => {
     }
   });
 });
+
+/**
+ * E2E-audit fix — zero-value LICENSE legs are exempt from the sum test.
+ *
+ * A LICENSE-funded booking is absorbed at the contract level: the funding leg
+ * is deliberately ₹0 while `Payment.amount` stays at the full list price, so
+ * `Σlegs === amount` is structurally false for EVERY one of them. Before the
+ * exemption, each license booking emitted a mismatch warning at checkout and a
+ * guaranteed `PAYMENT_LEG_SUM_MISMATCH` finding on the nightly reconcile —
+ * by-design noise that buried the real WALLET / INVOICE drift the check exists
+ * to surface.
+ *
+ * The exemption is narrow on purpose: it applies only when the original legs
+ * are ENTIRELY zero-value LICENSE legs. A license leg that carries money, or
+ * sits next to any other funding source, is checked normally.
+ */
+describe("checkPaymentLegsSumToAmount — zero-value LICENSE exemption", () => {
+  it("exempts a zero LICENSE leg against a full-price Payment", () => {
+    expect(
+      checkPaymentLegsSumToAmount({
+        paymentAmountPaise: 500000,
+        legs: [{ source: "LICENSE", amountPaise: 0 }],
+      }),
+    ).toBeNull();
+  });
+
+  it("does NOT exempt a license booking that also accrued an overage charge", () => {
+    // A LICENSED_SEAT program past its cap on the CHARGE_ORG path carries a
+    // real OVERAGE_INVOICE_ACCRUAL leg beside the zero LICENSE leg. That
+    // money must reconcile against Payment.amount like any other accrual —
+    // the exemption is for the wholly-absorbed case only.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "LICENSE", amountPaise: 0 },
+        { source: "OVERAGE_INVOICE_ACCRUAL", amountPaise: 250000 },
+      ],
+    });
+    expect(mismatch).not.toBeNull();
+    expect(mismatch!.legSumPaise).toBe(250000);
+  });
+
+  it("exempts a license booking whose accrual reversal nets it back to nothing", () => {
+    // Reversal sources are filtered out before the sum runs, so a refunded
+    // license booking is still judged on its original legs alone.
+    expect(
+      checkPaymentLegsSumToAmount({
+        paymentAmountPaise: 500000,
+        legs: [
+          { source: "LICENSE", amountPaise: 0 },
+          { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -0 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("does NOT exempt a LICENSE leg that carries a non-zero amount", () => {
+    // Money on a license leg is real drift, not the by-design zero case.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [{ source: "LICENSE", amountPaise: 100000 }],
+    });
+    expect(mismatch).not.toBeNull();
+    expect(mismatch!.legSumPaise).toBe(100000);
+  });
+
+  it("does NOT exempt when a zero LICENSE leg sits beside another funding source", () => {
+    // A WALLET leg that under-covers the amount is exactly the drift this
+    // check exists for; the neighbouring zero LICENSE leg must not mask it.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "LICENSE", amountPaise: 0 },
+        { source: "WALLET", amountPaise: 400000 },
+      ],
+    });
+    expect(mismatch).not.toBeNull();
+    expect(mismatch!.legSumPaise).toBe(400000);
+  });
+
+  it("keeps reporting a leg-less Payment as a mismatch", () => {
+    // The exemption requires at least one original leg — "no legs at all" is
+    // still a real failure to journal the money.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [],
+    });
+    expect(mismatch).not.toBeNull();
+    expect(mismatch!.legSumPaise).toBe(0);
+  });
+});

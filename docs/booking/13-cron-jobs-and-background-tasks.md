@@ -31,9 +31,48 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-slots.ts`             | `/api/cleanup/tentative-slots`             |
 | Cleanup stale pending consultations | `30 * * * *`    | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
 | Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
-| Expire stale requests               | `0 1 * * *`     | Daily at 01:00 UTC      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
+| Expire stale requests               | `10 * * * *`    | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
 | Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-slot-availability.ts`         | `/api/cleanup/reconcile-slot-availability` |
 | Detect consultant no-shows          | `17 * * * *`    | Every hour, at :17      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                  |
+
+---
+
+## Scheduling policy
+
+Every scheduled workflow is checked by `scripts/ci/check-workflow-hygiene.ts`
+at build time. The guard used to forbid any two recurring jobs from sharing a
+start-minute (minute-uniqueness); since the #932 pool stampede it instead
+models what actually matters — concurrent load on the Supabase pool.
+
+**Runtime annotations.** A workflow may declare its estimated DB-active
+runtime anywhere in the file with a comment:
+
+```yaml
+    - cron: "32 * * * *"
+    # cron-runtime-minutes: 8
+```
+
+The value covers the job's database-active window (the `tsx` step), not the
+whole workflow — checkout, `npm ci`, and `prisma generate` never touch the
+pool. Jobs without an annotation default to **2 minutes**, which is right for
+the quick sweeps. The heaviest jobs are annotated:
+`reconcile-slot-availability: 8`, `auto-complete-appointments: 6`,
+`cleanup-tentative-slots: 5`, `cleanup-invalid-appointments: 5`.
+
+**The budget.** For each start-minute shared by recurring jobs, the guard sums
+the declared runtimes and fails when the total exceeds
+`POOL_BUDGET_MINUTES = 10`. That constant is derived from the pool guidance in
+`lib/prisma.ts`: pg.Pool opens up to 10 clients per function instance
+(`PG_POOL_MAX` clamps it in serverless), while Supavisor's transaction pooler
+fronts a small server-side pool — concurrent clients piling up is exactly what
+turned #932 into 5–9.6s connects. Once-a-day overlaps stay tolerated: they
+collide once and cost nothing. A single job declaring more than the whole
+budget fails on its own declaration, since no staggering can fit it.
+
+This beats minute-scarcity because uniqueness was only ever a proxy for pool
+contention, and the clock was running out of free minutes as jobs were added.
+Cost lets light jobs share a minute safely and forces the conversation onto
+real numbers whenever a heavy one wants in.
 
 ---
 
@@ -147,25 +186,29 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 | Field              | Value                                            |
 | ------------------ | ------------------------------------------------ |
-| **Schedule**       | `0 1 * * *` -- daily at 01:00 UTC                |
+| **Schedule**       | `10 * * * *` -- every hour, at :10               |
 | **Source**         | `scripts/appointments/expire-stale-requests.ts`  |
 | **API**            | `app/api/cleanup/expire-stale-requests/route.ts` |
 | **GitHub Actions** | `.github/workflows/expire-stale-requests.yml`    |
 | **HTTP Methods**   | `GET`, `POST`                                    |
 
-**Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers two distinct scenarios:
+**Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers three distinct scenarios:
 
-| Scenario                           | Source Status              | Threshold                                                        | Target Status |
-| ---------------------------------- | -------------------------- | ---------------------------------------------------------------- | ------------- |
-| Consultant never responded         | `PENDING`                  | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)     | `EXPIRED`     |
-| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`) | `EXPIRED`     |
+| Scenario                           | Source Status              | Threshold                                                                        | Target Status |
+| ---------------------------------- | -------------------------- | ------------------------------------------------------------------------------- | ------------- |
+| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`)      | `EXPIRED`     |
+| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                     | `EXPIRED`     |
+| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)                 | `EXPIRED`     |
 
 **Action**:
 
-- PENDING requests: Bulk `updateMany` to `EXPIRED` for both consultations and subscriptions.
+- PENDING consultations: Bulk `updateMany` to `EXPIRED`, then immediately releases the tentative slots the expired requests pinned (`deleteMany` scoped to `isTentative: true` on their appointments). A PENDING consultation holds a real calendar slot, so the threshold is hours and the release happens in the same pass — booking-journey audit B1; previously a hold could sit for 30 days on a daily sweep that did not free slots.
+- PENDING subscriptions: Bulk `updateMany` to `EXPIRED`. Subscriptions hold no slots at request time (lazy allocation), so they keep the 30-day window.
+- **APPROVED-unallocated subscriptions (PR 2c money fix, audit gap #3)**: PAID bookings whose consultant never allocated any session were IMMORTAL before — `APPROVED` was not in `EXPIRED`'s allowed-from and no cohort covered them. The sweep now expires `APPROVED` rows with zero live confirmed slots after 30 days; `REQUEST_ALLOWED_FROM.EXPIRED` was widened to include `APPROVED` to make the transition legal.
+- **Refunds (PR 2c money fix, audit gap #1)**: every expired consultation/subscription with SUCCEEDED payments is refunded via the booking front door (`refundBookingPayment`, full remaining balance). Failures are counted + logged, never thrown — one bad gateway call must not stall the cohort drain.
 - APPROVED_PENDING_PAYMENT requests: Bulk `updateMany` to `EXPIRED` and clears `pendingPaymentUrl` to invalidate stale payment links.
 
-**Safety**: Three separate operations (PENDING consultations, PENDING subscriptions, payment-pending requests), each with its own `try/catch`. Uses bulk `updateMany` rather than per-record updates for efficiency.
+**Safety**: Three separate operations (PENDING consultations, PENDING subscriptions, payment-pending requests), each with its own `try/catch`. Uses bulk `updateMany` rather than per-record updates for efficiency. Hourly cadence bounds worst-case hold lifetime at ~49h.
 
 ---
 

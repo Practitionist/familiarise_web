@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createRazorpayOrder,
-  razorpayClient,
+  getRazorpayClient,
 } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -143,6 +143,7 @@ export async function POST(
   // the stored order has already been paid we fall through and mint a new one,
   // because the webhook for the paid order owns that outcome.
   const existingOrderId = event.payment.paymentIntent;
+  const razorpayClient = getRazorpayClient();
   if (razorpayClient && existingOrderId?.startsWith("order_")) {
     try {
       const existingOrder = await razorpayClient.orders.fetch(existingOrderId);

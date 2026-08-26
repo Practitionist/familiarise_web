@@ -89,7 +89,7 @@ async function cascadeRefundToEarningsUnlocked(): Promise<RefundEarningCascadeRe
             initiatedByUserId: null, // gateway-initiated
           });
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
       );
       console.log(`Cascade applied for refund ${refund.id}`);
       updatedCount++;

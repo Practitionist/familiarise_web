@@ -146,3 +146,17 @@ export async function recordSystemError(params: {
     },
   });
 }
+
+// Wave-3 hardening (#1230): ~15 call sites invoke this as
+// `void recordSystemError(...)` relying on an informal never-throw contract —
+// an unexpected throw (e.g. a getter blowing up inside a params spread) would
+// surface as an unhandled rejection and crash the host on Node ≥15. The
+// returned promise is wrapped post-hoc here so EVERY void-site is covered
+// without touching each call site; awaited callers still get settled void.
+export function recordSystemErrorSafe(
+  params: Parameters<typeof recordSystemError>[0],
+): Promise<void> {
+  return recordSystemError(params).catch((err) => {
+    console.error("[system-events] recordSystemError threw:", err);
+  });
+}

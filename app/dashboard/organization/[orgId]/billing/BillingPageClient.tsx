@@ -524,6 +524,13 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         subtitle="Invoices, charges, and outstanding balance"
         actions={
           <div className="flex gap-2">
+            {/* Wave-4b (#1230) — register export for finance reconciliation. */}
+            <a
+              href={`/api/organizations/${orgId}/billing-account/invoices/export`}
+              className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-zinc-50"
+            >
+              Export CSV
+            </a>
             {can("billing.manage") && (
               <Button size="sm" variant="outline" onClick={() => setShowComposer(true)}>
                 <Plus className="h-4 w-4 mr-1" /> Create invoice

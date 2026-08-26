@@ -16,6 +16,12 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import {
+  chunk,
+  pause,
+  STREAM_BATCH_PAUSE_MS,
+  STREAM_CONCURRENCY_LIMIT,
+} from "@/lib/stream/batch";
 import { getEventChannelIdsForAppointment } from "@/lib/stream/appointment-channels";
 import prisma from "@/lib/prisma";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
@@ -309,22 +315,36 @@ async function freezeChannelsForSessions(
     // success however many channels failed — it could not trip during the very
     // outage it exists for — and not one failure reached `result.errors`. Per
     // channel, the breaker sees each real failure and each is reported.
-    const outcomes = await Promise.allSettled(
-      channelIds.map((channelId) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(channelId), channelId)
-            .updatePartial({ set: { frozen: true } }),
-        ),
-      ),
-    );
-    outcomes.forEach((outcome, i) => {
-      if (outcome.status === "rejected") {
-        result.errors.push(
-          `freeze ${channelIds[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
-        );
+    //
+    // Chunked by STREAM_CONCURRENCY_LIMIT and PAUSED between batches
+    // (2026-08-23): a bare `channelIds.map(...)` fired every updatePartial
+    // simultaneously — up to MAX_DRAIN_BATCH at once — and UpdateChannelPartial
+    // is capped at 300/min app-wide. Concurrency alone is not rate control:
+    // ten parallel calls answered in 100ms is ~6000 req/min. The pause holds
+    // this loop under STREAM_TARGET_REQUESTS_PER_MINUTE — half the cap — so it
+    // cannot jointly breach 300/min with the paced expire cron even if their
+    // windows overlap (they run on different infra, so no shared limiter).
+    for (const [batchIdx, batch] of chunk(channelIds, STREAM_CONCURRENCY_LIMIT).entries()) {
+      if (batchIdx > 0) {
+        await pause(STREAM_BATCH_PAUSE_MS);
       }
-    });
+      const outcomes = await Promise.allSettled(
+        batch.map((channelId) =>
+          withStreamCircuitBreaker(() =>
+            chat
+              .channel(getChannelTypeFromId(channelId), channelId)
+              .updatePartial({ set: { frozen: true } }),
+          ),
+        ),
+      );
+      outcomes.forEach((outcome, i) => {
+        if (outcome.status === "rejected") {
+          result.errors.push(
+            `freeze ${batch[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+          );
+        }
+      });
+    }
   } catch (err) {
     result.errors.push(
       `Freeze chat: ${err instanceof Error ? err.message : String(err)}`,
@@ -373,22 +393,29 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
     if (channelIds.length === 0) return result;
 
     const chat = getStreamChatClient();
-    const outcomes = await Promise.allSettled(
-      channelIds.map((channelId) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(channelId), channelId)
-            .updatePartial({ set: { frozen: false } }),
+    // Chunked and paused like the freeze path above — same 300/min
+    // UpdateChannelPartial budget, same reason.
+    for (const [batchIdx, batch] of chunk(channelIds, STREAM_CONCURRENCY_LIMIT).entries()) {
+      if (batchIdx > 0) {
+        await pause(STREAM_BATCH_PAUSE_MS);
+      }
+      const outcomes = await Promise.allSettled(
+        batch.map((channelId) =>
+          withStreamCircuitBreaker(() =>
+            chat
+              .channel(getChannelTypeFromId(channelId), channelId)
+              .updatePartial({ set: { frozen: false } }),
+          ),
         ),
-      ),
-    );
-    outcomes.forEach((outcome, i) => {
-      if (outcome.status === "fulfilled") result.unfrozen++;
-      else
-        result.errors.push(
-          `unfreeze ${channelIds[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
-        );
-    });
+      );
+      outcomes.forEach((outcome, i) => {
+        if (outcome.status === "fulfilled") result.unfrozen++;
+        else
+          result.errors.push(
+            `unfreeze ${batch[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+          );
+      });
+    }
   } catch (err) {
     result.errors.push(
       `Unfreeze chat: ${err instanceof Error ? err.message : String(err)}`,

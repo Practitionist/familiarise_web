@@ -231,6 +231,12 @@ export async function GET(
     // #1166 ORG-4 — personal surface, so every query pins the appointment to
     // organizationId: null (ADR 19); mirrors lib/data/consultee-events-read.ts.
     // Org-funded sessions live on the org dashboard.
+    //
+    // take: per-user history is naturally small, but these were the only
+    // unbounded findManys on the hottest dashboard read — cap them so a
+    // pathological account (or an import bug) can't turn this endpoint into
+    // a multi-MB payload.
+    const PER_USER_TAKE = 250;
     const [consultations, subscriptions, webinars, classes] = await Promise.all(
       [
         // Fetch consultations for this consultee
@@ -243,6 +249,7 @@ export async function GET(
           orderBy: {
             requestedAt: "desc",
           },
+          take: PER_USER_TAKE,
         }),
         // Fetch subscriptions for this consultee
         prisma.subscription.findMany({
@@ -254,6 +261,7 @@ export async function GET(
           orderBy: {
             requestedAt: "desc",
           },
+          take: PER_USER_TAKE,
         }),
         // Webinars the consultee registered for
         prisma.webinar.findMany({
@@ -281,6 +289,10 @@ export async function GET(
           include: {
             ...webinarInclude,
           },
+          // Deterministic truncation: take without orderBy is unspecified
+          // order, so >250 matches could page differently between requests.
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: PER_USER_TAKE,
         }),
         // Classes the consultee enrolled in
         prisma.class.findMany({
@@ -318,6 +330,7 @@ export async function GET(
               status: "asc",
             },
           ],
+          take: PER_USER_TAKE,
         }),
       ],
     );

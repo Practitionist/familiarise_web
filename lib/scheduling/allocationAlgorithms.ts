@@ -47,6 +47,8 @@ export interface AllocationResult {
   success: boolean;
   selectedSlots: TimeSlot[];
   error?: string;
+  /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
+  errorCode?: string;
   strategy?: string;
   /** HTTP status of a failed allocate call — 409 means "allocated elsewhere". */
   httpStatus?: number;
@@ -193,6 +195,7 @@ export class AllocationAlgorithms {
           success: false,
           selectedSlots: [],
           error: allocationResult.error,
+          errorCode: allocationResult.errorCode,
           httpStatus: allocationResult.httpStatus,
         };
       }
@@ -281,6 +284,7 @@ export class AllocationAlgorithms {
           success: false,
           selectedSlots: [],
           error: allocationResult.error,
+          errorCode: allocationResult.errorCode,
           httpStatus: allocationResult.httpStatus,
         };
       }

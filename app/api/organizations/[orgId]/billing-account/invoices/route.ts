@@ -25,6 +25,7 @@ import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numberi
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 
 const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
@@ -105,6 +106,13 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
   if (access.error) return access.error;
+
+  // #677/PM-36 — invoice generation is a statutory-document write.
+  const limited = await applyRateLimit(
+    moneyOpsLimiter,
+    access.member?.id ?? orgId,
+  );
+  if (limited) return limited;
 
   const raw = await req.json().catch(() => null);
   const parsed = CreateBodySchema.safeParse(raw);

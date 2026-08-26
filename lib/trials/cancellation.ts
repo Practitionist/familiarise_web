@@ -26,7 +26,7 @@ import {
   computeRefundPct,
   parsePolicySnapshot,
 } from "@/lib/payments/operations/cancellation-policy";
-import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 
 export type TrialRefundOutcome = {
   refundPct: number;
@@ -140,7 +140,10 @@ export async function refundCancelledTrial(args: {
   if (amountPaise <= 0) return { refundPct, amountRefundedPaise: 0 };
 
   try {
-    const result = await refundPayment({
+    // Audit B-P1-07 — route through the booking front door so org-funded and
+    // free_ trials hit the correct rail (in-ledger reversal / credit restore)
+    // instead of throwing UNKNOWN_GATEWAY on the raw gateway path.
+    const result = await refundBookingPayment({
       paymentId: payment.id,
       amountPaise,
       reason: `trial cancellation (${refundPct}% per booking-time policy, ${

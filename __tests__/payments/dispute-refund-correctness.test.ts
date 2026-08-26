@@ -30,8 +30,9 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
   razorpayClient: { payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) } },
+  getRazorpayClient: () => ({ payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) } }),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
+jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null, getStripeClient: () => null }));
 
 // Minimal stubs for the rest of utils.ts's import graph so module load works.
 jest.mock("../../lib/novu", () => ({
