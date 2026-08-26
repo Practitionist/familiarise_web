@@ -191,6 +191,21 @@ export function checkPaymentLegsSumToAmount(args: {
   legs: Array<{ source: PaymentLegSource; amountPaise: number }>;
 }): PaymentLegSumMismatch | null {
   const originals = args.legs.filter((l) => !isReversalLegSource(l.source));
+
+  // E2E-audit fix — LICENSE-funded bookings are fully absorbed by the
+  // contract: the funding leg is deliberately ₹0 while Payment.amount stays
+  // at full price, so Σlegs === amount is structurally false for every one
+  // of them. Treating that as a mismatch made the checkout warn AND emitted
+  // a guaranteed nightly PAYMENT_LEG_SUM_MISMATCH finding per license
+  // booking — drowning real WALLET/INVOICE drift in by-design noise. Skip
+  // the sum test when the only original legs are zero-value LICENSE legs.
+  const nonLicenseOriginals = originals.filter(
+    (l) => !(l.source === "LICENSE" && l.amountPaise === 0),
+  );
+  if (nonLicenseOriginals.length === 0 && originals.length > 0) {
+    return null;
+  }
+
   const legSum = originals.reduce((acc, leg) => acc + leg.amountPaise, 0);
   if (legSum !== args.paymentAmountPaise) {
     return {

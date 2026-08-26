@@ -39,6 +39,7 @@ import {
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -237,6 +238,25 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
         }).catch((err) =>
           console.error("[cron] notifyOrgInvoiceIssued failed:", err),
+        );
+        // E2E-audit P1 fix — cron-issued invoices never emitted
+        // `invoice.issued`, so integrators (HRIS/ERP) only ever saw
+        // manually-created invoices. Same payload shape as the manual route.
+        void dispatchWebhookEvent({
+          prisma,
+          organizationId: orgId,
+          eventType: "invoice.issued",
+          payload: {
+            invoiceId: result.invoiceId,
+            invoiceNumber: result.invoiceNumber,
+            totalPaise: result.totalPaise,
+            displayCurrency: Currency.INR,
+            dueDate: dueDate.toISOString(),
+            purchaseOrderId: null,
+            contractId: sub.contract.id,
+          },
+        }).catch((err) =>
+          console.error("[cron] invoice.issued webhook failed:", err),
         );
       } else {
         console.log(
