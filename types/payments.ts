@@ -3,6 +3,8 @@
  * Used by admin/staff payment, refund, payout, and dispute pages.
  */
 
+import type { AppointmentsType } from "@prisma/client";
+
 // ─── Payment List (admin/payments, staff/payments) ─────────────────
 export interface Payment {
   id: string;
@@ -17,7 +19,7 @@ export interface Payment {
   isMockPayment?: boolean;
   createdAt: string;
   appointment: {
-    appointmentType: string;
+    appointmentType: AppointmentsType;
   } | null;
 }
 
@@ -75,7 +77,7 @@ export interface PaymentDetail {
   };
   appointment: {
     id: string;
-    appointmentType: string;
+    appointmentType: AppointmentsType;
   } | null;
   discountCode: {
     code: string;
@@ -140,7 +142,7 @@ export interface RecentPayment {
   paymentGateway: string;
   createdAt: string;
   appointment: {
-    appointmentType: string;
+    appointmentType: AppointmentsType;
   } | null;
 }
 
