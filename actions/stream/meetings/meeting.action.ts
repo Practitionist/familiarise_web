@@ -39,6 +39,10 @@ const anchorSlotSelect = {
   isTentative: true,
   appointmentId: true,
   completionStatus: true,
+  // E2E-audit P1 fix — lets anchor selection prefer the consultant-owned row
+  // of a run (group events carry parallel per-buyer rows spanning only the
+  // first atom, and whichever row sorted first used to decide the room id).
+  consultantProfileId: true,
 } as const;
 
 export type AnchorSlot = {
@@ -48,6 +52,7 @@ export type AnchorSlot = {
   isTentative: boolean;
   appointmentId: string;
   completionStatus: string;
+  consultantProfileId: string | null;
 };
 
 /** Consultant identity, deep enough for `resolvePlanOwnerIds` to read it. */
@@ -247,16 +252,29 @@ export async function resolveSessionAnchorSlot(
     // Served by @@index([appointmentId]). Only the soft-delete tombstone is
     // filtered here — it is a storage concern the grouping helper has no
     // business knowing about; every session rule is left to the helper.
+    // The `id` tiebreak makes equal-start rows order deterministically in
+    // every query that fetches them, so two surfaces can't disagree about
+    // which row leads a run merely by fetching in a different order.
     const siblings = await prisma.slotOfAppointment.findMany({
       where: { appointmentId: slot.appointmentId, deletedAt: null },
-      orderBy: { startsAt: "asc" },
+      orderBy: [{ startsAt: "asc" }, { id: "asc" }],
       select: anchorSlotSelect,
     });
 
     // No run means the row we were handed is itself cancelled, rescheduled or
     // soft-deleted, so it anchors only itself — which keeps a stale Join click
     // on the room it already has.
-    return findSessionRun(siblings, slot.id)?.anchor ?? slot;
+    const run = findSessionRun(siblings, slot.id);
+    if (!run) return slot;
+
+    // Prefer a consultant-owned anchor when one exists in this run. Webinar
+    // and class buyers get their own parallel slot row spanning only the
+    // first atom; if such a row sorts ahead of the consultant's contiguous
+    // N-atom run, the buyer's Join minted a SECOND room on a different key
+    // and split the audience (#1061 class). The consultant's rows are the
+    // canonical spine every attendee is grouped around.
+    const consultantAnchor = run.slots.find((s) => s.consultantProfileId);
+    return (consultantAnchor ?? run.anchor) ?? slot;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -527,8 +545,75 @@ async function refuseMeetingCreation(
       .join("; ")}`;
   }
 
+  // E2E-audit P1 fix — the writer is reachable by any entitled caller with
+  // arguments of its choosing, and entitlement (slot participation) holds
+  // even for TENTATIVE rows: an APPROVED_PENDING_PAYMENT consultation or a
+  // not-yet-captured webinar seat could provision a real room and walk into
+  // it pre-payment, because every Join-button guard lived in the UI. Read
+  // the row's actual persisted state instead of trusting the payload. The
+  // booking's status lives on its PARENT row (consultation/subscription/
+  // webinar/class/trial), not on Appointment itself.
+  const dbSlot = await prisma.slotOfAppointment.findUnique({
+    where: { id: parsedSlot.data.id },
+    select: {
+      isTentative: true,
+      completionStatus: true,
+      deletedAt: true,
+      appointment: {
+        select: {
+          deletedAt: true,
+          consultation: { select: { status: true } },
+          subscription: { select: { status: true } },
+          webinar: { select: { status: true } },
+          class: { select: { status: true } },
+          trialSession: { select: { status: true } },
+        },
+      },
+    },
+  });
+  if (!dbSlot) {
+    return "Session slot not found.";
+  }
+  if (dbSlot.isTentative) {
+    return "This session is not confirmed yet.";
+  }
+  if (
+    dbSlot.deletedAt ||
+    dbSlot.completionStatus === "CANCELLED" ||
+    dbSlot.completionStatus === "RESCHEDULED"
+  ) {
+    return "This session was cancelled or moved.";
+  }
+  const appt = dbSlot.appointment;
+  const bookingStatus =
+    appt.consultation?.status ??
+    appt.subscription?.status ??
+    appt.webinar?.status ??
+    appt.class?.status ??
+    (appt.trialSession?.status === "CANCELLED" ||
+    appt.trialSession?.status === "REJECTED"
+      ? "CANCELLED"
+      : null);
+  if (
+    appt.deletedAt ||
+    (bookingStatus && TERMINAL_APPOINTMENT_STATUSES.has(bookingStatus))
+  ) {
+    return "This booking is no longer active.";
+  }
+
   return null;
 }
+
+/**
+ * Booking states from which no new call may ever be provisioned. A cancelled,
+ * rejected or expired request must not resurrect as a video room, however the
+ * slot rows were left behind.
+ */
+const TERMINAL_APPOINTMENT_STATUSES = new Set([
+  "CANCELLED",
+  "REJECTED",
+  "EXPIRED",
+]);
 
 /**
  * The refusal check, hoisted for `getOrCreateAppointmentMeeting` to run BEFORE
