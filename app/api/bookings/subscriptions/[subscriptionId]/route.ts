@@ -303,75 +303,25 @@ export async function DELETE(
   // Require authentication
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
-  const { session } = authResult;
 
-  // Only ADMIN can delete subscriptions
-  if (session.user.role !== "ADMIN") {
-    return forbiddenResponse("Only administrators can delete subscriptions");
-  }
-
-  try {
-    const { subscriptionId } = await params;
-
-    const subscriptionData = await prisma.subscription.delete({
-      where: { id: subscriptionId },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointments: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: subscriptionData }, { status: 200 });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-    console.error("Error deleting subscription:", error);
-    return NextResponse.json(
-      { error: "An error occurred while deleting the subscription" },
-      { status: 500 },
-    );
-  }
+  // Doctrine rule 2 — nothing is deleted. This ADMIN-only route used to run a
+  // raw `prisma.subscription.delete`, whose cascades reach every Appointment
+  // of the plan and from there the Payments pointing at those appointments
+  // (Payment.appointment onDelete: Cascade) — or FK-fail on
+  // Refund.payment onDelete: Restrict, surfacing as a 500. Bookings are
+  // soft-cancelled through the cancel API, which routes refunds through the
+  // booking front door.
+  void params;
+  return NextResponse.json(
+    {
+      error:
+        "Deleting bookings is not supported. Cancel via " +
+        "POST /api/appointments/{appointmentId}/cancel, which soft-cancels " +
+        "and refunds through the booking front door.",
+      code: "DELETE_NOT_SUPPORTED",
+    },
+    { status: 405 },
+  );
 }
 
 export async function PATCH(

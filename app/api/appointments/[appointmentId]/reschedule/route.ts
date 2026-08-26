@@ -428,7 +428,14 @@ export async function POST(
                 id: appointment.consultation.id,
                 status: { in: [...RESCHEDULABLE_FROM] },
               },
-              data: { status: "PENDING" },
+              // requestedAt rides along deliberately: the stale-request
+              // expiry sweep keys its PENDING cohort on requestedAt, so a
+              // reschedule re-entering PENDING must refresh the clock or the
+              // next hourly run reads the ORIGINAL request age — for any
+              // booking older than 48h that is "stale", and the sweep would
+              // terminalise (EXPIRED) and fully refund a live booking the
+              // consultee is actively trying to move.
+              data: { status: "PENDING", requestedAt: new Date() },
             })
           ).count;
         } else if (appointment.subscription) {
@@ -455,7 +462,9 @@ export async function POST(
                     id: appointment.subscription.id,
                     status: { in: [...RESCHEDULABLE_FROM] },
                   },
-                  data: { status: "PENDING" },
+                  // Same clock-refresh rationale as the consultation flip
+                  // above: expirePendingSubscriptions keys on requestedAt.
+                  data: { status: "PENDING", requestedAt: new Date() },
                 })
               ).count;
         } else if (appointment.webinar) {
