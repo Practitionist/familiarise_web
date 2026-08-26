@@ -5,6 +5,10 @@
 import { toast } from "@/hooks/use-toast";
 import { ClassEvent } from "@/types/planner-events";
 import {
+  positioningPayload,
+  priceToPaise,
+} from "@/components/planner/services/shared/plan-payload";
+import {
   CreateClassPayload,
   UpdateClassPayload,
   ClassRequestBody,
@@ -198,7 +202,7 @@ export class ClassService {
       title: plan?.title ?? "",
       description: plan?.description ?? "",
       // The form edits rupees; the DB stores paise (#780 money model).
-      price: Math.round((plan?.price ?? 0) * 100),
+      price: priceToPaise(plan?.price),
       priceCurrency: plan?.priceCurrency,
       durationInMonths: plan?.durationInMonths ?? 1,
       sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
@@ -211,14 +215,7 @@ export class ClassService {
       prerequisites: plan?.prerequisites ?? undefined,
       materialProvided: plan?.materialProvided ?? undefined,
       learningOutcomes: plan?.learningOutcomes,
-      // ADR 24 positioning content. The endpoints validate and persist these
-      // (see the nested faqs create in crud-with-plan); the service simply
-      // never sent them, so authoring through the planner produced a plan with
-      // no subtitle, audience, inclusions or FAQ no matter what was typed.
-      subtitle: plan?.subtitle ?? null,
-      targetAudience: plan?.targetAudience ?? [],
-      whatsIncluded: plan?.whatsIncluded ?? [],
-      faqs: plan?.faqs ?? [],
+      ...positioningPayload(plan ?? {}),
       topics: topicNames,
       classContents: plan?.classContents?.map((content) => ({
         id: content.id,

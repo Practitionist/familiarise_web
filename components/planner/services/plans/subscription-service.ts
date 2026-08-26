@@ -4,6 +4,11 @@
 
 import type { SubscriptionPlan } from "@/schemas/plans";
 import { SubscriptionPlanEvent } from "@/types/planner-events";
+import {
+  positioningPayload,
+  priceToPaise,
+  recordingPayload,
+} from "@/components/planner/services/shared/plan-payload";
 
 export class SubscriptionService {
   /**
@@ -102,7 +107,7 @@ export class SubscriptionService {
         sessionDurationInHours: plan.sessionDurationInHours,
         sessionsPerWeek: plan.sessionsPerWeek,
         // The form edits rupees; the DB stores paise (#780 money model).
-        price: Math.round(plan.price * 100),
+        price: priceToPaise(plan.price),
         priceCurrency: plan.priceCurrency,
         emailSupport: plan.emailSupport,
         language: plan.language,
@@ -115,18 +120,8 @@ export class SubscriptionService {
         trialDurationMinutes: plan.trialDurationMinutes ?? 30,
         trialPriceInPaise: plan.trialPriceInPaise ?? 0,
         subscriptionContents: plan.subscriptionContents ?? [],
-        // ADR 24 positioning content. The endpoint has always validated and
-        // persisted these (see the nested faqs create); the service simply never
-        // sent them, so authoring through the planner produced a plan with no
-        // subtitle, audience, inclusions or FAQ no matter what was typed.
-        subtitle: plan.subtitle ?? null,
-        targetAudience: plan.targetAudience ?? [],
-        whatsIncluded: plan.whatsIncluded ?? [],
-        faqs: plan.faqs ?? [],
-        // #1134 P1-6 — recording is an explicit per-plan opt-in on all four
-        // types now; the endpoints persist both columns.
-        recordingEnabled: plan.recordingEnabled ?? false,
-        recordingStoragePolicy: plan.recordingStoragePolicy ?? "STREAM_ONLY",
+        ...positioningPayload(plan),
+        ...recordingPayload(plan),
         consultantProfileId: consultantId,
         ...(isUpdate && plan.id ? { id: plan.id } : {}),
       };
