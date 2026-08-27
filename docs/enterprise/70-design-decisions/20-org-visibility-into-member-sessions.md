@@ -47,3 +47,12 @@ What we pay is that an organization investigating a complaint cannot self-serve 
 ## Addendum (2026-08-14)
 
 A consequence of this decision that keeps getting re-reported as a bug deserves stating plainly: the rows in the org "Everyone" appointments table deliberately do not link anywhere. There is no per-session detail page an organization role is permitted to open — such a page would exist only to show content this ADR withholds — so the table is metadata-only **by design**, and the missing row link is intent, not an unfinished feature. The 2026-08-13 booking audit (#1169) flagged the absence and this addendum records the resolution: do not add a drill-in without revisiting this ADR itself.
+
+## Addendum (2026-08-21) — #support-hub: support conversations are content
+
+The support subsystem (#appt-support / #support-hub) lands inside this decision's boundary, and the org-facing triage surface states the rule rather than inheriting it by accident. A member's support conversation about their own session is **content**: it contains their complaints, and a member who believes their employer can read "the expert was unprepared" will raise fewer of them. So:
+
+- The org triage page and its endpoint (`GET /api/organizations/[orgId]/support-threads`, gated `operations.read`) select an explicit metadata allowlist — status, category, channel, timestamps, the member's name, the plan title — and **no messages, no bodies, no last-message preview**. `__tests__/security/org-scope-payload-allowlist.test.ts` pins the select; adding a content field to it fails the suite.
+- The org's CSAT visibility is the aggregate card (`/feedback-summary`: average + count) — individual ratings and comments never reach an organization surface, consistent with "either party's feedback, the rating" being content.
+- What the org DOES get is a party role, not a spectator role: an operator holding `operations.read` may open **their own** conversation on one of their org's appointments (`ORG_ADMIN_DISPUTE` / `SPONSORSHIP_BILLING` intents only, enforced in the thread route's authorize branch and clamped again in the support service). The org can raise a concern; it still cannot read anyone else's.
+- Platform staff are the exception by function, not by grant: once a thread escalates to the HUMAN channel, staff must read the transcript to respond — the same deliberate line as the back-office documents page, stated here so it is a decision rather than an `include`. The back-office Conversations inbox reads transcripts for exactly this reason and no other.

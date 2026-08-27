@@ -38,7 +38,7 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { ReportIssueDialog } from "@/components/appointments/consultee/ReportIssueDialog";
+import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 
 type DialogKind = "cancel" | "leave" | "report" | "documents";
@@ -119,18 +119,6 @@ const KIND_TO_TYPE: Record<
   WEBINAR: "Webinar",
   CLASS: "Class",
   TRIAL: "Trial",
-};
-
-const KIND_TO_REPORT_TYPE: Record<
-  AppointmentVM["kind"],
-  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS"
-> = {
-  CONSULTATION: "CONSULTATION",
-  // Trials belong to subscription plans — the support flow has no TRIAL kind.
-  TRIAL: "SUBSCRIPTION",
-  SUBSCRIPTION: "SUBSCRIPTION",
-  WEBINAR: "WEBINAR",
-  CLASS: "CLASS",
 };
 
 /**
@@ -481,9 +469,6 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const renderDialogs = () => {
     if (!activeVm) return null;
     const isPendingPayment = isPendingPaymentStatus(activeVm.status);
-    const scheduledAt = activeVm.raw.rawSlots?.[0]
-      ? new Date(activeVm.raw.rawSlots[0].startsAt as Date | string).toISOString()
-      : undefined;
     const dialogMode = dialog === "leave" ? "leave" : "cancel";
 
     return (
@@ -501,17 +486,20 @@ export function useConsulteeAppointmentsAdapter(options?: {
         />
 
         {activeVm.appointmentId && dialog === "report" && (
-          <ReportIssueDialog
+          // #support-hub — "Report issue" now opens the per-appointment
+          // flowchart thread (same surface as the detail page) instead of the
+          // legacy raw-ticket dialog. One system, one data path: intents are
+          // stage-gated server-side, escalations land in the ops queue with
+          // session context.
+          <SupportThreadSheet
+            appointmentId={activeVm.appointmentId}
             open
             onOpenChange={(open) => !open && closeDialog()}
-            appointmentId={activeVm.appointmentId}
-            appointmentType={KIND_TO_REPORT_TYPE[activeVm.kind]}
-            appointmentStatus={
-              activeVm.status === "COMPLETED" ? "COMPLETED" : "UPCOMING"
+            appointmentHref={
+              activeVm.appointmentId && consulteeId
+                ? `/dashboard/consultee/${consulteeId}/appointments/${activeVm.appointmentId}`
+                : undefined
             }
-            consultantName={activeVm.counterpart.name}
-            scheduledAt={scheduledAt}
-            onSuccess={closeDialog}
           />
         )}
 

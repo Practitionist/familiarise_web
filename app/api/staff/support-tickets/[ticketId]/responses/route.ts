@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
@@ -45,40 +46,75 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     // Create the response
-    const response = await prisma.supportResponse.create({
-      data: {
-        message: validatedData.message,
-        isInternal: validatedData.isInternal,
-        supportTicket: { connect: { id: ticketId } },
-        user: { connect: { id: session.user.id } },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            role: true,
-            image: true,
+    // One transaction for the whole public-reply write: the response row, the
+    // OPEN→IN_PROGRESS CAS, the thread mirror, and the ticket's activity clock
+    // commit or roll back together — a partial failure must not leave a reply
+    // with no activity bump or a mirror with no response behind it.
+    const now = new Date();
+    const response = await prisma.$transaction(async (tx) => {
+      const created = await tx.supportResponse.create({
+        data: {
+          message: validatedData.message,
+          isInternal: validatedData.isInternal,
+          supportTicket: { connect: { id: ticketId } },
+          user: { connect: { id: session.user.id } },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              image: true,
+            },
           },
         },
-      },
-    });
-
-    // Update ticket status to IN_PROGRESS if it was OPEN
-    // Only update if this is not an internal note
-    if (ticket.status === "OPEN" && !validatedData.isInternal) {
-      // Status-guarded CAS: a concurrent staff edit that already moved the
-      // ticket off OPEN must not be clobbered back. updateMany is a no-op
-      // (count 0) when the guard misses, so the loser silently yields.
-      await prisma.supportTicket.updateMany({
-        where: { id: ticketId, status: "OPEN" },
-        data: {
-          status: "IN_PROGRESS",
-          // Auto-assign to responding staff if not already assigned
-          assignedToId: ticket.assignedToId || session.user.id,
-        },
       });
-    }
+
+      // Update ticket status to IN_PROGRESS if it was OPEN (public replies
+      // only). Status-guarded CAS: a concurrent staff edit that already moved
+      // the ticket off OPEN must not be clobbered back. updateMany is a no-op
+      // (count 0) when the guard misses, so the loser silently yields.
+      if (ticket.status === "OPEN" && !validatedData.isInternal) {
+        await tx.supportTicket.updateMany({
+          where: { id: ticketId, status: "OPEN" },
+          data: {
+            status: "IN_PROGRESS",
+            // Auto-assign to responding staff if not already assigned
+            assignedToId: ticket.assignedToId || session.user.id,
+          },
+        });
+      }
+
+      // #support-hub — mirror public replies into the linked per-appointment
+      // thread as AGENT messages (what the USER sees on "Get help"), and bump
+      // the ticket's own clock — the hub and ops inbox sort by it.
+      if (!validatedData.isInternal) {
+        await tx.supportTicket.update({
+          where: { id: ticketId },
+          data: { lastMessageAt: now },
+        });
+        const linkedThread = await tx.appointmentSupportThread.findUnique({
+          where: { supportTicketId: ticketId },
+          select: { id: true },
+        });
+        if (linkedThread) {
+          await tx.supportMessage.create({
+            data: {
+              threadId: linkedThread.id,
+              sender: "AGENT",
+              body: validatedData.message,
+            },
+          });
+          await tx.appointmentSupportThread.update({
+            where: { id: linkedThread.id },
+            data: { lastMessageAt: now },
+          });
+        }
+      }
+
+      return created;
+    });
 
     // Notify the ticket owner about the staff response (skip for internal notes)
     if (!validatedData.isInternal) {
@@ -91,6 +127,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // reschedule times.
         respondedBy: response.user?.name ?? "Support",
         dashboardUrl: "/dashboard",
+        // ADR 23 — inherit the ticket's org-ness (attribution only).
+        ...notificationScope(ticket.organizationId),
       });
     }
 

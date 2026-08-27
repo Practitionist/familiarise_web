@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import {
   ISSUE_TYPE_LABELS,
-  ISSUE_TYPE_CATEGORIES,
+  PLATFORM_ISSUE_TYPE_CATEGORIES,
   PRIORITY_OPTIONS,
 } from "@/utils/supportTicketUrl";
 
@@ -331,7 +331,7 @@ export function FeedbackPanel({ profileId, view }: FeedbackPanelProps) {
                       <SelectValue placeholder="Select issue type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Object.entries(ISSUE_TYPE_CATEGORIES).map(
+                      {Object.entries(PLATFORM_ISSUE_TYPE_CATEGORIES).map(
                         ([category, types], idx) => (
                           <React.Fragment key={category}>
                             {idx > 0 && <div className="my-1" />}
@@ -348,6 +348,10 @@ export function FeedbackPanel({ profileId, view }: FeedbackPanelProps) {
                       )}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Issue with a specific session? Open the appointment and use
+                    &quot;Get help&quot; — it routes with full session context.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
