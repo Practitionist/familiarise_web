@@ -15,6 +15,19 @@ import { isPrivileged } from "@/lib/auth-helpers";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
+
+/** #366 — a captured standalone replay purchase grants playback. */
+async function hasReplayPurchase(
+  userId: string,
+  recordingId: string,
+): Promise<boolean> {
+  const purchase = await prisma.recordingPurchase.findFirst({
+    where: { recordingId, buyerId: userId, status: "SUCCEEDED" },
+    select: { id: true },
+  });
+  return !!purchase;
+}
+
 type RouteParams = {
   params: Promise<{
     recordingId: string;
@@ -112,6 +125,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         // #689 — a SUCCEEDED payment fully reversed by refunds is no longer an
         // entitlement; access needs at least one net-positive purchase for the plan.
         hasAccess = payments.some(isPaymentEntitled);
+      }
+
+      // #366 — standalone replay purchase (marketplace buyers hold no booking
+      // on the parent plan, so the payment path above can't see them).
+      if (!hasAccess) {
+        hasAccess = await hasReplayPurchase(session.user.id, recordingId);
       }
     }
 

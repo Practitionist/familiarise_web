@@ -25,6 +25,10 @@ import {
   handleOverageMemberSuccess,
   handleOverageMemberFailure,
 } from "@/lib/payments/webhooks/overage-handlers";
+import {
+  handleRecordingPurchaseSuccess,
+  handleRecordingPurchaseFailure,
+} from "@/lib/payments/webhooks/recording-purchase";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayPaymentCapturedEventSchema,
@@ -119,6 +123,12 @@ export async function routeCapturedPayment(params: {
     await handleOverageMemberSuccess(orderId);
     return;
   }
+  if (notes.type === "recording_purchase") {
+    // #366 — standalone replay sale; not a Payment row, settled on its own
+    // RecordingPurchase record (idempotent per gatewayOrderId).
+    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId);
+    return;
+  }
   await handlePaymentSuccess(orderId, notes, amountPaise);
 }
 
@@ -193,6 +203,8 @@ export async function processRazorpayWebhookEvent(
           await handleOrgPaymentFailure(failedNotes, failedEntity.id);
         } else if (failedNotes.type === "overage_member") {
           await handleOverageMemberFailure(failedEntity.order_id);
+        } else if (failedNotes.type === "recording_purchase") {
+          await handleRecordingPurchaseFailure(failedEntity.order_id);
         } else {
           await handlePaymentFailure(failedEntity.order_id);
         }

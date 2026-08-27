@@ -1085,6 +1085,99 @@ const deleteFromSupabase = async (
   }
 };
 
+// ============================================================================
+// Recording marketplace preview assets (#366)
+// Preview clips + thumbnails are PUBLIC marketing assets: explore cards are
+// ISR-cached and anonymous, so they can never depend on signed URLs. Full
+// recordings stay in the private `recordings` bucket.
+// ============================================================================
+
+const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
+const RECORDING_PREVIEW_MAX_BYTES = 50 * 1024 * 1024; // 50MB clip
+const RECORDING_PREVIEW_THUMB_MAX_BYTES = 5 * 1024 * 1024; // 5MB poster
+const ALLOWED_RECORDING_PREVIEW_VIDEO_TYPES = ["video/mp4", "video/webm"];
+const ALLOWED_RECORDING_PREVIEW_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+];
+
+interface RecordingPreviewUpload {
+  success: boolean;
+  url?: string;
+  storagePath?: string;
+  error?: string;
+}
+
+/**
+ * Upload a public preview asset for a recording listing. `kind` picks the
+ * validation profile (clip = short video, thumb = poster image).
+ *
+ * Object names are DETERMINISTIC per recording (`<recordingId>/clip.<ext>`,
+ * `<recordingId>/thumb.<ext>`) and the upload upserts: a re-upload overwrites
+ * the previous bytes in place, so no orphaned public objects accumulate. (A
+ * random per-upload filename here would strand the old clip forever — the
+ * bucket is public and nothing sweeps it.)
+ */
+const uploadRecordingPreviewAsset = async (
+  recordingId: string,
+  kind: "clip" | "thumb",
+  file: File,
+): Promise<RecordingPreviewUpload> => {
+  const isClip = kind === "clip";
+  const ext = isClip
+    ? file.type === "video/webm"
+      ? "webm"
+      : "mp4"
+    : file.type === "image/png"
+      ? "png"
+      : file.type === "image/webp"
+        ? "webp"
+        : "jpg";
+  return uploadAsset({
+    bucket: RECORDING_PREVIEWS_BUCKET,
+    folder: recordingId,
+    file,
+    maxBytes: isClip
+      ? RECORDING_PREVIEW_MAX_BYTES
+      : RECORDING_PREVIEW_THUMB_MAX_BYTES,
+    allowedMime: isClip
+      ? ALLOWED_RECORDING_PREVIEW_VIDEO_TYPES
+      : ALLOWED_RECORDING_PREVIEW_IMAGE_TYPES,
+    access: "public",
+    upsert: true,
+    replaceFolder: false,
+    cacheControl: "31536000",
+    // Fixed stem ⇒ upsert overwrites; extension follows the declared MIME.
+    fileNameFor: () => `${kind}.${ext}`,
+    ensureBucket: { public: true },
+    errors: {
+      bucketNotReady: `Preview storage bucket '${RECORDING_PREVIEWS_BUCKET}' not found.`,
+      size: isClip
+        ? "Preview clip exceeds the 50MB limit"
+        : "Thumbnail exceeds the 5MB limit",
+      type: isClip
+        ? (t) => `Unsupported preview format "${t}". Use MP4 or WebM.`
+        : (t) => `Unsupported thumbnail format "${t}". Use JPG, PNG, or WebP.`,
+    },
+  });
+};
+
+/** Best-effort removal of a recording's whole public-preview folder. */
+const deleteRecordingPreviewAssets = async (
+  recordingId: string,
+): Promise<void> => {
+  try {
+    await deleteAssetFolder(RECORDING_PREVIEWS_BUCKET, recordingId);
+  } catch (error) {
+    console.error("Failed to delete recording preview assets:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "storage" } },
+    );
+  }
+};
+
 export default supabase;
 export {
   fetchImagesFromSupabaseStorage,
@@ -1122,6 +1215,10 @@ export {
   // Generic upload/delete
   uploadToSupabase,
   deleteFromSupabase,
+  // Recording marketplace previews (#366, public bucket)
+  uploadRecordingPreviewAsset,
+  deleteRecordingPreviewAssets,
+  RECORDING_PREVIEWS_BUCKET,
   // Utility functions
   ensureBucketExists,
   getManualBucketInstructions,
