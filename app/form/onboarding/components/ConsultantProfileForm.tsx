@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PersonalInfoAndRole } from "@/schemas/user";
+import { LONG_FORM_TEXT_MAX, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import {
   ConsultantProfileFormSchema,
@@ -225,6 +225,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
             {...register("description")}
             placeholder="Tell us about your expertise and what you can offer to consultees"
             rows={4}
+            maxLength={LONG_FORM_TEXT_MAX}
           />
           {errors.description && (
             <p className="text-sm text-destructive">
