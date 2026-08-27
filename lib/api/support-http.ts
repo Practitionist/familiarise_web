@@ -13,9 +13,23 @@
  * without paging anyone — except 401/429, which are expected client behavior
  * and stay uncaptured on every path. `detail` echoes to the client only for
  * client-fault statuses; 5xx detail is Sentry-only.
+ *
+ * DELIVERY, not just capture: every capture below is followed by a flush
+ * scheduled with `after()`. On a serverless host the instance may freeze the
+ * moment the response is returned, and the SDK's transport is asynchronous —
+ * so a captured event can die queued, in memory, having never been sent. That
+ * is not theoretical here: the cron runner already flushes for exactly this
+ * reason (lib/observability/job-sentry.ts), and support 5xxs were reaching the
+ * client while Sentry stayed empty.
+ *
+ * `onRequestError` in instrumentation.ts does NOT cover this path. It only
+ * fires for errors Next.js sees escape a handler; these are caught and turned
+ * into an ordinary NextResponse, so as far as Next is concerned nothing
+ * failed. Capturing here is the only route, which makes flushing here
+ * mandatory rather than belt-and-braces.
  */
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 
@@ -40,6 +54,34 @@ const USER_COPY: Record<SupportErrorCode, string> = {
   CONFLICT: "That was just updated somewhere else. Refresh and try again.",
   INTERNAL: "Something went wrong on our side. Please try again in a moment.",
 };
+
+/**
+ * Schedule a Sentry flush for after the response is sent.
+ *
+ * `Sentry.flush` RESOLVES FALSE on timeout rather than throwing, and the
+ * queued events are then gone — silent loss. Log that, so an empty dashboard
+ * is distinguishable from a healthy one. Outside a request scope `after()`
+ * throws, so the whole thing is guarded: telemetry must never be the reason a
+ * response fails.
+ */
+function scheduleSentryFlush(timeoutMs = 2000): void {
+  try {
+    after(async () => {
+      try {
+        const drained = await Sentry.flush(timeoutMs);
+        if (!drained) {
+          console.warn(
+            `[support] Sentry flush timed out after ${timeoutMs}ms; queued events were dropped`,
+          );
+        }
+      } catch (err) {
+        console.warn("[support] Sentry flush failed", err);
+      }
+    });
+  } catch {
+    // Not in a request scope (unit tests, scripts) — nothing to schedule.
+  }
+}
 
 export function supportError(opts: {
   status: number;
@@ -84,6 +126,14 @@ export function supportError(opts: {
       extra,
       level: "warning",
     });
+  }
+
+  // Give the queued event a chance to leave the instance. `after()` runs the
+  // callback once the response is sent but before the platform is allowed to
+  // freeze the function, which is precisely the window the transport needs.
+  // Never awaited inline: a slow Sentry must not slow an error response down.
+  if (!ignored) {
+    scheduleSentryFlush();
   }
 
   return NextResponse.json(
