@@ -162,7 +162,10 @@ export const WorkExperienceSchema = z.object({
   isCurrent: z.boolean().default(false),
   description: z
     .string()
-    .max(LONG_FORM_TEXT_MAX, `Description must be ${LONG_FORM_TEXT_MAX} characters or less`)
+    .max(
+      LONG_FORM_TEXT_MAX,
+      `Description must be ${LONG_FORM_TEXT_MAX} characters or less`,
+    )
     .optional(),
 });
 
@@ -191,11 +194,17 @@ export const EducationSchema = z.object({
   grade: z.string().optional(),
   activities: z
     .string()
-    .max(SHORT_FORM_TEXT_MAX, `Activities must be ${SHORT_FORM_TEXT_MAX} characters or less`)
+    .max(
+      SHORT_FORM_TEXT_MAX,
+      `Activities must be ${SHORT_FORM_TEXT_MAX} characters or less`,
+    )
     .optional(),
   description: z
     .string()
-    .max(LONG_FORM_TEXT_MAX, `Description must be ${LONG_FORM_TEXT_MAX} characters or less`)
+    .max(
+      LONG_FORM_TEXT_MAX,
+      `Description must be ${LONG_FORM_TEXT_MAX} characters or less`,
+    )
     .optional(),
 });
 
@@ -208,7 +217,10 @@ export type Education = z.infer<typeof EducationSchema>;
 export const ConsultantProfileSchema = z.object({
   description: z
     .string()
-    .max(LONG_FORM_TEXT_MAX, `Description must be ${LONG_FORM_TEXT_MAX} characters or less`)
+    .max(
+      LONG_FORM_TEXT_MAX,
+      `Description must be ${LONG_FORM_TEXT_MAX} characters or less`,
+    )
     .optional(),
   experience: experienceValidation,
   rating: z.number().default(0),
@@ -226,7 +238,10 @@ export const ConsultantProfileSchema = z.object({
   toolsAndTechnologies: z.array(z.string()).default([]),
   mentoringStyle: z
     .string()
-    .max(SHORT_FORM_TEXT_MAX, `Mentoring style must be ${SHORT_FORM_TEXT_MAX} characters or less`)
+    .max(
+      SHORT_FORM_TEXT_MAX,
+      `Mentoring style must be ${SHORT_FORM_TEXT_MAX} characters or less`,
+    )
     .optional(),
   sessionTypes: z.array(SessionTypeEnum).default([]),
   profileCompletionPercentage: z.number().min(0).max(100).default(0),

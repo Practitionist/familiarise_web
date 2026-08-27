@@ -133,7 +133,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
   };
 
   const addCustomTag = useCallback(
-    async (name: string, tagsField: { value?: Tag[]; onChange: (v: Tag[]) => void }) => {
+    async (
+      name: string,
+      tagsField: { value?: Tag[]; onChange: (v: Tag[]) => void },
+    ) => {
       const trimmed = name.trim();
       if (!trimmed || !selectedDomain?.id) return;
 
@@ -188,7 +191,11 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
   if (isLoading) {
     return (
-      <div className="space-y-4 p-2 sm:p-4" aria-busy="true" aria-label="Loading form data">
+      <div
+        className="space-y-4 p-2 sm:p-4"
+        aria-busy="true"
+        aria-label="Loading form data"
+      >
         {[1, 2, 3, 4].map((i) => (
           <div key={i} className="space-y-2">
             <div className="h-4 w-28 animate-pulse rounded bg-muted" />
@@ -403,10 +410,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
                   {/* Checkbox grid for seeded tags */}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-3 rounded-lg bg-muted/50 border">
                     {filteredTags.map((tag) => (
-                      <div
-                        key={tag.id}
-                        className="flex items-center space-x-2"
-                      >
+                      <div key={tag.id} className="flex items-center space-x-2">
                         <Checkbox
                           id={`tag-${tag.id}`}
                           checked={

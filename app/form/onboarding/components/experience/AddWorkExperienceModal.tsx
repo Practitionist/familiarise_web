@@ -175,15 +175,17 @@ export function AddWorkExperienceModal({
                   Logo detected automatically
                 </p>
               )}
-              {!autoDetectedDomain && !manualDomainMode && formData.company.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => setManualDomainMode(true)}
-                >
-                  Add company website to show logo
-                </button>
-              )}
+              {!autoDetectedDomain &&
+                !manualDomainMode &&
+                formData.company.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setManualDomainMode(true)}
+                  >
+                    Add company website to show logo
+                  </button>
+                )}
             </div>
 
             {manualDomainMode && (

@@ -123,7 +123,10 @@ export function AddAchievementModal({
               <Select
                 value={formData.achievementType}
                 onValueChange={(value) =>
-                  setFormData({ ...formData, achievementType: value as AchievementType })
+                  setFormData({
+                    ...formData,
+                    achievementType: value as AchievementType,
+                  })
                 }
               >
                 <SelectTrigger>

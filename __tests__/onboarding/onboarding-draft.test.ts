@@ -54,8 +54,10 @@ import { AchievementCreateInputSchema } from "../../utils/onboarding";
 
 const mockGetSession = getSession as unknown as jest.Mock;
 const mockUpsert = prisma.onboardingDraft.upsert as unknown as jest.Mock;
-const mockFindUnique = prisma.onboardingDraft.findUnique as unknown as jest.Mock;
-const mockDeleteMany = prisma.onboardingDraft.deleteMany as unknown as jest.Mock;
+const mockFindUnique = prisma.onboardingDraft
+  .findUnique as unknown as jest.Mock;
+const mockDeleteMany = prisma.onboardingDraft
+  .deleteMany as unknown as jest.Mock;
 
 // A class NAMED File exercises the structural recognizer without needing the
 // DOM File global in the node environment.
@@ -138,7 +140,9 @@ describe("reviveDraftPayload", () => {
 describe("encodeDraftForSave", () => {
   it("rejects payloads over the serialized size budget", () => {
     const bloated = { bio: "x".repeat(ONBOARDING_DRAFT_MAX_BYTES + 10) };
-    expect(encodeDraftForSave({ role: null, currentStep: 0, payload: bloated })).toBeNull();
+    expect(
+      encodeDraftForSave({ role: null, currentStep: 0, payload: bloated }),
+    ).toBeNull();
   });
 
   it("accepts a realistic filled consultant form", () => {
@@ -389,7 +393,6 @@ function validInput(
   };
 }
 
-
 /**
  * The byte gate must count UTF-8 BYTES, not UTF-16 code units. Every existing
  * size test uses `"x".repeat(...)`, which is pure ASCII — those pass
@@ -444,7 +447,11 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
     // STAFF is invite-only and deliberately not draftable — but the caller
     // must be able to tell that apart from "the user wrote too much".
     expect(
-      prepareDraftForPersistDetailed({ role: "STAFF", currentStep: 0, payload: {} }),
+      prepareDraftForPersistDetailed({
+        role: "STAFF",
+        currentStep: 0,
+        payload: {},
+      }),
     ).toMatchObject({ ok: false, reason: "INVALID" });
   });
 
@@ -489,14 +496,17 @@ describe("structural payload contract", () => {
 
   const storedPayload = (payload: Record<string, unknown>) => {
     const result = prepare(payload);
-    if (!result.ok) throw new Error(`expected a persistable draft: ${result.reason}`);
+    if (!result.ok)
+      throw new Error(`expected a persistable draft: ${result.reason}`);
     return result.value.payload;
   };
 
   it("strips keys the wizard does not have", () => {
     // Not hostility — wizard versions. A key retired two releases ago would
     // otherwise ride along forever in a row nobody ever reads field-by-field.
-    expect(storedPayload({ name: "Ada", retiredInV2: "x", neverExisted: {} })).toEqual({
+    expect(
+      storedPayload({ name: "Ada", retiredInV2: "x", neverExisted: {} }),
+    ).toEqual({
       name: "Ada",
       [ONBOARDING_DRAFT_VERSION_KEY]: ONBOARDING_DRAFT_PAYLOAD_VERSION,
     });
@@ -544,7 +554,7 @@ describe("structural payload contract", () => {
     });
     expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
     expect(Object.hasOwn(stored, "constructor")).toBe(false);
-    expect((({}) as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("cannot store __proto__ or constructor nested inside an array item", () => {
@@ -606,7 +616,10 @@ describe("payload generation marker", () => {
     const written = prepareDraftForPersistDetailed({
       role: null,
       currentStep: 0,
-      payload: { name: "Ada", dateOfBirth: new Date("1990-06-15T00:00:00.000Z") },
+      payload: {
+        name: "Ada",
+        dateOfBirth: new Date("1990-06-15T00:00:00.000Z"),
+      },
     });
     if (!written.ok) throw new Error("expected a persistable draft");
 
@@ -650,7 +663,10 @@ describe("payload generation marker", () => {
     // that the form changed would be a lie.
     expect(readStoredDraftPayload({})).toEqual({ payload: {}, reason: null });
     expect(readStoredDraftPayload(null)).toEqual({ payload: {}, reason: null });
-    expect(readStoredDraftPayload("junk")).toEqual({ payload: {}, reason: null });
+    expect(readStoredDraftPayload("junk")).toEqual({
+      payload: {},
+      reason: null,
+    });
   });
 });
 

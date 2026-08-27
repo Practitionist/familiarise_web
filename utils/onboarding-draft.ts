@@ -193,11 +193,7 @@ const DraftableRoleSchema = z.union([
 export const SaveOnboardingDraftInputSchema = z
   .object({
     role: DraftableRoleSchema.nullable(),
-    currentStep: z
-      .number()
-      .int()
-      .min(0)
-      .max(ONBOARDING_DRAFT_MAX_STEP),
+    currentStep: z.number().int().min(0).max(ONBOARDING_DRAFT_MAX_STEP),
     payload: OnboardingDraftPayloadSchema,
   })
   .strict();
@@ -260,7 +256,9 @@ export function sanitizeDraftValue(
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, 200).map((item) => sanitizeDraftValue(item, depth + 1));
+    return value
+      .slice(0, 200)
+      .map((item) => sanitizeDraftValue(item, depth + 1));
   }
 
   if (isNonSerializable(value)) return null;
@@ -348,9 +346,10 @@ export function prepareDraftForPersistDetailed(
   const parsed = SaveOnboardingDraftInputSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "INVALID" };
 
-  const sanitizedPayload = sanitizeDraftValue(
-    parsed.data.payload,
-  ) as Record<string, unknown>;
+  const sanitizedPayload = sanitizeDraftValue(parsed.data.payload) as Record<
+    string,
+    unknown
+  >;
   const prepared: SaveOnboardingDraftInput = {
     ...parsed.data,
     // Stamped after sanitization so the marker is written by this function

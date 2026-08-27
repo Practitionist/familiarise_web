@@ -26,7 +26,10 @@ import { AlertTriangle, Check, History, LogOut, RotateCcw } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
-import { getPendingReferral, clearPendingReferral } from "@/lib/pending-referral";
+import {
+  getPendingReferral,
+  clearPendingReferral,
+} from "@/lib/pending-referral";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -82,10 +85,10 @@ const StaffProfileForm = dynamic(
   () => import("./components/StaffProfileForm"),
   { ssr: false, loading: () => <StepLoading /> },
 );
-const StaffReviewForm = dynamic(
-  () => import("./components/StaffReviewForm"),
-  { ssr: false, loading: () => <StepLoading /> },
-);
+const StaffReviewForm = dynamic(() => import("./components/StaffReviewForm"), {
+  ssr: false,
+  loading: () => <StepLoading />,
+});
 const CreateOrganizationWizard = dynamic(
   () =>
     import("@/components/organization/create-wizard/Wizard").then((m) => ({
@@ -784,7 +787,10 @@ const MultiStepForm: React.FC = () => {
           description: result.verificationWarning as string,
           variant: "destructive",
         });
-      } else if (finalData.role === "CONSULTANT" && result.verificationDeferred) {
+      } else if (
+        finalData.role === "CONSULTANT" &&
+        result.verificationDeferred
+      ) {
         trackOnboardingEvent("verification_deferred", {});
         toast({
           title: "Profile Submitted!",
