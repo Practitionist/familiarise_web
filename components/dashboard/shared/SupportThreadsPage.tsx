@@ -40,7 +40,12 @@ interface ThreadListRow {
   organizationId: string | null;
   messageCount: number;
   lastMessage: { sender: string; body: string } | null;
-  user: { id: string; name: string | null; email: string; image: string | null };
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+    image: string | null;
+  };
 }
 
 interface ThreadDetail {
@@ -62,7 +67,13 @@ interface ThreadDetail {
   };
 }
 
-const STATUS_FILTERS = ["OPEN", "IN_PROGRESS", "ESCALATED", "RESOLVED", "CLOSED"] as const;
+const STATUS_FILTERS = [
+  "OPEN",
+  "IN_PROGRESS",
+  "ESCALATED",
+  "RESOLVED",
+  "CLOSED",
+] as const;
 
 const STATUS_LABELS: Record<string, string> = {
   OPEN: "Open",
@@ -228,7 +239,22 @@ export function SupportThreadsPage() {
             (selectedId ? "lg:col-span-2" : "lg:col-span-5")
           }
         >
-          {list.isLoading ? (
+          {list.isError ? (
+            // `throwSupportError` produces a coded, user-facing message; the
+            // render branched only on the loading flag, so a failed fetch was
+            // indistinguishable from "no conversations" and offered no way
+            // back. Same shape as the detail pane below.
+            <div className="flex flex-col items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+              {(list.error as Error)?.message ?? "Couldn't load conversations."}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => list.refetch()}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : list.isLoading ? (
             <div className="p-4 space-y-2">
               <Skeleton className="h-14 w-full" />
               <Skeleton className="h-14 w-full" />
@@ -270,7 +296,9 @@ export function SupportThreadsPage() {
                 </p>
                 {t.lastMessage && (
                   <p className="mt-1 truncate text-xs text-muted-foreground">
-                    {t.lastMessage.sender === "USER" ? "" : `${t.lastMessage.sender.toLowerCase()}: `}
+                    {t.lastMessage.sender === "USER"
+                      ? ""
+                      : `${t.lastMessage.sender.toLowerCase()}: `}
                     {t.lastMessage.body}
                   </p>
                 )}
@@ -331,7 +359,9 @@ export function SupportThreadsPage() {
                     <div
                       key={m.id}
                       className={
-                        m.sender === "USER" ? "flex justify-start" : "flex justify-end"
+                        m.sender === "USER"
+                          ? "flex justify-start"
+                          : "flex justify-end"
                       }
                     >
                       <div
@@ -350,7 +380,9 @@ export function SupportThreadsPage() {
                           ) : (
                             <Bot className="h-3 w-3" />
                           )}
-                          {m.sender === "AGENT" ? "You" : m.sender.toLowerCase()}
+                          {m.sender === "AGENT"
+                            ? "You"
+                            : m.sender.toLowerCase()}
                         </span>
                         {m.body}
                       </div>
@@ -360,7 +392,10 @@ export function SupportThreadsPage() {
 
                 {/* Actions */}
                 <div className="space-y-2">
-                  <Label htmlFor={`reply-${d.id}`} className="text-xs text-muted-foreground">
+                  <Label
+                    htmlFor={`reply-${d.id}`}
+                    className="text-xs text-muted-foreground"
+                  >
                     Reply as support (mirrors to the linked ticket)
                   </Label>
                   <Textarea

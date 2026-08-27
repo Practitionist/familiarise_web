@@ -298,7 +298,7 @@ const generalFlow: PlatformFlowDefinition = {
     feedback: {
       id: "feedback",
       kind: "TERMINAL",
-      body: "The Feedback tab on this page is the direct line to the product team — every entry is read and tracked.",
+      body: "Tell us here and it goes straight to the product team — every entry is read and tracked.",
       resolved: true,
       reason: "routed_feedback",
     },

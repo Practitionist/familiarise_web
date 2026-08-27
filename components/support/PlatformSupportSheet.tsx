@@ -12,9 +12,16 @@
  * shows the result. See lib/support/platform-flows.ts for the registry.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LifeBuoy, Send, UserRound, Bot, CheckCircle2, Ticket } from "lucide-react";
+import {
+  LifeBuoy,
+  Send,
+  UserRound,
+  Bot,
+  CheckCircle2,
+  Ticket,
+} from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -75,12 +82,17 @@ export function PlatformSupportSheet({
     if (controlledOpen === undefined) setInternalOpen(v);
   };
   const [text, setText] = useState("");
+  // Monotonic marker for "this sitting". The platform intake is stateless —
+  // the client holds the cursor for one sitting — so a turn that resolves
+  // after the user abandoned that sitting must be dropped, not applied.
+  const sittingRef = useRef(0);
   const [flowId, setFlowId] = useState<string | null>(null);
   const [nodeId, setNodeId] = useState<string | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
-  const [done, setDone] = useState<{ resolved: boolean; ticketId?: string } | null>(
-    null,
-  );
+  const [done, setDone] = useState<{
+    resolved: boolean;
+    ticketId?: string;
+  } | null>(null);
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -96,11 +108,16 @@ export function PlatformSupportSheet({
   });
 
   const turn = useMutation({
-    mutationFn: async (body: {
+    mutationFn: async ({
+      epoch: _epoch,
+      ...body
+    }: {
       flowId: string;
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
+      /** Client-only sitting marker — see `sittingRef`. Never sent. */
+      epoch: number;
     }): Promise<TurnResponse> => {
       const res = await fetch("/api/support/platform", {
         method: "POST",
@@ -112,10 +129,18 @@ export function PlatformSupportSheet({
       return data;
     },
     onSuccess: (result, vars) => {
+      // Discard a turn that belongs to a sitting the user has already left.
+      // The sheet holds the cursor for one sitting; closing it or starting a
+      // different flow clears the transcript, and a request still in flight
+      // would otherwise repopulate it — dropping the user back into a
+      // conversation they abandoned, mid-flow, with a stale cursor.
+      if (vars.epoch !== sittingRef.current) return;
       setText("");
       setMessages((m) => [
         ...m,
-        ...(vars.userMessage ? [{ sender: "USER" as const, body: vars.userMessage }] : []),
+        ...(vars.userMessage
+          ? [{ sender: "USER" as const, body: vars.userMessage }]
+          : []),
         // metadata.options MUST survive the trip — a PROMPT without its
         // options is a dead end (no buttons, free text can't advance it).
         ...result.messages.map((msg) => ({
@@ -143,14 +168,16 @@ export function PlatformSupportSheet({
 
   const startFlow = (flow: PlatformFlow) => {
     if (turn.isPending) return;
+    sittingRef.current += 1;
     setFlowId(flow.id);
     setNodeId(null);
     setMessages([]);
     setDone(null);
-    turn.mutate({ flowId: flow.id });
+    turn.mutate({ flowId: flow.id, epoch: sittingRef.current });
   };
 
   const reset = () => {
+    sittingRef.current += 1;
     setFlowId(null);
     setNodeId(null);
     setMessages([]);
@@ -214,7 +241,9 @@ export function PlatformSupportSheet({
                     onClick={() => startFlow(f)}
                   >
                     <span>
-                      <span className="block text-sm font-medium">{f.title}</span>
+                      <span className="block text-sm font-medium">
+                        {f.title}
+                      </span>
                       <span className="block text-xs text-muted-foreground">
                         {f.description}
                       </span>
@@ -227,7 +256,9 @@ export function PlatformSupportSheet({
           {messages.map((m, i) => (
             <div
               key={i}
-              className={m.sender === "USER" ? "flex justify-end" : "flex justify-start"}
+              className={
+                m.sender === "USER" ? "flex justify-end" : "flex justify-start"
+              }
             >
               <div
                 className={
@@ -258,8 +289,8 @@ export function PlatformSupportSheet({
           {done && !done.resolved && done.ticketId && (
             <div className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground">
               <Ticket className="mr-1 inline h-3 w-3" />
-              Ticket created — our team will reply here in &quot;My requests&quot;
-              and by email.
+              Ticket created — our team will reply here in &quot;My
+              requests&quot; and by email.
             </div>
           )}
         </div>
@@ -275,7 +306,12 @@ export function PlatformSupportSheet({
                     size="sm"
                     disabled={turn.isPending}
                     onClick={() =>
-                      turn.mutate({ flowId: flowId!, nodeId, chosenOptionId: o.id })
+                      turn.mutate({
+                        flowId: flowId!,
+                        nodeId,
+                        chosenOptionId: o.id,
+                        epoch: sittingRef.current,
+                      })
                     }
                   >
                     {o.label}
@@ -288,7 +324,13 @@ export function PlatformSupportSheet({
               onSubmit={(e) => {
                 e.preventDefault();
                 const msg = text.trim();
-                if (msg) turn.mutate({ flowId: flowId!, nodeId, userMessage: msg });
+                if (msg)
+                  turn.mutate({
+                    flowId: flowId!,
+                    nodeId,
+                    userMessage: msg,
+                    epoch: sittingRef.current,
+                  });
               }}
             >
               <Input

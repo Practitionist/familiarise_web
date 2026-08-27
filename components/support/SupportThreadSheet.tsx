@@ -69,8 +69,16 @@ const INTENTS: { category: string; label: string; orgOnly?: boolean }[] = [
   { category: "RECORDING_ACCESS", label: "Recording access" },
   { category: "QUALITY_COMPLAINT", label: "Session quality" },
   { category: "TECHNICAL", label: "Technical trouble" },
-  { category: "SPONSORSHIP_BILLING", label: "Sponsorship & billing", orgOnly: true },
-  { category: "ORG_ADMIN_DISPUTE", label: "Raise a concern" },
+  {
+    category: "SPONSORSHIP_BILLING",
+    label: "Sponsorship & billing",
+    orgOnly: true,
+  },
+  // Org-party intent, same as SPONSORSHIP_BILLING: the thread route 403s it for
+  // a non-operator and the service clamps it again. Without orgOnly a plain B2C
+  // consultee was offered "Raise a concern" here and got an instant human
+  // escalation off a chip that could never resolve.
+  { category: "ORG_ADMIN_DISPUTE", label: "Raise a concern", orgOnly: true },
   { category: "OTHER", label: "Something else" },
 ];
 
@@ -118,10 +126,7 @@ export function SupportThreadSheet({
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
 
-  const {
-    data,
-    isFetching,
-  } = useQuery({
+  const { data, isFetching, isError } = useQuery({
     queryKey,
     enabled: open,
     queryFn: async (): Promise<{
@@ -139,14 +144,20 @@ export function SupportThreadSheet({
   // Server-gated intents win; the static list is an ERROR fallback only —
   // while the gated request is in flight, no chips render (a stage- or role-
   // invalid category must not be submittable before the server has spoken).
+  //
+  // An empty gated list is a SUCCESSFUL answer, not a failure: it means every
+  // intent was gated out for this stage and role. Falling back to the static
+  // list there re-offered precisely what the server had just withheld — a
+  // no-show chip on an upcoming session, a recording chip on one that never
+  // started. The fallback now triggers only when the request actually errored.
   const availableIntents = data
-    ? data.intents.length > 0
-      ? data.intents.map((i) => ({ category: i.category, label: i.title }))
-      : INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => ({
+    ? data.intents.map((i) => ({ category: i.category, label: i.title }))
+    : isError
+      ? INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => ({
           category: i.category,
           label: i.label,
         }))
-    : [];
+      : [];
 
   const turn = useMutation({
     mutationFn: async (body: {
@@ -181,7 +192,8 @@ export function SupportThreadSheet({
   const isHuman = thread?.activeChannel === "HUMAN";
   const isResolved = thread?.status === "RESOLVED";
   const lastBot = [...messages].reverse().find((m) => m.sender === "BOT");
-  const options = !isHuman && !isResolved ? (lastBot?.metadata?.options ?? []) : [];
+  const options =
+    !isHuman && !isResolved ? (lastBot?.metadata?.options ?? []) : [];
   const started = !!thread;
   // A press must stay dead until the server state has round-tripped: the
   // double-bubble bug was a second POST landing in the refetch window after

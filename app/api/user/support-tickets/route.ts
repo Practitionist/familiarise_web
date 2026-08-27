@@ -107,9 +107,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Resolve appointmentId to consultationId/subscriptionId if provided
-    let resolvedConsultationId = validatedData.consultationId;
-    let resolvedSubscriptionId = validatedData.subscriptionId;
+    // Resolve appointmentId to consultationId/subscriptionId if provided.
+    //
+    // When an appointmentId IS given, the client's own consultationId /
+    // subscriptionId are DISCARDED rather than kept as fallbacks. Keeping them
+    // was an ownership hole: the validation block below skips its checks
+    // whenever `appointmentId` is present ("already validated above"), but the
+    // appointment only ever resolves ONE arm — so a caller could pass their own
+    // consultation appointment together with somebody else's subscriptionId and
+    // have it attached to their ticket unchecked. The appointment is the single
+    // source of truth for the link, or there is no link.
+    let resolvedConsultationId = validatedData.appointmentId
+      ? undefined
+      : validatedData.consultationId;
+    let resolvedSubscriptionId = validatedData.appointmentId
+      ? undefined
+      : validatedData.subscriptionId;
 
     if (validatedData.appointmentId) {
       const appointment = await prisma.appointment.findFirst({
@@ -131,7 +144,11 @@ export async function POST(req: NextRequest) {
           status: 400,
           code: "INVALID_ID",
           message: "Invalid appointment ID or unauthorized",
-          context: { route: TICKETS_ROUTE, action: "create", appointmentId: validatedData.appointmentId },
+          context: {
+            route: TICKETS_ROUTE,
+            action: "create",
+            appointmentId: validatedData.appointmentId,
+          },
         });
       }
 
@@ -184,7 +201,11 @@ export async function POST(req: NextRequest) {
         status: 400,
         code: "INVALID_ID",
         message: `Invalid ${invalidEntity.type} ID`,
-        context: { route: TICKETS_ROUTE, action: "create", entity: invalidEntity.type },
+        context: {
+          route: TICKETS_ROUTE,
+          action: "create",
+          entity: invalidEntity.type,
+        },
       });
     }
 

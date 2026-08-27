@@ -271,8 +271,6 @@ model SupportTicket {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
-  @@index([organizationId])
   @@index([userId])
   @@index([status])
   @@index([assignedToId])
@@ -280,7 +278,10 @@ model SupportTicket {
   @@index([paymentId])
   @@index([createdAt])
   @@index([assignedToId, status])
-  // #support-hub — org-filtered ops queue views.
+  // #support-hub — org-filtered ops queue views. This also serves the
+  // organizationId-only lookups #1245 r2 added a single-column index for:
+  // Postgres reads a composite's leftmost prefix, so that index was pure
+  // write cost. Removed here rather than left shadowing this one.
   @@index([organizationId, status])
 }
 
