@@ -22,7 +22,7 @@ import {
   OnboardingFormDataSchema,
   transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
-import { Check, History, LogOut, RotateCcw } from "lucide-react";
+import { AlertTriangle, Check, History, LogOut, RotateCcw } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -304,10 +304,16 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
  *
  * `Object.hasOwn` rather than `role in ONBOARDING_STEPS`: `in` walks the
  * prototype chain, so "constructor", "toString" and "__proto__" all answer
- * true and yield an Object.prototype member instead of a step array. The
- * draft payload is stored as an unconstrained JSON blob, so that value is
- * reachable — and the resulting `steps.map(...)` throws during render, taking
- * the "Start over" button down with it.
+ * true and yield an Object.prototype member instead of a step array — and the
+ * resulting `steps.map(...)` throws during render, taking the "Start over"
+ * button down with it.
+ *
+ * Kept as defence in depth now that the draft payload has a structural schema
+ * (`OnboardingDraftPayloadSchema`). That schema strips poisoned KEYS at the
+ * storage boundary, but `role` is a legitimate key whose VALUE stays
+ * deliberately untyped — a draft holds answers that are not yet valid — so
+ * `role: "__proto__"` remains expressible and this guard remains the thing
+ * that stops it. It also covers the value arriving from anywhere but a draft.
  */
 function resolveRegistryRole(role: unknown): OnboardingRole {
   return typeof role === "string" && Object.hasOwn(ONBOARDING_STEPS, role)
@@ -325,11 +331,50 @@ function resolveRegistryRole(role: unknown): OnboardingRole {
  *  timer firing. */
 const DRAFT_SAVE_DEBOUNCE_MS = 800;
 
+/**
+ * Payload key → the words the user sees on the form. Only the fields that can
+ * realistically dominate a 64KB payload are listed; anything else falls back
+ * to generic wording rather than leaking an internal key name into the UI.
+ */
+const DRAFT_FIELD_LABELS: Record<string, string> = {
+  aboutMe: "“About me” summary",
+  achievements: "achievements",
+  bio: "short bio",
+  certificationsList: "certifications",
+  customSlots: "custom availability",
+  description: "expertise summary",
+  educationHistory: "education entries",
+  mentoringStyle: "mentoring style",
+  qualifications: "qualifications",
+  specialization: "specialization",
+  verificationDocuments: "verification documents",
+  verificationNotes: "verification notes",
+  weeklySlots: "weekly availability",
+  workExperiences: "work experience entries",
+};
+
+/** `Object.hasOwn` for the same reason as `resolveRegistryRole`: the key comes
+ *  from a stored payload, and `in` would happily resolve "toString". */
+function describeDraftField(field: string | null): string {
+  return field && Object.hasOwn(DRAFT_FIELD_LABELS, field)
+    ? DRAFT_FIELD_LABELS[field]
+    : "longest answers";
+}
+
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const [draftRestored, setDraftRestored] = useState(false);
+  // The stored draft existed but could not be restored (wizard version bump or
+  // a corrupt row). Silence here reads as data loss, so it gets its own banner.
+  const [draftQuarantined, setDraftQuarantined] = useState(false);
+  // Autosave has stopped because the payload outgrew the column budget. Sticky
+  // by nature — every later save fails the same way until something shrinks.
+  const [draftOverBudgetField, setDraftOverBudgetField] = useState<
+    string | null
+  >(null);
+  const [draftOverBudget, setDraftOverBudget] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
 
@@ -401,7 +446,15 @@ const MultiStepForm: React.FC = () => {
         return;
       }
       if (!result.draft) return;
-      const { payload, currentStep, role } = result.draft;
+      const { payload, currentStep, role, quarantined } = result.draft;
+      // A quarantined draft is the one case where "nothing restored" is not
+      // the same as "nothing was ever saved". Say so: the user typed those
+      // answers and is entitled to know they are not coming back.
+      if (quarantined) {
+        setDraftQuarantined(true);
+        trackOnboardingEvent("draft_quarantined", { currentStep, role });
+        return;
+      }
       const hasPayload = Object.keys(payload).length > 0;
       if (!hasPayload && !(role && currentStep > 0)) return;
       // Whatever the user has already committed (a step-0 submit that beat this
@@ -452,16 +505,23 @@ const MultiStepForm: React.FC = () => {
       });
       // Skipping stays non-fatal, but it is no longer silent. OVER_BUDGET in
       // particular is sticky: once the payload crosses the cap every later
-      // save is a no-op while the resume banner still promises saved progress,
-      // so it has to be visible somewhere.
+      // save is a no-op while the resume banner still promises saved progress.
+      // A Sentry breadcrumb tells US; the banner below tells the person who
+      // can actually do something about it.
       if (!prepared.ok) {
         trackOnboardingEvent("draft_save_skipped", {
           reason: prepared.reason,
           bytes: prepared.bytes ?? null,
           currentStep: snapshotStep,
         });
+        if (prepared.reason === "OVER_BUDGET") {
+          setDraftOverBudgetField(prepared.largestField ?? null);
+          setDraftOverBudget(true);
+        }
         return;
       }
+      // Back under budget — the user trimmed something, so stop warning.
+      setDraftOverBudget(false);
       const encoded = prepared.value;
       void queue
         .enqueue(() => saveOnboardingDraftAction(encoded))
@@ -536,6 +596,10 @@ const MultiStepForm: React.FC = () => {
   const startOver = async () => {
     await quiesceDraftSaves();
     setDraftRestored(false);
+    // Both warnings describe the draft being discarded here, so neither can
+    // outlive it.
+    setDraftQuarantined(false);
+    setDraftOverBudget(false);
     setFormData({});
     setStep(0);
     await clearOnboardingDraftAction().catch(() => {});
@@ -904,6 +968,38 @@ const MultiStepForm: React.FC = () => {
               <RotateCcw className="w-4 h-4" />
               Start over
             </button>
+          </div>
+        )}
+
+        {/* Draft could not be restored — the stored answers are gone, and
+            saying nothing would read as the wizard losing them silently. */}
+        {draftQuarantined && (
+          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+            <span className="text-foreground">
+              This form has changed since you last saved, so we couldn&apos;t
+              restore your earlier answers. You may need to enter some of them
+              again — everything from here on is being saved as normal.
+            </span>
+          </div>
+        )}
+
+        {/* Autosave has stopped because the draft outgrew its storage budget.
+            Deliberately non-blocking: the submit path has its own, larger
+            limits, so the run can still be finished — only RESUMING it later
+            is at risk. */}
+        {draftOverBudget && (
+          <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+            <span className="text-foreground">
+              Your answers are too long for us to save your progress, so this
+              run won&apos;t be here if you come back later. Shortening your{" "}
+              <strong className="font-medium">
+                {describeDraftField(draftOverBudgetField)}
+              </strong>{" "}
+              will start it saving again. You can still finish and submit
+              without changing anything.
+            </span>
           </div>
         )}
 
