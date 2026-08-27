@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
   prepareDraftForPersist,
-  reviveDraftPayload,
+  readStoredDraftPayload,
   type DraftActionResult,
   type LoadDraftActionResult,
   type OnboardingDraftSnapshot,
@@ -82,10 +82,15 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
 
     if (!draft) return { success: true, draft: null };
 
+    // A quarantined payload also invalidates the step: resuming at step 4 of a
+    // form whose answers were just discarded drops the user into a blank
+    // later step with no way to see what they are missing.
+    const { payload, reason } = readStoredDraftPayload(draft.payload);
     const snapshot: OnboardingDraftSnapshot = {
       role: draft.role,
-      currentStep: draft.currentStep,
-      payload: reviveDraftPayload(draft.payload),
+      currentStep: reason === null ? draft.currentStep : 0,
+      payload,
+      quarantined: reason !== null,
     };
     return { success: true, draft: snapshot };
   } catch (error) {
