@@ -269,15 +269,15 @@ export function ExpertProfileClient({
   }, [currentDate, selectedDate]);
 
   return (
-    <main className="bg-muted">
+    <main className="bg-background">
       {/* Back Navigation */}
-      <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+      <div className="glass-bar sticky top-[calc(var(--header-height,5rem))] z-30">
+        <div className="w-full px-4 md:px-8 lg:px-12 py-3">
           <Link
             href="/explore/experts"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className="group inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 transition-transform duration-300 group-hover:-translate-x-0.5" />
             Back to Experts
           </Link>
         </div>

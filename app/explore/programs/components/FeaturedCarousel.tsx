@@ -83,7 +83,7 @@ function FeaturedCarouselImpl({
   return (
     <div className="relative">
       <div
-        className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer"
+        className="card-lift group overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift"
         onClick={handleClick}
         role="button"
         tabIndex={0}
@@ -116,7 +116,7 @@ function FeaturedCarouselImpl({
               >
                 {program.type === "class" ? "Class" : "Webinar"}
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500 text-white">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-primary text-primary-foreground">
                 <Sparkles className="w-3 h-3" />
                 Featured
               </span>
@@ -125,7 +125,7 @@ function FeaturedCarouselImpl({
 
           {/* Content */}
           <div className="flex-1 p-6 md:p-8 flex flex-col justify-center min-w-0">
-            <h3 className="text-xl md:text-2xl font-bold text-foreground mb-3 line-clamp-2 group-hover:text-muted-foreground transition-colors">
+            <h3 className="text-xl md:text-2xl font-bold text-foreground mb-3 line-clamp-2 group-hover:text-foreground/70 transition-colors">
               {program.title}
             </h3>
             <p className="text-sm md:text-base text-muted-foreground mb-6 line-clamp-3">

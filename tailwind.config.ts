@@ -154,6 +154,16 @@ const config: Config = {
           "0 2px 4px -2px hsl(var(--shadow-color) / 0.1), 0 4px 8px -2px hsl(var(--shadow-color) / 0.06)",
         "elevation-3":
           "0 8px 16px -4px hsl(var(--shadow-color) / 0.12), 0 16px 32px -8px hsl(var(--shadow-color) / 0.08)",
+        /* UI overhaul: layered card shadows that read as physical elevation
+           rather than a flat outline glow (shadow-card / shadow-lift / float). */
+        card:
+          "0 1px 1px hsl(var(--shadow-color) / 0.03), 0 2px 6px -1px hsl(var(--shadow-color) / 0.05), 0 8px 24px -6px hsl(var(--shadow-color) / 0.06)",
+        lift:
+          "0 2px 4px -1px hsl(var(--shadow-color) / 0.05), 0 12px 28px -6px hsl(var(--shadow-color) / 0.1), 0 32px 64px -16px hsl(var(--shadow-color) / 0.1)",
+      },
+      transitionTimingFunction: {
+        // Signature easing of the overhaul — fast start, long glide.
+        "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)",
       },
       keyframes: {
         "accordion-down": {

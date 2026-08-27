@@ -56,12 +56,12 @@ function DomainGridImpl({
           <button
             key={domain.id}
             onClick={() => onDomainSelect(domain.id)}
-            className="group text-left rounded-xl border border-border bg-card p-5 hover:border-border hover:shadow-md transition-all duration-200"
+            className="group card-lift text-left rounded-2xl border border-border bg-card p-5 hover:border-foreground/25 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <div className="w-10 h-10 rounded-lg bg-muted group-hover:bg-primary flex items-center justify-center mb-3 transition-colors">
-              <Briefcase className="w-5 h-5 text-muted-foreground group-hover:text-primary-foreground transition-colors" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted transition-colors duration-300 group-hover:border-transparent group-hover:bg-primary">
+              <Briefcase className="h-5 w-5 text-muted-foreground transition-colors duration-300 group-hover:text-primary-foreground" />
             </div>
-            <h3 className="font-semibold text-foreground text-sm mb-1 line-clamp-1">
+            <h3 className="mb-1 mt-3 line-clamp-1 text-sm font-semibold tracking-tight text-foreground">
               {domain.name}
             </h3>
             <p className="text-xs text-muted-foreground">

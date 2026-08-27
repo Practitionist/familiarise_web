@@ -2,6 +2,7 @@ import { Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { SpotlightGrid } from "@/components/motion";
 import {
   DEFAULT_ORGANISATION_FILTERS,
   getOrganisationsMetadata,
@@ -58,28 +59,26 @@ async function OrganisationsDirectory() {
 export default function ExploreOrganisationsPage() {
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-zinc-950 pt-32 pb-16">
-        <div className="absolute inset-0">
-          <div className="animate-blob absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-zinc-800/30 blur-[120px]" />
-          <div className="animate-blob animation-delay-2000 absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-zinc-700/20 blur-[100px]" />
-        </div>
-        <div className="grid-pattern absolute inset-0 opacity-20" />
+      {/* Hero — same left-aligned stage as the experts/programs listings */}
+      <section className="relative overflow-hidden bg-zinc-950 pt-36 pb-16">
+        <SpotlightGrid className="opacity-60" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-32 left-1/2 h-[360px] w-[720px] -translate-x-1/2 rounded-full bg-zinc-500/10 blur-[120px]"
+        />
 
         <div className="relative z-10 mx-auto max-w-[1400px] px-4 md:px-8">
-          <div className="mx-auto max-w-3xl text-center">
-            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-700/50 bg-zinc-800/50 px-4 py-2 backdrop-blur-sm">
-              <Sparkles className="h-4 w-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Expert Networks &amp; Agencies
-              </span>
+          <div className="max-w-3xl">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1 text-xs text-zinc-300">
+              <Sparkles className="h-3.5 w-3.5" />
+              Expert Networks &amp; Agencies
             </div>
-            <h1 className="text-fluid-4xl mb-6 font-bold tracking-tight text-white">
+            <h1 className="text-fluid-4xl md:text-fluid-5xl mb-5 font-bold leading-[1.05] tracking-tight text-white">
               Explore <span className="silver-text">Organisations</span>
             </h1>
-            <p className="mx-auto max-w-xl text-lg text-zinc-300">
-              Discover expert networks, consulting agencies, and learning
-              institutions on Familiarise. Book their curated experts directly.
+            <p className="max-w-xl text-lg text-zinc-400">
+              Expert networks, consulting agencies, and learning institutions —
+              book their curated experts directly.
             </p>
           </div>
         </div>

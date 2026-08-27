@@ -132,7 +132,7 @@ function GridCard({
 
   return (
     <div
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
+      className="card-lift group overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift h-full flex flex-col"
       onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -169,7 +169,7 @@ function GridCard({
       </div>
 
       <div className="p-5 flex-1 flex flex-col">
-        <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1 group-hover:text-muted-foreground transition-colors">
+        <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1 group-hover:text-foreground/70 transition-colors">
           {program.title}
         </h3>
         <p className="text-sm text-muted-foreground mb-4 line-clamp-2 flex-1">
@@ -253,7 +253,7 @@ function ListCard({
 
   return (
     <div
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
+      className="card-lift group overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift flex"
       onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -282,7 +282,7 @@ function ListCard({
       <div className="p-6 flex-1 flex flex-col justify-between min-w-0">
         <div>
           <div className="flex items-start justify-between gap-4 mb-2">
-            <h3 className="text-lg font-semibold text-foreground group-hover:text-muted-foreground transition-colors">
+            <h3 className="text-lg font-semibold text-foreground group-hover:text-foreground/70 transition-colors">
               {program.title}
             </h3>
             {program.isRegistered && (
@@ -379,7 +379,7 @@ function CarouselCard({
 
   return (
     <div
-      className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
+      className="card-lift group overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift flex-shrink-0 w-[320px] md:w-[360px]"
       onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -410,7 +410,7 @@ function CarouselCard({
       </div>
 
       <div className="p-4">
-        <h3 className="text-base font-semibold text-foreground mb-1 line-clamp-1 group-hover:text-muted-foreground transition-colors">
+        <h3 className="text-base font-semibold text-foreground mb-1 line-clamp-1 group-hover:text-foreground/70 transition-colors">
           {program.title}
         </h3>
         <p className="text-sm text-muted-foreground line-clamp-1 mb-3">

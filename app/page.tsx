@@ -1,21 +1,16 @@
 import { Suspense } from "react";
 
+import { SmoothScroll } from "@/components/motion";
 import { HeroSection } from "@/components/home/HeroSection";
-import { TrustedBySection } from "@/components/home/TrustedBySection";
 import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
 import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
-import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
 import { TestimonialsSection } from "@/components/home/TestimonialsSection";
 import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
-import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
-import { EnterpriseSection } from "@/components/home/EnterpriseSection";
+import { CTAFinaleSection } from "@/components/home/CTAFinaleSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
 import { getHomeExperts, getHomeReviews, getHomeImages } from "@/lib/data/home";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
@@ -76,68 +71,49 @@ async function FeaturedExpertsLoader() {
 async function ReviewsLoader() {
   const reviews = await withBuildTimeRetry(getHomeReviews);
   if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
-  );
+  return <TestimonialsSection reviews={reviews} isLoading={false} />;
 }
 
 export default function Home() {
   return (
-    <main className="flex-1 w-full overflow-hidden">
-      {/* Hero - Black with animated orbs */}
-      <HeroSection />
+    <SmoothScroll>
+      <main className="flex-1 w-full overflow-hidden bg-zinc-950">
+        {/* Hero - full-viewport black stage, cursor spotlight, word reveal */}
+        <HeroSection />
 
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
+        {/* Our Offerings - dark bento grid */}
+        <FeaturesSection />
 
-      {/* Our Offerings - Dark charcoal with dot pattern */}
-      <FeaturesSection />
+        {/* Browse by Category - light scroll-snap rail */}
+        <CategoriesSection />
 
-      {/* Browse by Category - Light gradient */}
-      <CategoriesSection />
+        {/* Why Familiarise - sticky editorial split */}
+        <Suspense fallback={<BenefitsSkeleton />}>
+          <BenefitsLoader />
+        </Suspense>
 
-      {/* Why Familiarise / Benefits - Light silver gradient */}
-      <Suspense fallback={<BenefitsSkeleton />}>
-        <BenefitsLoader />
-      </Suspense>
+        {/* How It Works - numbered steps on a dark stage */}
+        <HowItWorksSection />
 
-      {/* Success Stories - Dark gradient */}
-      <SuccessStoriesSection />
+        {/* Featured Experts Marquee */}
+        <Suspense fallback={<FeaturedExpertsSkeleton />}>
+          <FeaturedExpertsLoader />
+        </Suspense>
 
-      {/* Featured Experts Marquee - White with dot pattern */}
-      <Suspense fallback={<FeaturedExpertsSkeleton />}>
-        <FeaturedExpertsLoader />
-      </Suspense>
+        {/* Testimonials dual marquee */}
+        <Suspense fallback={<TestimonialsSkeleton />}>
+          <ReviewsLoader />
+        </Suspense>
 
-      {/* Platform Features - Light with diagonal stripes */}
-      <PlatformFeaturesSection />
+        {/* Upcoming live sessions - static curated data, no read to guard */}
+        <UpcomingEventsSection />
 
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
-      <Suspense fallback={<TestimonialsSkeleton />}>
-        <ReviewsLoader />
-      </Suspense>
+        {/* Closing choice: become an expert vs bring your team */}
+        <CTAFinaleSection />
 
-      {/* Trust & Security Badges - Dark strip */}
-      <TrustBadgesSection />
-
-      {/* How It Works - Light with circles */}
-      <HowItWorksSection />
-
-      {/* For teams & organisations - Dark. Sits next to the expert CTA so the
-          two "which side are you on?" paths are adjacent at the page's end. */}
-      <EnterpriseSection />
-
-      {/* Become an Expert CTA - Light mesh gradient */}
-      <BecomeExpertSection />
-
-      {/* Explore Testimonials - Dark */}
-      <SatisfiedTestimonial />
-
-      {/* FAQ - Clean white */}
-      <FAQSection />
-    </main>
+        {/* FAQ */}
+        <FAQSection />
+      </main>
+    </SmoothScroll>
   );
 }

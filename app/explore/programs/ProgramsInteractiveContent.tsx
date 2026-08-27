@@ -4,6 +4,7 @@ import { PlanLevel } from "@prisma/client";
 import { useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { GraduationCap, Video, Users, Sparkles } from "lucide-react";
+import { SpotlightGrid } from "@/components/motion";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
@@ -177,57 +178,72 @@ export default function ProgramsInteractiveContent({
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-        </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
+      {/* Hero — mirrors /explore/experts so both listings read as one system */}
+      <section className="relative pt-36 pb-16 bg-zinc-950 overflow-hidden">
+        <SpotlightGrid className="opacity-60" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-32 left-1/2 h-[360px] w-[720px] -translate-x-1/2 rounded-full bg-zinc-500/10 blur-[120px]"
+        />
 
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-          <motion.div
-            className="max-w-4xl mx-auto text-center"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
+          <div className="max-w-3xl">
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1 text-xs text-zinc-300 mb-6"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Learn from the Best
+            </motion.div>
 
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
+            <motion.h1
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                duration: 0.65,
+                delay: 0.08,
+                ease: [0.16, 1, 0.3, 1],
+              }}
+              className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight text-white leading-[1.05]"
+            >
+              Classes &amp; <span className="silver-text">Webinars</span>
+            </motion.h1>
 
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
+            <motion.p
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                duration: 0.6,
+                delay: 0.18,
+                ease: [0.16, 1, 0.3, 1],
+              }}
+              className="mt-5 max-w-xl text-lg text-zinc-400"
+            >
+              Expert-led classes and live webinars — learn at your own pace or
+              join an interactive cohort.
+            </motion.p>
 
-            <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-              {stats.map((stat, index) => (
-                <motion.div
-                  key={stat.label}
-                  className="text-center"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
-                >
-                  <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                    <stat.icon className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="text-2xl md:text-3xl font-bold text-white">
+            <motion.dl
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.7, delay: 0.35 }}
+              className="mt-10 flex flex-wrap items-center gap-x-10 gap-y-4 border-t border-white/[0.07] pt-7"
+            >
+              {stats.map((stat) => (
+                <div key={stat.label}>
+                  <dt className="sr-only">{stat.label}</dt>
+                  <dd className="text-2xl font-semibold tabular-nums text-white">
                     {stat.value}
-                  </div>
-                  <div className="text-sm text-zinc-500">{stat.label}</div>
-                </motion.div>
+                  </dd>
+                  <dd className="text-xs uppercase tracking-wider text-zinc-500">
+                    {stat.label}
+                  </dd>
+                </div>
               ))}
-            </div>
-          </motion.div>
+            </motion.dl>
+          </div>
         </div>
       </section>
 

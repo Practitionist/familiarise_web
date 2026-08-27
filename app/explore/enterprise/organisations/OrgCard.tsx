@@ -26,7 +26,7 @@ export default function OrgCard({
   return (
     <Link
       href={`/explore/enterprise/organisations/${org.slug}`}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-all duration-300 hover:shadow-lg"
+      className="card-lift group flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-card hover:border-foreground/25 hover:shadow-lift"
     >
       <div className="relative h-24 overflow-hidden bg-gradient-to-br from-muted to-muted">
         {org.bannerImage && (

@@ -27,7 +27,7 @@ export function AboutSection({
   consultantDetails,
 }: AboutSectionProps) {
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8 space-y-6">
+    <div className="rounded-2xl border border-border bg-card p-6 shadow-card md:p-8 space-y-6">
       {/* About */}
       <div>
         <div className="flex items-center gap-2 mb-3">
