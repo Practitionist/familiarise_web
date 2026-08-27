@@ -204,6 +204,31 @@ model OnboardingDraft {
   ///   * It never becomes truth. The single writer of real data remains the
   ///     Zod-validated big-bang transaction into fully-normalized tables;
   ///     this row is a convenience cache deleted on completion.
+  ///   * The real tables CANNOT be reused as draft storage. Achievement and
+  ///     SlotOfAvailabilityWeekly both require a consultantProfileId, and no
+  ///     consultant profile exists until processOnboardingData creates one at
+  ///     the very end of the wizard. Drafting into them would mean either
+  ///     creating a half-built profile hours before the user commits to being
+  ///     a consultant, or duplicating each table with a nullable FK — which
+  ///     is the mirror below, not reuse.
+  ///   * A mirror would not buy stronger typing. Every mirrored column has to
+  ///     be nullable, because a draft is by definition incomplete: the user
+  ///     may have typed a job title and no dates. Every enum column becomes a
+  ///     liability for the same reason — a half-picked ScheduleType has no
+  ///     legal value to store. So a ten-table mirror is not typed storage; it
+  ///     is weak typing spread across ten tables, ten sets of FKs to keep
+  ///     consistent, and a migration for every form tweak.
+  ///
+  /// What the blob COSTS, honestly: the database enforces nothing about the
+  /// contents, so every consumer has to defend itself. That defence is real
+  /// code, not a footnote — a structural Zod schema at the write boundary
+  /// (utils/onboarding-draft.ts) that strips unknown keys and proves arrays
+  /// are arrays, a `__v` generation marker so a payload from an older wizard
+  /// is quarantined instead of merged, an application byte gate plus the
+  /// pg_column_size CHECK in prisma/sql/check-constraints.sql, and
+  /// prototype-chain-safe lookups wherever the wizard reads a value back out
+  /// (`Object.hasOwn`, never `in`). The trade is deliberate, but it is a
+  /// trade: the schema flexibility is paid for at every read site.
   ///
   /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
   /// promote that key to a real column instead of querying the blob.
