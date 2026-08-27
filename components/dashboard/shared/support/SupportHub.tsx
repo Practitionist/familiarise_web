@@ -94,7 +94,9 @@ const STATUS_LABELS: Record<string, string> = {
   CLOSED: "Closed",
 };
 
-function statusVariant(status: string): "default" | "secondary" | "outline" | "destructive" {
+function statusVariant(
+  status: string,
+): "default" | "secondary" | "outline" | "destructive" {
   if (status === "RESOLVED") return "secondary";
   if (status === "CLOSED") return "outline";
   if (status === "ESCALATED" || status === "ON_HOLD") return "destructive";
@@ -202,7 +204,14 @@ function SessionsTab({
         const res = await fetch(`/api/appointments${qs}`);
         if (!res.ok) return [];
         const json = await res.json();
-        return (json.data ?? json.appointments ?? []) as AppointmentRow[];
+        // `listAppointmentsScoped` returns { items, total, page, perPage }.
+        // The `data`/`appointments` fallbacks never matched, so the recent-
+        // sessions picker was unconditionally empty and the whole Sessions tab
+        // read as "you have no sessions" for users who plainly did.
+        return (json.items ??
+          json.data ??
+          json.appointments ??
+          []) as AppointmentRow[];
       };
       const [personal, ...orgLists] = await Promise.all([
         fetchScope(),
@@ -231,16 +240,20 @@ function SessionsTab({
         .slice(0, 8)
         .map((r) =>
           r.organization
-            ? { ...r, organization: { ...r.organization, name: orgNameById.get(r.organization.id) ?? r.organization.name } }
+            ? {
+                ...r,
+                organization: {
+                  ...r.organization,
+                  name:
+                    orgNameById.get(r.organization.id) ?? r.organization.name,
+                },
+              }
             : r,
         );
     },
   });
 
-  const buckets = useMemo(
-    () => bucketize(threads.data ?? []),
-    [threads.data],
-  );
+  const buckets = useMemo(() => bucketize(threads.data ?? []), [threads.data]);
 
   // "Go to appointment" only for B2C rows — org-hosted sessions have no
   // per-session detail page by design (ADR 20 addendum), so a link would 404.
@@ -330,7 +343,8 @@ function SessionsTab({
           </div>
         ) : (threads.data?.length ?? 0) === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing open — when you raise an issue about a session it lives here.
+            Nothing open — when you raise an issue about a session it lives
+            here.
           </p>
         ) : (
           <div className="space-y-6">
@@ -372,7 +386,7 @@ function SessionsTab({
                             <Badge variant={statusVariant(t.status)}>
                               {t.activeChannel === "HUMAN"
                                 ? "With our team"
-                                : STATUS_LABELS[t.status] ?? t.status}
+                                : (STATUS_LABELS[t.status] ?? t.status)}
                             </Badge>
                             <SupportThreadSheet
                               appointmentId={t.appointmentId}
@@ -489,7 +503,24 @@ function PlatformTab({
           <h3 className="text-sm font-semibold text-foreground">My requests</h3>
           <CreateTicketDialog />
         </div>
-        {tickets.isLoading ? (
+        {tickets.isError ? (
+          // Distinguishing a failed load from a genuine empty list matters
+          // here more than most places: "No platform requests yet" invites the
+          // user to file a request they may already have open.
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              {(tickets.error as Error)?.message ??
+                "Couldn't load your requests."}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => tickets.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : tickets.isLoading ? (
           <Skeleton className="h-20 w-full" />
         ) : sorted.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center">
@@ -603,7 +634,11 @@ export function SupportHub({
       {tab === "sessions" ? (
         <SessionsTab appointmentsHrefBase={appointmentsHrefBase} />
       ) : (
-        <PlatformTab orgId={orgId} feedbackHref={feedbackHref} helpHref={helpHref} />
+        <PlatformTab
+          orgId={orgId}
+          feedbackHref={feedbackHref}
+          helpHref={helpHref}
+        />
       )}
     </div>
   );

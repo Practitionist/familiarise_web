@@ -61,26 +61,6 @@ interface TurnResult {
  *  server is the source of truth (an unavailable intent falls back to a human).
  *  #support-hub: the GET now returns the server-gated intent list (stage /
  *  provider / org-operator aware) — this static list is only the fallback. */
-const INTENTS: { category: string; label: string; orgOnly?: boolean }[] = [
-  { category: "CANCEL_REFUND", label: "Cancel & refund" },
-  { category: "RESCHEDULE", label: "Reschedule" },
-  { category: "NO_SHOW", label: "The other party didn't show" },
-  { category: "PAYMENT_STATUS", label: "Payment or refund status" },
-  { category: "RECORDING_ACCESS", label: "Recording access" },
-  { category: "QUALITY_COMPLAINT", label: "Session quality" },
-  { category: "TECHNICAL", label: "Technical trouble" },
-  {
-    category: "SPONSORSHIP_BILLING",
-    label: "Sponsorship & billing",
-    orgOnly: true,
-  },
-  // Org-party intent, same as SPONSORSHIP_BILLING: the thread route 403s it for
-  // a non-operator and the service clamps it again. Without orgOnly a plain B2C
-  // consultee was offered "Raise a concern" here and got an instant human
-  // escalation off a chip that could never resolve.
-  { category: "ORG_ADMIN_DISPUTE", label: "Raise a concern", orgOnly: true },
-  { category: "OTHER", label: "Something else" },
-];
 
 function describeAction(a: SupportAction): string | null {
   if (a.kind === "OFFER_CANCEL_REFUND") {
@@ -97,7 +77,7 @@ function describeAction(a: SupportAction): string | null {
 
 export function SupportThreadSheet({
   appointmentId,
-  isOrgContext = false,
+  isOrgContext: _isOrgContext = false,
   open: controlledOpen,
   onOpenChange,
   trigger,
@@ -126,7 +106,7 @@ export function SupportThreadSheet({
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
 
-  const { data, isFetching, isError } = useQuery({
+  const { data, isFetching, isError, refetch } = useQuery({
     queryKey,
     enabled: open,
     queryFn: async (): Promise<{
@@ -150,14 +130,19 @@ export function SupportThreadSheet({
   // list there re-offered precisely what the server had just withheld — a
   // no-show chip on an upcoming session, a recording chip on one that never
   // started. The fallback now triggers only when the request actually errored.
+  // ONLY the server-gated list is ever offered.
+  //
+  // There used to be a static fallback here for when the gated fetch failed.
+  // It was stage-blind by construction, so on any error it offered "Cancel &
+  // refund" on a session that had already happened and "The other party didn't
+  // show" on one that had not started — reintroducing precisely the order-state
+  // violation this flow exists to prevent, and only revealing the problem after
+  // the user pressed a chip and the turn failed. A wrong chip is worse than no
+  // chip: the server clamps the intent anyway, so the fallback bought nothing
+  // and misled. On failure we now say so and offer a retry.
   const availableIntents = data
     ? data.intents.map((i) => ({ category: i.category, label: i.title }))
-    : isError
-      ? INTENTS.filter((i) => !i.orgOnly || isOrgContext).map((i) => ({
-          category: i.category,
-          label: i.label,
-        }))
-      : [];
+    : [];
 
   const turn = useMutation({
     mutationFn: async (body: {
@@ -291,8 +276,21 @@ export function SupportThreadSheet({
         {/* Controls */}
         <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
           {!started ? (
-            availableIntents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+            isError ? (
+              <div className="flex flex-col items-start gap-2">
+                <p className="text-sm text-muted-foreground">
+                  Couldn&apos;t load the help options for this session.
+                </p>
+                <Button variant="outline" size="sm" onClick={() => refetch()}>
+                  Retry
+                </Button>
+              </div>
+            ) : availableIntents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {isFetching
+                  ? "Loading…"
+                  : "There are no help options for this session right now."}
+              </p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {availableIntents.map((i) => (
