@@ -10,11 +10,7 @@
  * rather than dead-ending the user.
  */
 
-import type {
-  FlowNode,
-  SupportTurnInput,
-  SupportTurnResult,
-} from "./types";
+import type { FlowNode, SupportTurnInput, SupportTurnResult } from "./types";
 
 /** The structural shape both scopes share — appointment `FlowDefinition`s and
  *  platform `PlatformFlowDefinition`s are both WalkableFlows. */
@@ -49,7 +45,8 @@ function present(
   ctx: WalkContext,
 ): SupportTurnResult {
   const node = flow.nodes[nodeId];
-  if (!node) return escalateFallback("Let me connect you with our support team.");
+  if (!node)
+    return escalateFallback("Let me connect you with our support team.");
 
   if (node.kind === "PROMPT") {
     return {
@@ -78,7 +75,9 @@ function present(
       ? { ...node.action, refundPct: ctx.refundPctIfCancelledNow ?? 0 }
       : node.action;
   return {
-    messages: [{ sender: "BOT", body: node.body, metadata: { nodeId: node.id } }],
+    messages: [
+      { sender: "BOT", body: node.body, metadata: { nodeId: node.id } },
+    ],
     nextNodeId: null,
     actions: action ? [action] : [],
     escalate: node.escalate ?? false,
@@ -123,13 +122,17 @@ export function walkFlow(
         actions: [],
         escalate: false,
         resolved: true,
+        chosenLabel: chosen.label,
       };
     }
     const nextNode = flow.nodes[chosen.next];
     if (!nextNode) {
-      return escalateFallback("Connecting you with support.");
+      return {
+        ...escalateFallback("Connecting you with support."),
+        chosenLabel: chosen.label,
+      };
     }
-    return present(flow, nextNode.id, ctx);
+    return { ...present(flow, nextNode.id, ctx), chosenLabel: chosen.label };
   }
 
   // Already at a terminal — nothing further to advance.

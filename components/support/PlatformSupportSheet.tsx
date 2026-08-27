@@ -110,6 +110,7 @@ export function PlatformSupportSheet({
   const turn = useMutation({
     mutationFn: async ({
       epoch: _epoch,
+      chosenLabel: _chosenLabel,
       ...body
     }: {
       flowId: string;
@@ -118,6 +119,8 @@ export function PlatformSupportSheet({
       userMessage?: string;
       /** Client-only sitting marker — see `sittingRef`. Never sent. */
       epoch: number;
+      /** Client-only label of the pressed chip — see onSuccess. Never sent. */
+      chosenLabel?: string;
     }): Promise<TurnResponse> => {
       const res = await fetch("/api/support/platform", {
         method: "POST",
@@ -310,6 +313,7 @@ export function PlatformSupportSheet({
                         flowId: flowId!,
                         nodeId,
                         chosenOptionId: o.id,
+                        chosenLabel: o.label,
                         epoch: sittingRef.current,
                       })
                     }

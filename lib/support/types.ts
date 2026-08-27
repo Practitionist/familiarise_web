@@ -98,6 +98,17 @@ export interface SupportTurnResult {
    * triages on this instead of prose.
    */
   reason?: string;
+  /**
+   * The LABEL of the option the user just picked, when this turn advanced by a
+   * chip rather than free text.
+   *
+   * Without it the user's side of the conversation is invisible: the transcript
+   * is a run of bot questions with no record of the answers that produced them,
+   * both on screen and — for persisted appointment threads — in the row a staff
+   * member reads in the back-office inbox. Knowing the outcome (the terminal
+   * `reason`) is not the same as knowing the path.
+   */
+  chosenLabel?: string;
 }
 
 /** The uniform contract every channel implements. */

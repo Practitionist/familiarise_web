@@ -11,10 +11,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import type {
-  SupportChannel,
-  SupportThreadCategory,
-} from "@prisma/client";
+import type { SupportChannel, SupportThreadCategory } from "@prisma/client";
 import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
@@ -42,10 +39,9 @@ export interface RunTurnInput {
 /** The only intents an org party may raise on a member's session. Shared with
  *  the route layer, which 403s on it — one definition so the two gates can
  *  never drift. */
-export const ORG_PARTY_CATEGORIES: ReadonlySet<SupportThreadCategory> = new Set([
-  "ORG_ADMIN_DISPUTE",
-  "SPONSORSHIP_BILLING",
-]);
+export const ORG_PARTY_CATEGORIES: ReadonlySet<SupportThreadCategory> = new Set(
+  ["ORG_ADMIN_DISPUTE", "SPONSORSHIP_BILLING"],
+);
 
 export interface RunTurnResult {
   threadId: string;
@@ -113,21 +109,33 @@ export async function runSupportTurn(
 
   // Already with a human — persist the user's message and leave it in the queue.
   if (thread.activeChannel === "HUMAN") {
-    return persistHumanTurn(thread.id, thread.supportTicketId, input.userMessage);
+    return persistHumanTurn(
+      thread.id,
+      thread.supportTicketId,
+      input.userMessage,
+    );
   }
 
   const flow = flowForCategory(ctx, category);
   // No self-serve flow for this intent (OTHER, not-yet-built categories) → human.
   if (!flow) {
-    return escalate(ctx, thread.id, thread.supportTicketId, category, {
-      messages: [
-        { sender: "SYSTEM", body: "Connecting you with our support team." },
-      ],
-      nextNodeId: null,
-      actions: [],
-      resolved: false,
-      escalate: true,
-    }, input.userMessage, "no_flow");
+    return escalate(
+      ctx,
+      thread.id,
+      thread.supportTicketId,
+      category,
+      {
+        messages: [
+          { sender: "SYSTEM", body: "Connecting you with our support team." },
+        ],
+        nextNodeId: null,
+        actions: [],
+        resolved: false,
+        escalate: true,
+      },
+      input.userMessage,
+      "no_flow",
+    );
   }
 
   // Flow-version drift: a persisted cursor from an older registry revision
@@ -192,6 +200,9 @@ export async function runSupportTurn(
           actions: [],
           escalate: true,
           resolved: false,
+          // The user pressed "Less than 48 hours"; the server overrode the
+          // outcome, but the transcript must still show what they said.
+          chosenLabel: turn.chosenLabel,
         },
         input.userMessage,
         terminal.reason ?? "recording_missing",
@@ -218,17 +229,21 @@ export async function runSupportTurn(
   // NOT persisted again when the current tail already IS that prompt — one
   // press must never append two identical bubbles. The caller still gets the
   // messages so the UI converges on the server state.
-  const isRepresent =
-    !!currentNodeId && turn.nextNodeId === currentNodeId;
+  const isRepresent = !!currentNodeId && turn.nextNodeId === currentNodeId;
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
   // A free-text message is user activity even on a re-present turn (the
   // duplicate-suppression only covers the BOT's re-rendered prompt).
   const wroteMessages =
     !!input.userMessage || (turn.messages.length > 0 && !isRepresent);
   await prisma.$transaction(async (tx) => {
-    if (input.userMessage) {
+    // The user's side of the conversation. A chip press is an answer just as
+    // much as typed text is — without this the stored transcript is a run of
+    // bot questions with no record of what produced them, which is what the
+    // back-office inbox shows a staff member on an escalated thread.
+    const userSaid = input.userMessage ?? turn.chosenLabel;
+    if (userSaid) {
       await tx.supportMessage.create({
-        data: { threadId: thread.id, sender: "USER", body: input.userMessage },
+        data: { threadId: thread.id, sender: "USER", body: userSaid },
       });
     }
     if (!isRepresent) {
@@ -309,12 +324,18 @@ async function escalate(
   existingTicketId: string | null,
   category: SupportThreadCategory,
   turn: {
-    messages: { sender: string; body: string; metadata?: Record<string, unknown> }[];
+    messages: {
+      sender: string;
+      body: string;
+      metadata?: Record<string, unknown>;
+    }[];
     nextNodeId: string | null;
     actions: SupportAction[];
     resolved: boolean;
     escalate: boolean;
     reason?: string;
+    /** Label of the chip that produced this turn, recorded as the USER message. */
+    chosenLabel?: string;
   },
   userMessage: string | undefined,
   reason: string,
@@ -329,13 +350,19 @@ async function escalate(
   // the transaction reports back whether it minted one and the notify happens
   // after. (This is also why the create below cannot just call
   // `createSupportTicket` — that helper is not transaction-aware.)
-  let createdTicket: { id: string; title: string; organizationId: string | null } | null =
-    null;
+  let createdTicket: {
+    id: string;
+    title: string;
+    organizationId: string | null;
+  } | null = null;
 
   const ticketId = await prisma.$transaction(async (tx) => {
-    if (userMessage) {
+    // Same rule as the self-serve turn: record the chip the user pressed, so
+    // the escalated transcript staff read contains both halves.
+    const userSaid = userMessage ?? turn.chosenLabel;
+    if (userSaid) {
       await tx.supportMessage.create({
-        data: { threadId, sender: "USER", body: userMessage },
+        data: { threadId, sender: "USER", body: userSaid },
       });
     }
     for (const m of turn.messages) {
