@@ -97,10 +97,21 @@ export async function resolveEffectiveRateCard(
 ): Promise<ResolvedRateCard> {
   const at = params.at ?? new Date();
 
-  // 1. Membership-level override
+  // 1. Membership-level override. Scoped to the resolving org/contract: the
+  // id arrives from membership state, and a dangling or cross-tenant id must
+  // fall through to the plan/org/default chain — never silently settle
+  // bookings on another org's split bps.
   if (params.membershipOverrideId) {
-    const override = await tx.rateCard.findUnique({
-      where: { id: params.membershipOverrideId },
+    const override = await tx.rateCard.findFirst({
+      where: {
+        id: params.membershipOverrideId,
+        OR: [
+          ...(params.contractId
+            ? [{ ownerContractId: params.contractId }]
+            : []),
+          ...(params.orgId ? [{ ownerOrgId: params.orgId }] : []),
+        ],
+      },
     });
     if (override) return toResolved(override);
   }

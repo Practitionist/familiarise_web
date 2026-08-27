@@ -324,96 +324,24 @@ export async function DELETE(
     // Require authentication
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
-    const { session } = authResult;
 
-    const { consultationId } = await params;
-
-    // Fetch the consultation to check ownership
-    const existingConsultation = await prisma.consultation.findUnique({
-      where: { id: consultationId },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: true,
-          },
-        },
+    // Doctrine rule 2 — nothing is deleted. This route used to run a raw
+    // `prisma.consultation.delete`, whose cascades reach the Appointment and
+    // from there every Payment pointing at it (Payment.appointment onDelete:
+    // Cascade) — hard-destroying financial rows. Bookings are soft-cancelled
+    // through the cancel API, which also routes any refund through the front
+    // door (lib/payments/operations/booking-refund.ts).
+    void params;
+    return NextResponse.json(
+      {
+        error:
+          "Deleting bookings is not supported. Cancel via " +
+          "POST /api/appointments/{appointmentId}/cancel, which soft-cancels " +
+          "and refunds through the booking front door.",
+        code: "DELETE_NOT_SUPPORTED",
       },
-    });
-
-    if (!existingConsultation) {
-      return NextResponse.json(
-        { error: "Consultation not found" },
-        { status: 404 },
-      );
-    }
-
-    // Check authorization: must be a participant or privileged
-    const isConsultant =
-      !!existingConsultation.consultationPlan?.consultantProfile?.id &&
-      existingConsultation.consultationPlan.consultantProfile.id ===
-        session.user.consultantProfileId;
-    const isConsultee =
-      !!existingConsultation.requestedById &&
-      existingConsultation.requestedById === session.user.consulteeProfileId;
-    const isParticipant = isConsultant || isConsultee;
-
-    if (!isPrivileged(session.user.role) && !isParticipant) {
-      return forbiddenResponse(
-        "You can only delete consultations you are a participant in",
-      );
-    }
-
-    const consultationData = await prisma.consultation.delete({
-      where: { id: consultationId },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointment: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: consultationData }, { status: 200 });
+      { status: 405 },
+    );
   } catch (error) {
     console.error("Error deleting consultation:", error);
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
@@ -731,7 +659,7 @@ export async function PATCH(
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
-      // re-approval actually re-mints the link instead of parroting
+      // re-approval restores the link instead of parroting
       // "already in progress" forever.
       const needsLinkRetry =
         result.duplicate &&
@@ -774,12 +702,12 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry, and the retry re-mints — so it may
-        // only ever be reached while NO link exists. Everything after a
+        // The 502 below invites a retry; the retry reuses the same PENDING
+        // payment (#1181) rather than minting a parallel order — so a second
+        // live link can never reach the consultee. Everything after a
         // successful mint therefore reports and continues: a 502 past this
-        // point would hand the consultee a second live link (the duplicate
-        // guard walks appointment.payment, which approval payments never
-        // populate — see #1166).
+        // point would still be wrong, because it reads as a failure the
+        // consultant should answer by re-approving.
         let paymentResult;
         try {
           paymentResult = await generatePaymentLink(result.data);
@@ -989,6 +917,11 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
     userId: requestedBy.user.id,
     appointmentType: "CONSULTATION",
     consultationId: consultation.id,
+    // #1181 — the request created this appointment at submit time; threading
+    // it stamps Payment.appointmentId so capture confirms THAT row instead of
+    // building a twin off metadata, and the duplicate-payment guard (which
+    // walks appointment.payment) can see approval payments at all.
+    appointmentId: appointment?.id ?? undefined,
     planId: consultationPlan.id,
     // #1165 — settlement is INR-only and Razorpay is the KYC'd primary
     // gateway; the trial path already minted on it. Param stays configurable

@@ -303,75 +303,25 @@ export async function DELETE(
   // Require authentication
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
-  const { session } = authResult;
 
-  // Only ADMIN can delete subscriptions
-  if (session.user.role !== "ADMIN") {
-    return forbiddenResponse("Only administrators can delete subscriptions");
-  }
-
-  try {
-    const { subscriptionId } = await params;
-
-    const subscriptionData = await prisma.subscription.delete({
-      where: { id: subscriptionId },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointments: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: subscriptionData }, { status: 200 });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
-    console.error("Error deleting subscription:", error);
-    return NextResponse.json(
-      { error: "An error occurred while deleting the subscription" },
-      { status: 500 },
-    );
-  }
+  // Doctrine rule 2 — nothing is deleted. This ADMIN-only route used to run a
+  // raw `prisma.subscription.delete`, whose cascades reach every Appointment
+  // of the plan and from there the Payments pointing at those appointments
+  // (Payment.appointment onDelete: Cascade) — or FK-fail on
+  // Refund.payment onDelete: Restrict, surfacing as a 500. Bookings are
+  // soft-cancelled through the cancel API, which routes refunds through the
+  // booking front door.
+  void params;
+  return NextResponse.json(
+    {
+      error:
+        "Deleting bookings is not supported. Cancel via " +
+        "POST /api/appointments/{appointmentId}/cancel, which soft-cancels " +
+        "and refunds through the booking front door.",
+      code: "DELETE_NOT_SUPPORTED",
+    },
+    { status: 405 },
+  );
 }
 
 export async function PATCH(
@@ -704,7 +654,7 @@ export async function PATCH(
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
-      // re-approval actually re-mints the link.
+      // re-approval restores the link.
       const needsLinkRetry =
         result.duplicate &&
         result.data.status === AppointmentStatus.APPROVED_PENDING_PAYMENT &&
@@ -718,7 +668,8 @@ export async function PATCH(
 
       // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
       // in-tx comment). Mint failure leaves APPROVED_PENDING_PAYMENT with no
-      // link; re-approval re-enters via needsLinkRetry.
+      // link; re-approval re-enters via needsLinkRetry and reuses the PENDING
+      // payment the first attempt persisted (#1181).
       let mintedLink: {
         paymentUrl: string;
         paymentAmount: number;
@@ -728,9 +679,10 @@ export async function PATCH(
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry, and the retry re-mints — so it may
-        // only ever be reached while NO link exists. Everything after a
-        // successful mint therefore reports and continues (#1166).
+        // The 502 below invites a retry; the retry reuses the same PENDING
+        // payment (#1181) rather than minting a parallel order — so a second
+        // live link can never reach the consultee. Everything after a
+        // successful mint therefore reports and continues.
         let paymentResult;
         try {
           paymentResult = await generatePaymentLinkForSubscription(
@@ -999,11 +951,21 @@ async function generatePaymentLinkForSubscription(
   schedulingPeriodEndsAt: Date,
 ) {
   const { subscriptionPlan, requestedBy } = subscription;
+  // #1181 — the request-time appointment (direct checkout creates a
+  // placeholder for exactly this linkage; proposed-times creates real rows).
+  // First under the route's deterministic createdAt/id ordering, the same row
+  // the confirm flip and org resolution read. Threading it stamps
+  // Payment.appointmentId so capture confirms THAT row instead of building a
+  // twin subscription off metadata, and the duplicate-payment guard (which
+  // walks appointments.payment) can see approval payments at all. Unset only
+  // when no appointment exists yet — nothing to confirm, mint as before.
+  const appointmentId = subscription.appointments[0]?.id ?? undefined;
 
   return await createApprovalPaymentIntent({
     userId: requestedBy.user.id,
     appointmentType: "SUBSCRIPTION",
     subscriptionId: subscription.id,
+    appointmentId,
     planId: subscriptionPlan.id,
     // #1165 — settlement is INR-only; Razorpay is the KYC'd primary gateway,
     // matching the trial path. Param stays configurable for a scale decision.

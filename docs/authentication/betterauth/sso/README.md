@@ -17,7 +17,7 @@ SSO is the most security-sensitive subsystem in the codebase. Eight static invar
 
 | In scope | Out of scope |
 |---|---|
-| SSO enforcement (write-time and read-time) | OAuth providers — see [`../oauth/`](../oauth/README.md) |
+| SSO enforcement (write-time; read-time removed — see §4) | OAuth providers — see [`../oauth/`](../oauth/README.md) |
 | Provider registration (SAML + OIDC) | General BetterAuth setup — see [`../01-architecture.md`](../01-architecture.md) |
 | Domain claims + DNS TXT verification | Org management UI |
 | Member-to-Membership bridge | Authorization / role hierarchy — see `docs/authorization/` |
@@ -93,9 +93,11 @@ Three Prisma models support SSO:
 6. Check if user has an `Account` row with a matching `providerId`
 7. If no match → throw `FORBIDDEN` with `code: "SSO_REQUIRED"`
 
-**Layer 2: Read-time (defense-in-depth)**
+**Layer 2: Read-time (removed in #1242)**
 
-`customSession()` mirrors the same logic and sets `ssoEnforcementFailed: true` on the session. Page layouts check this flag and redirect. This catches sessions that were created before enforcement was configured.
+`customSession()` used to mirror this logic and set `ssoEnforcementFailed: true`, with the docs claiming layouts redirected on it. **No layout ever consumed the flag** — it cost 2 DB queries per session resolution for nothing, and was removed (see #1242 and the lifecycle spec in [#1241](https://github.com/Practitionist/familiarise_web/issues/1241)).
+
+Consequence: sessions created *before* an admin flips `enforceSSO` are not retroactively revoked — they persist until natural expiry/updateAge. Layer 1 catches every NEW session. If retroactive enforcement is needed, implement the Phase-1/2 plan from #1241 with an actual consumer.
 
 ### 3.4 Domain Check API
 
@@ -171,7 +173,7 @@ Domain claims require a DNS TXT record at `_familiarise-verify.<domain>` contain
 
 ### Fail-Open During Setup
 
-If an org enables `enforceSSO` but hasn't registered any providers yet, enforcement is skipped (both `shouldRejectSession` and `customSession` check `registeredProviderIds.length > 0`). This prevents the org owner from locking themselves out mid-setup.
+If an org enables `enforceSSO` but hasn't registered any providers yet, enforcement is skipped by `shouldRejectSession` (`registeredProviderIds.length > 0`). This prevents the org owner from locking themselves out mid-setup. (The removed `customSession` read-time check used to mirror this; see §4 Layer 2.)
 
 ## 5. Edge Cases & Foot-Guns
 

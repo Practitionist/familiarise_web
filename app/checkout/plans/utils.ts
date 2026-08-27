@@ -70,6 +70,73 @@ export async function makeCheckoutRequest(
   });
 }
 
+// ============================================================================
+// B5 (booking-journey audit) — flash-sale busy retry
+// ============================================================================
+
+/**
+ * The two structured 409s the checkout locks return when someone ELSE holds
+ * the gate: another buyer holds an event's mutex, or this same account is
+ * mid-checkout from another device. Both are transient by design — the holder
+ * commits or releases within seconds — yet they used to dead-end as terminal
+ * error toasts while the buyer watched a hot slot slip away.
+ */
+const BUSY_ERROR_TYPES = new Set(["EVENT_CHECKOUT_BUSY", "CONSULTEE_BOOKING_BUSY"]);
+
+/** Never wait longer than this server-advised pause (function-ceiling friendly). */
+const MAX_BUSY_WAIT_SECONDS = 20;
+
+interface BusyBody {
+  errorType?: string;
+  retryAfter?: number;
+}
+
+/**
+ * Runs one checkout attempt; on a structured BUSY 409, tells the user what is
+ * happening, waits the advised pause (capped), and retries EXACTLY ONCE.
+ *
+ * The single-retry discipline matters: the same clientIdempotencyKey rides
+ * both attempts and the server CASes on it, so the retry can never mint a
+ * duplicate order — but hammering the endpoint would, so no exponential loop.
+ * The caller's `attempt` closure supplies its own headers/key unchanged.
+ */
+export async function fetchCheckoutWithBusyRetry(
+  attempt: () => Promise<Response>,
+  notifyBusy: (waitSeconds: number) => void,
+): Promise<Response> {
+  const response = await attempt();
+  if (response.status !== 409) return response;
+
+  let body: BusyBody;
+  try {
+    body = (await response.clone().json()) as BusyBody;
+  } catch {
+    return response;
+  }
+  const retryAfter = Number(body?.retryAfter);
+  if (!body?.errorType || !BUSY_ERROR_TYPES.has(body.errorType) || !Number.isFinite(retryAfter)) {
+    return response;
+  }
+
+  const waitSeconds = Math.min(Math.max(1, Math.round(retryAfter)), MAX_BUSY_WAIT_SECONDS);
+  notifyBusy(waitSeconds);
+  await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+
+  // One automatic retry — the idempotency key in `attempt` makes this safe.
+  return attempt();
+}
+
+/** Shared copy for the during-wait notice so all four surfaces sound alike. */
+export function busyRetryToast(
+  waitSeconds: number,
+): { title: string; description: string } {
+  return {
+    title: "Almost got it — someone is one step ahead",
+    description: `Your card has not been charged. Retrying automatically in ${waitSeconds}s…`,
+  };
+}
+
+
 // Common success handling logic for different appointment types
 export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],

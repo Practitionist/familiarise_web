@@ -186,6 +186,29 @@ const nextConfig = {
   // confirming it needs `npm run build:analyze`, not reasoning.
   transpilePackages: ["date-fns"],
 
+  // #1244 — the OpenNext server-handler function blew past Netlify's hard
+  // 250MB per-function cap. The file tracer was pulling the entire BUILD
+  // toolchain into every deployment (typescript, esbuild binaries, webpack +
+  // its graph, terser): none of it is loadable at request time. Excluding it
+  // sheds ~40MB with zero runtime surface.
+  outputFileTracingExcludes: {
+    "*": [
+      "node_modules/typescript/**",
+      "node_modules/@esbuild/**",
+      "node_modules/esbuild/**",
+      "node_modules/webpack/**",
+      "node_modules/webpack-sources/**",
+      "node_modules/watchpack/**",
+      "node_modules/tapable/**",
+      "node_modules/@xtuc/**",
+      "node_modules/enhanced-resolve/**",
+      "node_modules/terser/**",
+      "node_modules/terser-webpack-plugin/**",
+      "node_modules/schema-utils/**",
+      "node_modules/jest-worker/**",
+    ],
+  },
+
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg
   serverExternalPackages: [

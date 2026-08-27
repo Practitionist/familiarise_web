@@ -32,6 +32,29 @@ export const STREAM_BATCH_LIMIT = 100;
  */
 export const STREAM_CONCURRENCY_LIMIT = 10;
 
+/**
+ * Pause between concurrency-limited batches, so a chunked per-item loop
+ * (freeze/unfreeze — the `UpdateChannelPartial` endpoint) averages under this
+ * many requests per minute even when Stream answers instantly.
+ *
+ * 140 is roughly HALF of Stream's app-wide 300/min cap for that endpoint: each
+ * paced consumer stays under half the budget, so two independent consumers —
+ * the daily expire cron on GitHub Actions and a maintenance drain on Netlify,
+ * which cannot share an in-process limiter — cannot jointly breach 300/min
+ * even if their windows overlap. Concurrency width alone does NOT give you
+ * this: ten parallel calls answered in 100ms is ~6000 req/min.
+ */
+export const STREAM_TARGET_REQUESTS_PER_MINUTE = 140;
+
+export const STREAM_BATCH_PAUSE_MS = Math.ceil(
+  (STREAM_CONCURRENCY_LIMIT * 60_000) / STREAM_TARGET_REQUESTS_PER_MINUTE,
+);
+
+/** Sleep for `ms` milliseconds. Trivial, but keeps call sites readable. */
+export function pause(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 /** Split into chunks of at most `size`. Empty input yields no chunks. */
 export function chunk<T>(items: T[], size: number = STREAM_BATCH_LIMIT): T[][] {
   if (!Number.isInteger(size) || size < 1) {

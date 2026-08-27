@@ -107,6 +107,10 @@ export async function PATCH(
         return NextResponse.json(
           {
             error: result.error,
+            // Allocation-resilience audit gap #5 — the client needs the
+            // structured code to render a cause-specific toast instead of
+            // guessing from the raw message string.
+            errorCode: result.errorCode,
             details: {
               consultationId,
               mode,

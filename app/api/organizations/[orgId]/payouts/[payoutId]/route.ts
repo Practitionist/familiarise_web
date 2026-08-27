@@ -123,11 +123,25 @@ export async function PATCH(
         }
       }
 
-      const next = await tx.organizationPayout.update({
-        where: { id: payoutId },
+      // CAS on the state we validated: two concurrent transitions (e.g.
+      // APPROVED vs CANCELLED from PENDING) both passed the read-based check
+      // before, and the unconditional update let the loser overwrite the
+      // winner — an APPROVED payout whose earnings a racing CANCELLED had
+      // already released. The count check makes the loser fail closed.
+      const claimed = await tx.organizationPayout.updateMany({
+        where: { id: payoutId, organizationId: orgId, status: current.status },
         data: {
           ...(body.status && { status: body.status }),
         },
+      });
+      if (claimed.count === 0) {
+        throw Object.assign(
+          new Error("Payout state changed concurrently; retry"),
+          { httpStatus: 409 },
+        );
+      }
+      const next = await tx.organizationPayout.findUniqueOrThrow({
+        where: { id: payoutId },
       });
 
       // CANCELLED releases the earnings back to READY so a subsequent

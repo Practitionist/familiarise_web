@@ -4,6 +4,9 @@ on:
   schedule:
     # Run every 2 hours
     - cron: "38 */2 * * *"
+    # DB-active window of the tsx sweep (checkout/npm ci/prisma generate don't
+    # touch the pool); read by check-workflow-hygiene's pool budget.
+    # cron-runtime-minutes: 5
   workflow_dispatch: # Allow manual triggering
 
 jobs:

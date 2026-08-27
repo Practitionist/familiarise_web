@@ -39,6 +39,7 @@ export type BackofficeSurface =
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
   | "waitlist.manage"
+  | "leads.manage"
   | "users.read"
   | "users.verify"
   | "users.moderate"
@@ -89,6 +90,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // irreversible and account-destroying, so admin-only.
   "appointments.manage": OPERATORS,
   "waitlist.manage": OPERATORS,
+  // #1230 wave-4c — enterprise sales pipeline triage.
+  "leads.manage": OPERATORS,
   "users.read": OPERATORS,
   "users.verify": OPERATORS,
   "users.moderate": ADMIN_ONLY,

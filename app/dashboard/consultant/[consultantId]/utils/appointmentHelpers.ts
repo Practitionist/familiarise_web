@@ -1,5 +1,23 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
+import { isDeadSlot } from "@/lib/appointments/slots";
+
+/**
+ * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
+ * deletedAt tombstone) and tentative holds excluded.
+ *
+ * Booking-journey audit B7: the Today/Upcoming helpers used to iterate every
+ * row, so a reschedule's released slots (still carrying their original
+ * startsAt on an APPROVED parent) rendered as "Today's Appointment", and a
+ * tentative hold could announce itself in "Needs you now". Every consumer of
+ * these helpers — Today/Upcoming lists, HomeTab action items — inherits the
+ * filter.
+ */
+function liveSlotsOf(appointment: TAppointment): TAppointment["slotsOfAppointment"] {
+  return (appointment.slotsOfAppointment ?? []).filter(
+    (slot) => !isDeadSlot(slot) && !slot.isTentative,
+  );
+}
 
 // =============================================================================
 // Collaborator Types
@@ -426,10 +444,8 @@ export const getTodayAppointments = (
 
   // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {
-    if (
-      !appointment.slotsOfAppointment ||
-      appointment.slotsOfAppointment.length === 0
-    ) {
+    const liveSlots = liveSlotsOf(appointment);
+    if (liveSlots.length === 0) {
       return [appointment];
     }
 
@@ -439,15 +455,16 @@ export const getTodayAppointments = (
       appointment.appointmentType === "SUBSCRIPTION" ||
       appointment.appointmentType === "CLASS"
     ) {
-      return appointment.slotsOfAppointment.map((slot) => ({
+      return liveSlots.map((slot) => ({
         ...appointment,
         id: `${appointment.id}-${slot.id}`,
         slotsOfAppointment: [slot],
       }));
     }
 
-    // Keep consultations and webinars as single appointments
-    return [appointment];
+    // Keep consultations and webinars as single appointments — but with only
+    // their live rows, so a released reschedule slot cannot anchor "today".
+    return [{ ...appointment, slotsOfAppointment: liveSlots }];
   });
 
   return expandedAppointments.filter((appointment) => {
@@ -467,8 +484,23 @@ export const getUpcomingAppointments = (
 ): TAppointment[] => {
   const now = new Date();
 
+  // Drop dead/tentative rows up front (B7) so neither the expansion below nor
+  // the per-appointment checks can resurrect a released or unconfirmed slot.
+  // An appointment whose rows ALL died (every session cancelled or
+  // rescheduled away) drops out entirely — with zero live rows it has nothing
+  // to show, and the raw-slot readers below would re-admit it (CodeRabbit
+  // triage). Appointments that arrived with NO rows at all keep legacy
+  // behavior (their liveness is decided by the checks below, not slots).
+  const withLiveSlots = appointments.flatMap((appointment) => {
+    const live = liveSlotsOf(appointment);
+    if (live.length === 0 && (appointment.slotsOfAppointment ?? []).length > 0) {
+      return [];
+    }
+    return [{ ...appointment, slotsOfAppointment: live }];
+  });
+
   // First filter out completed appointments
-  const filteredAppointments = appointments.filter((appointment) => {
+  const filteredAppointments = withLiveSlots.filter((appointment) => {
     // For multi-slotted appointments (subscription and class)
     if (
       (appointment.appointmentType === "SUBSCRIPTION" &&

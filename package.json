@@ -9,10 +9,11 @@
     "db:migrate": "prisma migrate dev --name init",
     "db:pull": "prisma db pull",
     "db:push": "npm run db:push:schema && npm run db:sidecars",
-    "db:push:schema": "prisma db push",
-    "db:sidecars": "npm run db:triggers && npm run db:constraints",
+    "db:push:schema": "prisma db push && npm run db:sidecars",
+    "db:sidecars": "npm run db:triggers && npm run db:leg-triggers && npm run db:constraints",
     "db:assert-sidecars": "npx tsx -r dotenv/config scripts/db/assert-sidecar-applied.ts",
     "db:triggers": "npx tsx -r dotenv/config scripts/db/apply-ledger-triggers.ts",
+    "db:leg-triggers": "npx tsx -r dotenv/config scripts/db/apply-payment-legs-triggers.ts",
     "db:constraints": "npx tsx -r dotenv/config scripts/db/apply-check-constraints.ts",
     "ledger:baseline": "npx tsx -r dotenv/config scripts/db/generate-ledger-baseline.ts",
     "test:chaos:api": "npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=07-real-api-booking && npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=09-webhook-storm",
@@ -53,7 +54,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "update-env-secret": "npx tsx scripts/update-env-secret.ts",
-    "update-slot-types": "ts-node scripts/update-slot-types.ts"
+    "update-slot-types": "ts-node scripts/update-slot-types.ts",
+    "db:push:no-sidecars-DANGEROUS": "prisma db push"
   },
   "dependencies": {
     "@better-auth/sso": "^1.6.3",
@@ -160,6 +162,7 @@
     "prisma": "7.7.0",
     "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
+    "tsx": "4.23.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0"
   },

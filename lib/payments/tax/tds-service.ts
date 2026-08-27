@@ -40,7 +40,8 @@
  *
  * When unblocked:
  *   1. Route consultant payouts through `deriveTds()` in compliance/tds.ts.
- *   2. Use the now-frozen schema: `ConsultantProfile.taxEntityType` (#778 §D)
+ *   2. Use the now-frozen schema: `ConsultantTaxInfo.taxEntityType` (#778 §D;
+ *      canonical since the BLOCKER-0 dedup, #1230)
  *      + `tdsSection` override drive the residual 194J/194C threshold cases
  *      this engine handled; the ₹50K/entity-type threshold logic moves there.
  *   3. Keep `TDSRecord` + this file's FY/quarter arithmetic as the shared
@@ -121,10 +122,14 @@ export function getIndianFYQuarter(date: Date = new Date()): number {
  */
 export function getFYDateRange(fy: string): { start: Date; end: Date } {
   const startYear = parseInt(fy.split("-")[0]);
-  return {
-    start: new Date(startYear, 3, 1), // April 1
-    end: new Date(startYear + 1, 2, 31, 23, 59, 59), // March 31
-  };
+  // IST-anchored boundaries (CR #1234 r3): the fiscal year is an Indian
+  // legal construct, so Apr 1 00:00 means 18:30Z on Mar 31 — local-time
+  // components put each bound 5½h late on a UTC host, excluding early-April
+  // IST records and bleeding in next-FY ones. End stays EXCLUSIVE; callers
+  // must use `lt`.
+  const start = new Date(`${startYear}-03-31T18:30:00.000Z`);
+  const end = new Date(`${startYear + 1}-03-31T18:30:00.000Z`);
+  return { start, end };
 }
 
 // ============================================================================
@@ -146,7 +151,7 @@ export async function getCurrentFYCumulativePayments(
     where: {
       consultantProfileId,
       status: "COMPLETED",
-      processedAt: { gte: start, lte: end },
+      processedAt: { gte: start, lt: end },
     },
     _sum: { amount: true },
   });

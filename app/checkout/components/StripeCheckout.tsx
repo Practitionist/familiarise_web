@@ -6,7 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { loadStripe } from "@stripe/stripe-js";
 import { useState } from "react";
-import { mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+import {
+  busyRetryToast,
+  fetchCheckoutWithBusyRetry,
+ mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
 // Initialize Stripe with publishable key
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
@@ -87,16 +90,19 @@ export default function StripeCheckout({
       // Make API call to create checkout session/payment intent
       console.log("Making checkout request with data:", checkoutData);
 
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...checkoutData,
-          clientIdempotencyKey: idempotencyKey,
-        }),
-      });
+      // B5 — same busy-retry discipline as the Razorpay path.
+      const response = await fetchCheckoutWithBusyRetry(
+        () =>
+          fetch("/api/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...checkoutData,
+              clientIdempotencyKey: idempotencyKey,
+            }),
+          }),
+        (waitSeconds) => toast(busyRetryToast(waitSeconds)),
+      );
 
       console.log("Response status:", response.status);
 

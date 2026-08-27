@@ -104,6 +104,8 @@ graph TD
 | Run the release checklist              | [15-checklist.md](./15-checklist.md)                                           |
 | Follow a recurring event end to end    | [16-recurring-events-journey.md](./16-recurring-events-journey.md)             |
 | Understand org-sponsored bookings      | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                       |
+| **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
+| **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 

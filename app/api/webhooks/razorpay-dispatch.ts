@@ -25,6 +25,10 @@ import {
   handleOverageMemberSuccess,
   handleOverageMemberFailure,
 } from "@/lib/payments/webhooks/overage-handlers";
+import {
+  handleRecordingPurchaseSuccess,
+  handleRecordingPurchaseFailure,
+} from "@/lib/payments/webhooks/recording-purchase";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayPaymentCapturedEventSchema,
@@ -32,7 +36,7 @@ import {
   razorpayOrderPaidEventSchema,
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
-import { razorpayClient } from "@/lib/payments/core/razorpay";
+import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { z } from "zod";
 
 // Strict inner-entity schemas used to narrow optional envelope fields at the
@@ -119,6 +123,12 @@ export async function routeCapturedPayment(params: {
     await handleOverageMemberSuccess(orderId);
     return;
   }
+  if (notes.type === "recording_purchase") {
+    // #366 — standalone replay sale; not a Payment row, settled on its own
+    // RecordingPurchase record (idempotent per gatewayOrderId).
+    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId);
+    return;
+  }
   await handlePaymentSuccess(orderId, notes, amountPaise);
 }
 
@@ -193,6 +203,8 @@ export async function processRazorpayWebhookEvent(
           await handleOrgPaymentFailure(failedNotes, failedEntity.id);
         } else if (failedNotes.type === "overage_member") {
           await handleOverageMemberFailure(failedEntity.order_id);
+        } else if (failedNotes.type === "recording_purchase") {
+          await handleRecordingPurchaseFailure(failedEntity.order_id);
         } else {
           await handlePaymentFailure(failedEntity.order_id);
         }
@@ -209,6 +221,9 @@ export async function processRazorpayWebhookEvent(
         );
         let paymentIntentId = refundEvent.payment_id;
 
+        // Only the refund family resolves payment_id → order_id via the SDK;
+        // other event branches must not construct a client.
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(
@@ -259,6 +274,7 @@ export async function processRazorpayWebhookEvent(
         );
         let failedPaymentIntentId = failedRefundEvent.payment_id;
 
+        const razorpayClient = getRazorpayClient();
         if (razorpayClient) {
           try {
             const rzpPayment = await razorpayClient.payments.fetch(

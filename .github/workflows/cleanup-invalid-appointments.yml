@@ -4,6 +4,9 @@ on:
   schedule:
     # Run every hour
     - cron: "12 * * * *"
+    # Validation sweep over appointment rows; the tsx step is the DB-active
+    # window read by check-workflow-hygiene's pool budget.
+    # cron-runtime-minutes: 5
   workflow_dispatch: # Allow manual triggering
 
 jobs:

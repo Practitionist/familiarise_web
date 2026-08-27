@@ -200,6 +200,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // #1021 — stamp the submitter's active org so enterprise tickets can be
+    // routed and SLA-tracked per organisation instead of vanishing into the
+    // B2C queue. First ACTIVE membership wins (users belong to one org in
+    // practice; multi-org members pick their primary dashboard context).
+    // Read from verified memberships, never client-asserted.
+    const membership = await prisma.membership.findFirst({
+      where: { userId: session.user.id, status: "ACTIVE" },
+      select: { organizationId: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // The shared factory owns the write: it stamps lastMessageAt at creation
+    // and notifies staff without letting a notification failure turn a
+    // committed ticket into a 500. It already accepts organizationId, so
+    // #1021's attribution rides THROUGH it rather than around it — keeping one
+    // writer instead of two that drift.
     const ticket = await createSupportTicket({
       userId: session.user.id,
       title: validatedData.title,
@@ -207,6 +223,7 @@ export async function POST(req: NextRequest) {
       priority: validatedData.priority || "MEDIUM",
       category: validatedData.category,
       issueType: validatedData.issueType,
+      organizationId: membership?.organizationId,
       consultationId: resolvedConsultationId,
       subscriptionId: resolvedSubscriptionId,
       paymentId: validatedData.paymentId,

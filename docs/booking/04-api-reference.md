@@ -24,9 +24,8 @@ All `/api/slots/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in middl
 | `/api/slots/appointments` (GET)         | Yes           | Non-privileged users are filtered to their own profile only        |
 | `/api/slots/appointments` (POST)        | Yes           | Admin/staff only                                                   |
 | `/api/slots/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
-| `/api/slots/appointments/[id]` (PATCH)  | Yes           | Consultant-only check (not consultee)                              |
-| `/api/slots/appointments/[id]` (PUT)    | Yes           | Admin/staff only                                                   |
-| `/api/slots/appointments/[id]` (DELETE) | Yes           | Admin/staff only                                                   |
+
+**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `slot_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SlotAllocationService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
 
 ### Status Filters
 

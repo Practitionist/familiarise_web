@@ -700,7 +700,25 @@ export async function createEarningsFromPayment({
                   }
                 }
                 pushDebit({ kind: "CASH" }, card);
-                pushDebit({ kind: "WALLET", organizationId: orgId }, wallet);
+                // #835 mirror — a B2C booking funded by an org wallet may
+                // carry no organizationId on the Payment row. Keying the
+                // WALLET leg off payment.organizationId alone posted the
+                // debit to the null-org sub-ledger while the checkout's cache
+                // decrement hit the org's own account — guaranteed
+                // WALLET_BALANCE_DRIFT at reconcile (the refund path got this
+                // fallback; the booking posting was missed).
+                let walletLegOrgId = orgId;
+                if (!walletLegOrgId && wallet > 0 && payment.billingAccountId) {
+                  const walletOwner = await tx.billingAccount.findUnique({
+                    where: { id: payment.billingAccountId },
+                    select: { ownerOrgId: true },
+                  });
+                  walletLegOrgId = walletOwner?.ownerOrgId ?? null;
+                }
+                pushDebit(
+                  { kind: "WALLET", organizationId: walletLegOrgId },
+                  wallet,
+                );
                 pushDebit(
                   { kind: "ORG_RECEIVABLE", organizationId: orgId },
                   receivable,

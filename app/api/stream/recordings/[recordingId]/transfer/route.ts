@@ -9,6 +9,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { getRecordingOwnershipInfo } from "@/lib/stream/recording-utils";
+import {
+  appointmentStoragePolicySelect,
+  resolveAppointmentStoragePolicy,
+} from "@/lib/stream/recording-listing-access";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
@@ -46,28 +50,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           include: {
             slotOfAppointment: {
               include: {
-                appointment: {
-                  include: {
-                    webinar: {
-                      include: {
-                        webinarPlan: {
-                          select: {
-                            consultantProfileId: true,
-                          },
-                        },
-                      },
-                    },
-                    class: {
-                      include: {
-                        classPlan: {
-                          select: {
-                            consultantProfileId: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
+                appointment: { select: appointmentStoragePolicySelect },
               },
             },
           },
@@ -116,6 +99,23 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           error: `Recording cannot be transferred in ${recording.status} state`,
         },
         { status: 400 },
+      );
+    }
+
+    // Policy enforcement — manual transfer is a PREMIUM capability. The plan
+    // that produced this session decides; a STREAM_ONLY plan must not be able
+    // to mint permanent storage (and its costs) by hitting this endpoint.
+    const apt = recording.meetingSession.slotOfAppointment.appointment;
+    const { policy: storagePolicy } = resolveAppointmentStoragePolicy(apt);
+
+    if (storagePolicy !== "SUPABASE_PERMANENT") {
+      return NextResponse.json(
+        {
+          error:
+            "Permanent storage is available on plans with premium recording. Stream keeps this recording for 14 days — download it or upgrade your plan to keep it permanently.",
+          code: "UPGRADE_REQUIRED",
+        },
+        { status: 403 },
       );
     }
 

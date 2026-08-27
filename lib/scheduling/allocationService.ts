@@ -50,6 +50,8 @@ export interface AllocationResponse {
   success: boolean;
   data?: AllocatedAppointmentDto[];
   error?: string;
+  /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
+  errorCode?: string;
   /** HTTP status of the failed response — 409 means "allocated elsewhere". */
   httpStatus?: number;
 }
@@ -132,6 +134,7 @@ export class AllocationService {
         return {
           success: false,
           error: data.error || fallbackError,
+          errorCode: data.errorCode,
           httpStatus: response.status,
         };
       }

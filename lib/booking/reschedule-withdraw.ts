@@ -4,8 +4,12 @@ import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
   transitionRescheduleRequest,
+  transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { notificationHref } from "@/lib/novu/resolve-href";
 
 /**
  * The initiator takes their own reschedule back, and the booking returns to
@@ -85,9 +89,7 @@ export async function withdrawRescheduleRequest(args: {
       // A consultation reschedule sends the booking back to PENDING so it
       // re-enters the consultant's queue; withdrawing has to undo that or the
       // consultee is left with a confirmed-looking booking still sitting in
-      // someone's inbox. A subscription is deliberately NOT flipped on
-      // reschedule (#448 — it has no per-session status), so there is nothing
-      // to put back there.
+      // someone's inbox.
       //
       // fromIn narrows to PENDING rather than the map's default: this edge is
       // only ever undoing the reschedule's own flip, so an APPROVED booking
@@ -99,6 +101,30 @@ export async function withdrawRescheduleRequest(args: {
           to: "APPROVED",
           fromIn: ["PENDING"],
         });
+      }
+
+      // E2E-audit P1 fix — subscriptions need the same undo. #448 kept
+      // PARTIAL subscription reschedules from flipping the parent, but the
+      // whole-booking reschedule (no slotIds) DOES flip it to PENDING via the
+      // reschedule route. Leaving a withdrawn, paid plan in PENDING strands
+      // it in the consultant's request queue, where expirePendingSubscriptions
+      // can EXPIRE + refund a plan that still owes (or already delivered)
+      // sessions. Restore only when the parent actually sits in PENDING —
+      // i.e., this proposal was a whole-booking flip; partial proposals left
+      // the parent APPROVED and must not be touched (#448). The CAS keeps the
+      // concurrent-answer race modelled.
+      if (request.appointment?.subscriptionId) {
+        const sub = await tx.subscription.findUnique({
+          where: { id: request.appointment.subscriptionId },
+          select: { status: true },
+        });
+        if (sub?.status === "PENDING") {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: request.appointment.subscriptionId },
+            to: "APPROVED",
+            fromIn: ["PENDING"],
+          });
+        }
       }
     });
   } catch (err) {
@@ -143,6 +169,77 @@ export async function withdrawRescheduleRequest(args: {
         },
       },
     );
+  }
+
+  // PR 2e — the initiator withdrew their own proposal; both parties learn
+  // the booking stays at its original times. Fire-and-forget.
+  try {
+    const detail = await prisma.rescheduleRequest.findUnique({
+      where: { id: rescheduleRequestId },
+      select: {
+        initiatedById: true,
+        appointment: {
+          select: {
+            organizationId: true,
+            appointmentType: true,
+            consultation: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                consultationPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+            subscription: {
+              select: {
+                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                subscriptionPlan: {
+                  select: {
+                    title: true,
+                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const appt = detail?.appointment;
+    const side = appt?.consultation ?? appt?.subscription;
+    if (detail && side && appt) {
+      const isConsultation = "consultationPlan" in side;
+      const planTitle = isConsultation
+        ? side.consultationPlan.title
+        : side.subscriptionPlan.title;
+      const consultantUser = isConsultation
+        ? side.consultationPlan.consultantProfile.user
+        : side.subscriptionPlan.consultantProfile.user;
+      const consulteeUser = side.requestedBy.user;
+      void notifyAppointmentRescheduled(
+        [detail.initiatedById, consultantUser.id, consulteeUser.id].filter(
+          (id, i, arr) => arr.indexOf(id) === i,
+        ),
+        {
+          ...notificationScope(appt.organizationId),
+          appointmentType: appt.appointmentType,
+          consultantName: consultantUser.name || "Consultant",
+          consulteeName: consulteeUser.name || "Consultee",
+          planTitle,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          outcome: "WITHDRAWN",
+        },
+      );
+    }
+  } catch (notifyErr) {
+    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
+      subsystem: "bookings",
+      op: "reschedule-withdraw-notify",
+      expected: true,
+    });
   }
 
   return { withdrawn: true };

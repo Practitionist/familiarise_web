@@ -22,18 +22,27 @@
  *
  * #1161 — this IS the universal front door now. The third rail, a booking
  * fully covered by referral credits (`free_` intent, `Payment.amount === 0`),
- * restores its credits here: no gateway leg, no ledger money to move, just
- * the full credit restoration that cancellation owes the buyer. Callers must
- * stop filtering on `amount > 0` and send every SUCCEEDED payment through.
- * (Referral credits are refused for org-funded checkouts, so a free_ payment
- * never carries BookingUtilization — nothing org-side to reverse.)
+ * settles here: no gateway leg, and no card money to move — but not nothing.
+ * The booking-time posting debited PLATFORM_PROMO for the credit funding and
+ * credited the consultant/org payables, GST and the platform fee, and
+ * ConsultantEarnings accrued on the gross, so cancellation mirrors that
+ * journal in-ledger (payables debited, earnings netted, PLATFORM_PROMO back
+ * to credit), reverses BookingUtilization (a defensive no-op for personal
+ * bookings — credits are refused on org-funded checkouts), and restores the
+ * credits in full. Callers must stop filtering on `amount > 0` and send every
+ * SUCCEEDED payment through.
  */
 
-import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
+import { EarningStatus, Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
+import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
+import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { applyReversal } from "./reversal-engine";
 import { RefundValidationError, refundPayment } from "./refund";
 
@@ -101,11 +110,15 @@ export async function refundBookingPayment(input: {
 /**
  * #1161 — restore the referral credits behind a fully-credit-funded booking.
  *
- * There is no money to move: `Payment.amount` is 0 and the value lives in the
- * consumed `ReferralCreditUsage` rows. A zero-amount Refund row is minted so
- * the cancellation leaves the same audit shape as every other rail, and its
- * existence doubles as the idempotency claim — a second cancellation of the
- * same booking restores nothing twice.
+ * There is no card money to move: `Payment.amount` is 0 and the value lives in
+ * the consumed `ReferralCreditUsage` rows. But the booking was not free — the
+ * booking-time posting debited PLATFORM_PROMO and credited the payables, and
+ * ConsultantEarnings accrued on the gross. So alongside the credit restoration
+ * this runs the same in-ledger reversal the org rail gets, minus the gateway
+ * phases. A zero-amount Refund row is minted so the cancellation leaves the
+ * same audit shape as every other rail, and its existence doubles as the
+ * idempotency claim — a second cancellation of the same booking restores
+ * nothing twice.
  */
 async function refundFreeCreditPayment(input: {
   paymentId: string;
@@ -170,15 +183,309 @@ async function refundFreeCreditPayment(input: {
         // No amounts → full restoration of every usage row on the payment.
         await reverseCreditsForPayment(payment.id, tx);
 
+        // #1003 convention (mirrors cancelPendingCheckout): utilization is
+        // debited at checkout before capture, so release it here. A no-op for
+        // personal bookings, which have no utilization row — referral credits
+        // are refused on org-funded checkouts, so a free_ payment can only be
+        // personal.
+        await reverseBookingUtilization(tx, {
+          paymentId: payment.id,
+          reason: input.reason,
+        });
+
+        // Mirror the booking-time PLATFORM_PROMO journal: net the payables'
+        // source rows and counter-post the funding. Same tx as the Refund row,
+        // so a failed posting rolls the whole restoration back atomically.
+        await reverseFreeCreditSettlement(tx, {
+          paymentId: payment.id,
+          refundId: refundRow.id,
+          initiatedByUserId: input.initiatedByUserId ?? null,
+        });
+
         return {
           refundId: refundRow.id,
           amountRefundedPaise: 0,
           rail: "CREDITS" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
+}
+
+/**
+ * In-ledger settlement of a fully-credit-funded cancellation (#1161).
+ *
+ * `applyRefundCascade` cannot serve this payment: its proportional machinery
+ * divides by `Payment.amount`, which is 0 here (its zero-amount branch exists
+ * precisely to short-circuit that, and only releases utilization). So this is
+ * the ratio-1 special case, shaped like the cascade's Step 9 and mirroring —
+ * leg for leg — how the credit funding was originally booked
+ * (earnings-service.ts): the journal debited PLATFORM_PROMO for the
+ * REFERRAL_CREDIT legs (or DISCOUNT on legacy rows without legs) and credited
+ * CONSULTANT_PAYABLE per party, ORG_PAYABLE per org, GST_PAYABLE and the
+ * platform fee. The reversal credits PLATFORM_PROMO back and debits those
+ * payables, with PLATFORM_FEE absorbing the residual so the txn balances to
+ * the paise.
+ *
+ * The payables' source rows net first (earnings → REFUNDED, org clawback when
+ * already paid out) so payout math and ledger stay coherent — EARNINGS_LEDGER_
+ * DRIFT reconciles exactly this pairing. A free_ booking carries no overage
+ * side-charges and no invoice, so there is no Step-7.6 credit-back or GST
+ * credit note to mirror.
+ *
+ * No-op when no earnings rows exist: without them neither did the consultant
+ * pipeline nor the booking journal run, so there is nothing to invert —
+ * posting anyway would credit PLATFORM_PROMO against a debit that never
+ * happened.
+ */
+async function reverseFreeCreditSettlement(
+  tx: Tx,
+  input: {
+    paymentId: string;
+    refundId: string;
+    initiatedByUserId: string | null;
+  },
+): Promise<void> {
+  const payment = await tx.payment.findUniqueOrThrow({
+    where: { id: input.paymentId },
+    select: {
+      originalAmount: true,
+      taxAmount: true,
+      legs: { select: { source: true, amountPaise: true } },
+      earnings: {
+        select: {
+          id: true,
+          consultantProfileId: true,
+          consultantSharePaise: true,
+          refundedShareAmount: true,
+          status: true,
+          payoutId: true,
+        },
+      },
+      organizationEarnings: {
+        select: {
+          id: true,
+          organizationId: true,
+          orgSharePaise: true,
+          refundedAmountPaise: true,
+          status: true,
+          orgPayoutId: true,
+          orgPayout: { select: { status: true, clawbackInitiatedAt: true } },
+        },
+      },
+    },
+  });
+
+  if (payment.earnings.length === 0 && payment.organizationEarnings.length === 0)
+    return;
+
+  // Consultant earnings net in full — same cap + legal-transition guard as
+  // cascade Step 6, with the identity proportion (a cancellation is total).
+  for (const earnings of payment.earnings) {
+    const newRefundedShare = Math.min(
+      earnings.consultantSharePaise,
+      earnings.refundedShareAmount + earnings.consultantSharePaise,
+    );
+    const fully = newRefundedShare >= earnings.consultantSharePaise;
+    let nextStatus = earnings.status;
+    if (fully && earnings.status !== EarningStatus.REFUNDED) {
+      assertEarningStatusTransitionLegal(
+        earnings.id,
+        earnings.status,
+        EarningStatus.REFUNDED,
+      );
+      nextStatus = EarningStatus.REFUNDED;
+    }
+    await tx.consultantEarnings.update({
+      where: { id: earnings.id },
+      data: { refundedShareAmount: newRefundedShare, status: nextStatus },
+    });
+    if (earnings.payoutId) {
+      // Full reversal of this share → full TDS reversal for it; the helper's
+      // own dedup + original-cap keeps a re-run bounded.
+      await recordTdsReversal(tx, {
+        payoutId: earnings.payoutId,
+        consultantProfileId: earnings.consultantProfileId,
+        earningsId: earnings.id,
+        refundAmountPaise: earnings.consultantSharePaise,
+        paymentAmountPaise: earnings.consultantSharePaise,
+        refundId: input.refundId,
+      });
+    }
+  }
+
+  // Org earnings (the consultant's host org / collaborator orgs — not a
+  // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
+  // cascade Step 7 including the COMPLETED-payout clawback record.
+  for (const orgEarn of payment.organizationEarnings) {
+    const newRefunded = Math.min(
+      orgEarn.orgSharePaise,
+      orgEarn.refundedAmountPaise + orgEarn.orgSharePaise,
+    );
+    const fully = newRefunded >= orgEarn.orgSharePaise;
+    let nextStatus = orgEarn.status;
+    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
+      assertEarningStatusTransitionLegal(
+        orgEarn.id,
+        orgEarn.status,
+        EarningStatus.REFUNDED,
+      );
+      nextStatus = EarningStatus.REFUNDED;
+    }
+    await tx.organizationEarnings.update({
+      where: { id: orgEarn.id },
+      data: { refundedAmountPaise: newRefunded, status: nextStatus },
+    });
+
+    if (
+      orgEarn.orgPayoutId &&
+      orgEarn.orgPayout?.status === "COMPLETED" &&
+      orgEarn.orgSharePaise > 0
+    ) {
+      await tx.organizationPayout.update({
+        where: { id: orgEarn.orgPayoutId },
+        data: {
+          clawbackAmountPaise: { increment: orgEarn.orgSharePaise },
+          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
+            ? undefined
+            : new Date(),
+        },
+      });
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgEarn.organizationId,
+          actorMembershipId: null,
+          category: "PAYOUT",
+          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
+          description: `Credit-funded cancellation clawback: ${orgEarn.orgSharePaise} paise from payout ${orgEarn.orgPayoutId}`,
+          details: {
+            paymentId: input.paymentId,
+            refundId: input.refundId,
+            orgEarningsId: orgEarn.id,
+            orgPayoutId: orgEarn.orgPayoutId,
+            amountPaise: orgEarn.orgSharePaise,
+            initiatedByUserId: input.initiatedByUserId,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
+  // The counter-posting. Funding returns to PLATFORM_PROMO (the account the
+  // REFERRAL_CREDIT legs were debited to); legacy pre-legs payments booked
+  // their gross as DISCOUNT instead (#1003 shape).
+  const promoTotal = payment.legs.reduce(
+    (s, l) =>
+      l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
+        ? s + l.amountPaise
+        : s,
+    0,
+  );
+  const credits: Posting[] = [];
+  if (promoTotal > 0) {
+    credits.push({
+      account: { kind: "PLATFORM_PROMO" },
+      direction: "CREDIT",
+      amountPaise: promoTotal,
+    });
+  } else {
+    const discountBack =
+      payment.originalAmount + (payment.taxAmount ?? 0);
+    if (discountBack > 0) {
+      credits.push({
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: discountBack,
+      });
+    }
+  }
+
+  const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+  const consRev = payment.earnings.reduce(
+    (s, e) => s + e.consultantSharePaise,
+    0,
+  );
+  const orgRev = payment.organizationEarnings.reduce(
+    (s, o) => s + o.orgSharePaise,
+    0,
+  );
+  const gstRev = payment.taxAmount ?? 0;
+  // PLATFORM_FEE is the residual plug (cascade Step 9 convention): positive →
+  // the platform gives back its fee slice; negative (discount gap between the
+  // funding and the shares) → the fee credit absorbs the shortfall.
+  const platformPlug = fundingTotal - consRev - orgRev - gstRev;
+
+  const debits: Posting[] = [];
+  for (const earnings of payment.earnings) {
+    if (earnings.consultantSharePaise > 0) {
+      debits.push({
+        account: {
+          kind: "CONSULTANT_PAYABLE",
+          consultantProfileId: earnings.consultantProfileId,
+        },
+        direction: "DEBIT",
+        amountPaise: earnings.consultantSharePaise,
+      });
+    }
+  }
+  for (const orgEarn of payment.organizationEarnings) {
+    if (orgEarn.orgSharePaise > 0) {
+      debits.push({
+        account: { kind: "ORG_PAYABLE", organizationId: orgEarn.organizationId },
+        direction: "DEBIT",
+        amountPaise: orgEarn.orgSharePaise,
+      });
+    }
+  }
+  if (gstRev > 0) {
+    debits.push({
+      account: { kind: "GST_PAYABLE" },
+      direction: "DEBIT",
+      amountPaise: gstRev,
+    });
+  }
+  if (platformPlug > 0) {
+    debits.push({
+      account: { kind: "PLATFORM_FEE" },
+      direction: "DEBIT",
+      amountPaise: platformPlug,
+    });
+  } else if (platformPlug < 0) {
+    credits.push({
+      account: { kind: "PLATFORM_FEE" },
+      direction: "CREDIT",
+      amountPaise: -platformPlug,
+    });
+  }
+
+  const debitTotal = debits.reduce((s, d) => s + d.amountPaise, 0);
+  const creditTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
+  // #1218-triage — a fully-zero settlement (zero-share earnings rows only)
+  // produces empty postings on BOTH sides: that is a legitimate nothing-to-
+  // journal outcome, not an imbalance. Only a one-sided non-empty total is
+  // a real logic bug worth rolling back for.
+  if (debits.length === 0 && credits.length === 0) {
+    console.log(
+      `ℹ️ free-credit reversal for payment ${input.paymentId}: zero-value settlement — no journal posted`,
+    );
+    return;
+  }
+  if (debitTotal === 0 || debitTotal !== creditTotal) {
+    // Unreachable given the plug — a mismatch is a real logic bug. Throwing
+    // rolls back the whole Serializable tx (Refund row included) for a clean
+    // retry rather than half-applying the reversal.
+    throw new Error(
+      `free-credit reversal unbalanced for payment ${input.paymentId}: Dr ${debitTotal} Cr ${creditTotal}`,
+    );
+  }
+
+  await postLedgerTxn(tx, {
+    idempotencyKey: `refund:${input.refundId}`,
+    kind: "REFUND",
+    paymentId: input.paymentId,
+    postings: [...debits, ...credits],
+  });
 }
 
 /**
@@ -306,7 +613,7 @@ async function refundInternalFundedPayment(input: {
           rail: "INTERNAL" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
 }
