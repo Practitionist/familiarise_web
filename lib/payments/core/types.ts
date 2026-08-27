@@ -16,11 +16,11 @@ import { PaymentGateway, RefundStatus, DisputeStatus } from "@prisma/client";
 export interface PaymentIntentParams {
   amount: number; // Amount in base currency (e.g., 100.00 for $100)
   currency: string;
-  metadata: {
-    appointmentId: string;
-    appointmentType: string;
-    [key: string]: string;
-  };
+  // Booking checkouts set appointmentId/appointmentType; standalone goods
+  // (#366 recording_purchase) have no booking context and omit them. Kept as
+  // a flat Record because Razorpay/Stripe metadata params reject
+  // optional-property index signatures (`string | undefined`).
+  metadata: Record<string, string>;
   paymentGateway: PaymentGateway;
   isMockPayment?: boolean; // For development: skip actual gateway calls
 }

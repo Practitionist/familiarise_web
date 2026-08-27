@@ -18,10 +18,20 @@ export async function GET() {
     return NextResponse.json({ invites: [] });
   }
 
+  // E2E-audit P1 fix — expired invitations are no longer returned. The
+  // onboarding role-picker replaces itself with a non-dismissible "you've
+  // been invited" panel whenever this returns a row, so an expired-but-
+  // still-pending invite used to lock that user out of onboarding forever:
+  // the emailed link 410s, acceptance returns 410, but this endpoint kept
+  // saying "invited" with no skip affordance and no role tiles.
+  const now = new Date();
+
   const invites = await prisma.invitation.findMany({
     where: {
       email: session.user.email.toLowerCase(),
       status: "pending",
+      // expiresAt is required on Invitation, so "unexpired" is a single gt.
+      expiresAt: { gt: now },
     },
     select: {
       id: true,
@@ -34,6 +44,16 @@ export async function GET() {
     },
     orderBy: { createdAt: "desc" },
     take: 5,
+  });
+
+  // Expired rows are cleaned up lazily so they cannot resurface elsewhere.
+  await prisma.invitation.updateMany({
+    where: {
+      email: session.user.email.toLowerCase(),
+      status: "pending",
+      expiresAt: { lte: now },
+    },
+    data: { status: "expired" },
   });
 
   return NextResponse.json({

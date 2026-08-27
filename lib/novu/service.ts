@@ -31,6 +31,8 @@ import {
   type RecordingPayload,
   type RecordingFailedPayload,
   type RecordingExpiringPayload,
+  type DocumentUploadedPayload,
+  type DocumentReviewedPayload,
   type ConsultantApplicationPayload,
   type ReferralBonusPayload,
   type RefereeWelcomeBonusPayload,
@@ -616,6 +618,34 @@ export async function notifyRecordingExpiring(
   return triggerWorkflow(
     NOVU_WORKFLOWS.RECORDING_EXPIRING,
     consultantUserId,
+    payload,
+  );
+}
+
+// ============================================================================
+// Document Review Notifications
+// ============================================================================
+
+/** A document (or revision/response) landed on an appointment. */
+export async function notifyDocumentUploaded(
+  subscriberId: string,
+  payload: DocumentUploadedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.DOCUMENT_UPLOADED,
+    subscriberId,
+    payload,
+  );
+}
+
+/** A consultant set a review decision on a submitted document. */
+export async function notifyDocumentReviewed(
+  subscriberId: string,
+  payload: DocumentReviewedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.DOCUMENT_REVIEWED,
+    subscriberId,
     payload,
   );
 }

@@ -21,11 +21,19 @@ import prisma from "../../lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
 // REQUEST_ALLOWED_FROM.EXPIRED in lib/booking/transitions.ts (#836) —
 // each cohort has its own cutoff, so they are not merged into one sweep.
+//
+// Belt-and-braces on top of the requestedAt refresh in the reschedule route:
+// a booking with a LIVE reschedule proposal (PENDING_REVIEW / COUNTERED) is
+// excluded from the PENDING cohorts entirely. The proposal system budgets its
+// own lifetime (72h); the expiry sweep must never race it — an unanswered
+// reschedule used to be auto-EXPIRED and fully refunded within the hour while
+// its proposal was still open.
 
 // Expire PENDING consultations after 48 hours. A PENDING consultation is not
 // just paperwork — its request-for-approval tentative slots block the
@@ -132,6 +140,12 @@ async function expirePendingConsultations(): Promise<{
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
+        // Never reap a booking whose reschedule proposal is still live.
+        appointment: {
+          rescheduleRequests: {
+            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+          },
+        },
       },
       select: { id: true, appointment: { select: { id: true } } },
     });
@@ -154,6 +168,15 @@ async function expirePendingConsultations(): Promise<{
       where: {
         id: { in: expiredIds },
         status: AppointmentStatus.PENDING,
+        // Re-checked AT WRITE TIME: between the stale read above and this
+        // statement the consultee could have opened a reschedule proposal
+        // (PENDING is reschedulable), and expiring then would kill a booking
+        // with a live proposal.
+        appointment: {
+          rescheduleRequests: {
+            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+          },
+        },
       },
       data: {
         status: AppointmentStatus.EXPIRED,
@@ -219,6 +242,17 @@ async function expirePendingSubscriptions(): Promise<{
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
+        // Same live-proposal exclusion as consultations: a full-subscription
+        // reschedule re-enters PENDING, and its open proposal must resolve
+        // through the reschedule machine (accept/decline/withdraw/expire),
+        // not be swept out from under it.
+        appointments: {
+          none: {
+            rescheduleRequests: {
+              some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+            },
+          },
+        },
       },
       include: {
         requestedBy: {
@@ -254,6 +288,13 @@ async function expirePendingSubscriptions(): Promise<{
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
+        appointments: {
+          none: {
+            rescheduleRequests: {
+              some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+            },
+          },
+        },
       },
       data: {
         status: AppointmentStatus.EXPIRED,

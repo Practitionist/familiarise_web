@@ -405,3 +405,16 @@ ALTER TABLE "Contract" ADD CONSTRAINT "contract_payment_terms_nonnegative"
 --    ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
 --      CHECK ("totalSessions" >= 1);
 -- ============================================================================
+
+-- #1244 review — document review thread versioning. Prisma cannot express a
+-- functional/partial unique, so this rides the sidecar like the CHECKs above:
+-- one version number per position within a live thread. The root row joins
+-- the thread via COALESCE(rootDocumentId, id); tombstoned rows are excluded
+-- so the nightly purge can never conflict with itself.
+ALTER TABLE "AppointmentDocument" DROP CONSTRAINT IF EXISTS "appointment_doc_thread_version_unique";
+-- SPLIT
+DROP INDEX IF EXISTS "appointment_doc_thread_version_unique";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "appointment_doc_thread_version_unique"
+ON "AppointmentDocument" (COALESCE("rootDocumentId", "id"), "versionNo")
+WHERE "deletedAt" IS NULL;

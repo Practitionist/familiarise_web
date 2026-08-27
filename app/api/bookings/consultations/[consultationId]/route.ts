@@ -324,96 +324,24 @@ export async function DELETE(
     // Require authentication
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
-    const { session } = authResult;
 
-    const { consultationId } = await params;
-
-    // Fetch the consultation to check ownership
-    const existingConsultation = await prisma.consultation.findUnique({
-      where: { id: consultationId },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: true,
-          },
-        },
+    // Doctrine rule 2 — nothing is deleted. This route used to run a raw
+    // `prisma.consultation.delete`, whose cascades reach the Appointment and
+    // from there every Payment pointing at it (Payment.appointment onDelete:
+    // Cascade) — hard-destroying financial rows. Bookings are soft-cancelled
+    // through the cancel API, which also routes any refund through the front
+    // door (lib/payments/operations/booking-refund.ts).
+    void params;
+    return NextResponse.json(
+      {
+        error:
+          "Deleting bookings is not supported. Cancel via " +
+          "POST /api/appointments/{appointmentId}/cancel, which soft-cancels " +
+          "and refunds through the booking front door.",
+        code: "DELETE_NOT_SUPPORTED",
       },
-    });
-
-    if (!existingConsultation) {
-      return NextResponse.json(
-        { error: "Consultation not found" },
-        { status: 404 },
-      );
-    }
-
-    // Check authorization: must be a participant or privileged
-    const isConsultant =
-      !!existingConsultation.consultationPlan?.consultantProfile?.id &&
-      existingConsultation.consultationPlan.consultantProfile.id ===
-        session.user.consultantProfileId;
-    const isConsultee =
-      !!existingConsultation.requestedById &&
-      existingConsultation.requestedById === session.user.consulteeProfileId;
-    const isParticipant = isConsultant || isConsultee;
-
-    if (!isPrivileged(session.user.role) && !isParticipant) {
-      return forbiddenResponse(
-        "You can only delete consultations you are a participant in",
-      );
-    }
-
-    const consultationData = await prisma.consultation.delete({
-      where: { id: consultationId },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointment: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: consultationData }, { status: 200 });
+      { status: 405 },
+    );
   } catch (error) {
     console.error("Error deleting consultation:", error);
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });

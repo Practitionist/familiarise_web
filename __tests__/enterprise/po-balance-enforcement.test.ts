@@ -28,6 +28,15 @@ import { NextRequest } from "next/server";
 
 // ---- Mocks ------------------------------------------------------------
 
+// The route applies moneyOpsLimiter (10/min). Without this stub, the real
+// Upstash limiter 429s the later cases in CI — the same house mock every
+// other enterprise suite uses (see owner-role-escalation-guard.test.ts).
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn().mockResolvedValue(null),
+  moneyOpsLimiter: {},
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

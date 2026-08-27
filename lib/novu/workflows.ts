@@ -71,6 +71,11 @@ export const NOVU_WORKFLOWS = {
   // before their Stream S3 URL lapses so they can download/keep it.
   RECORDING_EXPIRING: "recording-expiring",
 
+  // Documents — per-appointment review flow. An upload pings the reviewer,
+  // a decision pings the uploader (see notifyDocumentUploaded/Reviewed).
+  DOCUMENT_UPLOADED: "document-uploaded",
+  DOCUMENT_REVIEWED: "document-reviewed",
+
   // Referrals
   REFERRAL_BONUS_EARNED: "referral-bonus-earned",
   REFEREE_WELCOME_BONUS: "referee-welcome-bonus",
@@ -374,6 +379,41 @@ export type RecordingFailedPayload = {
 export type RecordingExpiringPayload = {
   recordingCount: number;
   expiresAt: string;
+  dashboardUrl: string;
+};
+
+/**
+ * Fired when a document lands on an appointment (consultee submission,
+ * consultee revision, or consultant response). Recipient is the other
+ * party — the reviewer for consultee uploads, the uploader for responses.
+ */
+export type DocumentUploadedPayload = NotificationScope & {
+  appointmentId: string;
+  documentId: string;
+  uploadedByRole: "CONSULTEE" | "CONSULTANT";
+  /** Original filename as uploaded. */
+  fileName: string;
+  /** True when threaded onto an existing review (revision or response). */
+  isThreaded: boolean;
+  /** 1-based sequence within the review thread. */
+  versionNo: number;
+  consultantName: string;
+  consulteeName: string;
+  dashboardUrl: string;
+};
+
+/**
+ * Fired when a consultant changes a document's review status. Recipient is
+ * the consultee who submitted it. `reviewStatus` is the NEW status; templates
+ * branch on it (approved / rejected / needs-revision / in-review).
+ */
+export type DocumentReviewedPayload = NotificationScope & {
+  appointmentId: string;
+  documentId: string;
+  reviewStatus: "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
+  reviewNotes?: string;
+  originalName: string;
+  consultantName: string;
   dashboardUrl: string;
 };
 

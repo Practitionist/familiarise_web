@@ -17,6 +17,8 @@ import {
   buildStaffScalarData,
   buildAdminScalarData,
   validateProfessionalBackground,
+  shouldSubmitVerification,
+  isPersistableVerificationDoc,
 } from "./onboarding-shared";
 
 // ============================================================================
@@ -478,7 +480,14 @@ async function submitVerificationRequest(
   });
 
   if (verificationDocuments && verificationDocuments.length > 0) {
-    const existingDocuments = verificationDocuments.filter(
+    // Same predicate that gated the deferral decision in
+    // maybeSubmitConsultantVerification — a doc that would not persist here
+    // must never have started a review (review round 1).
+    const persistableDocs = verificationDocuments.filter(
+      isPersistableVerificationDoc,
+    ) as VerificationDocumentInput[];
+
+    const existingDocuments = persistableDocs.filter(
       (doc) => doc.id && !doc.isOnboardingUpload,
     );
     if (existingDocuments.length > 0) {
@@ -492,7 +501,7 @@ async function submitVerificationRequest(
       });
     }
 
-    const onboardingDocuments = verificationDocuments.filter(
+    const onboardingDocuments = persistableDocs.filter(
       (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
     );
     if (onboardingDocuments.length > 0) {
@@ -577,6 +586,11 @@ type OnboardingResult = {
   user?: Record<string, unknown>;
   error?: string;
   verificationWarning?: string;
+  /// True when the consultant finished onboarding without completing the
+  /// verification package (LinkedIn + ≥1 document). The profile exists with
+  /// verificationStatus PENDING_VERIFICATION; the client uses this to show a
+  /// "finish from Settings" message instead of "under review".
+  verificationDeferred?: boolean;
 };
 
 async function runOnboardingTransaction(
@@ -646,22 +660,49 @@ async function recoverIdempotentOnboarding(
   return null;
 }
 
-// Post-transaction consultant verification. Returns a warning string when the
-// profile saved but the verification submission failed, else undefined.
+/**
+ * Post-transaction consultant verification. Returns a warning string when the
+ * profile saved but the verification submission failed; `deferred: true` when
+ * the consultant finished without a complete verification package. The policy
+ * itself lives in `shouldSubmitVerification` (onboarding-shared) so it stays
+ * unit-testable outside this server-only module.
+ */
 async function maybeSubmitConsultantVerification(
   userId: string,
   updatedUser: OnboardingUser,
   body: unknown,
   role: OnboardingData["role"],
-): Promise<string | undefined> {
+): Promise<{ warning?: string; deferred?: boolean } | undefined> {
   if (role !== UserRole.CONSULTANT || !updatedUser.consultantProfileId) {
     return undefined;
   }
+
+  const verificationBody = body as VerificationBody;
+  const { hasDocuments, hasLinkedin } =
+    shouldSubmitVerification(verificationBody);
+
+  // Deferred path (#onboarding-ux): the profile is real and saved with the
+  // model default PENDING_VERIFICATION ("onboarding complete, awaiting
+  // review"); marketplace visibility continues to gate on verification, so a
+  // deferred consultant is simply unlisted until they finish from Settings.
+  // Whatever LinkedIn they did enter still lands on the User row.
+  if (!hasDocuments || !hasLinkedin) {
+    if (hasLinkedin) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          linkedinUrl: verificationBody.verificationLinkedinUrl!.trim(),
+        },
+      });
+    }
+    return { deferred: true };
+  }
+
   try {
     await submitVerificationRequest(
       userId,
       updatedUser.consultantProfileId,
-      body as VerificationBody,
+      verificationBody,
       updatedUser.name || "",
       updatedUser.email || "",
     );
@@ -671,7 +712,10 @@ async function maybeSubmitConsultantVerification(
       "Failed to create verification request:",
       verificationError,
     );
-    return "Your profile was saved but verification submission failed. Please contact support.";
+    return {
+      warning:
+        "Your profile was saved but verification submission failed. Please contact support.",
+    };
   }
 }
 
@@ -720,14 +764,19 @@ export async function processOnboardingData(
       throw error;
     }
 
-    const verificationWarning = await maybeSubmitConsultantVerification(
+    const verification = await maybeSubmitConsultantVerification(
       userId,
       updatedUser,
       body,
       validatedBody.role,
     );
 
-    return { success: true, user: updatedUser, verificationWarning };
+    return {
+      success: true,
+      user: updatedUser,
+      verificationWarning: verification?.warning,
+      verificationDeferred: verification?.deferred,
+    };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
     const errorMessage =
