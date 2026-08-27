@@ -5,7 +5,7 @@
  * one reviewable line per reason.
  */
 
-import type { SupportPriority } from "@prisma/client";
+import type { SupportIssueType, SupportPriority } from "@prisma/client";
 
 /** Reasons that page the queue at HIGH (money-integrity + no-show disputes). */
 const HIGH_REASONS = new Set([
@@ -18,4 +18,68 @@ const HIGH_REASONS = new Set([
 export function priorityForReason(reason: string | null | undefined): SupportPriority {
   if (reason && HIGH_REASONS.has(reason)) return "HIGH";
   return "MEDIUM";
+}
+
+/**
+ * Reason → `SupportIssueType` for the per-appointment escalation path.
+ *
+ * Without this the appointment path wrote tickets with `issueType: null`, so
+ * every session escalation landed in the ops queue indistinguishable from a
+ * billing question — the Issue type column rendered "-" and staff could not
+ * filter for them. It also meant all twelve members of
+ * SESSION_SCOPED_ISSUE_TYPES were unreachable in the entire product, and the
+ * platform form's 422 guarding them was guarding a door to an empty room.
+ *
+ * The payment reasons deliberately map to the SAME types the platform intake
+ * assigns (`platform-flows.ts` → `issueTypeByReason`), so "charged twice"
+ * means one thing in the queue regardless of which surface it came from.
+ */
+const ISSUE_TYPE_BY_REASON: Readonly<Record<string, SupportIssueType>> = {
+  // Attendance
+  provider_no_show: "CONSULTANT_NO_SHOW",
+  // The provider reporting a consultee no-show resolves in-flow rather than
+  // escalating, but map it so a policy escalation still types correctly.
+  attendee_no_show: "CONSULTANT_NO_SHOW",
+
+  // Delivery quality
+  quality_ended_early: "SESSION_ENDED_EARLY",
+  quality_poor: "SESSION_QUALITY_POOR",
+  quality_wrong_expert: "WRONG_CONSULTANT",
+  quality_av: "COMMUNICATION_ISSUE",
+  quality_other: "SESSION_QUALITY_POOR",
+
+  // In-session technical trouble that the self-serve steps did not fix.
+  technical_unresolved: "ACCESS_ISSUE",
+
+  // Materials and recordings are both "I cannot get at the artefact".
+  recording_missing: "DOCUMENT_ISSUE",
+  recording_broken: "DOCUMENT_ISSUE",
+  documents_missing: "DOCUMENT_ISSUE",
+  documents_wrong: "DOCUMENT_ISSUE",
+
+  // Scheduling
+  timezone_mismatch: "TIMEZONE_CONFUSION",
+
+  // Money — same mapping as the platform intake.
+  payment_deducted_unconfirmed: "PAYMENT_FAILED",
+  double_charge: "CHARGED_TWICE",
+  refund_missing: "REFUND_REQUEST",
+  high_value_refund: "REFUND_REQUEST",
+  sponsorship_charge: "BILLING_QUESTION",
+
+  // Org-party concerns are conduct/relationship, not a session defect.
+  org_conduct_dispute: "GENERAL_INQUIRY",
+  routed_org_disputes: "GENERAL_INQUIRY",
+};
+
+/**
+ * Falls back to `null` rather than a catch-all: a reason nobody has classified
+ * should read as unclassified in the queue, not be silently filed as OTHER.
+ * `no_flow` (free-text straight to a human) lands here on purpose.
+ */
+export function issueTypeForReason(
+  reason: string | null | undefined,
+): SupportIssueType | null {
+  if (!reason) return null;
+  return ISSUE_TYPE_BY_REASON[reason] ?? null;
 }

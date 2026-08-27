@@ -19,7 +19,8 @@ import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
 import { decideEscalation } from "./escalation";
-import { priorityForReason } from "./priority";
+import { issueTypeForReason, priorityForReason } from "./priority";
+import { notifySupportStaff } from "./create-ticket";
 import type { SupportAction, SupportContext, FlowNode } from "./types";
 
 export interface RunTurnInput {
@@ -307,6 +308,14 @@ async function escalate(
   // (high_value_refund, no_flow) fill in. Priority comes from the shared map.
   const effectiveReason = turn.reason ?? reason;
   const priority = priorityForReason(effectiveReason);
+  const issueType = issueTypeForReason(effectiveReason);
+
+  // Staff notification must fire only for a ticket that actually committed, so
+  // the transaction reports back whether it minted one and the notify happens
+  // after. (This is also why the create below cannot just call
+  // `createSupportTicket` — that helper is not transaction-aware.)
+  let createdTicket: { id: string; title: string; organizationId: string | null } | null =
+    null;
 
   const ticketId = await prisma.$transaction(async (tx) => {
     if (userMessage) {
@@ -334,13 +343,18 @@ async function escalate(
           description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
           priority,
           category,
+          // The machine-readable half of the terminal reason. Without it every
+          // session escalation reached ops as an untyped row and none of the
+          // session-scoped issue types was reachable anywhere in the product.
+          issueType: issueType ?? undefined,
           paymentId: ctx.paymentId,
           // Org attribution for the ops queue's org filter (null = B2C).
           organizationId: ctx.organizationId,
         },
-        select: { id: true },
+        select: { id: true, title: true, organizationId: true },
       });
       linkedTicketId = ticket.id;
+      createdTicket = ticket;
     }
 
     await tx.appointmentSupportThread.update({
@@ -356,6 +370,18 @@ async function escalate(
     });
     return linkedTicketId;
   });
+
+  // Committed — now it is safe to page the queue. Fire-and-forget for the same
+  // reason the factory does it: a notification failure must not turn a
+  // successful escalation into a 500 and have the user retry into a duplicate.
+  if (createdTicket) {
+    await notifySupportStaff(createdTicket).catch((error) => {
+      console.error("support: staff notification failed for escalation", {
+        ticketId: (createdTicket as { id: string }).id,
+        error,
+      });
+    });
+  }
 
   return {
     threadId,

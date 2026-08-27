@@ -283,6 +283,11 @@ const qualityComplaintFlow: FlowDefinition = {
         },
         { id: "poor", label: "Session quality was poor", next: "poor" },
         { id: "wrong", label: "It wasn't the expert I booked", next: "wrong" },
+        {
+          id: "av",
+          label: "Audio or video problems during the call",
+          next: "av",
+        },
         { id: "other", label: "Something else", next: "other" },
       ],
     },
@@ -296,9 +301,19 @@ const qualityComplaintFlow: FlowDefinition = {
     poor: {
       id: "poor",
       kind: "TERMINAL",
-      body: "Thanks for telling us — our team will review and follow up here. Your rating and feedback stay private.",
+      body: "Thanks for telling us — our team will review and follow up here.",
       escalate: true,
       reason: "quality_poor",
+    },
+    av: {
+      id: "av",
+      kind: "TERMINAL",
+      // The TECHNICAL intent is gated notCompleted, so once the session ends
+      // this is the only route for "the call itself was broken" — which is
+      // COMMUNICATION_ISSUE in the ticket taxonomy.
+      body: "Sorry — a call that won't hold together wastes the session. Our team will check the call logs for this session and follow up here.",
+      escalate: true,
+      reason: "quality_av",
     },
     wrong: {
       id: "wrong",
@@ -331,7 +346,29 @@ const technicalFlow: FlowDefinition = {
       options: [
         { id: "join", label: "I can't join the session", next: "join" },
         { id: "av", label: "Audio or video problems in the call", next: "av" },
+        {
+          id: "timezone",
+          label: "The session time looks wrong to me",
+          next: "timezone",
+        },
       ],
+    },
+    timezone: {
+      id: "timezone",
+      kind: "PROMPT",
+      body: "Times are shown in the timezone set on your profile, not the expert's. Check Settings → your timezone, then reopen this session. Does the time look right now?",
+      options: [
+        { id: "fixed", label: "Yes, that explains it", next: "fixed" },
+        { id: "tzstuck", label: "No, it still looks wrong", next: "tzstuck" },
+      ],
+    },
+    tzstuck: {
+      id: "tzstuck",
+      kind: "TERMINAL",
+      body: "Thanks — our team will confirm the correct time for this session and can move it if the listing was wrong.",
+      action: { kind: "OFFER_RESCHEDULE" },
+      escalate: true,
+      reason: "timezone_mismatch",
     },
     join: {
       id: "join",
@@ -441,6 +478,63 @@ const orgAdminDisputeFlow: FlowDefinition = {
   },
 };
 
+// --- Session materials (handouts, pre-reads, uploads) -------------------------
+const documentsFlow: FlowDefinition = {
+  category: "DOCUMENTS",
+  title: "Session materials",
+  entryNodeId: "start",
+  // Deliberately ungated: pre-reads matter before, handouts after, and a
+  // wrong file is worth reporting whenever it is noticed.
+  nodes: {
+    start: {
+      id: "start",
+      kind: "PROMPT",
+      body: "What's wrong with the materials for this session?",
+      options: [
+        {
+          id: "missing",
+          label: "I haven't received the materials",
+          next: "missing",
+        },
+        {
+          id: "wrong",
+          label: "The file is wrong or won't open",
+          next: "wrong",
+        },
+      ],
+    },
+    missing: {
+      id: "missing",
+      kind: "PROMPT",
+      body: "Materials appear on this appointment's page once the expert uploads them — they aren't emailed. Can you see anything under Documents there?",
+      options: [
+        { id: "found", label: "Yes, found them", next: "found" },
+        { id: "stillmissing", label: "No, nothing is there", next: "stillmissing" },
+      ],
+    },
+    found: {
+      id: "found",
+      kind: "TERMINAL",
+      body: "Good — they'll stay on that page for as long as you need them.",
+      resolved: true,
+    },
+    stillmissing: {
+      id: "stillmissing",
+      kind: "TERMINAL",
+      body: "Thanks — our team will chase the materials for this session and follow up here.",
+      escalate: true,
+      reason: "documents_missing",
+    },
+    wrong: {
+      id: "wrong",
+      kind: "TERMINAL",
+      body: "Thanks — tell us which file below and our team will get the right one to you.",
+      escalate: true,
+      reason: "documents_wrong",
+    },
+  },
+};
+
 const ALL_FLOWS: FlowDefinition[] = [
   noShowFlowAttendee,
   noShowFlowProvider,
@@ -450,6 +544,7 @@ const ALL_FLOWS: FlowDefinition[] = [
   recordingAccessFlow,
   qualityComplaintFlow,
   technicalFlow,
+  documentsFlow,
   sponsorshipBillingFlow,
   orgAdminDisputeFlow,
 ];

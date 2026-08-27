@@ -430,6 +430,10 @@ enum SupportThreadCategory {
   RESCHEDULE
   NO_SHOW
   TECHNICAL
+  // #support-hub review — session materials (handouts, pre-reads). DOCUMENT_ISSUE
+  // was session-scoped (so refused on the platform form) with no appointment
+  // flow to send anyone to; this is that flow's category.
+  DOCUMENTS
   PAYMENT_STATUS
   RECORDING_ACCESS
   QUALITY_COMPLAINT

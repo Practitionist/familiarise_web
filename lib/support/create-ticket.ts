@@ -52,8 +52,18 @@ export interface CreateSupportTicketInput {
   organizationId?: string | null;
 }
 
-/** Fire-and-forget staff notification — shared by every creation path. */
-async function notifyStaff(ticket: SupportTicket): Promise<void> {
+/**
+ * Fire-and-forget staff notification — shared by every creation path.
+ *
+ * Exported because the per-appointment escalation creates its ticket INSIDE a
+ * transaction (atomically with the thread's state change) and so cannot use
+ * `createSupportTicket`. It calls this after the transaction commits, which
+ * keeps the invariant that matters: staff are never told about a ticket a
+ * rollback then erased.
+ */
+export async function notifySupportStaff(
+  ticket: Pick<SupportTicket, "id" | "title" | "organizationId">,
+): Promise<void> {
   // ADR 23 — the notification inherits the ticket's org-ness (attribution +
   // deep-link filing only; recipient lists are unchanged).
   let orgName: string | null = null;
@@ -106,7 +116,7 @@ export async function createSupportTicket(
   });
   // The ticket is already committed — a notification failure must not turn a
   // successful create into a 500, or the retrying client files a duplicate.
-  await notifyStaff(ticket).catch((error) => {
+  await notifySupportStaff(ticket).catch((error) => {
     console.error("support: staff notification failed", {
       ticketId: ticket.id,
       error,
