@@ -21,7 +21,7 @@ import { FlowchartResolver } from "./resolvers/flowchart-resolver";
 import { decideEscalation } from "./escalation";
 import { issueTypeForReason, priorityForReason } from "./priority";
 import { notifySupportStaff } from "./create-ticket";
-import type { SupportAction, SupportContext, FlowNode } from "./types";
+import type { SupportAction, SupportContext } from "./types";
 
 export interface RunTurnInput {
   /** Chosen intent — set on the first turn (or to switch intents). */
@@ -149,16 +149,31 @@ export async function runSupportTurn(
   // Claiming "within" after the window has really expired is re-anchored onto
   // the flow's escalation terminal; the reverse (claiming "beyond" early) is
   // left alone — wanting a human is never wrong.
+  //
+  // Gated on the RESOLVED NODE, not the category. `within` is the only
+  // resolved terminal that makes an elapsed-time claim. The playback branch's
+  // `fixed` terminal ("Yes, it plays now") is also resolved, and recordings
+  // only exist after processing — so most playback turns happen more than 48h
+  // after the session ended. Gating on the category alone discarded the user's
+  // confirmation that the problem was GONE, told them "our team will chase the
+  // processing", and filed a false recording_missing ticket.
+  const resolvedNodeId = (
+    turn.messages[0]?.metadata as { nodeId?: string } | undefined
+  )?.nodeId;
   if (
     category === "RECORDING_ACCESS" &&
     turn.resolved &&
+    resolvedNodeId === "within" &&
     ctx.endsAt &&
     Date.now() - ctx.endsAt.getTime() > 48 * 3_600_000
   ) {
-    const terminal = Object.values(flow.nodes).find(
-      (n): n is Extract<FlowNode, { kind: "TERMINAL" }> =>
-        n.kind === "TERMINAL" && !!n.escalate,
-    );
+    // Target `beyond` by name rather than "the first escalating terminal in
+    // object order" — that happened to pick `beyond` only because it is
+    // declared before `broken`, so reordering the nodes would silently start
+    // filing recording_broken for a missing recording.
+    const beyond = flow.nodes["beyond"];
+    const terminal =
+      beyond?.kind === "TERMINAL" && beyond.escalate ? beyond : undefined;
     if (terminal) {
       return escalate(
         ctx,

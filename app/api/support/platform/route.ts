@@ -31,9 +31,13 @@ import {
   platformFlowsForContext,
   platformFlowForId,
   issueTypeForFlow,
+  resolveOrgAttribution,
   type PlatformSupportContext,
 } from "@/lib/support/platform-flows";
-import { createSupportTicket, findRecentOpenEscalation } from "@/lib/support/create-ticket";
+import {
+  createSupportTicket,
+  findRecentOpenEscalation,
+} from "@/lib/support/create-ticket";
 import { priorityForReason } from "@/lib/support/priority";
 
 const turnSchema = z
@@ -166,13 +170,14 @@ export async function POST(req: NextRequest) {
     const issueType = issueTypeForFlow(flow, reason);
     const priority = priorityForReason(reason);
 
-    // Org attribution — operator-billing scope only. An explicit orgId that
-    // isn't one of the caller's ACTIVE memberships is a forged/spoofed
-    // attribution: 403, never a silent downgrade to a B2C ticket. Inference
-    // (sole membership) applies only on the operator billing flow, where org
-    // context is the point — a B2C flow must not silently inherit it.
-    let organizationId: string | null = null;
-    if (input.orgId && !ctx.organizationIds.includes(input.orgId)) {
+    // Org attribution — the rule lives in resolveOrgAttribution so it is
+    // unit-testable and shared with any future intake surface.
+    const attribution = resolveOrgAttribution({
+      flowId: flow.id,
+      requestedOrgId: input.orgId,
+      activeOrganizationIds: ctx.organizationIds,
+    });
+    if (!attribution.ok) {
       return supportError({
         status: 403,
         code: "FORBIDDEN",
@@ -184,13 +189,7 @@ export async function POST(req: NextRequest) {
         },
       });
     }
-    if (flow.id === "ORG_OPERATOR_BILLING") {
-      if (input.orgId) {
-        organizationId = input.orgId;
-      } else if (ctx.organizationIds.length === 1) {
-        organizationId = ctx.organizationIds[0];
-      }
-    }
+    const organizationId = attribution.organizationId;
 
     const walkedPath = input.nodeId
       ? `Flow ${flow.id} at node ${input.nodeId}`

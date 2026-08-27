@@ -33,7 +33,11 @@ interface TriageRow {
   lastMessageAt: string;
   createdAt: string;
   member: { id: string; name: string | null };
-  appointment: { appointmentType: string; startsAt: string | null; planTitle: string | null };
+  appointment: {
+    appointmentType: string;
+    startsAt: string | null;
+    planTitle: string | null;
+  };
 }
 
 interface FeedbackSummary {
@@ -60,7 +64,60 @@ function statusVariant(
   return "default";
 }
 
-const STATUS_FILTERS = ["OPEN", "IN_PROGRESS", "ESCALATED", "RESOLVED"] as const;
+const STATUS_FILTERS = [
+  "OPEN",
+  "IN_PROGRESS",
+  "ESCALATED",
+  "RESOLVED",
+] as const;
+
+/**
+ * One row of the org triage list.
+ *
+ * METADATA ONLY, by design (ADR 20 + its 2026-08-21 addendum): plan title,
+ * member name, category, status and timestamps. A member's support
+ * conversation is CONTENT — the org may see that it happened, never what was
+ * said — so no message, body or preview field belongs here. The endpoint
+ * enforces the same line with a select allowlist, pinned by
+ * `__tests__/security/org-scope-payload-allowlist.test.ts`.
+ */
+function OrgThreadRow({ thread: t }: { thread: TriageRow }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-foreground">
+          {t.appointment.planTitle ?? "Session"}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            {t.member.name ?? t.member.id} ·{" "}
+            {t.appointment.startsAt &&
+              new Date(t.appointment.startsAt).toLocaleDateString()}
+          </span>
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {t.category.replaceAll("_", " ").toLowerCase()} · last activity{" "}
+          {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
+            day: "numeric",
+            month: "short",
+          })}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant={statusVariant(t.status)}>
+          {STATUS_LABELS[t.status] ?? t.status}
+        </Badge>
+        <SupportThreadSheet
+          appointmentId={t.appointmentId}
+          trigger={
+            <Button variant="outline" size="sm">
+              <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
+              Raise concern
+            </Button>
+          }
+        />
+      </div>
+    </li>
+  );
+}
 
 export function OrgSupportTriage({ orgId }: { orgId: string }) {
   const { allowed, isLoading: gateLoading } = useRequireOrgAccess(orgId, {
@@ -215,51 +272,14 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
         ) : (
           <ul className="divide-y divide-border rounded-lg border border-border">
             {threads.data!.map((t) => (
-              <li
-                key={t.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {t.appointment.planTitle ?? "Session"}
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      {t.member.name ?? t.member.id} ·{" "}
-                      {t.appointment.startsAt &&
-                        new Date(t.appointment.startsAt).toLocaleDateString()}
-                    </span>
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {t.category.replaceAll("_", " ").toLowerCase()} · last
-                    activity{" "}
-                    {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
-                      day: "numeric",
-                      month: "short",
-                    })}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={statusVariant(t.status)}>
-                    {STATUS_LABELS[t.status] ?? t.status}
-                  </Badge>
-                  <SupportThreadSheet
-                    appointmentId={t.appointmentId}
-                    trigger={
-                      <Button variant="outline" size="sm">
-                        <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
-                        Raise concern
-                      </Button>
-                    }
-                  />
-                </div>
-              </li>
+              <OrgThreadRow key={t.id} thread={t} />
             ))}
           </ul>
         )}
         <p className="mt-2 text-xs text-muted-foreground">
           Conversations are shown as status only — what a member discusses with
-          support stays between them and the platform. &quot;Raise
-          concern&quot; opens your organization&apos;s own conversation about
-          that session.
+          support stays between them and the platform. &quot;Raise concern&quot;
+          opens your organization&apos;s own conversation about that session.
         </p>
       </section>
     </div>

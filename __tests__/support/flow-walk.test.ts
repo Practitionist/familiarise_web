@@ -75,6 +75,46 @@ describe("walkFlow", () => {
     expect(r.nextNodeId).toBeNull();
   });
 
+  it("resolves silently when the chosen option has no successor", () => {
+    // `next: null` is how a flow says "that answer needs no reply" — it must
+    // end the conversation without emitting a bubble, not fall through to the
+    // unknown-node escalation.
+    const endFlow: WalkableFlow = {
+      entryNodeId: "start",
+      nodes: {
+        start: {
+          id: "start",
+          kind: "PROMPT",
+          body: "Anything else?",
+          options: [{ id: "no", label: "No", next: null }],
+        },
+      },
+    };
+    const r = walkFlow(endFlow, "start", { chosenOptionId: "no" }, ctx);
+    expect(r.resolved).toBe(true);
+    expect(r.escalate).toBe(false);
+    expect(r.messages).toHaveLength(0);
+  });
+
+  it("escalates when an option points at a node that does not exist", () => {
+    // A typo'd `next` is a flow-authoring bug. It must fail toward a human
+    // rather than stranding the user on a cursor nothing can advance.
+    const brokenFlow: WalkableFlow = {
+      entryNodeId: "start",
+      nodes: {
+        start: {
+          id: "start",
+          kind: "PROMPT",
+          body: "What happened?",
+          options: [{ id: "a", label: "A", next: "gone" }],
+        },
+      },
+    };
+    const r = walkFlow(brokenFlow, "start", { chosenOptionId: "a" }, ctx);
+    expect(r.escalate).toBe(true);
+    expect(r.nextNodeId).toBeNull();
+  });
+
   it("injects the context refund % into OFFER_CANCEL_REFUND terminals", () => {
     const refundFlow: WalkableFlow = {
       entryNodeId: "t",

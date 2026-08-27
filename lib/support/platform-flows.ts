@@ -97,8 +97,16 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
       kind: "PROMPT",
       body: "What's the refund question?",
       options: [
-        { id: "status", label: "Tracking a refund I requested", next: "tracking" },
-        { id: "missing", label: "I'm owed one and see nothing", next: "missing" },
+        {
+          id: "status",
+          label: "Tracking a refund I requested",
+          next: "tracking",
+        },
+        {
+          id: "missing",
+          label: "I'm owed one and see nothing",
+          next: "missing",
+        },
       ],
     },
     tracking: {
@@ -195,7 +203,11 @@ const platformTechnicalFlow: PlatformFlowDefinition = {
       body: "What's misbehaving?",
       options: [
         { id: "load", label: "A page won't load / errors out", next: "load" },
-        { id: "notify", label: "I'm not getting notifications", next: "notify" },
+        {
+          id: "notify",
+          label: "I'm not getting notifications",
+          next: "notify",
+        },
       ],
     },
     load: {
@@ -251,7 +263,11 @@ const orgOperatorBillingFlow: PlatformFlowDefinition = {
       body: "What does your organization need?",
       options: [
         { id: "invoice", label: "Invoice / GST question", next: "invoice" },
-        { id: "po", label: "PO, payment terms or sponsorship programs", next: "po" },
+        {
+          id: "po",
+          label: "PO, payment terms or sponsorship programs",
+          next: "po",
+        },
       ],
     },
     invoice: {
@@ -285,7 +301,11 @@ const generalFlow: PlatformFlowDefinition = {
       body: "Sure — what would you like to do?",
       options: [
         { id: "human", label: "Talk to a person", next: "human" },
-        { id: "feedback", label: "Leave feedback or a suggestion", next: "feedback" },
+        {
+          id: "feedback",
+          label: "Leave feedback or a suggestion",
+          next: "feedback",
+        },
       ],
     },
     human: {
@@ -336,4 +356,42 @@ export function issueTypeForFlow(
     return flow.issueTypeByReason[reason];
   }
   return flow.issueType;
+}
+
+/**
+ * Org attribution for a platform-intake escalation.
+ *
+ * Two separate rules, kept together because getting either wrong changes who a
+ * ticket is billed and routed to:
+ *
+ *   1. An explicit `orgId` that is NOT one of the caller's ACTIVE memberships
+ *      is a forged attribution. It must be REFUSED, never silently downgraded
+ *      to a B2C ticket — a silent downgrade hides the attempt.
+ *   2. Inference from a sole membership applies only to the operator-billing
+ *      flow, where org context is the entire point. A B2C flow must never
+ *      inherit an org just because the caller happens to belong to one.
+ *
+ * Extracted from the route so the rule is unit-testable on its own and so any
+ * future intake surface enforces the same one.
+ */
+export function resolveOrgAttribution(args: {
+  flowId: string;
+  requestedOrgId: string | null | undefined;
+  activeOrganizationIds: readonly string[];
+}):
+  | { ok: true; organizationId: string | null }
+  | { ok: false; reason: "FORGED_ORG" } {
+  const { flowId, requestedOrgId, activeOrganizationIds } = args;
+
+  if (requestedOrgId && !activeOrganizationIds.includes(requestedOrgId)) {
+    return { ok: false, reason: "FORGED_ORG" };
+  }
+  if (flowId !== "ORG_OPERATOR_BILLING") {
+    return { ok: true, organizationId: null };
+  }
+  if (requestedOrgId) return { ok: true, organizationId: requestedOrgId };
+  if (activeOrganizationIds.length === 1) {
+    return { ok: true, organizationId: activeOrganizationIds[0] };
+  }
+  return { ok: true, organizationId: null };
 }
