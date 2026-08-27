@@ -109,6 +109,16 @@ export function SupportThreadSheet({
   const { data, isFetching, isError, refetch } = useQuery({
     queryKey,
     enabled: open,
+    // Staff reply into this thread from the ops queue and nothing pushes that
+    // down, so without polling the reply sits in the database until the user
+    // closes and reopens the sheet — the thread reads as one-sided. Bounded on
+    // all three sides: only while the sheet is open (`enabled`), never once the
+    // thread is settled, and never in a background tab (the react-query
+    // default), so an idle drawer costs no queries.
+    refetchInterval: (query) => {
+      const status = query.state.data?.thread?.status;
+      return status === "RESOLVED" || status === "CLOSED" ? false : 15_000;
+    },
     queryFn: async (): Promise<{
       thread: SupportThread | null;
       intents: { category: string; title: string }[];
