@@ -19,6 +19,7 @@ export function trackOnboardingEvent(
     | "draft_save_failed"
     | "draft_save_skipped"
     | "draft_load_failed"
+    | "draft_quarantined"
     | "submit_success"
     | "submit_error"
     | "verification_deferred",
