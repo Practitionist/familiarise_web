@@ -51,6 +51,9 @@ describe("issueTypeForReason", () => {
     // no_flow is free text straight to a human: genuinely unclassified, and it
     // should read that way in the queue rather than be filed as OTHER.
     expect(issueTypeForReason("no_flow")).toBeNull();
+    // A provider reporting an absent consultee is NOT a consultant no-show —
+    // the enum has no member for it, and typing it as one inverts the blame.
+    expect(issueTypeForReason("attendee_no_show")).toBeNull();
     expect(issueTypeForReason(undefined)).toBeNull();
     expect(issueTypeForReason(null)).toBeNull();
     expect(issueTypeForReason("")).toBeNull();

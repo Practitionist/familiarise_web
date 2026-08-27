@@ -35,11 +35,14 @@ export function priorityForReason(reason: string | null | undefined): SupportPri
  * means one thing in the queue regardless of which surface it came from.
  */
 const ISSUE_TYPE_BY_REASON: Readonly<Record<string, SupportIssueType>> = {
-  // Attendance
+  // Attendance. Note there is deliberately NO entry for `attendee_no_show`:
+  // that is the provider reporting an absent CONSULTEE, and the enum has no
+  // member for it. Typing it CONSULTANT_NO_SHOW would invert the blame — a
+  // consultant who turned up and reported the other side missing would appear
+  // in the queue as the no-show. It resolves in-flow anyway ("the fee stays
+  // with you"), so it reaches this map only via a policy escalation, where
+  // unclassified is the honest answer.
   provider_no_show: "CONSULTANT_NO_SHOW",
-  // The provider reporting a consultee no-show resolves in-flow rather than
-  // escalating, but map it so a policy escalation still types correctly.
-  attendee_no_show: "CONSULTANT_NO_SHOW",
 
   // Delivery quality
   quality_ended_early: "SESSION_ENDED_EARLY",
