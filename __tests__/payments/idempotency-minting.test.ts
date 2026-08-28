@@ -37,8 +37,35 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     expect(staged).toContain('"OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL');
   });
 
-  it("the drift guard ignores the staged block", () => {
+  it("the drift guard ignores the staged block but sees every live object", () => {
+    // Asserted behaviourally rather than by pinning the implementation string.
+    // The guard used to split on the banner, which also discarded the ACTIVE
+    // SQL that sits below it — `appointment_doc_thread_version_unique` and
+    // `onboarding_draft_payload_size` were silently never asserted. What
+    // actually excludes a staged object is that it is COMMENTED OUT, so that
+    // is what this pins.
     const script = read("scripts/db/assert-sidecar-applied.ts");
-    expect(script).toContain('split("STAGED FOR THE PRE-MVP RESET")[0]');
+    expect(script).toContain('.startsWith("--")');
+
+    const active = read("prisma/sql/check-constraints.sql")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    const names = [
+      ...active.matchAll(/ADD CONSTRAINT "?([A-Za-z0-9_]+)"?/g),
+      ...active.matchAll(
+        /CREATE UNIQUE INDEX (?:IF NOT EXISTS )?"?([A-Za-z0-9_]+)"?/g,
+      ),
+    ].map((m) => m[1]);
+
+    // Staged for the reset — must NOT be demanded of a live database.
+    expect(names).not.toContain("program_assignment_no_active_overlap");
+    expect(names).not.toContain("subscription_plan_total_sessions_min");
+    // Live, and below the banner — these are the ones the old split lost.
+    expect(names).toContain("appointment_doc_thread_version_unique");
+    expect(names).toContain("onboarding_draft_payload_size");
+    expect(names).toContain("consultant_review_legacy_pair_key");
+    // `IF NOT EXISTS` must not be captured as an index name.
+    expect(names).not.toContain("IF");
   });
 });
