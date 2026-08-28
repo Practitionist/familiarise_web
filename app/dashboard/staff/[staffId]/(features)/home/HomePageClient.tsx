@@ -28,6 +28,8 @@ import Link from "next/link";
 
 interface RecentTicket {
   id: string;
+  /** #705 — the minted handle; null on tickets that predate it. */
+  referenceNumber?: string | null;
   subject: string;
   user: string;
   userImage: string | null;
@@ -317,7 +319,8 @@ export default function HomePageClient({
                           {ticket.subject}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {ticket.id.slice(-8).toUpperCase()} • {ticket.user}
+                          {ticket.referenceNumber ?? ticket.id.slice(-8).toUpperCase()} •{" "}
+                          {ticket.user}
                         </p>
                       </div>
                     </div>

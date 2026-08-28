@@ -387,7 +387,11 @@ export function TicketsPage() {
       key: "ticketId",
       header: "Ticket ID",
       className: "font-mono text-xs text-muted-foreground",
-      cell: (ticket) => ticket.id.slice(0, 8).toUpperCase(),
+      // #705 — the minted reference, falling back to the old truncation only
+      // for tickets that predate it. The staff home used slice(-8) while this
+      // used slice(0, 8), so the two screens named the same ticket differently.
+      cell: (ticket) =>
+        ticket.referenceNumber ?? ticket.id.slice(0, 8).toUpperCase(),
     },
     {
       key: "subject",
@@ -693,7 +697,9 @@ export function TicketsPage() {
                     {ticketDetail.title}
                   </ResponsiveModalTitle>
                   <ResponsiveModalDescription>
-                    {ticketDetail.id.slice(0, 8).toUpperCase()} • Created{" "}
+                    {ticketDetail.referenceNumber ??
+                      ticketDetail.id.slice(0, 8).toUpperCase()}{" "}
+                    • Created{" "}
                     {formatDate(ticketDetail.createdAt)}
                     {ticketDetail.issueType && (
                       <> • {formatIssueType(ticketDetail.issueType)}</>

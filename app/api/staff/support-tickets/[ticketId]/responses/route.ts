@@ -8,6 +8,8 @@ import prisma from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { CreateSupportResponseSchema } from "@/schemas/support";
+import { allocateMessageSeq } from "@/lib/support/message-seq";
+import { staffRepliedPatch } from "@/lib/support/sla";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
@@ -92,18 +94,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       if (!validatedData.isInternal) {
         await tx.supportTicket.update({
           where: { id: ticketId },
-          data: { lastMessageAt: now },
+          data: {
+            lastMessageAt: now,
+            // #705 — a public reply stops the resolution clock and counts as
+            // the acknowledgement. An INTERNAL note does neither: the user has
+            // not heard anything, so nothing is owed back to them yet.
+            ...staffRepliedPatch(ticket, now),
+          },
         });
         const linkedThread = await tx.appointmentSupportThread.findUnique({
           where: { supportTicketId: ticketId },
           select: { id: true },
         });
         if (linkedThread) {
+          const seq = await allocateMessageSeq(tx, linkedThread.id, 1);
           await tx.supportMessage.create({
             data: {
               threadId: linkedThread.id,
               sender: "AGENT",
               body: validatedData.message,
+              seq: seq + 1,
+              authorUserId: session.user.id,
             },
           });
           await tx.appointmentSupportThread.update({

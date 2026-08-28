@@ -39,6 +39,7 @@ import {
   findRecentOpenEscalation,
 } from "@/lib/support/create-ticket";
 import { priorityForReason } from "@/lib/support/priority";
+import { recordFlowOutcome } from "@/lib/support/deflection";
 
 const turnSchema = z
   .object({
@@ -147,6 +148,22 @@ export async function POST(req: NextRequest) {
     );
 
     if (!turn.escalate) {
+      // #705 — the platform scope persisted NOTHING on a resolved turn, so a
+      // user the tree helped left no trace and deflection was unanswerable
+      // even after the fact. This is a counter only: no message bodies.
+      if (turn.resolved) {
+        await recordFlowOutcome({
+          scope: "PLATFORM",
+          flowKey: flow.id,
+          terminalNodeId:
+            (turn.messages[0]?.metadata as { nodeId?: string } | undefined)
+              ?.nodeId ?? null,
+          reason: turn.reason ?? null,
+          outcome: "RESOLVED",
+          userId: session.user.id,
+          organizationId: input.orgId ?? null,
+        });
+      }
       return NextResponse.json({
         data: {
           flowId: flow.id,
@@ -220,6 +237,7 @@ export async function POST(req: NextRequest) {
           escalated: true,
           actions: turn.actions,
           supportTicketId: recent.id,
+          supportTicketReference: recent.referenceNumber,
           deduped: true,
         },
       });
@@ -234,6 +252,15 @@ export async function POST(req: NextRequest) {
       organizationId,
     });
 
+    await recordFlowOutcome({
+      scope: "PLATFORM",
+      flowKey: flow.id,
+      reason,
+      outcome: "ESCALATED",
+      userId: session.user.id,
+      organizationId,
+    });
+
     return NextResponse.json({
       data: {
         flowId: flow.id,
@@ -243,6 +270,7 @@ export async function POST(req: NextRequest) {
         escalated: true,
         actions: turn.actions,
         supportTicketId: ticket.id,
+        supportTicketReference: ticket.referenceNumber,
       },
     });
   } catch (cause) {

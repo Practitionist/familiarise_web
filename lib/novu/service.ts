@@ -349,6 +349,22 @@ export async function notifySupportTicketUpdate(
   return triggerWorkflow(NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE, userId, payload);
 }
 
+/**
+ * #705 — the ops side of a ticket update, fanned out to several staff.
+ * A user replying into an escalated thread used to page nobody at all, so the
+ * only way staff learned of it was reopening the inbox.
+ */
+export async function notifySupportTicketUpdateForStaff(
+  userIds: string[],
+  payload: SupportTicketPayload,
+) {
+  return triggerForMultiple(
+    NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
+    userIds,
+    payload,
+  );
+}
+
 export async function notifySupportTicketResponse(
   userId: string,
   payload: SupportTicketPayload,

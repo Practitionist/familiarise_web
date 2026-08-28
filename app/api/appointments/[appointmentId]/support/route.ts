@@ -15,7 +15,9 @@ import prisma from "@/lib/prisma";
 import { runSupportTurn, ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { buildSupportContext } from "@/lib/support/context";
 import { flowsForContext } from "@/lib/support/flows";
+import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
+import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import {
   parseRouteParams,
   supportError,
@@ -27,18 +29,7 @@ import {
 
 const SUPPORT_ROUTE = "appointments.support";
 
-const CATEGORY = z.enum([
-  "CANCEL_REFUND",
-  "RESCHEDULE",
-  "NO_SHOW",
-  "TECHNICAL",
-  "PAYMENT_STATUS",
-  "RECORDING_ACCESS",
-  "QUALITY_COMPLAINT",
-  "SPONSORSHIP_BILLING",
-  "ORG_ADMIN_DISPUTE",
-  "OTHER",
-]);
+const CATEGORY = SupportThreadCategoryEnum;
 
 const turnSchema = z
   .object({
@@ -66,7 +57,7 @@ export async function GET(
 
     const thread = await prisma.appointmentSupportThread.findUnique({
       where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
+      include: { messages: { orderBy: MESSAGE_ORDER } },
     });
 
     // #support-hub — the intents the SERVER offers for this appointment

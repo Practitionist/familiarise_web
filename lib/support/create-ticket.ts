@@ -8,8 +8,13 @@
 
 import prisma from "@/lib/prisma";
 import type { SupportIssueType, SupportPriority, SupportTicket } from "@prisma/client";
-import { notifySupportTicketCreated } from "@/lib/novu";
+import {
+  notifySupportTicketCreated,
+  notifySupportTicketUpdateForStaff,
+} from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { allocateTicketReference } from "./reference";
+import { slaDeadlinesFor } from "./sla";
 
 /**
  * Issue types that describe WHAT HAPPENED IN A SESSION. The platform-level
@@ -62,7 +67,10 @@ export interface CreateSupportTicketInput {
  * rollback then erased.
  */
 export async function notifySupportStaff(
-  ticket: Pick<SupportTicket, "id" | "title" | "organizationId">,
+  ticket: Pick<
+    SupportTicket,
+    "id" | "title" | "organizationId" | "referenceNumber"
+  >,
 ): Promise<void> {
   // ADR 23 — the notification inherits the ticket's org-ness (attribution +
   // deep-link filing only; recipient lists are unchanged).
@@ -82,11 +90,54 @@ export async function notifySupportStaff(
     staffUsers.map((u) => u.id),
     {
       ticketId: ticket.id,
-      ticketTitle: ticket.title || "Support Ticket",
+      // Lead with the reference: it is what the user will quote back.
+      ticketTitle: ticket.referenceNumber
+        ? `${ticket.referenceNumber} — ${ticket.title || "Support Ticket"}`
+        : ticket.title || "Support Ticket",
       dashboardUrl: "/dashboard/admin/tickets",
       ...notificationScope(ticket.organizationId, orgName),
     },
   );
+}
+
+/**
+ * #705 — page ops when the USER adds to an existing ticket. Both directions of
+ * this conversation now notify: previously a reply into an escalated thread, or
+ * onto a ticket, told nobody, so staff only learned of it by reopening the
+ * inbox. Prefers the assignee — fanning every reply at every staff member is
+ * how a queue's notifications get muted.
+ */
+export async function notifyStaffOfTicketActivity(
+  ticketId: string,
+  organizationId?: string | null,
+): Promise<void> {
+  const ticket = await prisma.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: {
+      title: true,
+      assignedToId: true,
+      referenceNumber: true,
+      organizationId: true,
+    },
+  });
+  if (!ticket) return;
+  const recipients = ticket.assignedToId
+    ? [ticket.assignedToId]
+    : (
+        await prisma.user.findMany({
+          where: { role: { in: ["STAFF", "ADMIN"] } },
+          select: { id: true },
+        })
+      ).map((u) => u.id);
+  if (recipients.length === 0) return;
+  void notifySupportTicketUpdateForStaff(recipients, {
+    ticketId,
+    ticketTitle: ticket.referenceNumber
+      ? `${ticket.referenceNumber} — ${ticket.title}`
+      : ticket.title,
+    dashboardUrl: "/dashboard/admin/tickets",
+    ...notificationScope(organizationId ?? ticket.organizationId),
+  });
 }
 
 /**
@@ -96,23 +147,34 @@ export async function notifySupportStaff(
 export async function createSupportTicket(
   input: CreateSupportTicketInput,
 ): Promise<SupportTicket> {
-  const ticket = await prisma.supportTicket.create({
-    data: {
-      title: input.title,
-      description: input.description,
-      priority: input.priority ?? "MEDIUM",
-      category: input.category ?? undefined,
-      issueType: input.issueType ?? undefined,
-      consultationId: input.consultationId ?? undefined,
-      subscriptionId: input.subscriptionId ?? undefined,
-      paymentId: input.paymentId ?? undefined,
-      organizationId: input.organizationId ?? undefined,
-      // A ticket is born from a message (its description) — start the
-      // last-activity clock at creation.
-      lastMessageAt: new Date(),
-      userId: input.userId,
-    },
-    include: { responses: true, attachments: true },
+  const priority = input.priority ?? "MEDIUM";
+  // One transaction so a rolled-back ticket cannot leave a live reference
+  // behind, and so the SLA clock and the row it belongs to commit together.
+  const ticket = await prisma.$transaction(async (tx) => {
+    const openedAt = new Date();
+    const referenceNumber = await allocateTicketReference(tx, openedAt);
+    const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(priority, openedAt);
+    return tx.supportTicket.create({
+      data: {
+        title: input.title,
+        description: input.description,
+        priority,
+        referenceNumber,
+        ackDueAt,
+        resolutionDueAt,
+        category: input.category ?? undefined,
+        issueType: input.issueType ?? undefined,
+        consultationId: input.consultationId ?? undefined,
+        subscriptionId: input.subscriptionId ?? undefined,
+        paymentId: input.paymentId ?? undefined,
+        organizationId: input.organizationId ?? undefined,
+        // A ticket is born from a message (its description) — start the
+        // last-activity clock at creation.
+        lastMessageAt: openedAt,
+        userId: input.userId,
+      },
+      include: { responses: true, attachments: true },
+    });
   });
   // The ticket is already committed — a notification failure must not turn a
   // successful create into a 500, or the retrying client files a duplicate.

@@ -35,6 +35,7 @@ export {
   // Support
   notifySupportTicketCreated,
   notifySupportTicketUpdate,
+  notifySupportTicketUpdateForStaff,
   notifySupportTicketResponse,
   // Feedback & Reviews
   notifyFeedbackReceived,
