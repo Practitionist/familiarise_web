@@ -53,7 +53,10 @@ function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
     appointmentType: "CONSULTATION" as SupportContext["appointmentType"],
     isOrgContext: false,
     isProvider: false,
+    isOrgOperator: false,
+    stage: "UPCOMING",
     startsAt: new Date("2026-09-01T10:00:00Z"),
+    endsAt: new Date("2026-09-01T11:00:00Z"),
     refundPctIfCancelledNow: 100,
     paymentId: "pay1",
     paymentAmountPaise: 200_00,
@@ -81,9 +84,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.appointment.findUnique.mockResolvedValue({ organizationId: null });
   mockBuildContext.mockResolvedValue(ctx());
-  // Interactive transaction — run the callback against the same mock surface.
-  mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) =>
-    cb(mockPrisma),
+  // Interactive transaction — run the callback against the same mock surface;
+  // array form (persistHumanTurn) resolves each element.
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
+    Array.isArray(arg)
+      ? Promise.all(arg as Promise<unknown>[])
+      : (arg as (tx: unknown) => unknown)(mockPrisma),
   );
   mockPrisma.supportMessage.create.mockResolvedValue({});
   mockPrisma.appointmentSupportThread.update.mockResolvedValue({});
@@ -156,5 +162,89 @@ describe("runSupportTurn", () => {
     const r = await runSupportTurn("appt1", "user1", { category: "OTHER" });
     expect(r?.escalated).toBe(true);
     expect(mockPrisma.supportTicket.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts at the entry when the persisted cursor no longer exists (flow-version drift)", async () => {
+    // Pre-hub threads carry cursors from older registry revisions; a ghost
+    // cursor used to make every choice mismatch and re-present forever.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "ghost-node" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "cancel" });
+    expect(r?.currentNodeId).toBe("start"); // presented the CURRENT entry…
+    expect(r?.escalated).toBe(false); // …not failed safe to a human
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist a duplicate bubble when a press re-presents the same node", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "bogus" });
+    expect(r?.currentNodeId).toBe("start");
+    // The caller still receives the prompt (UI converges), but nothing new is
+    // written — one press can never append two identical bubbles.
+    expect(mockPrisma.supportMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("clicking the active intent chip restarts the flow at its entry", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "confirm" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    expect(r?.currentNodeId).toBe("start");
+    expect(r?.status).toBe("IN_PROGRESS");
+  });
+
+  it("clamps an org party to the org-party intents (defensive, route 403s first)", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "OTHER", currentNodeId: null }),
+    );
+    mockBuildContext.mockResolvedValue(
+      ctx({ isOrgContext: true, isOrgOperator: true, organizationId: "org1" }),
+    );
+
+    // A participant-only intent reaching the service from an org party is
+    // clamped to ORG_ADMIN_DISPUTE — which has a self-serve flow, so the turn
+    // proceeds on THAT flow instead of the smuggled one.
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "CANCEL_REFUND",
+      isOrgParty: true,
+    });
+    expect(r?.escalated).toBe(false);
+    // The clamped flow self-serves — no ticket may be filed for the smuggled
+    // intent.
+    expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled();
+    expect(mockPrisma.appointmentSupportThread.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ category: "ORG_ADMIN_DISPUTE" }),
+      }),
+    );
+  });
+
+  it("attributes the escalated ticket to the thread's organization", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "NO_SHOW", currentNodeId: "start" }),
+    );
+    mockBuildContext.mockResolvedValue(
+      ctx({
+        isOrgContext: true,
+        isOrgOperator: false,
+        organizationId: "org9",
+        stage: "COMPLETED",
+        paymentId: "pay9",
+      }),
+    );
+    mockPrisma.supportTicket.create.mockResolvedValue({ id: "ticket4" });
+
+    await runSupportTurn("appt1", "user1", { chosenOptionId: "expert" });
+    expect(mockPrisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org9",
+          priority: "HIGH", // provider_no_show maps HIGH in the shared policy
+        }),
+      }),
+    );
   });
 });

@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { throwSupportError } from "@/lib/support/error-copy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
@@ -40,6 +41,7 @@ import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
 
 const PARTICIPANTS_PREVIEW = 5;
@@ -121,10 +123,7 @@ export function AppointmentDetailClient({
     queryKey: ["appointment-detail", appointmentId] as const,
     queryFn: async (): Promise<TAppointmentDetail> => {
       const res = await fetch(`/api/appointments/${appointmentId}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to fetch appointment");
-      }
+      if (!res.ok) await throwSupportError(res, "appointment detail load");
       const { data } = await res.json();
       return data;
     },
@@ -295,6 +294,14 @@ export function AppointmentDetailClient({
               isOrgContext={!!orgName}
             />
           </div>
+
+          {/* #support-hub — the live support conversation for THIS appointment:
+              status + latest exchange inline; nothing renders until a thread
+              exists. */}
+          <AppointmentSupportStatusCard
+            appointmentId={appointmentId}
+            isOrgContext={!!orgName}
+          />
 
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">

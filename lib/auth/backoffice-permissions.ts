@@ -33,6 +33,7 @@ import type { UserRole } from "@prisma/client";
 export type BackofficeSurface =
   // Support — the staff remit, full read+write.
   | "tickets.manage"
+  | "threads.manage"
   | "feedback.manage"
   | "moderation.manage"
   // Operations — booking-side triage and user verification.
@@ -78,6 +79,9 @@ export const BACKOFFICE_PERMISSIONS: Record<
 > = {
   // Support — staff's core job, no admin carve-outs.
   "tickets.manage": OPERATORS,
+  // #support-hub — the per-appointment conversation inbox; same remit as the
+  // ticket queue it escalates into.
+  "threads.manage": OPERATORS,
   "feedback.manage": OPERATORS,
   "moderation.manage": OPERATORS,
 

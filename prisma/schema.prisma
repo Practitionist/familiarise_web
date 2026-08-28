@@ -279,6 +279,11 @@ model SupportTicket {
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
 
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every visible message write. `updatedAt` only moves when THIS row changes,
+  // so replies would leave it stale; the hub and the ops inbox sort by this.
+  lastMessageAt DateTime?
+
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
   subscriptionId String?
@@ -291,8 +296,6 @@ model SupportTicket {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
-  @@index([organizationId])
   @@index([userId])
   @@index([status])
   @@index([assignedToId])
@@ -300,6 +303,11 @@ model SupportTicket {
   @@index([paymentId])
   @@index([createdAt])
   @@index([assignedToId, status])
+  // #support-hub — org-filtered ops queue views. This also serves the
+  // organizationId-only lookups #1245 r2 added a single-column index for:
+  // Postgres reads a composite's leftmost prefix, so that index was pure
+  // write cost. Removed here rather than left shadowing this one.
+  @@index([organizationId, status])
 }
 
 model SupportResponse {
@@ -369,12 +377,19 @@ model AppointmentSupportThread {
   updatedAt  DateTime         @updatedAt
   resolvedAt DateTime?
 
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every message write (same rationale as SupportTicket.lastMessageAt).
+  lastMessageAt DateTime?
+
   // One support conversation per (appointment, user) — reused across intents,
   // like a per-order support chat. Also the concurrency guard for find-or-create.
   @@unique([appointmentId, userId])
   @@index([userId, status])
   @@index([organizationId, status])
   @@index([status, createdAt])
+  // #support-hub — the ops inbox sorts by last activity, usually status-
+  // filtered; without this every page sorts the whole filtered set.
+  @@index([status, lastMessageAt])
 }
 
 model SupportMessage {
@@ -441,6 +456,10 @@ enum SupportThreadCategory {
   RESCHEDULE
   NO_SHOW
   TECHNICAL
+  // #support-hub review — session materials (handouts, pre-reads). DOCUMENT_ISSUE
+  // was session-scoped (so refused on the platform form) with no appointment
+  // flow to send anyone to; this is that flow's category.
+  DOCUMENTS
   PAYMENT_STATUS
   RECORDING_ACCESS
   QUALITY_COMPLAINT
@@ -885,6 +904,9 @@ model Organization {
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
   appointmentSupportThreads AppointmentSupportThread[]
   appointmentFeedback       AppointmentFeedback[]
+  // #support-hub — tickets attributed to this org (operator intake + escalated
+  // org-appointment threads). Powers the org-filtered ops queue.
+  supportTickets SupportTicket[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
@@ -893,8 +915,6 @@ model Organization {
 
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
-  // #1021 — org-scoped support ticket routing.
-  supportTickets SupportTicket[]
 
   @@index([status])
   @@index([canSponsor, canHost])
