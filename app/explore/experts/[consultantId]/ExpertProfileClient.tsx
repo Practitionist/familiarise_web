@@ -375,7 +375,11 @@ export function ExpertProfileClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
           >
-            <ReviewsSection reviews={reviews} />
+            <ReviewsSection
+              reviews={reviews}
+              publishedRating={consultantDetails.publishedRating}
+              reviewCount={consultantDetails.reviewCount}
+            />
           </motion.div>
           {/* Spacer to match pricing sidebar width */}
           <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />

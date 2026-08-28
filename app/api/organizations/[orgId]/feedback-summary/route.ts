@@ -24,14 +24,21 @@ export async function GET(
 
   const since30d = new Date(Date.now() - 30 * 24 * 3_600_000);
 
+  // #705 — attendee ratings only. The POST authorizes any participant, so a
+  // consultant could rate their OWN session into this average. Filtering on
+  // CONSULTEE rather than excluding PROVIDER means rows written before the
+  // column existed (raterRole NULL, provenance unknown) fail closed instead of
+  // being assumed innocent.
+  const attendeeRatings = { organizationId: orgId, raterRole: "CONSULTEE" as const };
+
   const [overall, last30] = await Promise.all([
     prisma.appointmentFeedback.aggregate({
-      where: { organizationId: orgId },
+      where: attendeeRatings,
       _avg: { rating: true },
       _count: { _all: true },
     }),
     prisma.appointmentFeedback.aggregate({
-      where: { organizationId: orgId, createdAt: { gte: since30d } },
+      where: { ...attendeeRatings, createdAt: { gte: since30d } },
       _avg: { rating: true },
       _count: { _all: true },
     }),

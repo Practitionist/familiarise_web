@@ -16,6 +16,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { ModerationActionType } from "@prisma/client";
 import { EarningStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { recomputeConsultantRating } from "@/lib/reviews";
 import {
   getStreamChatClient,
   withStreamCircuitBreaker,
@@ -189,17 +190,10 @@ async function softDeleteReview(
     where: { id: reviewId },
     data: { deletedAt: new Date() },
   });
-  const remaining = await tx.consultantReview.aggregate({
-    where: {
-      consultantProfileId: review.consultantProfileId,
-      deletedAt: null,
-    },
-    _avg: { rating: true },
-  });
-  await tx.consultantProfile.update({
-    where: { id: review.consultantProfileId },
-    data: { rating: remaining._avg.rating || 0 },
-  });
+  // #705 — was an inlined plain `_avg`, a second implementation of the rating
+  // rule that silently disagreed with lib/reviews.ts once group sessions became
+  // one data point, and never touched publishedRating at all.
+  await recomputeConsultantRating(tx, review.consultantProfileId);
   return { reviewRemoved: true };
 }
 

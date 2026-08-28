@@ -19,8 +19,14 @@ export const CreateFeedbackSchema = z.object({
 export const CreateReviewSchema = z.object({
   rating: z.number().int().min(1, "Rating is required").max(5),
   reviewDescription: z.string().max(MAX_TEXT_LENGTH).optional(),
-  consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-  consulteeProfileId: z.string().min(1, "Consultee profile ID is required"),
+  /**
+   * #705 — the session being reviewed. The consultant and the consultee are
+   * DERIVED from it server-side: a body that names its own consultantProfileId
+   * is a body that can review someone the author never met, and the old
+   * eligibility check only asked whether SOME completed booking existed
+   * between the pair.
+   */
+  appointmentId: z.string().min(1, "Session is required").max(64),
 });
 
 // PUT only mutates the two consultee-owned fields; a partial keeps either optional.

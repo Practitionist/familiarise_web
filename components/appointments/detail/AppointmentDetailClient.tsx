@@ -43,6 +43,7 @@ import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
+import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -336,8 +337,14 @@ export function AppointmentDetailClient({
 
         <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-4">
-            {vm.bucket === "past" && (
-              <AppointmentCsatCard appointmentId={appointmentId} />
+            {/* #705 — attendees only. The API authorizes any participant, so
+                this used to offer a consultant a star rating on their own
+                session, which then fed the org quality average. */}
+            {vm.bucket === "past" && role === "consultee" && (
+              <>
+                <AppointmentCsatCard appointmentId={appointmentId} />
+                <SessionReviewCard appointmentId={appointmentId} />
+              </>
             )}
             <Section title="Sessions">
               {hasConfirmedSessions ? (

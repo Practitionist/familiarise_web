@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { canAccessAppointment } from "@/lib/data/appointment-detail";
+import { appointmentRaterRole } from "@/lib/data/appointment-detail";
 import { AppointmentIdParams } from "@/schemas/support";
 import {
   parseRouteParams,
@@ -71,7 +71,12 @@ export async function POST(
     // CSAT is a PARTICIPANT's private rating: staff/admin read access must
     // not become write access — a privileged non-participant's row would
     // pollute the org quality aggregate with a rating they never earned.
-    if (!canAccessAppointment(auth.userId, auth.detail)) {
+    // #705 — and WHICH side they are on. A consultant rating their own session
+    // used to be indistinguishable from an attendee's rating and landed in the
+    // org quality average; the aggregate now filters on CONSULTEE, so an
+    // unattributable row fails closed instead of counting.
+    const raterRole = appointmentRaterRole(auth.userId, auth.detail);
+    if (!raterRole) {
       return supportError({
         status: 403,
         code: "FORBIDDEN",
@@ -97,8 +102,13 @@ export async function POST(
         organizationId: auth.organizationId,
         rating: body.data.rating,
         comment: body.data.comment,
+        raterRole,
       },
-      update: { rating: body.data.rating, comment: body.data.comment },
+      update: {
+        rating: body.data.rating,
+        comment: body.data.comment,
+        raterRole,
+      },
     });
     return NextResponse.json({ data: feedback });
   } catch (cause) {
