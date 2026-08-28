@@ -1,0 +1,82 @@
+---
+title: A review belongs to a session, a group session counts once, and a score below five rated sessions is not published
+band: 70-design-decisions
+audience: sde2
+status: live
+last-reviewed: 2026-08-29
+---
+
+# ADR 25 — Per-session reviews and the published score
+
+## Context
+
+The platform has carried a `ConsultantReview` model and a denormalized `ConsultantProfile.rating` column since long before launch, and both were wrong in ways that only became visible once someone tried to write a review through the product rather than through a seed script.
+
+The first problem was that nobody could. `POST /api/user/reviews` existed, was rate-limited, recomputed the consultant's average and purged the public caches, and had no caller anywhere in the application. The expert profile page invited visitors to "Be the first to leave a review!" and offered nowhere to do it. Every review in every environment therefore came from `prisma/seedFiles`, which is also why nothing downstream of the review corpus had ever been exercised against real data.
+
+The second problem was the uniqueness rule. `@@unique([consultantProfileId, consulteeProfileId])` allowed one review per pair of people for the lifetime of the relationship. That is the correct rule for a directory of businesses and the wrong one for a marketplace of sessions: the client who books the same mentor every month for a year could describe the first session and never the eleven that followed, and the review that did exist was pinned to whichever session happened to be first. The model also had no link to the session at all, so "verified booking" was a claim the platform made about its own data rather than a fact the data could support. Eligibility was checked by asking whether *some* completed booking existed between the two profiles, which is a weaker question than whether this person attended this session.
+
+The third problem was arithmetic. `ConsultantProfile.rating` was the plain mean of the review rows, and the explore sort ordered on it directly. A single five-star review from one session therefore outranked a 4.8 built from two hundred, and a consultant with no reviews at all rendered as `0.0`, which reads as a bad consultant rather than a new one. Group events made the same arithmetic worse in the opposite direction: a webinar with two hundred attendees could contribute two hundred rows, so one event could dominate — or destroy — the average of a consultant whose one-to-one work is the actual offering.
+
+A fourth problem sat next to it rather than inside it. `AppointmentFeedback`, the private per-appointment CSAT that feeds the organization quality signal, is also a one-to-five star rating with an optional comment. The two objects were close enough in shape that merging them would have looked like a simplification.
+
+## Decision
+
+**A review belongs to a session, not to a relationship.** `ConsultantReview` gains a nullable `appointmentId` with `onDelete: SetNull`, and the uniqueness rule becomes `@@unique([appointmentId, consulteeProfileId])`. A repeat client may now review every session they attend, and each review is anchored to the thing it describes. A webinar's attendees share one `appointmentId` with distinct consultee profiles, so the same constraint still caps each attendee at one review of that event. The delete behaviour is `SetNull` rather than `Cascade` because tombstoning an appointment must not silently delete published consumer reviews. The constraint is deliberately not made partial on `deletedAt`: a review removed by moderation must not free the slot for the same person to post it again.
+
+Rows written before the column existed carry a null `appointmentId`, and Postgres treats a null key column as distinct, so those rows would fall outside the new unique entirely and the old per-pair rule would silently lapse for them. `prisma/sql/check-constraints.sql` therefore carries `consultant_review_legacy_pair_key`, a partial unique on `(consultantProfileId, consulteeProfileId) WHERE "appointmentId" IS NULL`, which keeps the old rule alive for exactly that band and expires with the pre-MVP reset.
+
+Eligibility moved with the constraint. `lib/reviews.ts` exposes `listReviewableSessions` and `resolveReviewableSession`, and the same helper backs both the review card's pre-render check and the `POST`'s authorization, so there is one rule rather than two that can disagree. The request body names only the `appointmentId`; the consultant and the consultee are derived from it server-side, because a body that names its own `consultantProfileId` is a body that can review someone the author never met. A slot counts as held when its completion status is `COMPLETED` or `UNVERIFIED`, since the latter means "past, with no meeting session recorded", which is what an offline session looks like and excluding it would deny a review to everyone whose session did not run through the video stack. The group arms additionally require a succeeded payment by the requesting user, so a cancelled or comped registration cannot buy a review. All three failure modes — not yours, not held, not paid — return one message, because distinguishing them would leak whether an appointment exists.
+
+**A group session contributes the mean of its attendees as a single data point.** `ConsultantReview` carries a denormalized `ratingUnitId`, written at review time, formatted as `appointment:<id>` for one-to-one work, `webinar:<id>`, or `class:<id>`. `recomputeConsultantRating` groups on that column, averages within each unit, and then averages the units. The individual review cards still render in full; only the score is weighted. One two-hundred-seat webinar therefore cannot dominate a consultant whose one-to-one practice is the real offering, and one bad event cannot destroy them either.
+
+The value is denormalized rather than derived at read time because Prisma's `groupBy` can only group on the model's own scalars, and it is a string identifier rather than a session-type discriminator for a reason that is easy to get wrong. A `sessionType` enum cannot do this job. A webinar shares one `Appointment` across every attendee, but a class mints one `Appointment` per enrolment. Grouping by type alone would therefore treat every class a consultant has ever run as a single bucket and collapse their entire teaching history into one data point, which is a worse distortion than the imbalance the rule exists to correct. The unit has to name the *event*, and only for webinars and classes is that something other than the appointment itself.
+
+Legacy rows carry a null `ratingUnitId`. `groupBy` would lump all of them into one bucket and collapse a consultant's whole history into a single point, so they are aggregated separately and folded back in as individual units. That fold is exact rather than an approximation, since N rows averaging X contribute exactly N·X to the sum.
+
+**A score below five distinct rated sessions is not published.** `ConsultantProfile.publishedRating` is null until `ratingUnitCount` reaches `MIN_RATED_UNITS_FOR_PUBLIC_SCORE`, defined in `lib/reviews.ts`. Public reads, the minimum-rating filter and the explore rating sort all read that column, with `nulls: "last"` on the sort, so a suppressed consultant is never surfaced by a number the profile page refuses to display. The raw mean stays in the existing `rating` column as the internal and staff-facing figure.
+
+The threshold is a code constant rather than a column or an environment variable. A per-consultant column would invite tuning, which is precisely the gaming vector the threshold exists to close, and an environment variable would let a preview deployment and production disagree about a number that users can see. This is the same call already made for `MIN_COHORT` in the organization feedback summary. Five was chosen rather than the ten that Practo uses, because at launch a threshold of ten would leave almost every consultant with no visible score at all, and an honest "not enough yet" is only useful if some consultants clear it.
+
+The review count is shown even when the score is suppressed. Three reviews is an honest statement; an average of three is not.
+
+**Public reviews and private CSAT stay two separate objects.** `AppointmentFeedback` remains a private per-participant rating that feeds the organization quality aggregate and appears on no public surface, and `ConsultantReview` remains a consumer review that appears on the consultant's profile with the author's name and the date. They are collected by two adjacent cards on the same page, and each says plainly which it is. The FTC's rule at 16 CFR §465.1(d) makes a bare star rating a "consumer review", so a merged object would turn feedback the user believes to be private into a published one the moment anything decided to display an aggregate of it. The separation is what keeps that from being a one-line change somebody makes later without noticing.
+
+The private card also became attendee-only. The feedback `POST` authorizes any participant, so the appointment detail page had been offering a consultant a star rating on their own session, and that rating then fed the organization quality average. `AppointmentFeedback.raterRole` now records which side of the session the author was on, `PROVIDER` wins a tie, and the aggregate filters on `CONSULTEE` rather than excluding `PROVIDER`, so rows of unknown provenance fail closed instead of being assumed innocent.
+
+**Everyone is asked identically, after every held session, with no gate and no incentive.** The review card is shown to every attendee of every held session. There is no "enjoying your session?" question in front of it, because the preamble to the FTC rule is explicit that soliciting only the customers you already believe are happy is not a "generalized solicitation". Nothing is offered in exchange, because Airbnb's own experiment on incentivised reviews found them *more* negative than unincentivised ones with no revenue effect, so the incentive buys legal exposure and nothing else. The interface follows the same principle: every star is the same size with the same affordance, since making the high ones easier to press is a named dark pattern under the 2023 CCPA guidelines and is also how a rating stops being data, and a low rating is submitted without a confirmation prompt, since confirm-shaming manufactures the J-shaped distribution it pretends to measure.
+
+## Why not the alternatives
+
+Three other shapes were considered for the weighting problem and one for the threshold, and each lost for a concrete reason.
+
+| Alternative | Why it was rejected |
+|---|---|
+| Weight each review by seat count, or cap the contribution of any one event | Both require a policy number that has to be defended, and neither changes the outcome for the case that actually matters: a consultant whose entire visible history is one large event. Collapsing the event to one point answers that case without a tunable. |
+| Discriminate on a `sessionType` enum instead of a unit id | A webinar shares one appointment across all attendees and a class mints one per enrolment, so type alone cannot distinguish "one event" from "one enrolment". Grouping by it would collapse a consultant's every class into a single data point. |
+| Compute the unit at read time instead of storing `ratingUnitId` | Prisma's `groupBy` can only group on the model's own scalars, so the aggregate would have to load the join and group in application code on every recompute. The value is immutable once written, which is the case denormalization is for. |
+| Set the publication threshold at ten, as Practo does | At current volume that suppresses effectively every consultant, and a threshold nobody clears communicates nothing. Five is revisitable upward once the corpus supports it. |
+
+Merging the two rating objects was also considered and rejected on the regulatory ground given above rather than on a modelling one. They would model cleanly as one table; that is exactly the trap.
+
+## Consequences
+
+**A consultant with four sold-out webinars has no published score, however many people reviewed them.** This is the accepted cost of counting a group event once, and it is the case most likely to be raised as a bug. Four events is four rating units regardless of whether eight people or eight hundred wrote the reviews, so the profile shows the review count and the sentence "Not enough rated sessions yet to show an average". The alternative — publishing a score off four data points because the row count happens to be large — is the failure mode the whole decision exists to prevent, so the behaviour is correct and should be explained rather than patched.
+
+**Every rating recompute must run at Serializable with retry.** The recompute is a read-then-write over rows that two concurrent reviewers both touch, so at read-committed the second write overwrites an average computed without the first review, and the published score stays wrong with nothing to show for it. The three consultee-facing paths already did this; the staff moderation delete did not, and now does. That same path also never purged the public caches, so a review removed by moderation kept rendering on the landing page and in explore for up to an hour.
+
+**There is now exactly one implementation of the rating rule.** `lib/moderation/side-effects.ts` had an inlined plain average that silently disagreed with `lib/reviews.ts` as soon as group sessions became one data point, and it never touched `publishedRating` at all. It now calls the shared helper. Any future writer that recomputes a rating by hand will reintroduce the same class of drift.
+
+**Explore's trending sort changed meaning slightly, and became correct.** It ordered on `{ reviews: { _count: "desc" } }`, which counts soft-deleted rows because Prisma cannot filter a relation `_count` inside `orderBy`, so a review removed by moderation kept pushing its consultant up the list. It now orders on the denormalized `reviewCount`, which excludes them.
+
+**Consultants gain a right of reply.** `ConsultantReview` carries `replyBody`, `repliedAt` and `replyDeletedAt` as columns rather than a separate table, because there is one reply per review and every read of a review already loads its row. `replyDeletedAt` is deliberately separate from the review's own `deletedAt`, so that staff can remove an abusive reply without erasing the consumer review beneath it.
+
+**The new columns arrive empty, and one run of an ordinary script fills them.** `publishedRating` arrives null and `ratingUnitCount` and `reviewCount` arrive zero, and null means suppressed, so until something recomputes them every consultant's public score is hidden. `npm run db:recompute-ratings` (`scripts/db/recompute-consultant-ratings.ts`) walks every profile and calls the same `recomputeConsultantRating` that every review mutation calls. It is deliberately not a backfill migration and does not become one: it is ordinary application code, it is idempotent and re-runnable, it touches no DDL, it accepts `--dry-run`, and nothing in the schema depends on it having run. It uses the same Serializable-with-retry wrapper as the mutation paths, so a review landing mid-run cannot lose-update the average it writes.
+
+**The threshold is the thing to revisit first.** It is a single constant with a single meaning, so raising it once the corpus is large enough is a one-line change plus another run of that script. `ConsultantProfile.ratingAggregatedAt` exists for exactly that kind of maintenance: it finds profiles whose aggregates predate their newest review without recomputing every profile to find out.
+
+## Related
+
+- [ADR 20 — org visibility into member sessions](20-org-visibility-into-member-sessions.md), which is why the private CSAT aggregate is metadata-only and why its cohort floor exists.
+- [Support & feedback hub](../../support/support-hub.md), for the private CSAT rail and the surfaces the two cards sit on.
+- [Engineering log, 2026-08-29](../../support/engineering-log-2026-08-29.md), for the schema additions this decision required and the support-drawer defects shipped alongside them.
