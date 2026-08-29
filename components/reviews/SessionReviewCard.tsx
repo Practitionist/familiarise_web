@@ -21,7 +21,7 @@
  * negative, with no revenue effect.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Star } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -73,14 +73,21 @@ export function SessionReviewCard({
   const [text, setText] = useState("");
   const [anonymous, setAnonymous] = useState(false);
 
+  // Seed the form from the stored review ONCE per review, not on every render
+  // of a new `existing` object. React Query hands back a fresh object on each
+  // refetch, so depending on its identity meant the 15s poll silently reset the
+  // textarea to the saved text — and a user who had just cleared it submitted
+  // the old value back. Keyed on the review id (and null, for "not written
+  // yet") so switching sessions still re-seeds.
+  const seededFor = useRef<string | null>(null);
+  const seedKey = existing?.id ?? `none:${appointmentId}`;
   useEffect(() => {
-    // Reset on absence too, and key on the appointment: without either, moving
-    // to a session you have NOT reviewed kept the previous session's stars and
-    // text sitting in the form, ready to be posted against the wrong session.
+    if (seededFor.current === seedKey) return;
+    seededFor.current = seedKey;
     setRating(existing?.rating ?? 0);
     setText(existing?.reviewDescription ?? "");
     setAnonymous(existing?.isAnonymous ?? false);
-  }, [existing, appointmentId]);
+  }, [seedKey, existing]);
 
   const save = useMutation({
     mutationFn: async () => {

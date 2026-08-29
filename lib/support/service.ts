@@ -236,12 +236,20 @@ export async function runSupportTurn(
 
   const decision = decideEscalation(ctx, turn, input.userMessage);
   if (decision.escalate) {
+    // Drop the walk's "I didn't catch that" nudge when the turn escalates
+    // anyway. Typing "agent" hits no option, so the walk emits the nudge — and
+    // the nudge is the copy telling the user to type "agent". Persisting it
+    // left the transcript scolding them for doing exactly what it asked, one
+    // line above the hand-off. The escalation message is the real answer.
+    const escalating = turn.unrecognized
+      ? { ...turn, messages: [], unrecognized: false }
+      : turn;
     return escalate(
       ctx,
       thread.id,
       thread.supportTicketId,
       category,
-      turn,
+      escalating,
       input.userMessage,
       decision.reason ?? "escalated",
     );
