@@ -6,11 +6,11 @@
  * invited people to "Be the first to leave a review!" and there was nowhere to
  * do it, so the entire review corpus could only come from seeds.
  *
- * Deliberately distinct from `AppointmentCsatCard` beside it. That one is a
- * PRIVATE rating that feeds the org quality signal; this one is a consumer
- * review that appears on the consultant's profile. FTC 16 CFR 465.1(d) makes a
- * bare star rating a "consumer review", so merging the two would quietly turn
- * private feedback into a published one.
+ * Deliberately distinct from the per-call rating on the session rows above
+ * (`SessionRatingRow`). That one is a PRIVATE rating of a single call; this is
+ * a consumer review of the CONSULTANT, one per person, editable. FTC 16 CFR
+ * 465.1(d) makes a bare star rating a "consumer review", so merging the two
+ * would quietly turn private feedback into a published one.
  *
  * Shown to every attendee of every held session, identically and without
  * asking how they feel first — the preamble to that rule is explicit that
