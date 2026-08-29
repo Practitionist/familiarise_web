@@ -141,7 +141,7 @@ export function AppointmentDetailClient({
       ),
     [appointmentId, mapped?.vm.sessions],
   );
-  const ratedSlots = useSessionFeedback(feedbackScopes);
+  const sessionFeedback = useSessionFeedback(feedbackScopes);
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   if (isLoading && !detail) {
@@ -364,16 +364,30 @@ export function AppointmentDetailClient({
                   // rates. Attendees only: the API authorizes any participant,
                   // and a consultant rating their own session would feed the
                   // org quality average.
-                  renderSessionExtra={(session) => (
-                    <SessionRatingRow
-                      appointmentId={session.appointmentId ?? appointmentId}
-                      slotId={session.slotId}
-                      existingRating={ratedSlots[session.slotId] ?? null}
-                      // The consultant sees what a call scored; only the
-                      // attendee can set it.
-                      readOnly={role !== "consultee"}
-                    />
-                  )}
+                  renderSessionExtra={(session) => {
+                    const rating =
+                      sessionFeedback.ratings[session.slotId] ?? null;
+                    // Offer stars only where a rating would be ACCEPTED —
+                    // you attended, or nobody could have recorded it. Showing
+                    // them on a call the viewer never joined invited a click
+                    // that the route then refused.
+                    const canRate = sessionFeedback.rateable.has(
+                      session.slotId,
+                    );
+                    if (role === "consultee" && !canRate && rating === null) {
+                      return null;
+                    }
+                    return (
+                      <SessionRatingRow
+                        appointmentId={session.appointmentId ?? appointmentId}
+                        slotId={session.slotId}
+                        existingRating={rating}
+                        // The consultant sees what a call scored; only the
+                        // attendee can set it.
+                        readOnly={role !== "consultee" || !canRate}
+                      />
+                    );
+                  }}
                   sessions={vm.sessions}
                   joinWindowMs={joinWindowMs}
                   defaultExpanded

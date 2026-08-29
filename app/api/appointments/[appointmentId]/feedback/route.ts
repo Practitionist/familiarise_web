@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
+import { heldSlot } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
@@ -54,6 +55,16 @@ export async function GET(
     const asProvider =
       appointmentRaterRole(auth.userId, auth.detail) === "PROVIDER";
 
+    // Which calls of this booking the caller may rate at all, so the timeline
+    // offers stars only where a rating would be accepted rather than erroring
+    // after the click.
+    const rateable = asProvider
+      ? []
+      : await prisma.slotOfAppointment.findMany({
+          where: { appointmentId, ...heldSlot(auth.userId) },
+          select: { id: true },
+        });
+
     // Every call of this booking the caller has rated (or, for the provider,
     // every attendee rating on it), so the timeline can show a per-session
     // breakdown instead of one number for the package.
@@ -71,7 +82,10 @@ export async function GET(
       // A provider could otherwise infer a rater from ordering on a group call.
       orderBy: { createdAt: "asc" },
     });
-    return NextResponse.json({ data: feedback });
+    return NextResponse.json({
+      data: feedback,
+      rateableSlotIds: rateable.map((s) => s.id),
+    });
   } catch (cause) {
     return supportError({
       status: 500,
@@ -131,10 +145,12 @@ export async function POST(
       where: {
         id: body.data.slotId,
         appointmentId,
-        deletedAt: null,
-        // A cancelled or rescheduled call never happened, so there is nothing
-        // to rate — and a rating on one would still reach the org average.
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        // You may rate a call you ATTENDED, or one nobody could have recorded
+        // (an offline session). A COMPLETED slot the caller never joined does
+        // not qualify: a no-show rating would otherwise feed the consultant's
+        // quality signal. `heldSlot` also excludes cancelled and rescheduled
+        // calls, which never happened at all.
+        ...heldSlot(auth.userId),
       },
       select: { id: true },
     });

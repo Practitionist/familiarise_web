@@ -24,22 +24,25 @@ export const MIN_RATED_UNITS_FOR_PUBLIC_SCORE = 5;
  * offline session looks like. Excluding it would silently deny a review to
  * everyone whose session did not run through the video stack.
  */
-function heldSlot(userId: string) {
+export function heldSlot(userId: string) {
   return {
     deletedAt: null,
+    // Not "the call happened" — "YOU were at the call". A COMPLETED slot the
+    // user never joined used to qualify, so a no-show could rate a session they
+    // did not attend and it fed the consultant's quality signal. Two ways in:
     OR: [
-      {
-        completionStatus: {
-          in: ["COMPLETED", "UNVERIFIED"] as SlotCompletionStatus[],
-        },
-      },
-      // Or THIS user was demonstrably in the call. `completionStatus` only
-      // flips when the call.session_ended webhook lands, which fires after the
-      // LAST participant leaves plus an inactivity timeout — so without this
-      // the post-call prompt shows nothing to whoever leaves first, which is
-      // most people. Attendance is the stronger proof anyway: it distinguishes
-      // "bought a seat" from "was actually there".
+      // 1. You were demonstrably there. Also the reason this cannot key on
+      //    `completionStatus` alone: that only flips when the
+      //    call.session_ended webhook lands, which fires after the LAST
+      //    participant leaves plus an inactivity timeout — so a post-call
+      //    prompt keyed on it shows nothing to whoever leaves first.
       { meetingSession: { attendances: { some: { userId } } } },
+      // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
+      //    MeetingSession", which is what an offline session looks like —
+      //    excluding it would deny feedback to everyone who met in person.
+      {
+        completionStatus: "UNVERIFIED" as SlotCompletionStatus,
+      },
     ],
   };
 }

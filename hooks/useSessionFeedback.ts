@@ -19,24 +19,40 @@ interface SlotFeedback {
  * appointment left every child session looking unrated, and its invalidation
  * key pointed at the wrong query.
  */
+export interface SessionFeedbackState {
+  /** slot id → the rating this viewer gave it. */
+  ratings: Record<string, number>;
+  /** Slots this viewer may rate at all — attended, or offline. */
+  rateable: Set<string>;
+}
+
 export function useSessionFeedback(
   appointmentIds: readonly string[],
-): Record<string, number> {
+): SessionFeedbackState {
   const results = useQueries({
     queries: appointmentIds.map((appointmentId) => ({
       queryKey: ["appointment-feedback", appointmentId],
-      queryFn: async (): Promise<Record<string, number>> => {
+      queryFn: async (): Promise<{
+        ratings: Record<string, number>;
+        rateable: string[];
+      }> => {
         const res = await fetch(`/api/appointments/${appointmentId}/feedback`);
-        if (!res.ok) return {};
-        const { data } = await res.json();
+        if (!res.ok) return { ratings: {}, rateable: [] };
+        const { data, rateableSlotIds } = await res.json();
         const rows = (data ?? []) as SlotFeedback[];
-        return Object.fromEntries(
-          rows
-            .filter((r) => r.slotOfAppointmentId)
-            .map((r) => [r.slotOfAppointmentId as string, r.rating]),
-        );
+        return {
+          ratings: Object.fromEntries(
+            rows
+              .filter((r) => r.slotOfAppointmentId)
+              .map((r) => [r.slotOfAppointmentId as string, r.rating]),
+          ),
+          rateable: (rateableSlotIds ?? []) as string[],
+        };
       },
     })),
   });
-  return Object.assign({}, ...results.map((r) => r.data ?? {}));
+  return {
+    ratings: Object.assign({}, ...results.map((r) => r.data?.ratings ?? {})),
+    rateable: new Set(results.flatMap((r) => r.data?.rateable ?? [])),
+  };
 }

@@ -374,6 +374,16 @@ export function SupportThreadSheet({
     !isHuman && !isResolved ? (activePrompt?.metadata?.options ?? []) : [];
   const started = !!thread;
   const turnPending = turn.isPending;
+  // `turnPending` is React state, so two clicks in the same tick both read the
+  // stale value and both fire. A ref flips synchronously and stops the second
+  // before it leaves the browser — which also spares a pool where
+  // PG_POOL_MAX=1 serialises everything an entirely wasted round trip.
+  const inFlight = useRef(false);
+  const submitTurn = (vars: TurnVars) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    turn.mutate(vars, { onSettled: () => (inFlight.current = false) });
+  };
   // The hand-off sits immediately before the first AGENT message. A thread that
   // has escalated but whose staff reply has not landed yet still gets the
   // marker, at the end — otherwise the drawer looks like the bot simply gave
@@ -382,7 +392,7 @@ export function SupportThreadSheet({
     const failed = failedTurns[id];
     if (!failed) return;
     setFailedTurns(({ [id]: _gone, ...rest }) => rest);
-    turn.mutate(failed.vars);
+    submitTurn(failed.vars);
   };
 
   const waitingLine = describeWait(thread?.supportTicket?.ackDueAt);
@@ -602,7 +612,7 @@ export function SupportThreadSheet({
                     size="sm"
                     disabled={turnPending}
                     onClick={() =>
-                      turn.mutate({
+                      submitTurn({
                         category: i.category,
                         chosenLabel: i.label,
                       })
@@ -623,7 +633,7 @@ export function SupportThreadSheet({
                     size="sm"
                     disabled={turnPending}
                     onClick={() =>
-                      turn.mutate({
+                      submitTurn({
                         chosenOptionId: o.id,
                         chosenLabel: o.label,
                       })
@@ -641,7 +651,7 @@ export function SupportThreadSheet({
             onSubmit={(e) => {
               e.preventDefault();
               const msg = text.trim();
-              if (msg) turn.mutate({ userMessage: msg });
+              if (msg) submitTurn({ userMessage: msg });
             }}
           >
             <Input
