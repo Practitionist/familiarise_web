@@ -56,7 +56,9 @@ async function previewConsultantRating(consultantProfileId: string) {
     ? Math.round((unitSum / ratingUnitCount) * 100) / 100
     : 0;
   return {
+    rating: mean,
     ratingUnitCount,
+    reviewCount: units.reduce((sum, u) => sum + u._count._all, 0) + legacyCount,
     publishedRating:
       ratingUnitCount >= MIN_RATED_UNITS_FOR_PUBLIC_SCORE ? mean : null,
   };
@@ -65,7 +67,16 @@ async function previewConsultantRating(consultantProfileId: string) {
 async function main(): Promise<void> {
   const dryRun = process.argv.includes("--dry-run");
   const profiles = await prisma.consultantProfile.findMany({
-    select: { id: true, publishedRating: true, ratingUnitCount: true },
+    // Every aggregate the real run writes, so the dry run cannot report "no
+    // change" for a profile whose review count moved without crossing the
+    // publish threshold.
+    select: {
+      id: true,
+      rating: true,
+      publishedRating: true,
+      ratingUnitCount: true,
+      reviewCount: true,
+    },
     orderBy: { id: "asc" },
   });
 
@@ -73,15 +84,17 @@ async function main(): Promise<void> {
   let wouldChange = 0;
   const failed: { id: string; error: string }[] = [];
 
-  for (const { id, publishedRating, ratingUnitCount } of profiles) {
+  for (const { id, ...stored } of profiles) {
     if (dryRun) {
       // Actually report what a real run would do. Counting rows and calling it
       // "recomputed" made the dry run useless as a pre-flight check on a shared
       // database, which is the only reason it exists.
       const preview = await previewConsultantRating(id);
       if (
-        preview.publishedRating !== publishedRating ||
-        preview.ratingUnitCount !== ratingUnitCount
+        preview.rating !== stored.rating ||
+        preview.publishedRating !== stored.publishedRating ||
+        preview.ratingUnitCount !== stored.ratingUnitCount ||
+        preview.reviewCount !== stored.reviewCount
       ) {
         wouldChange += 1;
       }

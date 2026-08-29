@@ -24,7 +24,7 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import { SupportThreadIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { MESSAGE_ORDER, allocateMessageSeq } from "@/lib/support/message-seq";
-import { staffRepliedPatch } from "@/lib/support/sla";
+import { applyStaffReply } from "@/lib/support/sla";
 
 const THREAD_ROUTE = "staff.support-thread";
 
@@ -192,26 +192,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // stops. Unconditional (not part of the OPEN CAS above): a reply on an
         // already-IN_PROGRESS ticket still pauses the clock and still counts as
         // an acknowledgement.
-        //
-        // Read INSIDE the transaction. The `thread` above was fetched before it
-        // opened, so two staff replying at once would both see a null
-        // `firstAgentReplyAt` and the later write would move a timestamp that is
-        // supposed to be first-write-wins.
-        const current = await tx.supportTicket.findUnique({
+        await applyStaffReply(tx, thread.supportTicketId, now);
+        await tx.supportTicket.update({
           where: { id: thread.supportTicketId },
-          select: {
-            acknowledgedAt: true,
-            firstAgentReplyAt: true,
-            awaitingUserSince: true,
-            pausedSeconds: true,
-          },
+          data: { lastMessageAt: now },
         });
-        if (current) {
-          await tx.supportTicket.update({
-            where: { id: thread.supportTicketId },
-            data: { ...staffRepliedPatch(current, now), lastMessageAt: now },
-          });
-        }
       }
       return agentMessage;
     });
@@ -304,7 +289,17 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       if (updated.count === 0) return 0;
 
       // Mirror to the linked ticket so the queue never disagrees with the thread.
+      // A CLOSED ticket cannot follow, and letting the thread move anyway is
+      // exactly the disagreement this mirror exists to prevent — so the whole
+      // transaction fails instead, and the caller gets a 409 rather than a
+      // silent split. Moving to CLOSED is exempt: a closed ticket is already
+      // where the thread is going.
       if (thread.supportTicketId) {
+        const linked = await tx.supportTicket.findUnique({
+          where: { id: thread.supportTicketId },
+          select: { status: true },
+        });
+        if (linked?.status === "CLOSED" && status !== "CLOSED") return 0;
         await tx.supportTicket.updateMany({
           where: { id: thread.supportTicketId, status: { notIn: ["CLOSED"] } },
           data: {
@@ -324,7 +319,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       return supportError({
         status: 409,
         code: "CONFLICT",
-        message: "Thread is closed and can no longer change status",
+        message:
+          "This conversation can no longer change status — it, or the ticket behind it, is already closed",
         context: {
           route: THREAD_ROUTE,
           action: "status",

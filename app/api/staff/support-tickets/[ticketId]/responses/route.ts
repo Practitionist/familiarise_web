@@ -9,7 +9,7 @@ import { notifySupportTicketResponse } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import { allocateMessageSeq } from "@/lib/support/message-seq";
-import { staffRepliedPatch } from "@/lib/support/sla";
+import { applyStaffReply } from "@/lib/support/sla";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
@@ -92,26 +92,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // thread as AGENT messages (what the USER sees on "Get help"), and bump
       // the ticket's own clock — the hub and ops inbox sort by it.
       if (!validatedData.isInternal) {
-        // Re-read inside the transaction: `ticket` was fetched before it
-        // opened, and `firstAgentReplyAt` is first-write-wins.
-        const current = await tx.supportTicket.findUnique({
-          where: { id: ticketId },
-          select: {
-            acknowledgedAt: true,
-            firstAgentReplyAt: true,
-            awaitingUserSince: true,
-            pausedSeconds: true,
-          },
-        });
+        // #705 — a public reply stops the resolution clock and counts as the
+        // acknowledgement. An INTERNAL note does neither: the user has not
+        // heard anything, so nothing is owed back to them yet.
+        await applyStaffReply(tx, ticketId, now);
         await tx.supportTicket.update({
           where: { id: ticketId },
-          data: {
-            lastMessageAt: now,
-            // #705 — a public reply stops the resolution clock and counts as
-            // the acknowledgement. An INTERNAL note does neither: the user has
-            // not heard anything, so nothing is owed back to them yet.
-            ...(current ? staffRepliedPatch(current, now) : {}),
-          },
+          data: { lastMessageAt: now },
         });
         const linkedThread = await tx.appointmentSupportThread.findUnique({
           where: { supportTicketId: ticketId },

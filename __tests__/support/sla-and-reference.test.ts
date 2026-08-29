@@ -20,7 +20,7 @@ import {
   slaDeadlinesFor,
   slaStateOf,
   effectiveResolutionDueAt,
-  staffRepliedPatch,
+  applyStaffReply,
   userRepliedPatch,
   type SlaClock,
 } from "@/lib/support/sla";
@@ -138,48 +138,56 @@ describe("the resolution clock pauses while we are waiting on the user", () => {
     ).toEqual({});
   });
 
-  it("records the first human reply once and never moves it", () => {
-    const first = staffRepliedPatch(
-      {
-        acknowledgedAt: null,
-        firstAgentReplyAt: null,
-        awaitingUserSince: null,
-        pausedSeconds: 0,
+  it("claims each milestone in the WHERE clause, so the FIRST reply wins", async () => {
+    // Reading the row and then writing unconditionally is not enough: at READ
+    // COMMITTED two staff replying at the same instant both see null, and the
+    // later write moves a timestamp that is supposed to be the first one. The
+    // guard has to be a condition the database evaluates.
+    const calls: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }[] = [];
+    const tx = {
+      supportTicket: {
+        updateMany: jest.fn(async (a: never) => {
+          calls.push(a as never);
+          return { count: 1 };
+        }),
+        findUnique: jest.fn(async () => ({ awaitingUserSince: null })),
       },
-      T0,
+    };
+    await applyStaffReply(tx as never, "t1", T0);
+
+    const ack = calls.find(
+      (c) => "acknowledgedAt" in c.data && c.where.acknowledgedAt !== undefined,
     );
-    expect(first.firstAgentReplyAt).toEqual(T0);
-    expect(first.acknowledgedAt).toEqual(T0);
-    const second = staffRepliedPatch(
-      {
-        acknowledgedAt: T0,
-        firstAgentReplyAt: T0,
-        awaitingUserSince: null,
-        pausedSeconds: 0,
-      },
-      new Date(T0.getTime() + DAY),
-    );
-    expect(second.firstAgentReplyAt).toBeUndefined();
-    expect(second.acknowledgedAt).toBeUndefined();
-    // But the clock still pauses again — that part is unconditional.
-    expect(second.awaitingUserSince).toEqual(new Date(T0.getTime() + DAY));
+    const first = calls.find((c) => "firstAgentReplyAt" in c.data);
+    expect(ack!.where).toEqual({ id: "t1", acknowledgedAt: null });
+    expect(first!.where).toEqual({ id: "t1", firstAgentReplyAt: null });
   });
 
-  it("banks the wait a SECOND staff reply would otherwise discard", () => {
-    // Staff replies at T0 (clock stops), then again a day later with no user
-    // message in between. That day was time we were owed; overwriting
-    // `awaitingUserSince` used to throw it away.
-    const patch = staffRepliedPatch(
-      {
-        acknowledgedAt: T0,
-        firstAgentReplyAt: T0,
-        awaitingUserSince: T0,
-        pausedSeconds: 0,
+  it("banks an open wait exactly once, guarded by a compare-and-swap", async () => {
+    const openedAt = new Date(T0.getTime() - DAY);
+    const calls: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }[] = [];
+    const tx = {
+      supportTicket: {
+        updateMany: jest.fn(async (a: never) => {
+          calls.push(a as never);
+          return { count: 1 };
+        }),
+        findUnique: jest.fn(async () => ({ awaitingUserSince: openedAt })),
       },
-      new Date(T0.getTime() + DAY),
-    );
-    expect(patch.pausedSeconds).toBe(24 * 3600);
-    expect(patch.awaitingUserSince).toEqual(new Date(T0.getTime() + DAY));
+    };
+    await applyStaffReply(tx as never, "t1", T0);
+
+    const bank = calls.find((c) => "pausedSeconds" in c.data);
+    // Increment, not a read-modify-write, and only for the row still holding
+    // the timestamp we read — the loser of a race banks nothing.
+    expect(bank!.data.pausedSeconds).toEqual({ increment: 24 * 3600 });
+    expect(bank!.where).toEqual({ id: "t1", awaitingUserSince: openedAt });
   });
 });
 

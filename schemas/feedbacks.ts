@@ -18,7 +18,11 @@ export const CreateFeedbackSchema = z.object({
 
 export const CreateReviewSchema = z.object({
   rating: z.number().int().min(1, "Rating is required").max(5),
-  reviewDescription: z.string().max(MAX_TEXT_LENGTH).optional(),
+  // Nullable, not just optional: on the PUT (which is `.partial()`) undefined
+  // means "leave it alone", so a consultee clearing their written review needs
+  // an explicit null to say "remove it" rather than an empty string, which
+  // would be a second way of storing "no text".
+  reviewDescription: z.string().max(MAX_TEXT_LENGTH).nullable().optional(),
   /**
    * #705 — the session being reviewed. The consultant and the consultee are
    * DERIVED from it server-side: a body that names its own consultantProfileId

@@ -13,6 +13,7 @@
  */
 
 import type { SupportPriority, SupportTicketStatus } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
 
 /** The statutory ceilings. Nothing here may exceed these. */
 export const STATUTORY_ACK_HOURS = 24;
@@ -83,7 +84,7 @@ export function pausedSecondsAt(
 }
 
 /** The wait that is still running, if any. Zero when the ball is with us. */
-function openWaitSeconds(
+export function openWaitSeconds(
   clock: Pick<SlaClock, "awaitingUserSince">,
   now: Date,
 ): number {
@@ -149,30 +150,51 @@ export function slaStateOf(clock: SlaClock, now: Date = new Date()): SlaState {
 }
 
 /**
- * The write a STAFF reply makes: the ball is now in the user's court, so the
- * resolution clock stops. `firstAgentReplyAt` is set once and never moved — it
- * is the number that predicts CSAT, and an auto-acknowledgement must not be
- * able to claim it.
+ * The writes a STAFF reply makes: the ball moves to the user, so the resolution
+ * clock stops. `firstAgentReplyAt` is set once and never moved — it is the
+ * number that predicts CSAT, and an auto-acknowledgement must not claim it.
  */
-export function staffRepliedPatch(
-  clock: Pick<
-    SlaClock,
-    "acknowledgedAt" | "awaitingUserSince" | "pausedSeconds"
-  > & {
-    firstAgentReplyAt: Date | null;
-  },
+export async function applyStaffReply(
+  tx: Tx,
+  ticketId: string,
   now: Date = new Date(),
-) {
-  // Two staff replies in a row used to just overwrite `awaitingUserSince`,
-  // discarding the wait that was already running between them — time the team
-  // was owed. Bank it first, then restart the clock.
-  const open = openWaitSeconds(clock, now);
-  return {
-    awaitingUserSince: now,
-    ...(open > 0 ? { pausedSeconds: clock.pausedSeconds + open } : {}),
-    ...(clock.acknowledgedAt ? {} : { acknowledgedAt: now }),
-    ...(clock.firstAgentReplyAt ? {} : { firstAgentReplyAt: now }),
-  };
+): Promise<void> {
+  // First-write-wins, expressed in the WHERE clause so the DATABASE decides it
+  // rather than a value we read a moment ago. Reading the row first and then
+  // writing unconditionally is not enough even inside a transaction: at READ
+  // COMMITTED two staff replying at the same instant both see null, and the
+  // later write moves a timestamp that is supposed to be the first one.
+  await tx.supportTicket.updateMany({
+    where: { id: ticketId, acknowledgedAt: null },
+    data: { acknowledgedAt: now },
+  });
+  await tx.supportTicket.updateMany({
+    where: { id: ticketId, firstAgentReplyAt: null },
+    data: { firstAgentReplyAt: now },
+  });
+
+  // Bank the wait that was already running, then restart the clock. The CAS on
+  // `awaitingUserSince` is what stops two simultaneous replies banking the same
+  // interval twice — only the one whose read is still current matches.
+  const current = await tx.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { awaitingUserSince: true },
+  });
+  const open = openWaitSeconds(
+    { awaitingUserSince: current?.awaitingUserSince ?? null },
+    now,
+  );
+  if (current?.awaitingUserSince && open > 0) {
+    const banked = await tx.supportTicket.updateMany({
+      where: { id: ticketId, awaitingUserSince: current.awaitingUserSince },
+      data: { pausedSeconds: { increment: open }, awaitingUserSince: now },
+    });
+    if (banked.count > 0) return;
+  }
+  await tx.supportTicket.updateMany({
+    where: { id: ticketId },
+    data: { awaitingUserSince: now },
+  });
 }
 
 /**

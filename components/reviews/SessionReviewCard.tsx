@@ -48,7 +48,12 @@ export function SessionReviewCard({
   const qc = useQueryClient();
   const queryKey = ["reviewable-session", appointmentId] as const;
 
-  const { data: session } = useQuery({
+  const {
+    data: session,
+    isError,
+    isLoading,
+    refetch,
+  } = useQuery({
     queryKey,
     queryFn: async (): Promise<ReviewableSession | null> => {
       const res = await fetch(
@@ -75,10 +80,10 @@ export function SessionReviewCard({
 
   const save = useMutation({
     mutationFn: async () => {
-      const body = {
-        rating,
-        reviewDescription: text.trim() || undefined,
-      };
+      // Explicit null when cleared, never undefined: UpdateReviewSchema is
+      // `.partial()`, so undefined means "leave it alone" and a consultee
+      // deleting their written review could never actually delete it.
+      const body = { rating, reviewDescription: text.trim() || null };
       const res = existing
         ? await fetch(`/api/user/reviews/${existing.id}`, {
             method: "PUT",
@@ -93,12 +98,16 @@ export function SessionReviewCard({
       if (!res.ok) await throwSupportError(res, "review save");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({
         title: existing ? "Review updated" : "Thanks for your review",
         description: "It appears on the expert's public profile.",
       });
-      void qc.invalidateQueries({ queryKey });
+      // AWAITED: until this resolves, `existing` is still null and the button
+      // still reads "Post review", so a second press would POST again and take
+      // a 409 off the one-review-per-session unique. `isPending` stays true for
+      // the duration, which is what keeps the button disabled.
+      await qc.invalidateQueries({ queryKey });
     },
     onError: (e: unknown) => {
       toast({
@@ -109,10 +118,30 @@ export function SessionReviewCard({
     },
   });
 
-  // Not eligible, or the eligibility check has not answered yet. Rendering a
-  // disabled form to someone who may never be allowed to use it is worse than
-  // rendering nothing.
-  if (!session) return null;
+  // A failed eligibility check is NOT the same as "you cannot review this".
+  // Rendering nothing for both is the mistake the Platform tab already made
+  // once — it showed a load failure as an empty list and invited the user to
+  // file a request they already had open.
+  if (isError) {
+    return (
+      <section className="rounded-xl border border-dashed border-border p-4">
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t check whether you can review this session.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          onClick={() => refetch()}
+        >
+          Retry
+        </Button>
+      </section>
+    );
+  }
+  // Still asking, or genuinely not eligible. Showing a disabled form to someone
+  // who may never be allowed to use it is worse than showing nothing.
+  if (isLoading || !session) return null;
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
