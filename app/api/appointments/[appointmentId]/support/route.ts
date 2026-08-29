@@ -57,7 +57,13 @@ export async function GET(
 
     const thread = await prisma.appointmentSupportThread.findUnique({
       where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
-      include: { messages: { orderBy: MESSAGE_ORDER } },
+      include: {
+        messages: { orderBy: MESSAGE_ORDER },
+        // #705 — an escalated thread is ASYNCHRONOUS: nobody is composing a
+        // reply, and a typing indicator promised otherwise. The drawer shows
+        // this deadline instead, which we already committed to at intake.
+        supportTicket: { select: { referenceNumber: true, ackDueAt: true } },
+      },
     });
 
     // #support-hub — the intents the SERVER offers for this appointment

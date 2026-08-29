@@ -43,6 +43,8 @@ interface ThreadMessage {
   createdAt: string;
   /** Client-only: shown before the server has confirmed the write. */
   pending?: boolean;
+  /** Client-only: the send failed and the user can retry it in place. */
+  failed?: boolean;
 }
 
 interface SupportThread {
@@ -51,6 +53,11 @@ interface SupportThread {
   activeChannel: string;
   currentNodeId: string | null;
   messages: ThreadMessage[];
+  /** Present once escalated — the deadline committed to at intake. */
+  supportTicket?: {
+    referenceNumber: string | null;
+    ackDueAt: string | null;
+  } | null;
 }
 
 interface ThreadData {
@@ -86,7 +93,7 @@ const nextLocalId = () => `local-${++localSeq}`;
  *  first turn (the row does not exist until the server writes it). */
 function appendMessages(
   old: ThreadData | undefined,
-  msgs: Omit<ThreadMessage, "id" | "createdAt">[],
+  msgs: (Omit<ThreadMessage, "id" | "createdAt"> & { id?: string })[],
 ): ThreadData {
   const base: ThreadData = old ?? { thread: null, intents: [] };
   const thread: SupportThread = base.thread ?? {
@@ -104,10 +111,47 @@ function appendMessages(
         ...thread.messages,
         ...msgs.map((m) => ({
           ...m,
-          id: nextLocalId(),
+          id: m.id ?? nextLocalId(),
           createdAt: new Date().toISOString(),
         })),
       ],
+    },
+  };
+}
+
+/** One turn's payload, kept so a failed send can be repeated verbatim. */
+interface TurnVars {
+  category?: string;
+  chosenOptionId?: string;
+  userMessage?: string;
+  /** Client-only echo of what was pressed. Never sent. */
+  chosenLabel?: string;
+}
+
+/** Mark one optimistic bubble as failed, leaving it where the user put it. */
+function markFailed(old: ThreadData | undefined, id: string): ThreadData {
+  const base: ThreadData = old ?? { thread: null, intents: [] };
+  if (!base.thread) return base;
+  return {
+    ...base,
+    thread: {
+      ...base.thread,
+      messages: base.thread.messages.map((m) =>
+        m.id === id ? { ...m, pending: false, failed: true } : m,
+      ),
+    },
+  };
+}
+
+/** Drop a failed bubble — it is about to be re-sent as a fresh one. */
+function dropMessage(old: ThreadData | undefined, id: string): ThreadData {
+  const base: ThreadData = old ?? { thread: null, intents: [] };
+  if (!base.thread) return base;
+  return {
+    ...base,
+    thread: {
+      ...base.thread,
+      messages: base.thread.messages.filter((m) => m.id !== id),
     },
   };
 }
@@ -148,6 +192,10 @@ export function SupportThreadSheet({
   const open = controlledOpen ?? internalOpen;
   const [text, setText] = useState("");
   const [lastActions, setLastActions] = useState<SupportAction[]>([]);
+  // A failed send stays in the transcript, keyed by its optimistic bubble id,
+  // with the payload needed to send it again. A toast disappears and leaves the
+  // user unable to tell whether anything was sent.
+  const [failedTurns, setFailedTurns] = useState<Record<string, TurnVars>>({});
   const { toast } = useToast();
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
@@ -166,13 +214,7 @@ export function SupportThreadSheet({
     mutationFn: async ({
       chosenLabel: _chosenLabel,
       ...body
-    }: {
-      category?: string;
-      chosenOptionId?: string;
-      userMessage?: string;
-      /** Client-only echo of what was pressed — see `onMutate`. Never sent. */
-      chosenLabel?: string;
-    }): Promise<TurnResult> => {
+    }: TurnVars): Promise<TurnResult> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,12 +232,16 @@ export function SupportThreadSheet({
       await qc.cancelQueries({ queryKey });
       const previous = qc.getQueryData<ThreadData>(queryKey);
       const said = vars.userMessage ?? vars.chosenLabel;
+      let optimisticId: string | undefined;
       if (said) {
+        optimisticId = nextLocalId();
         qc.setQueryData<ThreadData>(queryKey, (old) =>
-          appendMessages(old, [{ sender: "USER", body: said, pending: true }]),
+          appendMessages(old, [
+            { id: optimisticId, sender: "USER", body: said, pending: true },
+          ]),
         );
       }
-      return { previous };
+      return { previous, optimisticId };
     },
     onSuccess: (result) => {
       setLastActions(result.actions ?? []);
@@ -230,15 +276,22 @@ export function SupportThreadSheet({
       });
       void qc.invalidateQueries({ queryKey });
     },
-    onError: (e: unknown, _vars, context) => {
-      // Roll the optimistic bubble back — a message that stays on screen after
-      // the turn failed is worse than one that never appeared.
-      if (context?.previous) qc.setQueryData(queryKey, context.previous);
-      toast({
-        title: "Support",
-        description: e instanceof Error ? e.message : "Please try again.",
-        variant: "destructive",
-      });
+    onError: (e: unknown, vars, context) => {
+      // Keep the message where the user put it, marked failed, with a retry —
+      // the convention every messaging app uses. Rolling it back and toasting
+      // left them unable to tell whether it had sent at all, which is exactly
+      // what a connection timeout on a cold instance looked like.
+      const id = context?.optimisticId;
+      if (id) {
+        qc.setQueryData<ThreadData>(queryKey, (old) => markFailed(old, id));
+        setFailedTurns((f) => ({ ...f, [id]: vars }));
+      } else {
+        toast({
+          title: "Support",
+          description: e instanceof Error ? e.message : "Please try again.",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -296,6 +349,33 @@ export function SupportThreadSheet({
   // has escalated but whose staff reply has not landed yet still gets the
   // marker, at the end — otherwise the drawer looks like the bot simply gave
   // up on the user.
+  const retryTurn = (id: string) => {
+    const vars = failedTurns[id];
+    if (!vars) return;
+    setFailedTurns(({ [id]: _gone, ...rest }) => rest);
+    qc.setQueryData<ThreadData>(queryKey, (old) => dropMessage(old, id));
+    turn.mutate(vars);
+  };
+
+  // "We'll reply by 4:30 PM" beats "soon": a concrete wait is what the handoff
+  // research found cuts abandonment, and this one is a promise we already made.
+  const ackDueAt = thread?.supportTicket?.ackDueAt;
+  const waitingLine = (() => {
+    if (!ackDueAt) return "Our team will reply here and by email.";
+    const due = new Date(ackDueAt);
+    if (Number.isNaN(due.getTime()))
+      return "Our team will reply here and by email.";
+    if (due.getTime() < Date.now()) {
+      // Past our own deadline — say so rather than quietly showing a stale time.
+      return "Our team is taking longer than usual. You'll get a reply here and by email.";
+    }
+    const sameDay = due.toDateString() === new Date().toDateString();
+    return `Our team will reply by ${due.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    })}${sameDay ? " today" : ` on ${due.toLocaleDateString([], { day: "numeric", month: "short" })}`}.`;
+  })();
+
   const firstAgent = messages.findIndex((m) => m.sender === "AGENT");
   const handoffIndex =
     firstAgent >= 0 ? firstAgent : isHuman ? messages.length : -1;
@@ -378,16 +458,31 @@ export function SupportThreadSheet({
                       and "BOT" contradicted the header's "you're connected with
                       our support team". Side and colour carry the speaker; the
                       divider above carries who is answering. */}
-                  <div
-                    className={
-                      "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
-                      (m.sender === "USER"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-foreground") +
-                      (m.pending ? " opacity-70" : "")
-                    }
-                  >
-                    {m.body}
+                  <div className="max-w-[85%]">
+                    <div
+                      className={
+                        "rounded-2xl px-3 py-2 text-sm transition-opacity " +
+                        (m.sender === "USER"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground") +
+                        (m.pending ? " opacity-70" : "") +
+                        (m.failed ? " opacity-60 ring-1 ring-destructive" : "")
+                      }
+                    >
+                      {m.body}
+                    </div>
+                    {m.failed && (
+                      <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-destructive">
+                        <span>Not sent</span>
+                        <button
+                          type="button"
+                          className="underline underline-offset-2"
+                          onClick={() => retryTurn(m.id)}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -396,6 +491,14 @@ export function SupportThreadSheet({
             {/* The bot is working. Uber's own write-up calls this out as the
               contract of a request/response flow engine: the user waits, and a
               visual indicator tells them why. */}
+            {/* The honest version of "we're on it": the deadline we already
+                committed to at intake, rather than an indefinite spinner. */}
+            {isHuman && !isResolved && waitingLine && (
+              <p className="text-center text-[11px] text-muted-foreground">
+                {waitingLine}
+              </p>
+            )}
+
             {handoffIndex === messages.length && (
               <div className="flex items-center gap-2">
                 <span className="h-px flex-1 bg-border" />
@@ -406,7 +509,11 @@ export function SupportThreadSheet({
               </div>
             )}
 
-            {turnPending && (
+            {/* Only while the flowchart is answering. Once the thread is with a
+                human there is nobody composing anything, and dots promising an
+                imminent reply on an asynchronous hand-off is the single thing
+                the research says loses people. */}
+            {turnPending && !isHuman && (
               <div className="flex justify-start">
                 <div
                   className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
