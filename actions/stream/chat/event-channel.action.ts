@@ -110,6 +110,37 @@ export async function checkEventChannelExists(
 }
 
 /**
+ * Upserts the user to Stream, treating a DPDP consent refusal as a skip.
+ *
+ * #1270 — a withdrawn or absent STREAM_DATA_PROCESSING consent is a deliberate
+ * refusal, not a failure, but `addUserToEventChannel` let it bubble unhandled
+ * out of a server action and took the WHOLE appointment page down rather than
+ * just chat. `syncUserChannels` has degraded gracefully since #701; this path
+ * never did. Extracted rather than inlined so the caller stays under the
+ * cognitive-complexity budget.
+ *
+ * @returns false when consent is missing and the caller should skip.
+ */
+async function syncUserOrSkipOnConsent(
+  userId: string,
+  channelId: string,
+): Promise<boolean> {
+  try {
+    await upsertUserToStream(userId);
+    return true;
+  } catch (err) {
+    if (err instanceof ConsentRequiredError) {
+      streamLogger.info(
+        "Skipping event channel join — Stream consent not granted",
+        { userId, channelId, purposeCode: err.purposeCode },
+      );
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * Add a user to an event channel, creating the channel if it doesn't exist
  * Uses caching to avoid redundant operations
  */
@@ -134,27 +165,12 @@ export async function addUserToEventChannel(
 
   const client = getStreamChatClient();
 
-  try {
-    // Ensure user is upserted to Stream first.
-    //
-    // #1270 — a withdrawn/absent STREAM_DATA_PROCESSING consent is a
-    // deliberate refusal, not a failure, and this call site let it bubble
-    // unhandled out of a server action on the appointment page, taking the
-    // WHOLE page down rather than just chat. syncUserChannels below has
-    // degraded gracefully since #701; this one never did.
-    try {
-      await upsertUserToStream(userId);
-    } catch (err) {
-      if (err instanceof ConsentRequiredError) {
-        streamLogger.info(
-          "Skipping event channel join — Stream consent not granted",
-          { userId, channelId, purposeCode: err.purposeCode },
-        );
-        return { success: false, channelId };
-      }
-      throw err;
-    }
+  // #1270 — a consent refusal must not take the page down with it.
+  if (!(await syncUserOrSkipOnConsent(userId, channelId))) {
+    return { success: false, channelId };
+  }
 
+  try {
     const channel = client.channel(channelType, channelId);
 
     // Try to add member directly (works for existing channels)
