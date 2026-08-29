@@ -25,13 +25,13 @@ export function SessionRatingRow({
   slotId,
   existingRating,
   readOnly = false,
-}: {
+}: Readonly<{
   appointmentId: string;
   slotId: string;
   existingRating: number | null;
   /** The consultant's view: what this call scored, not something to set. */
   readOnly?: boolean;
-}) {
+}>) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [rating, setRating] = useState(existingRating ?? 0);
@@ -93,10 +93,10 @@ export function SessionRatingRow({
   }
 
   return (
-    <div
-      className="flex items-center gap-0.5"
-      onClick={(e) => e.stopPropagation()}
-    >
+    // No handler on the wrapper: a div with onClick is unreachable by keyboard
+    // and announces nothing. Each star is a real button and stops propagation
+    // itself, which is what keeps the session row from also firing.
+    <div className="flex items-center gap-0.5">
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}

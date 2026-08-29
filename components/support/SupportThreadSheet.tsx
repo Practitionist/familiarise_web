@@ -43,8 +43,6 @@ interface ThreadMessage {
   createdAt: string;
   /** Client-only: shown before the server has confirmed the write. */
   pending?: boolean;
-  /** Client-only: the send failed and the user can retry it in place. */
-  failed?: boolean;
 }
 
 interface SupportThread {
@@ -81,6 +79,8 @@ interface TurnResult {
   }[];
   escalated: boolean;
   resolved: boolean;
+  /** False when the server refused the write (thread closed underneath us). */
+  accepted?: boolean;
   actions: SupportAction[];
 }
 
@@ -128,32 +128,37 @@ interface TurnVars {
   chosenLabel?: string;
 }
 
-/** Mark one optimistic bubble as failed, leaving it where the user put it. */
-function markFailed(old: ThreadData | undefined, id: string): ThreadData {
-  const base: ThreadData = old ?? { thread: null, intents: [] };
-  if (!base.thread) return base;
-  return {
-    ...base,
-    thread: {
-      ...base.thread,
-      messages: base.thread.messages.map((m) =>
-        m.id === id ? { ...m, pending: false, failed: true } : m,
-      ),
-    },
-  };
+/**
+ * "We'll reply by 4:30 PM" beats "soon": a concrete wait is what the hand-off
+ * research found cuts abandonment, and this one is a promise already made at
+ * intake rather than a guess.
+ */
+/** Announced to assistive tech only — the visual design carries no captions. */
+function speakerLabel(sender: Sender): string {
+  if (sender === "USER") return "You said";
+  if (sender === "AGENT") return "Support said";
+  if (sender === "SYSTEM") return "System";
+  return "Assistant said";
 }
 
-/** Drop a failed bubble — it is about to be re-sent as a fresh one. */
-function dropMessage(old: ThreadData | undefined, id: string): ThreadData {
-  const base: ThreadData = old ?? { thread: null, intents: [] };
-  if (!base.thread) return base;
-  return {
-    ...base,
-    thread: {
-      ...base.thread,
-      messages: base.thread.messages.filter((m) => m.id !== id),
-    },
-  };
+function describeWait(ackDueAt: string | null | undefined): string {
+  const FALLBACK = "Our team will reply here and by email.";
+  if (!ackDueAt) return FALLBACK;
+  const due = new Date(ackDueAt);
+  if (Number.isNaN(due.getTime())) return FALLBACK;
+  // Past our own deadline — say so rather than showing a promise that lapsed.
+  if (due.getTime() < Date.now()) {
+    return "Our team is taking longer than usual. You'll get a reply here and by email.";
+  }
+  const time = due.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (due.toDateString() === new Date().toDateString()) {
+    return `Our team will reply by ${time} today.`;
+  }
+  const day = due.toLocaleDateString([], { day: "numeric", month: "short" });
+  return `Our team will reply by ${time} on ${day}.`;
 }
 
 function describeAction(a: SupportAction): string | null {
@@ -195,7 +200,12 @@ export function SupportThreadSheet({
   // A failed send stays in the transcript, keyed by its optimistic bubble id,
   // with the payload needed to send it again. A toast disappears and leaves the
   // user unable to tell whether anything was sent.
-  const [failedTurns, setFailedTurns] = useState<Record<string, TurnVars>>({});
+  // Held in component state, NOT in the query cache: a poll replaces the cache
+  // wholesale with server rows, which would take the failed bubble and its
+  // Retry with it — the exact thing the user needs in order to recover.
+  const [failedTurns, setFailedTurns] = useState<
+    Record<string, { body: string; vars: TurnVars }>
+  >({});
   const { toast } = useToast();
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
@@ -243,7 +253,23 @@ export function SupportThreadSheet({
       }
       return { previous, optimisticId };
     },
-    onSuccess: (result) => {
+    onSuccess: (result, vars, context) => {
+      // The server took the request but refused the write. Treat it exactly
+      // like a failure, or the bubble sits there looking delivered.
+      if (result.accepted === false) {
+        const id = context?.optimisticId;
+        const said = vars.userMessage ?? vars.chosenLabel;
+        if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        if (id && said)
+          setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
+        toast({
+          title: "Support",
+          description:
+            "This conversation has been closed, so your message wasn't sent.",
+          variant: "destructive",
+        });
+        return;
+      }
       setLastActions(result.actions ?? []);
       setText("");
       // Merge the server's own reply rather than only invalidating: an
@@ -282,9 +308,12 @@ export function SupportThreadSheet({
       // left them unable to tell whether it had sent at all, which is exactly
       // what a connection timeout on a cold instance looked like.
       const id = context?.optimisticId;
-      if (id) {
-        qc.setQueryData<ThreadData>(queryKey, (old) => markFailed(old, id));
-        setFailedTurns((f) => ({ ...f, [id]: vars }));
+      const said = vars.userMessage ?? vars.chosenLabel;
+      if (id && said) {
+        // Roll the cache back to the server's truth and keep the failed message
+        // beside it in component state, so a refetch cannot erase it.
+        if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        setFailedTurns((f) => ({ ...f, [id]: { body: said, vars } }));
       } else {
         toast({
           title: "Support",
@@ -350,31 +379,13 @@ export function SupportThreadSheet({
   // marker, at the end — otherwise the drawer looks like the bot simply gave
   // up on the user.
   const retryTurn = (id: string) => {
-    const vars = failedTurns[id];
-    if (!vars) return;
+    const failed = failedTurns[id];
+    if (!failed) return;
     setFailedTurns(({ [id]: _gone, ...rest }) => rest);
-    qc.setQueryData<ThreadData>(queryKey, (old) => dropMessage(old, id));
-    turn.mutate(vars);
+    turn.mutate(failed.vars);
   };
 
-  // "We'll reply by 4:30 PM" beats "soon": a concrete wait is what the handoff
-  // research found cuts abandonment, and this one is a promise we already made.
-  const ackDueAt = thread?.supportTicket?.ackDueAt;
-  const waitingLine = (() => {
-    if (!ackDueAt) return "Our team will reply here and by email.";
-    const due = new Date(ackDueAt);
-    if (Number.isNaN(due.getTime()))
-      return "Our team will reply here and by email.";
-    if (due.getTime() < Date.now()) {
-      // Past our own deadline — say so rather than quietly showing a stale time.
-      return "Our team is taking longer than usual. You'll get a reply here and by email.";
-    }
-    const sameDay = due.toDateString() === new Date().toDateString();
-    return `Our team will reply by ${due.toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-    })}${sameDay ? " today" : ` on ${due.toLocaleDateString([], { day: "numeric", month: "short" })}`}.`;
-  })();
+  const waitingLine = describeWait(thread?.supportTicket?.ackDueAt);
 
   const firstAgent = messages.findIndex((m) => m.sender === "AGENT");
   const handoffIndex =
@@ -458,31 +469,21 @@ export function SupportThreadSheet({
                       and "BOT" contradicted the header's "you're connected with
                       our support team". Side and colour carry the speaker; the
                       divider above carries who is answering. */}
-                  <div className="max-w-[85%]">
-                    <div
-                      className={
-                        "rounded-2xl px-3 py-2 text-sm transition-opacity " +
-                        (m.sender === "USER"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground") +
-                        (m.pending ? " opacity-70" : "") +
-                        (m.failed ? " opacity-60 ring-1 ring-destructive" : "")
-                      }
-                    >
-                      {m.body}
-                    </div>
-                    {m.failed && (
-                      <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-destructive">
-                        <span>Not sent</span>
-                        <button
-                          type="button"
-                          className="underline underline-offset-2"
-                          onClick={() => retryTurn(m.id)}
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    )}
+                  <div
+                    className={
+                      "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
+                      (m.sender === "USER"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-foreground") +
+                      (m.pending ? " opacity-70" : "")
+                    }
+                  >
+                    {/* Dropping the visible USER/BOT captions removed the only
+                        speaker attribution a screen reader had — side and colour
+                        are visual-only. This restores it without restoring the
+                        clutter. */}
+                    <span className="sr-only">{speakerLabel(m.sender)}: </span>
+                    {m.body}
                   </div>
                 </div>
               </div>
@@ -498,6 +499,28 @@ export function SupportThreadSheet({
                 {waitingLine}
               </p>
             )}
+
+            {/* Failed sends, kept out of the cache so a poll cannot erase them. */}
+            {Object.entries(failedTurns).map(([id, f]) => (
+              <div key={id} className="flex justify-end">
+                <div className="max-w-[85%]">
+                  <div className="rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground opacity-60 ring-1 ring-destructive">
+                    <span className="sr-only">You said: </span>
+                    {f.body}
+                  </div>
+                  <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-destructive">
+                    <span>Not sent</span>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() => retryTurn(id)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
 
             {handoffIndex === messages.length && (
               <div className="flex items-center gap-2">

@@ -68,6 +68,12 @@ export interface RunTurnResult {
   actions: SupportAction[];
   escalated: boolean;
   resolved: boolean;
+  /**
+   * False when a CAS refused the write — the thread settled underneath the
+   * user. Without it a discarded message came back as a plain success and the
+   * client marked it delivered.
+   */
+  accepted?: boolean;
   supportTicketId: string | null;
   /** Machine-readable escalation reason (terminal node / policy), if any. */
   reason?: string;
@@ -331,6 +337,7 @@ async function persistHumanTurn(
   // back claiming it was still with the team.
   let status = thread.status;
   let messageId: string | null = null;
+  let accepted = true;
 
   if (userMessage) {
     // Deliberately SHORT. On Netlify PG_POOL_MAX=1 serialises every query onto
@@ -369,13 +376,16 @@ async function persistHumanTurn(
     );
 
     if (!written) {
-      // The thread settled underneath us. Report where it actually landed
-      // rather than claiming the message went somewhere.
+      // The thread settled underneath us and the CAS refused the write. Report
+      // where it actually landed AND that the message was not accepted —
+      // returning a plain success made the client mark it delivered, so a
+      // message that was never stored looked sent.
       const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
         where: { id: thread.id },
         select: { status: true },
       });
       status = current.status;
+      accepted = false;
     } else {
       messageId = written.id;
 
@@ -412,6 +422,7 @@ async function persistHumanTurn(
     actions: [],
     escalated: true,
     resolved: false,
+    accepted,
     supportTicketId: thread.supportTicketId,
   };
 }

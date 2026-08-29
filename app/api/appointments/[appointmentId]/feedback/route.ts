@@ -132,6 +132,9 @@ export async function POST(
         id: body.data.slotId,
         appointmentId,
         deletedAt: null,
+        // A cancelled or rescheduled call never happened, so there is nothing
+        // to rate — and a rating on one would still reach the org average.
+        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
       },
       select: { id: true },
     });
@@ -139,7 +142,8 @@ export async function POST(
       return supportError({
         status: 404,
         code: "NOT_FOUND",
-        message: "That session isn't part of this booking",
+        message:
+          "That session isn't part of this booking, or it didn't take place",
         context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
       });
     }

@@ -25,6 +25,9 @@ import { CountdownBadge } from "./CountdownBadge";
 
 type SessionStatus = "completed" | "noRecord" | "upcoming" | "joinable";
 
+/** Statuses that mean the session did not take place. */
+const DEAD_SESSION = new Set(["CANCELLED", "RESCHEDULED"]);
+
 interface SessionTimelineProps {
   sessions: SessionVM[];
   isJoining?: boolean;
@@ -235,7 +238,13 @@ export function SessionTimeline({
               </span>
             </div>
 
-            {renderSessionExtra && status !== "upcoming" && !joinable
+            {/* Nothing to rate on a call that never happened. */}
+            {renderSessionExtra &&
+            status !== "upcoming" &&
+            !joinable &&
+            !DEAD_SESSION.has(
+              group.slots[group.slots.length - 1].completionStatus ?? "",
+            )
               ? renderSessionExtra(group.slots[group.slots.length - 1])
               : null}
 

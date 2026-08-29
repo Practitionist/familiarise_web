@@ -6,28 +6,37 @@
  * row.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 
 interface SlotFeedback {
   slotOfAppointmentId: string | null;
   rating: number;
 }
 
-export function useSessionFeedback(appointmentId: string, enabled: boolean) {
-  const { data } = useQuery({
-    queryKey: ["appointment-feedback", appointmentId],
-    enabled,
-    queryFn: async (): Promise<Record<string, number>> => {
-      const res = await fetch(`/api/appointments/${appointmentId}/feedback`);
-      if (!res.ok) return {};
-      const { data } = await res.json();
-      const rows = (data ?? []) as SlotFeedback[];
-      return Object.fromEntries(
-        rows
-          .filter((r) => r.slotOfAppointmentId)
-          .map((r) => [r.slotOfAppointmentId as string, r.rating]),
-      );
-    },
+/**
+ * Sessions in a subscription or class group belong to DIFFERENT appointments —
+ * `SessionVM.appointmentId` differs per row — so fetching only the page's own
+ * appointment left every child session looking unrated, and its invalidation
+ * key pointed at the wrong query.
+ */
+export function useSessionFeedback(
+  appointmentIds: readonly string[],
+): Record<string, number> {
+  const results = useQueries({
+    queries: appointmentIds.map((appointmentId) => ({
+      queryKey: ["appointment-feedback", appointmentId],
+      queryFn: async (): Promise<Record<string, number>> => {
+        const res = await fetch(`/api/appointments/${appointmentId}/feedback`);
+        if (!res.ok) return {};
+        const { data } = await res.json();
+        const rows = (data ?? []) as SlotFeedback[];
+        return Object.fromEntries(
+          rows
+            .filter((r) => r.slotOfAppointmentId)
+            .map((r) => [r.slotOfAppointmentId as string, r.rating]),
+        );
+      },
+    })),
   });
-  return data ?? {};
+  return Object.assign({}, ...results.map((r) => r.data ?? {}));
 }

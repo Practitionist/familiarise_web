@@ -364,6 +364,12 @@ export function PlatformSupportSheet({
                     (m.pending ? " opacity-70" : "")
                   }
                 >
+                  {/* Screen-reader-only speaker attribution: the visual design
+                      dropped the captions, and side plus colour say nothing to
+                      assistive tech. */}
+                  <span className="sr-only">
+                    {m.sender === "USER" ? "You said" : "Assistant said"}:{" "}
+                  </span>
                   {m.body}
                 </div>
               </div>

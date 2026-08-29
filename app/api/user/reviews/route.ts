@@ -99,6 +99,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/** Thrown when the author tries to edit a review moderation has removed. */
+class ModeratedReviewError extends Error {}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -154,6 +157,20 @@ export async function POST(req: NextRequest) {
     const newReview = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          // A review that moderation removed cannot be edited back into existence,
+          // and accepting the edit silently would tell the author it was published
+          // when nothing changed on the page.
+          const existing = await tx.consultantReview.findUnique({
+            where: {
+              consultantProfileId_consulteeProfileId: {
+                consultantProfileId: reviewable.consultantProfileId,
+                consulteeProfileId: sessionConsulteeProfileId,
+              },
+            },
+            select: { deletedAt: true },
+          });
+          if (existing?.deletedAt) throw new ModeratedReviewError();
+
           // UPSERT, not create. There is one review per consultant per consultee,
           // so a second session with the same person updates the opinion rather
           // than colliding on the unique — and `appointmentId`/`ratingUnitId` move
@@ -237,7 +254,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
-    // @@unique([appointmentId, consulteeProfileId]) — one review per session.
+    if (error instanceof ModeratedReviewError) {
+      return NextResponse.json(
+        {
+          error:
+            "This review was removed by our moderation team and can't be edited.",
+        },
+        { status: 409 },
+      );
+    }
+    // @@unique([consultantProfileId, consulteeProfileId]) — one per consultant.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"

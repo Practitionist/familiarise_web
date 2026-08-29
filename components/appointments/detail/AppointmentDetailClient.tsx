@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
@@ -127,7 +127,21 @@ export function AppointmentDetailClient({
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
   // Which calls of this booking the viewer has already rated.
-  const ratedSlots = useSessionFeedback(appointmentId, true);
+  // Every appointment the rendered sessions belong to, not just this page's:
+  // a subscription group's rows carry their own child appointment ids.
+  const feedbackScopes = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          appointmentId,
+          ...(mapped?.vm.sessions ?? []).map(
+            (s) => s.appointmentId ?? appointmentId,
+          ),
+        ]),
+      ),
+    [appointmentId, mapped?.vm.sessions],
+  );
+  const ratedSlots = useSessionFeedback(feedbackScopes);
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   if (isLoading && !detail) {

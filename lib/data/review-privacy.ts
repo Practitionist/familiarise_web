@@ -28,7 +28,7 @@ export function stripAnonymousReviewer<T extends AnonymisableReview>(
     consulteeProfile: {
       ...review.consulteeProfile,
       user: {
-        ...(review.consulteeProfile.user ?? {}),
+        ...review.consulteeProfile.user,
         name: null,
         image: null,
       },
