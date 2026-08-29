@@ -7,6 +7,8 @@
 import fs from "fs";
 import path from "path";
 
+import { parseSidecarObjects } from "../../scripts/db/sidecar-objects";
+
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
@@ -24,8 +26,9 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     // Exactly one mint, on the payout row. A second mint had landed in the
     // audit payload, stamping details with a UUID matching no payout row.
     expect(
-      src.split("idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID()")
-        .length,
+      src.split(
+        "idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID()",
+      ).length,
     ).toBe(2);
     expect(src).toContain("idempotencyKey: created.idempotencyKey");
   });
@@ -34,29 +37,21 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     const sql = read("prisma/sql/check-constraints.sql");
     const staged = sql.slice(sql.indexOf("STAGED FOR THE PRE-MVP RESET"));
     expect(staged).toContain('"clientIdempotencyKey" SET NOT NULL');
-    expect(staged).toContain('"OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL');
+    expect(staged).toContain(
+      '"OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL',
+    );
   });
 
   it("the drift guard ignores the staged block but sees every live object", () => {
-    // Asserted behaviourally rather than by pinning the implementation string.
-    // The guard used to split on the banner, which also discarded the ACTIVE
-    // SQL that sits below it — `appointment_doc_thread_version_unique` and
-    // `onboarding_draft_payload_size` were silently never asserted. What
-    // actually excludes a staged object is that it is COMMENTED OUT, so that
-    // is what this pins.
-    const script = read("scripts/db/assert-sidecar-applied.ts");
-    expect(script).toContain('.startsWith("--")');
-
-    const active = read("prisma/sql/check-constraints.sql")
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("--"))
-      .join("\n");
-    const names = [
-      ...active.matchAll(/ADD CONSTRAINT "?([A-Za-z0-9_]+)"?/g),
-      ...active.matchAll(
-        /CREATE UNIQUE INDEX (?:IF NOT EXISTS )?"?([A-Za-z0-9_]+)"?/g,
-      ),
-    ].map((m) => m[1]);
+    // Runs the PRODUCTION parser over the real sidecar file, so this guards the
+    // script rather than a copy of its regexes. The guard used to split on the
+    // staged-for-reset banner, which also discarded the ACTIVE SQL below it —
+    // `appointment_doc_thread_version_unique` and `onboarding_draft_payload_size`
+    // were silently never asserted.
+    const { constraints, indexes } = parseSidecarObjects(
+      read("prisma/sql/check-constraints.sql"),
+    );
+    const names = [...constraints, ...indexes];
 
     // Staged for the reset — must NOT be demanded of a live database.
     expect(names).not.toContain("program_assignment_no_active_overlap");

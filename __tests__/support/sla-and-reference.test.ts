@@ -41,7 +41,7 @@ function clock(overrides: Partial<SlaClock> = {}): SlaClock {
     resolutionDueAt: null,
     resolvedAt: null,
     awaitingUserSince: null,
-    pausedMs: 0,
+    pausedSeconds: 0,
     ...overrides,
   };
 }
@@ -72,9 +72,9 @@ describe("SLA deadlines", () => {
 describe("breach state", () => {
   it("breaches acknowledgement once the deadline passes unacknowledged", () => {
     const c = clock({ ackDueAt: new Date(T0.getTime() + HOUR) });
-    expect(slaStateOf(c, new Date(T0.getTime() + 30 * 60_000)).ackBreached).toBe(
-      false,
-    );
+    expect(
+      slaStateOf(c, new Date(T0.getTime() + 30 * 60_000)).ackBreached,
+    ).toBe(false);
     expect(slaStateOf(c, new Date(T0.getTime() + 2 * HOUR)).ackBreached).toBe(
       true,
     );
@@ -125,31 +125,61 @@ describe("the resolution clock pauses while we are waiting on the user", () => {
 
   it("banks a closed wait and does not double count a second user message", () => {
     const waited = userRepliedPatch(
-      { awaitingUserSince: new Date(T0.getTime() + HOUR), pausedMs: 0 },
+      { awaitingUserSince: new Date(T0.getTime() + HOUR), pausedSeconds: 0 },
       new Date(T0.getTime() + 5 * HOUR),
     );
-    expect(waited).toEqual({ pausedMs: 4 * HOUR, awaitingUserSince: null });
+    expect(waited).toEqual({
+      pausedSeconds: 4 * 3600,
+      awaitingUserSince: null,
+    });
     // Second message in a row: we were not waiting, so nothing is banked.
-    expect(userRepliedPatch({ awaitingUserSince: null, pausedMs: 4 * HOUR })).toEqual(
-      {},
-    );
+    expect(
+      userRepliedPatch({ awaitingUserSince: null, pausedSeconds: 4 * 3600 }),
+    ).toEqual({});
   });
 
   it("records the first human reply once and never moves it", () => {
     const first = staffRepliedPatch(
-      { acknowledgedAt: null, firstAgentReplyAt: null },
+      {
+        acknowledgedAt: null,
+        firstAgentReplyAt: null,
+        awaitingUserSince: null,
+        pausedSeconds: 0,
+      },
       T0,
     );
     expect(first.firstAgentReplyAt).toEqual(T0);
     expect(first.acknowledgedAt).toEqual(T0);
     const second = staffRepliedPatch(
-      { acknowledgedAt: T0, firstAgentReplyAt: T0 },
+      {
+        acknowledgedAt: T0,
+        firstAgentReplyAt: T0,
+        awaitingUserSince: null,
+        pausedSeconds: 0,
+      },
       new Date(T0.getTime() + DAY),
     );
     expect(second.firstAgentReplyAt).toBeUndefined();
     expect(second.acknowledgedAt).toBeUndefined();
     // But the clock still pauses again — that part is unconditional.
     expect(second.awaitingUserSince).toEqual(new Date(T0.getTime() + DAY));
+  });
+
+  it("banks the wait a SECOND staff reply would otherwise discard", () => {
+    // Staff replies at T0 (clock stops), then again a day later with no user
+    // message in between. That day was time we were owed; overwriting
+    // `awaitingUserSince` used to throw it away.
+    const patch = staffRepliedPatch(
+      {
+        acknowledgedAt: T0,
+        firstAgentReplyAt: T0,
+        awaitingUserSince: T0,
+        pausedSeconds: 0,
+      },
+      new Date(T0.getTime() + DAY),
+    );
+    expect(patch.pausedSeconds).toBe(24 * 3600);
+    expect(patch.awaitingUserSince).toEqual(new Date(T0.getTime() + DAY));
   });
 });
 
@@ -165,7 +195,9 @@ describe("ticket reference", () => {
     // allocates seq 1 — an off-by-one here would hand two tickets the same
     // number on the very first day of a year.
     const tx = {
-      supportTicketCounter: { upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }) },
+      supportTicketCounter: {
+        upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),
+      },
     };
     return allocateTicketReference(tx as never, T0).then((ref) => {
       expect(ref).toBe("FAM-2026-000001");

@@ -10,35 +10,23 @@
  * that drift LOUD: run it after every push (`npm run db:assert-sidecars`) and
  * from any recurring health check.
  *
- * Names are parsed from the sidecar file itself so the two cannot drift.
- * Staged-for-the-reset objects are commented out, so stripping comment lines is
- * what excludes them — splitting on the banner did not, because ACTIVE SQL sits
- * below it too, and that silently left `appointment_doc_thread_version_unique`
- * and `onboarding_draft_payload_size` unasserted.
+ * Names are parsed from the sidecar file itself so the two cannot drift, by the
+ * shared parser in ./sidecar-objects.ts — which the regression test reads too,
+ * so it guards this script rather than a copy of it.
  */
 
 import fs from "fs";
 import path from "path";
 import prisma from "../../lib/prisma";
+import { parseSidecarObjects } from "./sidecar-objects";
 
 async function main() {
   const sql = fs.readFileSync(
     path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
     "utf8",
   );
-  const active = sql
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("--"))
-    .join("\n");
-
-  const constraintNames = [
-    ...active.matchAll(/ADD CONSTRAINT "?([A-Za-z0-9_]+)"?/g),
-  ].map((m) => m[1]);
-  // `IF NOT EXISTS` is optional in the sidecar; without skipping it the capture
-  // group takes the literal "IF" and the assert can never pass.
-  const indexNames = [
-    ...active.matchAll(/CREATE UNIQUE INDEX (?:IF NOT EXISTS )?"?([A-Za-z0-9_]+)"?/g),
-  ].map((m) => m[1]);
+  const { constraints: constraintNames, indexes: indexNames } =
+    parseSidecarObjects(sql);
 
   const presentConstraints = new Set(
     (

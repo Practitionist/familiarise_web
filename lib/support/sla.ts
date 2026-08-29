@@ -65,7 +65,7 @@ export interface SlaClock {
   resolutionDueAt: Date | null;
   resolvedAt: Date | null;
   awaitingUserSince: Date | null;
-  pausedMs: number;
+  pausedSeconds: number;
 }
 
 /**
@@ -75,11 +75,23 @@ export interface SlaClock {
  * The ACKNOWLEDGEMENT clock never pauses: nobody has replied yet, so there is
  * nothing to be waiting for.
  */
-export function pausedMsAt(clock: SlaClock, now: Date = new Date()): number {
-  const open = clock.awaitingUserSince
-    ? Math.max(0, now.getTime() - clock.awaitingUserSince.getTime())
-    : 0;
-  return clock.pausedMs + open;
+export function pausedSecondsAt(
+  clock: Pick<SlaClock, "awaitingUserSince" | "pausedSeconds">,
+  now: Date = new Date(),
+): number {
+  return clock.pausedSeconds + openWaitSeconds(clock, now);
+}
+
+/** The wait that is still running, if any. Zero when the ball is with us. */
+function openWaitSeconds(
+  clock: Pick<SlaClock, "awaitingUserSince">,
+  now: Date,
+): number {
+  if (!clock.awaitingUserSince) return 0;
+  return Math.max(
+    0,
+    Math.floor((now.getTime() - clock.awaitingUserSince.getTime()) / 1000),
+  );
 }
 
 /** Resolution deadline shifted by the time spent waiting on the user. */
@@ -88,7 +100,9 @@ export function effectiveResolutionDueAt(
   now: Date = new Date(),
 ): Date | null {
   if (!clock.resolutionDueAt) return null;
-  return new Date(clock.resolutionDueAt.getTime() + pausedMsAt(clock, now));
+  return new Date(
+    clock.resolutionDueAt.getTime() + pausedSecondsAt(clock, now) * 1000,
+  );
 }
 
 export interface SlaState {
@@ -116,7 +130,9 @@ export function slaStateOf(clock: SlaClock, now: Date = new Date()): SlaState {
 
   return {
     ackBreached:
-      ackOutstanding && !!clock.ackDueAt && now.getTime() > clock.ackDueAt.getTime(),
+      ackOutstanding &&
+      !!clock.ackDueAt &&
+      now.getTime() > clock.ackDueAt.getTime(),
     resolutionBreached:
       resolutionOutstanding &&
       !!resolutionDue &&
@@ -139,11 +155,21 @@ export function slaStateOf(clock: SlaClock, now: Date = new Date()): SlaState {
  * able to claim it.
  */
 export function staffRepliedPatch(
-  clock: Pick<SlaClock, "acknowledgedAt"> & { firstAgentReplyAt: Date | null },
+  clock: Pick<
+    SlaClock,
+    "acknowledgedAt" | "awaitingUserSince" | "pausedSeconds"
+  > & {
+    firstAgentReplyAt: Date | null;
+  },
   now: Date = new Date(),
 ) {
+  // Two staff replies in a row used to just overwrite `awaitingUserSince`,
+  // discarding the wait that was already running between them — time the team
+  // was owed. Bank it first, then restart the clock.
+  const open = openWaitSeconds(clock, now);
   return {
     awaitingUserSince: now,
+    ...(open > 0 ? { pausedSeconds: clock.pausedSeconds + open } : {}),
     ...(clock.acknowledgedAt ? {} : { acknowledgedAt: now }),
     ...(clock.firstAgentReplyAt ? {} : { firstAgentReplyAt: now }),
   };
@@ -155,14 +181,12 @@ export function staffRepliedPatch(
  * three messages in a row cannot bank three pauses.
  */
 export function userRepliedPatch(
-  clock: Pick<SlaClock, "awaitingUserSince" | "pausedMs">,
+  clock: Pick<SlaClock, "awaitingUserSince" | "pausedSeconds">,
   now: Date = new Date(),
 ) {
   if (!clock.awaitingUserSince) return {};
   return {
-    pausedMs:
-      clock.pausedMs +
-      Math.max(0, now.getTime() - clock.awaitingUserSince.getTime()),
+    pausedSeconds: clock.pausedSeconds + openWaitSeconds(clock, now),
     awaitingUserSince: null,
   };
 }

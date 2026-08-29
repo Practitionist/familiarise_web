@@ -357,11 +357,13 @@ export async function notifySupportTicketUpdate(
 export async function notifySupportTicketUpdateForStaff(
   userIds: string[],
   payload: SupportTicketPayload,
+  dedupeKey?: string,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     userIds,
     payload,
+    dedupeKey,
   );
 }
 

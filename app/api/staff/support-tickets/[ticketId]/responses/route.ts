@@ -92,6 +92,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // thread as AGENT messages (what the USER sees on "Get help"), and bump
       // the ticket's own clock — the hub and ops inbox sort by it.
       if (!validatedData.isInternal) {
+        // Re-read inside the transaction: `ticket` was fetched before it
+        // opened, and `firstAgentReplyAt` is first-write-wins.
+        const current = await tx.supportTicket.findUnique({
+          where: { id: ticketId },
+          select: {
+            acknowledgedAt: true,
+            firstAgentReplyAt: true,
+            awaitingUserSince: true,
+            pausedSeconds: true,
+          },
+        });
         await tx.supportTicket.update({
           where: { id: ticketId },
           data: {
@@ -99,7 +110,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             // #705 — a public reply stops the resolution clock and counts as
             // the acknowledgement. An INTERNAL note does neither: the user has
             // not heard anything, so nothing is owed back to them yet.
-            ...staffRepliedPatch(ticket, now),
+            ...(current ? staffRepliedPatch(current, now) : {}),
           },
         });
         const linkedThread = await tx.appointmentSupportThread.findUnique({
@@ -145,7 +156,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error creating support response:", error);
     return NextResponse.json(
       { error: "Failed to create response" },
@@ -182,7 +196,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(responses);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching support responses:", error);
     return NextResponse.json(
       { error: "Failed to fetch responses" },

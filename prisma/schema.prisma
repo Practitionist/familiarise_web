@@ -327,10 +327,16 @@ model SupportTicket {
   firstAgentReplyAt DateTime? @db.Timestamptz
   // The resolution clock stops while the ball is in the user's court, or every
   // slow-replying customer reads as a team breach. Staff's reply sets
-  // `awaitingUserSince`; the user's reply folds the elapsed time into
-  // `pausedMs` and clears it. Effective deadline = resolutionDueAt + pausedMs.
+  // `awaitingUserSince`; the user's reply folds the elapsed wait into
+  // `pausedSeconds` and clears it. Effective deadline =
+  // resolutionDueAt + pausedSeconds.
+  //
+  // SECONDS, not milliseconds: an Int of ms overflows at 24.8 days, which a
+  // ticket that sits on the user for a couple of months would reach. Seconds
+  // buy 68 years, and sub-second precision is meaningless against a deadline
+  // measured in days.
   awaitingUserSince DateTime? @db.Timestamptz
-  pausedMs          Int       @default(0)
+  pausedSeconds     Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

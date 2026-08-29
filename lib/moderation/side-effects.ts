@@ -47,6 +47,10 @@ export interface TransactionalEffectResult {
   earningsHeld?: number;
   profilesUnverified?: number;
   reviewRemoved?: boolean;
+  /** #705 — whose public surfaces need purging once the transaction commits.
+   *  A removed review kept rendering on the landing page for up to an hour
+   *  because nothing invalidated the cache. */
+  reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
 }
 
@@ -194,7 +198,10 @@ async function softDeleteReview(
   // rule that silently disagreed with lib/reviews.ts once group sessions became
   // one data point, and never touched publishedRating at all.
   await recomputeConsultantRating(tx, review.consultantProfileId);
-  return { reviewRemoved: true };
+  return {
+    reviewRemoved: true,
+    reviewRemovedConsultantProfileId: review.consultantProfileId,
+  };
 }
 
 type TriggerOutcome = { success: boolean; error?: Error | string } | null;

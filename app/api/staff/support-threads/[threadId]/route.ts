@@ -192,20 +192,26 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         // stops. Unconditional (not part of the OPEN CAS above): a reply on an
         // already-IN_PROGRESS ticket still pauses the clock and still counts as
         // an acknowledgement.
-        await tx.supportTicket.update({
+        //
+        // Read INSIDE the transaction. The `thread` above was fetched before it
+        // opened, so two staff replying at once would both see a null
+        // `firstAgentReplyAt` and the later write would move a timestamp that is
+        // supposed to be first-write-wins.
+        const current = await tx.supportTicket.findUnique({
           where: { id: thread.supportTicketId },
-          data: {
-            ...staffRepliedPatch(
-              {
-                acknowledgedAt: thread.supportTicket?.acknowledgedAt ?? null,
-                firstAgentReplyAt:
-                  thread.supportTicket?.firstAgentReplyAt ?? null,
-              },
-              now,
-            ),
-            lastMessageAt: now,
+          select: {
+            acknowledgedAt: true,
+            firstAgentReplyAt: true,
+            awaitingUserSince: true,
+            pausedSeconds: true,
           },
         });
+        if (current) {
+          await tx.supportTicket.update({
+            where: { id: thread.supportTicketId },
+            data: { ...staffRepliedPatch(current, now), lastMessageAt: now },
+          });
+        }
       }
       return agentMessage;
     });
@@ -319,7 +325,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         status: 409,
         code: "CONFLICT",
         message: "Thread is closed and can no longer change status",
-        context: { route: THREAD_ROUTE, action: "status", threadId, attemptedStatus: status },
+        context: {
+          route: THREAD_ROUTE,
+          action: "status",
+          threadId,
+          attemptedStatus: status,
+        },
       });
     }
 

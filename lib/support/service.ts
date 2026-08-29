@@ -10,7 +10,10 @@
  * is a separate, server-validated seam — a refund never fires from a flow graph.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "@/lib/prisma";
 import type {
   SupportChannel,
   SupportThreadCategory,
@@ -29,11 +32,7 @@ import { allocateMessageSeq } from "./message-seq";
 import { recordFlowOutcome } from "./deflection";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor, userRepliedPatch } from "./sla";
-import type {
-  SupportAction,
-  SupportContext,
-  SupportTurnResult,
-} from "./types";
+import type { SupportAction, SupportContext, SupportTurnResult } from "./types";
 
 export interface RunTurnInput {
   /** Chosen intent — set on the first turn (or to switch intents). */
@@ -331,6 +330,9 @@ async function persistHumanTurn(
   // "ESCALATED", so once ops resolved the thread the user's own message came
   // back claiming it was still with the team.
   let status = thread.status;
+  // Identifies this specific message to the notification dedupe — see
+  // notifyStaffOfTicketActivity.
+  let messageId: string | null = null;
 
   if (userMessage) {
     status = await prisma.$transaction(async (tx) => {
@@ -349,18 +351,20 @@ async function persistHumanTurn(
         return current.status;
       }
       const seq = await allocateMessageSeq(tx, thread.id, 1);
-      await tx.supportMessage.create({
+      const written = await tx.supportMessage.create({
         data: {
           threadId: thread.id,
           sender: "USER",
           body: userMessage,
           seq: seq + 1,
         },
+        select: { id: true },
       });
+      messageId = written.id;
       if (thread.supportTicketId) {
         const ticket = await tx.supportTicket.findUnique({
           where: { id: thread.supportTicketId },
-          select: { awaitingUserSince: true, pausedMs: true },
+          select: { awaitingUserSince: true, pausedSeconds: true },
         });
         await tx.supportTicket.update({
           where: { id: thread.supportTicketId },
@@ -377,10 +381,15 @@ async function persistHumanTurn(
     // A user reply into an escalated thread used to page nobody — staff only
     // learned of it by reopening the inbox. Fire-and-forget after the commit,
     // for the same reason every other notification here is.
-    if (thread.supportTicketId && status !== "CLOSED" && status !== "RESOLVED") {
+    if (
+      thread.supportTicketId &&
+      status !== "CLOSED" &&
+      status !== "RESOLVED"
+    ) {
       await notifyStaffOfTicketActivity(
         thread.supportTicketId,
         thread.organizationId,
+        messageId ?? undefined,
       ).catch((error) => {
         console.error("support: user-reply notification failed", {
           threadId: thread.id,
@@ -402,7 +411,6 @@ async function persistHumanTurn(
     supportTicketId: thread.supportTicketId,
   };
 }
-
 
 /** Hand the thread to a human: persist the exchange, create/link a SupportTicket
  *  in the existing ops queue, and flip the channel to HUMAN. */
@@ -445,77 +453,84 @@ async function escalate(
     referenceNumber: string | null;
   } | null = null;
 
-  const ticketId = await prisma.$transaction(async (tx) => {
-    // Same rule as the self-serve turn: record the chip the user pressed, so
-    // the escalated transcript staff read contains both halves.
-    const userSaid = userMessage ?? turn.chosenLabel;
-    const outgoing = [
-      ...(userSaid
-        ? [{ sender: "USER" as const, body: userSaid, metadata: undefined }]
-        : []),
-      ...turn.messages.map((m) => ({
-        sender: m.sender as "BOT" | "SYSTEM" | "USER" | "AGENT",
-        body: m.body,
-        metadata: (m.metadata as object) ?? undefined,
-      })),
-    ];
-    let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
-    for (const m of outgoing) {
-      await tx.supportMessage.create({
-        data: { threadId, seq: ++seq, ...m },
-      });
-    }
+  const ticketId = await prisma.$transaction(
+    async (tx) => {
+      // Same rule as the self-serve turn: record the chip the user pressed, so
+      // the escalated transcript staff read contains both halves.
+      const userSaid = userMessage ?? turn.chosenLabel;
+      const outgoing = [
+        ...(userSaid
+          ? [{ sender: "USER" as const, body: userSaid, metadata: undefined }]
+          : []),
+        ...turn.messages.map((m) => ({
+          sender: m.sender as "BOT" | "SYSTEM" | "USER" | "AGENT",
+          body: m.body,
+          metadata: (m.metadata as object) ?? undefined,
+        })),
+      ];
+      let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
+      for (const m of outgoing) {
+        await tx.supportMessage.create({
+          data: { threadId, seq: ++seq, ...m },
+        });
+      }
 
-    let linkedTicketId = existingTicketId;
-    if (!linkedTicketId) {
-      // Both inside the ticket's own transaction: a rolled-back escalation must
-      // not leave a live reference behind, and must not start an SLA clock for
-      // a ticket that does not exist.
-      const openedAt = new Date();
-      const referenceNumber = await allocateTicketReference(tx, openedAt);
-      const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(priority, openedAt);
-      const ticket = await tx.supportTicket.create({
-        data: {
-          userId: ctx.userId,
-          title: `Support for appointment ${ctx.appointmentId}`,
-          description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
+      let linkedTicketId = existingTicketId;
+      if (!linkedTicketId) {
+        // Both inside the ticket's own transaction: a rolled-back escalation must
+        // not leave a live reference behind, and must not start an SLA clock for
+        // a ticket that does not exist.
+        const openedAt = new Date();
+        const referenceNumber = await allocateTicketReference(tx, openedAt);
+        const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
           priority,
-          referenceNumber,
-          ackDueAt,
-          resolutionDueAt,
+          openedAt,
+        );
+        const ticket = await tx.supportTicket.create({
+          data: {
+            userId: ctx.userId,
+            title: `Support for appointment ${ctx.appointmentId}`,
+            description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
+            priority,
+            referenceNumber,
+            ackDueAt,
+            resolutionDueAt,
+            category,
+            // The machine-readable half of the terminal reason. Without it every
+            // session escalation reached ops as an untyped row and none of the
+            // session-scoped issue types was reachable anywhere in the product.
+            issueType: issueType ?? undefined,
+            paymentId: ctx.paymentId,
+            // Org attribution for the ops queue's org filter (null = B2C).
+            organizationId: ctx.organizationId,
+          },
+          select: {
+            id: true,
+            title: true,
+            organizationId: true,
+            referenceNumber: true,
+          },
+        });
+        linkedTicketId = ticket.id;
+        createdTicket = ticket;
+      }
+
+      await tx.appointmentSupportThread.update({
+        where: { id: threadId },
+        data: {
           category,
-          // The machine-readable half of the terminal reason. Without it every
-          // session escalation reached ops as an untyped row and none of the
-          // session-scoped issue types was reachable anywhere in the product.
-          issueType: issueType ?? undefined,
-          paymentId: ctx.paymentId,
-          // Org attribution for the ops queue's org filter (null = B2C).
-          organizationId: ctx.organizationId,
-        },
-        select: {
-          id: true,
-          title: true,
-          organizationId: true,
-          referenceNumber: true,
+          currentNodeId: null,
+          status: "ESCALATED",
+          activeChannel: "HUMAN",
+          supportTicketId: linkedTicketId,
+          lastMessageAt: new Date(),
         },
       });
-      linkedTicketId = ticket.id;
-      createdTicket = ticket;
-    }
-
-    await tx.appointmentSupportThread.update({
-      where: { id: threadId },
-      data: {
-        category,
-        currentNodeId: null,
-        status: "ESCALATED",
-        activeChannel: "HUMAN",
-        supportTicketId: linkedTicketId,
-        lastMessageAt: new Date(),
-      },
-    });
-    return linkedTicketId;
-  });
+      return linkedTicketId;
+    },
+    // Allocation budget: this transaction also queues on the reference counter.
+    { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
+  );
 
   await recordFlowOutcome({
     scope: "APPOINTMENT",

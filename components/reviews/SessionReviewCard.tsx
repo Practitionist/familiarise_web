@@ -66,11 +66,12 @@ export function SessionReviewCard({
   const [text, setText] = useState("");
 
   useEffect(() => {
-    if (existing) {
-      setRating(existing.rating);
-      setText(existing.reviewDescription ?? "");
-    }
-  }, [existing]);
+    // Reset on absence too, and key on the appointment: without either, moving
+    // to a session you have NOT reviewed kept the previous session's stars and
+    // text sitting in the form, ready to be posted against the wrong session.
+    setRating(existing?.rating ?? 0);
+    setText(existing?.reviewDescription ?? "");
+  }, [existing, appointmentId]);
 
   const save = useMutation({
     mutationFn: async () => {

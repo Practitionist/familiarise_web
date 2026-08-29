@@ -98,16 +98,21 @@ export async function POST(
     });
 
     // Committed — safe to page the queue. A user's reply used to notify nobody.
-    await notifyStaffOfTicketActivity(ticketId).catch((error) => {
-      console.error("support: user-reply notification failed", {
-        ticketId,
-        error,
-      });
-    });
+    await notifyStaffOfTicketActivity(ticketId, null, response.id).catch(
+      (error) => {
+        console.error("support: user-reply notification failed", {
+          ticketId,
+          error,
+        });
+      },
+    );
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error creating support response:", error);
     return NextResponse.json(
       {

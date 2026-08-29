@@ -59,7 +59,11 @@ export async function recomputeConsultantRating(
   const [units, legacy] = await Promise.all([
     tx.consultantReview.groupBy({
       by: ["ratingUnitId"],
-      where: { consultantProfileId, deletedAt: null, ratingUnitId: { not: null } },
+      where: {
+        consultantProfileId,
+        deletedAt: null,
+        ratingUnitId: { not: null },
+      },
       _avg: { rating: true },
       _count: { _all: true },
     }),
@@ -97,7 +101,6 @@ export async function recomputeConsultantRating(
 export interface ReviewableSession {
   appointmentId: string;
   consultantProfileId: string;
-  consultantName: string | null;
   /** The unit this review's rating folds into — see recomputeConsultantRating. */
   ratingUnitId: string;
   appointmentType: AppointmentsType;
@@ -111,7 +114,9 @@ export interface ReviewableSession {
   } | null;
 }
 
-type AppointmentRow = Awaited<ReturnType<typeof loadReviewableAppointments>>[number];
+type AppointmentRow = Awaited<
+  ReturnType<typeof loadReviewableAppointments>
+>[number];
 
 function loadReviewableAppointments(
   consulteeProfileId: string,
@@ -234,7 +239,6 @@ function describe(row: AppointmentRow): ReviewableSession | null {
   return {
     appointmentId: row.id,
     consultantProfileId,
-    consultantName: null,
     ratingUnitId,
     appointmentType: row.appointmentType,
     title:
