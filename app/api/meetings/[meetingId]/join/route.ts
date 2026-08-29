@@ -9,6 +9,7 @@ import {
   StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
@@ -135,7 +136,18 @@ export async function POST(
       // This runs only after resolveMeetingAccess has confirmed the caller is on
       // this appointment — authorization first, creation second, which is the
       // ordering P0-2 was about.
-      await call.getOrCreate();
+      // #1270 — server-side auth carries no user context, so Stream requires
+      // an explicit author on GetOrCreateCall. Omitting it threw code 4 on
+      // EVERY request, which this route reported as a 500 after access had
+      // already been granted. Honoured only on actual creation, so an existing
+      // call keeps its original author and the repair path above still works.
+      await call.getOrCreate({ data: { created_by_id: session.user.id } });
+
+      // #1270 — Stream refuses a call operation naming a user it does not
+      // hold, and a token alone never creates one: only connectUser does. A
+      // participant who has never signed in would be refused here, so sync
+      // them first. Already-synced ids are filtered inside.
+      await upsertUsersToStream([session.user.id]);
 
       // Idempotent: re-adding an existing member updates their role rather than
       // erroring, so a rejoin is a no-op.

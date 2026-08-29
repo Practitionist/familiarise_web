@@ -127,6 +127,14 @@ export const useGetCallById = (callId: string) => {
 
       const isRejoin = rejoinKey > 0;
 
+      // #1270 — `callInstance.get()` below applies the call type's
+      // camera_default_on/mic_default_on, so the devices are LIVE from that
+      // line on. Every exit that does not hand the instance to state — a
+      // `cancelled` bail, a throw — used to drop the only reference to it and
+      // leave the camera light on for the life of the tab.
+      let inFlight: Call | null = null;
+      let adopted = false;
+
       try {
         // Release the dead instance BEFORE acquiring a new one, so the camera
         // is not held twice on the same device across the swap.
@@ -184,6 +192,7 @@ export const useGetCallById = (callId: string) => {
         // `client.call()` only constructs the local handle — it performs no
         // network write, so nothing is created for a caller who got this far.
         const callInstance = client.call(data.callType, data.callId);
+        inFlight = callInstance;
         await callInstance.get();
 
         if (cancelled) return;
@@ -205,6 +214,7 @@ export const useGetCallById = (callId: string) => {
         });
         previousCall.current = callInstance;
         setCall(callInstance);
+        adopted = true;
       } catch (err) {
         if (cancelled) return;
         streamLogger.error("Failed to resolve meeting call", err, { callId });
@@ -212,6 +222,9 @@ export const useGetCallById = (callId: string) => {
         setCall(null);
         previousCall.current = null;
       } finally {
+        // Anything still in flight here was never handed to state, so nothing
+        // else can ever release it.
+        if (!adopted && inFlight) await leaveCallAndReleaseMedia(inFlight);
         if (!cancelled) setIsCallLoading(false);
       }
     };

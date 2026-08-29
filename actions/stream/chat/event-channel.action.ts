@@ -135,8 +135,25 @@ export async function addUserToEventChannel(
   const client = getStreamChatClient();
 
   try {
-    // Ensure user is upserted to Stream first
-    await upsertUserToStream(userId);
+    // Ensure user is upserted to Stream first.
+    //
+    // #1270 — a withdrawn/absent STREAM_DATA_PROCESSING consent is a
+    // deliberate refusal, not a failure, and this call site let it bubble
+    // unhandled out of a server action on the appointment page, taking the
+    // WHOLE page down rather than just chat. syncUserChannels below has
+    // degraded gracefully since #701; this one never did.
+    try {
+      await upsertUserToStream(userId);
+    } catch (err) {
+      if (err instanceof ConsentRequiredError) {
+        streamLogger.info(
+          "Skipping event channel join — Stream consent not granted",
+          { userId, channelId, purposeCode: err.purposeCode },
+        );
+        return { success: false, channelId };
+      }
+      throw err;
+    }
 
     const channel = client.channel(channelType, channelId);
 

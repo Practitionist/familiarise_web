@@ -21,6 +21,7 @@ interface MeetingSlot {
   appointmentId?: string | null;
 }
 import { MeetingSession } from "@prisma/client";
+import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Input validation schemas
@@ -274,7 +275,7 @@ export async function resolveSessionAnchorSlot(
     // and split the audience (#1061 class). The consultant's rows are the
     // canonical spine every attendee is grouped around.
     const consultantAnchor = run.slots.find((s) => s.consultantProfileId);
-    return (consultantAnchor ?? run.anchor) ?? slot;
+    return consultantAnchor ?? run.anchor ?? slot;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -423,6 +424,13 @@ export async function resolveSessionCallProfile(
       appointment.class?.classPlan?.title ??
       appointment.trialSession?.subscriptionPlan?.title ??
       null;
+
+    // #1270 — Stream rejects the whole GetOrCreateCall when `members` names a
+    // user it does not hold ("Please create users before referencing them in a
+    // call"), and it never auto-creates one from a reference. 29% of
+    // consultants were missing because only the chat paths upsert. Every chat
+    // channel create already does this; the video mint never did.
+    await upsertUsersToStream([...hostUserIds, ...guestUserIds]);
 
     return {
       startsAt: run.startsAt,

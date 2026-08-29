@@ -53,7 +53,7 @@ import {
 } from "@/lib/labels/session-labels";
 import {
   isInactiveStatus,
-  isApprovedStatus,
+  isConfirmedStatus,
 } from "@/lib/appointments/status-guards";
 import { getSessionJoinState } from "@/lib/appointments/slots";
 
@@ -139,7 +139,10 @@ function UpcomingSessionCard({
   const isApproved =
     event.type === "webinar" || event.type === "class"
       ? event.bookingStatus === "CONFIRMED"
-      : isApprovedStatus(event.status);
+      : // #1270 — was isApprovedStatus, a strict equality on APPROVED. SCHEDULED
+        // is confirmed but not APPROVED, so a scheduled subscription offered
+        // Join on the Appointments tab and hid it here. Same gate both places.
+        isConfirmedStatus(event.status);
   const isTentative = event.joinableSlot?.isTentative ?? true;
   const canShowJoin = !isTentative && isApproved && !isInactive;
 

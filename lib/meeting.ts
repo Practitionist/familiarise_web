@@ -10,6 +10,7 @@ import {
   isUserFacingError,
   userFacingError,
 } from "@/lib/errors/classification/client-failure";
+import { releaseLocalMedia } from "@/lib/stream/media-teardown";
 import type { Call } from "@stream-io/video-react-sdk";
 import { StreamVideoClient } from "@stream-io/video-react-sdk";
 import type { AppointmentsType } from "@prisma/client";
@@ -170,7 +171,7 @@ export const getOrCreateAppointmentMeeting = async (
       // appointment's stored org. `null` from caller force-omits.
       const resolvedOrgId =
         organizationId === undefined
-          ? appointment.organizationId ?? null
+          ? (appointment.organizationId ?? null)
           : organizationId;
 
       // #org-appts — per-appointment identity for host/guest derivation. The
@@ -220,33 +221,44 @@ export const getOrCreateAppointmentMeeting = async (
           : {}),
       };
 
-      await call.getOrCreate({
-        data: {
-          starts_at: startsAt,
-          custom,
-          // Records who hosts, once, instead of every surface inferring it.
-          //
-          // #1134 P0-1 — this is no longer merely additive, and the comment that
-          // used to say so is now the opposite of true. Once
-          // scripts/stream/ensure-call-type-grants.ts strips `join-call` from
-          // `user` and `guest`, membership is the ONLY thing that admits anyone.
-          // A call minted without members is joinable solely via
-          // POST /api/meetings/[id]/join, which grants membership itself — so
-          // the fallback still works, but naming members here is what makes the
-          // common path cheap rather than what makes it possible.
-          //
-          // Deliberately NOT sent (deferred to #1070): `backstage`,
-          // `join_ahead_time_seconds`, and `settings_override.limits
-          // .max_duration_seconds`. The first two let Stream refuse a join, so
-          // a consultant who never calls goLive() would strand a paying
-          // consultee on a backstage screen — invisible to us, unfixable
-          // without a deploy. The third hard-terminates a call that overruns.
-          // The join gate stays in our code, where we can see and fix it.
-          ...(callProfile && callProfile.members.length > 0
-            ? { members: callProfile.members }
-            : {}),
-        },
-      });
+      // #1270 — getOrCreate applies the call's device settings, and this type
+      // has camera_default_on/mic_default_on, so it opens the camera and mic
+      // right here on the DASHBOARD. `call` is function-local and never
+      // returned, so those tracks outlived every reference to them and the
+      // recording indicator stayed lit for the life of the tab. Minting a room
+      // is not joining one; release whatever it turned on either way.
+      try {
+        await call.getOrCreate({
+          data: {
+            starts_at: startsAt,
+            custom,
+            // Records who hosts, once, instead of every surface inferring it.
+            //
+            // #1134 P0-1 — this is no longer merely additive, and the comment that
+            // used to say so is now the opposite of true. Once
+            // scripts/stream/ensure-call-type-grants.ts strips `join-call` from
+            // `user` and `guest`, membership is the ONLY thing that admits anyone.
+            // A call minted without members is joinable solely via
+            // POST /api/meetings/[id]/join, which grants membership itself — so
+            // the fallback still works, but naming members here is what makes the
+            // common path cheap rather than what makes it possible.
+            //
+            // Deliberately NOT sent (deferred to #1070): `backstage`,
+            // `join_ahead_time_seconds`, and `settings_override.limits
+            // .max_duration_seconds`. The first two let Stream refuse a join, so
+            // a consultant who never calls goLive() would strand a paying
+            // consultee on a backstage screen — invisible to us, unfixable
+            // without a deploy. The third hard-terminates a call that overruns.
+            // The join gate stays in our code, where we can see and fix it.
+            ...(callProfile && callProfile.members.length > 0
+              ? { members: callProfile.members }
+              : {}),
+          },
+        });
+      } finally {
+        // Never let teardown mask the reason the mint failed.
+        await releaseLocalMedia(call).catch(() => {});
+      }
 
       // 4. Create the corresponding record in the database via server action.
       // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
@@ -266,14 +278,20 @@ export const getOrCreateAppointmentMeeting = async (
       `Error in getOrCreateAppointmentMeeting for slot ${slot.id}:`,
       error,
     );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     // Wrapped, but with `cause` set: the browser catch needs the original to
     // classify it, and a chunk failure or a server-action `digest` is invisible
     // once the message has been flattened into a string.
     if (error instanceof Error) {
-      throw new Error(`Failed to get/create meeting session: ${error.message}`, {
-        cause: error,
-      });
+      throw new Error(
+        `Failed to get/create meeting session: ${error.message}`,
+        {
+          cause: error,
+        },
+      );
     }
     throw new Error(
       "An unknown error occurred while managing the appointment meeting session.",
