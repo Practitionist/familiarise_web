@@ -19,17 +19,30 @@ import {
 const named = {
   isAnonymous: false,
   rating: 5,
-  consulteeProfile: { user: { name: "Priya S.", image: "https://x/y.png" } },
+  consulteeProfile: {
+    id: "consultee-profile-1",
+    userId: "user-1",
+    user: { name: "Priya S.", image: "https://x/y.png" },
+  },
 };
 const anon = { ...named, isAnonymous: true };
 
 describe("anonymous reviewers", () => {
-  it("removes the name AND the avatar, not just the name", () => {
-    // An avatar is an identifier too, and on a small marketplace often a
-    // stronger one than a first name.
+  it("drops the whole profile, not just the name and avatar", () => {
     const out = stripAnonymousReviewer(anon);
-    expect(out.consulteeProfile.user.name).toBeNull();
-    expect(out.consulteeProfile.user.image).toBeNull();
+    expect(out.consulteeProfile).toBeNull();
+  });
+
+  it("does not leak a stable id that could re-identify the reviewer", () => {
+    // The real hazard is CORRELATION, not the name. Review one expert under
+    // your name and another anonymously, and a shared consulteeProfile.id in
+    // both public payloads joins the two and unmasks the anonymous one. An
+    // opaque id stops being opaque the second time it appears.
+    const serialised = JSON.stringify(stripAnonymousReviewer(anon));
+    expect(serialised).not.toContain("consultee-profile-1");
+    expect(serialised).not.toContain("user-1");
+    expect(serialised).not.toContain("Priya");
+    expect(serialised).not.toContain("y.png");
   });
 
   it("leaves a named review completely untouched", () => {
@@ -42,10 +55,18 @@ describe("anonymous reviewers", () => {
     expect(stripAnonymousReviewer(anon).isAnonymous).toBe(true);
   });
 
+  it("still names a NAMED reviewer \u2014 the strip is opt-in, not blanket", () => {
+    const out = stripAnonymousReviewer(named);
+    expect(JSON.stringify(out)).toContain("Priya S.");
+  });
+
   it("does not mutate the row it was given", () => {
-    const row = { ...anon, consulteeProfile: { user: { ...anon.consulteeProfile.user } } };
+    const row = {
+      ...anon,
+      consulteeProfile: { ...anon.consulteeProfile },
+    };
     stripAnonymousReviewer(row);
-    expect(row.consulteeProfile.user.name).toBe("Priya S.");
+    expect(row.consulteeProfile).not.toBeNull();
   });
 
   it("handles a review with no consultee profile at all", () => {
@@ -55,7 +76,7 @@ describe("anonymous reviewers", () => {
 
   it("strips a mixed list, one by one", () => {
     const out = stripAnonymousReviewers([named, anon]);
-    expect(out[0].consulteeProfile!.user.name).toBe("Priya S.");
-    expect(out[1].consulteeProfile!.user.name).toBeNull();
+    expect(JSON.stringify(out[0])).toContain("Priya S.");
+    expect(out[1].consulteeProfile).toBeNull();
   });
 });

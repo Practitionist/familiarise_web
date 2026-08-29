@@ -11,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
+  ModeratedReviewError,
   recomputeConsultantRating,
   resolveReviewableSession,
 } from "@/lib/reviews";
@@ -98,9 +99,6 @@ export async function GET(req: NextRequest) {
     return apiError({ tag: "[Reviews.GET]", error });
   }
 }
-
-/** Thrown when the author tries to edit a review moderation has removed. */
-class ModeratedReviewError extends Error {}
 
 export async function POST(req: NextRequest) {
   try {

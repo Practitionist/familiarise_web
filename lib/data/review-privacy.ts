@@ -14,26 +14,20 @@
 /** The shape every public review read shares. */
 interface AnonymisableReview {
   isAnonymous: boolean;
-  consulteeProfile?: {
-    user?: { name?: string | null; image?: string | null } | null;
-  } | null;
+  consulteeProfile?: unknown;
 }
 
 export function stripAnonymousReviewer<T extends AnonymisableReview>(
   review: T,
 ): T {
   if (!review.isAnonymous || !review.consulteeProfile) return review;
-  return {
-    ...review,
-    consulteeProfile: {
-      ...review.consulteeProfile,
-      user: {
-        ...review.consulteeProfile.user,
-        name: null,
-        image: null,
-      },
-    },
-  };
+  // The WHOLE profile goes, not just the name and avatar. Leaving
+  // `consulteeProfile.id` behind was a de-anonymisation vector: the same person
+  // reviewing one expert under their name and another anonymously shipped the
+  // SAME profile id in both public payloads, so the two could be joined and the
+  // anonymous one attributed. An opaque id is only opaque until it appears
+  // twice.
+  return { ...review, consulteeProfile: null };
 }
 
 export function stripAnonymousReviewers<T extends AnonymisableReview>(

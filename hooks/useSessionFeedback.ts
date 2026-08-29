@@ -40,11 +40,25 @@ export function useSessionFeedback(
         if (!res.ok) return { ratings: {}, rateable: [] };
         const { data, rateableSlotIds } = await res.json();
         const rows = (data ?? []) as SlotFeedback[];
+        // A provider's read returns EVERY attendee's rating, so a group call
+        // yields several rows for one slot. `Object.fromEntries` kept whichever
+        // came last — the consultant saw one arbitrary attendee's score and
+        // read it as the session's. Averaged instead, which is also how that
+        // call contributes to the rating unit.
+        const bySlot = new Map<string, { total: number; n: number }>();
+        for (const r of rows) {
+          if (!r.slotOfAppointmentId) continue;
+          const acc = bySlot.get(r.slotOfAppointmentId) ?? { total: 0, n: 0 };
+          acc.total += r.rating;
+          acc.n += 1;
+          bySlot.set(r.slotOfAppointmentId, acc);
+        }
         return {
           ratings: Object.fromEntries(
-            rows
-              .filter((r) => r.slotOfAppointmentId)
-              .map((r) => [r.slotOfAppointmentId as string, r.rating]),
+            [...bySlot].map(([slotId, a]) => [
+              slotId,
+              Math.round((a.total / a.n) * 10) / 10,
+            ]),
           ),
           rateable: (rateableSlotIds ?? []) as string[],
         };
