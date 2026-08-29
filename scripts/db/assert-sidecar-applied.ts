@@ -10,27 +10,23 @@
  * that drift LOUD: run it after every push (`npm run db:assert-sidecars`) and
  * from any recurring health check.
  *
- * Names are parsed from the sidecar file itself so the two cannot drift;
- * everything below the "STAGED FOR THE PRE-MVP RESET" banner is ignored.
+ * Names are parsed from the sidecar file itself so the two cannot drift, by the
+ * shared parser in ./sidecar-objects.ts — which the regression test reads too,
+ * so it guards this script rather than a copy of it.
  */
 
 import fs from "fs";
 import path from "path";
 import prisma from "../../lib/prisma";
+import { parseSidecarObjects } from "./sidecar-objects";
 
 async function main() {
   const sql = fs.readFileSync(
     path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
     "utf8",
   );
-  const active = sql.split("STAGED FOR THE PRE-MVP RESET")[0];
-
-  const constraintNames = [
-    ...active.matchAll(/ADD CONSTRAINT "?([A-Za-z0-9_]+)"?/g),
-  ].map((m) => m[1]);
-  const indexNames = [
-    ...active.matchAll(/CREATE UNIQUE INDEX "?([A-Za-z0-9_]+)"?/g),
-  ].map((m) => m[1]);
+  const { constraints: constraintNames, indexes: indexNames } =
+    parseSidecarObjects(sql);
 
   const presentConstraints = new Set(
     (

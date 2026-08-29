@@ -28,6 +28,10 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       description: true,
       experience: true,
       rating: true,
+      // #705 — the published score and the count behind it. `rating` above is
+      // the RAW mean and stays internal; the profile shows this one.
+      publishedRating: true,
+      reviewCount: true,
       headline: true,
       websiteUrl: true,
       twitterUrl: true,

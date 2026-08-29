@@ -124,7 +124,11 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
   const firstOrg = memberships[0]?.organization ?? null;
   return {
     id: c.id,
-    rating: c.rating,
+    // #705 — the suppressed-below-threshold score, never the raw mean. Null
+    // renders as "not enough reviews yet" rather than a number one client can
+    // define.
+    rating: c.publishedRating,
+    reviewCount: c.reviewCount,
     headline: c.headline,
     experience: c.experience,
     description: c.description,
@@ -170,9 +174,15 @@ export function orderByForSort(
       return { user: { name: "desc" } };
     case "reviewCount":
     case "trending":
-      return { reviews: { _count: "desc" } };
+      // #705 — the denormalized count, which excludes soft-deleted reviews.
+      // `{ reviews: { _count: "desc" } }` counted them: Prisma cannot filter a
+      // relation _count inside orderBy, so a moderated-away review kept
+      // pushing its consultant up the trending list.
+      return { reviewCount: "desc" };
     case "rating":
-      return { rating: "desc" };
+      // The PUBLISHED score, nulls last. Sorting on the raw mean let a 5.0 from
+      // a single session outrank a 4.8 from two hundred.
+      return { publishedRating: { sort: "desc", nulls: "last" } };
     case "newest":
       return { createdAt: "desc" };
     case "nameAsc":

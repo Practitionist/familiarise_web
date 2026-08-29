@@ -16,6 +16,7 @@ import {
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
 import * as Sentry from "@sentry/nextjs";
+import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -151,12 +152,12 @@ function moderationActionErrorResponse(error: unknown): NextResponse {
         : 500;
     return NextResponse.json({ error: error.message }, { status });
   }
-  Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
-  console.error("Error taking moderation action:", error);
-  return NextResponse.json(
-    { error: "Failed to take action" },
-    { status: 500 },
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    { tags: { subsystem: "staff" } },
   );
+  console.error("Error taking moderation action:", error);
+  return NextResponse.json({ error: "Failed to take action" }, { status: 500 });
 }
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
@@ -181,10 +182,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     ];
     if (
       ACCOUNT_DESTRUCTIVE.includes(actionType) &&
-      !hasBackofficePermission(
-        session.user.role as UserRole,
-        "users.moderate",
-      )
+      !hasBackofficePermission(session.user.role as UserRole, "users.moderate")
     ) {
       return NextResponse.json(
         {
@@ -237,6 +235,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         session.user.id,
         input,
       );
+
+    // #705 — the moderation path never invalidated the public caches, so a
+    // removed review kept rendering on the landing page and explore for up to
+    // an hour. Purged AFTER the transaction commits: purging before would
+    // repopulate the cache from rows a rollback then restores.
+    if (transactional.reviewRemovedConsultantProfileId) {
+      purgeReviewSurfaces(transactional.reviewRemovedConsultantProfileId);
+    }
 
     // Refunds, Stream revocation, and notifications are best-effort — each
     // step's outcome (including failures) is persisted for staff visibility.

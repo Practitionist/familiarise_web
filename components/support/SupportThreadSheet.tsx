@@ -9,7 +9,7 @@
  * separate server-validated surface, never fired from here.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, LifeBuoy, Send, UserRound, Bot } from "lucide-react";
@@ -29,12 +29,20 @@ import { throwSupportError } from "@/lib/support/error-copy";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
+interface MessageMetadata {
+  /** The flow node this message was emitted from — the chip cursor. */
+  nodeId?: string;
+  options?: { id: string; label: string }[];
+}
+
 interface ThreadMessage {
   id: string;
   sender: Sender;
   body: string;
-  metadata?: { options?: { id: string; label: string }[] } | null;
+  metadata?: MessageMetadata | null;
   createdAt: string;
+  /** Client-only: shown before the server has confirmed the write. */
+  pending?: boolean;
 }
 
 interface SupportThread {
@@ -45,6 +53,11 @@ interface SupportThread {
   messages: ThreadMessage[];
 }
 
+interface ThreadData {
+  thread: SupportThread | null;
+  intents: { category: string; title: string }[];
+}
+
 type SupportAction =
   | { kind: "OFFER_CANCEL_REFUND"; refundPct: number }
   | { kind: string };
@@ -52,15 +65,48 @@ type SupportAction =
 interface TurnResult {
   status: string;
   activeChannel: string;
+  currentNodeId: string | null;
+  /** The bot's own reply. Rendered straight from here — see `onSuccess`. */
+  messages: { sender: Sender; body: string; metadata?: MessageMetadata | null }[];
   escalated: boolean;
   resolved: boolean;
   actions: SupportAction[];
 }
 
-/** The entry intents. SPONSORSHIP_BILLING is offered only in an org context; the
- *  server is the source of truth (an unavailable intent falls back to a human).
- *  #support-hub: the GET now returns the server-gated intent list (stage /
- *  provider / org-operator aware) — this static list is only the fallback. */
+/** Ids for locally-rendered bubbles. Never collide with the server's uuids, and
+ *  distinguishable in the DOM when a transcript is being debugged. */
+let localSeq = 0;
+const nextLocalId = () => `local-${++localSeq}`;
+
+/** Append bubbles to the cached thread, synthesising a shell thread on the
+ *  first turn (the row does not exist until the server writes it). */
+function appendMessages(
+  old: ThreadData | undefined,
+  msgs: Omit<ThreadMessage, "id" | "createdAt">[],
+): ThreadData {
+  const base: ThreadData = old ?? { thread: null, intents: [] };
+  const thread: SupportThread = base.thread ?? {
+    id: "local",
+    status: "IN_PROGRESS",
+    activeChannel: "SELF_SERVE",
+    currentNodeId: null,
+    messages: [],
+  };
+  return {
+    ...base,
+    thread: {
+      ...thread,
+      messages: [
+        ...thread.messages,
+        ...msgs.map((m) => ({
+          ...m,
+          id: nextLocalId(),
+          createdAt: new Date().toISOString(),
+        })),
+      ],
+    },
+  };
+}
 
 function describeAction(a: SupportAction): string | null {
   if (a.kind === "OFFER_CANCEL_REFUND") {
@@ -96,69 +142,32 @@ export function SupportThreadSheet({
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
-  const setOpen = (v: boolean) => {
-    onOpenChange?.(v);
-    if (controlledOpen === undefined) setInternalOpen(v);
-  };
   const [text, setText] = useState("");
   const [lastActions, setLastActions] = useState<SupportAction[]>([]);
   const { toast } = useToast();
   const qc = useQueryClient();
   const queryKey = ["support-thread", appointmentId] as const;
-
-  const { data, isFetching, isError, refetch } = useQuery({
-    queryKey,
-    enabled: open,
-    // Staff reply into this thread from the ops queue and nothing pushes that
-    // down, so without polling the reply sits in the database until the user
-    // closes and reopens the sheet — the thread reads as one-sided. Bounded on
-    // all three sides: only while the sheet is open (`enabled`), never once the
-    // thread is settled, and never in a background tab (the react-query
-    // default), so an idle drawer costs no queries.
-    refetchInterval: (query) => {
-      const status = query.state.data?.thread?.status;
-      return status === "RESOLVED" || status === "CLOSED" ? false : 15_000;
-    },
-    queryFn: async (): Promise<{
-      thread: SupportThread | null;
-      intents: { category: string; title: string }[];
-    }> => {
-      const res = await fetch(`/api/appointments/${appointmentId}/support`);
-      if (!res.ok) await throwSupportError(res, "thread load");
-      const json = await res.json();
-      return { thread: json.data, intents: json.intents ?? [] };
-    },
-  });
-  const thread = data?.thread ?? null;
-
-  // Server-gated intents win; the static list is an ERROR fallback only —
-  // while the gated request is in flight, no chips render (a stage- or role-
-  // invalid category must not be submittable before the server has spoken).
-  //
-  // An empty gated list is a SUCCESSFUL answer, not a failure: it means every
-  // intent was gated out for this stage and role. Falling back to the static
-  // list there re-offered precisely what the server had just withheld — a
-  // no-show chip on an upcoming session, a recording chip on one that never
-  // started. The fallback now triggers only when the request actually errored.
-  // ONLY the server-gated list is ever offered.
-  //
-  // There used to be a static fallback here for when the gated fetch failed.
-  // It was stage-blind by construction, so on any error it offered "Cancel &
-  // refund" on a session that had already happened and "The other party didn't
-  // show" on one that had not started — reintroducing precisely the order-state
-  // violation this flow exists to prevent, and only revealing the problem after
-  // the user pressed a chip and the turn failed. A wrong chip is worse than no
-  // chip: the server clamps the intent anyway, so the fallback bought nothing
-  // and misled. On failure we now say so and offer a retry.
-  const availableIntents = data
-    ? data.intents.map((i) => ({ category: i.category, label: i.title }))
-    : [];
+  const setOpen = (v: boolean) => {
+    onOpenChange?.(v);
+    if (controlledOpen === undefined) setInternalOpen(v);
+    // Offered actions belong to the sitting that produced them. Left standing,
+    // reopening the drawer re-displayed a refund offer from a previous visit.
+    if (!v) {
+      setLastActions([]);
+      setText("");
+    }
+  };
 
   const turn = useMutation({
-    mutationFn: async (body: {
+    mutationFn: async ({
+      chosenLabel: _chosenLabel,
+      ...body
+    }: {
       category?: string;
       chosenOptionId?: string;
       userMessage?: string;
+      /** Client-only echo of what was pressed — see `onMutate`. Never sent. */
+      chosenLabel?: string;
     }): Promise<TurnResult> => {
       const res = await fetch(`/api/appointments/${appointmentId}/support`, {
         method: "POST",
@@ -169,12 +178,60 @@ export function SupportThreadSheet({
       const { data } = await res.json();
       return data;
     },
+    // Echo the user's turn immediately. Without this a press showed nothing
+    // until the POST *and* a follow-up GET had both returned — two serial round
+    // trips, which on a cold serverless instance is a long silent gap that
+    // reads as the tap having missed.
+    onMutate: async (vars) => {
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<ThreadData>(queryKey);
+      const said = vars.userMessage ?? vars.chosenLabel;
+      if (said) {
+        qc.setQueryData<ThreadData>(queryKey, (old) =>
+          appendMessages(old, [
+            { sender: "USER", body: said, pending: true },
+          ]),
+        );
+      }
+      return { previous };
+    },
     onSuccess: (result) => {
       setLastActions(result.actions ?? []);
       setText("");
+      // Merge the server's own reply rather than only invalidating: an
+      // invalidation makes the bot's answer wait for a second round trip, and a
+      // poll resolving in that window can land pre-turn rows over the top. The
+      // confirming refetch still runs behind this and replaces these bubbles
+      // with the persisted rows, which carry identical bodies.
+      qc.setQueryData<ThreadData>(queryKey, (old) => {
+        const merged = appendMessages(
+          old,
+          result.messages.map((m) => ({
+            sender: m.sender,
+            body: m.body,
+            metadata: m.metadata ?? null,
+          })),
+        );
+        if (!merged.thread) return merged;
+        return {
+          ...merged,
+          thread: {
+            ...merged.thread,
+            status: result.status,
+            activeChannel: result.activeChannel,
+            currentNodeId: result.currentNodeId,
+            messages: merged.thread.messages.map((m) =>
+              m.pending ? { ...m, pending: false } : m,
+            ),
+          },
+        };
+      });
       void qc.invalidateQueries({ queryKey });
     },
-    onError: (e: unknown) => {
+    onError: (e: unknown, _vars, context) => {
+      // Roll the optimistic bubble back — a message that stays on screen after
+      // the turn failed is worse than one that never appeared.
+      if (context?.previous) qc.setQueryData(queryKey, context.previous);
       toast({
         title: "Support",
         description: e instanceof Error ? e.message : "Please try again.",
@@ -183,17 +240,65 @@ export function SupportThreadSheet({
     },
   });
 
+  const { data, isFetching, isError, refetch } = useQuery({
+    queryKey,
+    enabled: open,
+    // Staff reply into this thread from the ops queue and nothing pushes that
+    // down, so without polling the reply sits in the database until the user
+    // closes and reopens the sheet — the thread reads as one-sided. Bounded on
+    // four sides: only while the sheet is open (`enabled`), never once the
+    // thread is settled, never in a background tab (the react-query default),
+    // and never while a turn is in flight — a poll that resolves after the
+    // optimistic write would otherwise put the pre-turn transcript back.
+    refetchInterval: (query) => {
+      if (turn.isPending) return false;
+      const status = query.state.data?.thread?.status;
+      return status === "RESOLVED" || status === "CLOSED" ? false : 15_000;
+    },
+    queryFn: async (): Promise<ThreadData> => {
+      const res = await fetch(`/api/appointments/${appointmentId}/support`);
+      if (!res.ok) await throwSupportError(res, "thread load");
+      const json = await res.json();
+      return { thread: json.data, intents: json.intents ?? [] };
+    },
+  });
+  const thread = data?.thread ?? null;
+
+  // Server-gated intents win; there is NO static fallback. An empty gated list
+  // is a SUCCESSFUL answer — every intent was gated out for this stage and role
+  // — so falling back would re-offer precisely what the server withheld (a
+  // no-show chip on an upcoming session, a recording chip on one that never
+  // started). On a genuine error we say so and offer a retry instead.
+  const availableIntents = data
+    ? data.intents.map((i) => ({ category: i.category, label: i.title }))
+    : [];
+
   const messages = thread?.messages ?? [];
   const isHuman = thread?.activeChannel === "HUMAN";
   const isResolved = thread?.status === "RESOLVED";
-  const lastBot = [...messages].reverse().find((m) => m.sender === "BOT");
+  // Chips come from the message that sits AT the server's cursor, not from
+  // whichever BOT message happens to be last. Those two can drift, and a chip
+  // whose option id the server no longer recognises spends a whole round trip
+  // to answer "I didn't catch that".
+  const cursor = thread?.currentNodeId ?? null;
+  const activePrompt = cursor
+    ? [...messages]
+        .reverse()
+        .find((m) => m.sender === "BOT" && m.metadata?.nodeId === cursor)
+    : undefined;
   const options =
-    !isHuman && !isResolved ? (lastBot?.metadata?.options ?? []) : [];
+    !isHuman && !isResolved ? (activePrompt?.metadata?.options ?? []) : [];
   const started = !!thread;
-  // A press must stay dead until the server state has round-tripped: the
-  // double-bubble bug was a second POST landing in the refetch window after
-  // isPending flipped false but before the refetch swapped the options.
-  const turnPending = turn.isPending || (turn.isSuccess && isFetching);
+  const turnPending = turn.isPending;
+
+  // Keep the newest bubble in view. The transcript is a plain overflow
+  // container, so past the drawer height every reply lands below the fold and
+  // the drawer looks like it stopped responding.
+  const endRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [open, messages.length, turnPending]);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -245,10 +350,11 @@ export function SupportThreadSheet({
             >
               <div
                 className={
-                  "max-w-[85%] rounded-2xl px-3 py-2 text-sm " +
+                  "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
                   (m.sender === "USER"
                     ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground")
+                    : "bg-muted text-foreground") +
+                  (m.pending ? " opacity-70" : "")
                 }
               >
                 <span className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wide opacity-60">
@@ -263,6 +369,27 @@ export function SupportThreadSheet({
               </div>
             </div>
           ))}
+
+          {/* The bot is working. Uber's own write-up calls this out as the
+              contract of a request/response flow engine: the user waits, and a
+              visual indicator tells them why. */}
+          {turnPending && (
+            <div className="flex justify-start">
+              <div
+                className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
+                role="status"
+                aria-label="Support is typing"
+              >
+                {[0, 150, 300].map((delay) => (
+                  <span
+                    key={delay}
+                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/40"
+                    style={{ animationDelay: `${delay}ms` }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Offered actions from the latest turn (informational, not executed) */}
           {lastActions.map(describeAction).map((desc, i) =>
@@ -281,6 +408,7 @@ export function SupportThreadSheet({
               Resolved
             </Badge>
           )}
+          <div ref={endRef} />
         </div>
 
         {/* Controls */}
@@ -309,7 +437,9 @@ export function SupportThreadSheet({
                     variant="outline"
                     size="sm"
                     disabled={turnPending}
-                    onClick={() => turn.mutate({ category: i.category })}
+                    onClick={() =>
+                      turn.mutate({ category: i.category, chosenLabel: i.label })
+                    }
                   >
                     {i.label}
                   </Button>
@@ -325,7 +455,12 @@ export function SupportThreadSheet({
                     variant="outline"
                     size="sm"
                     disabled={turnPending}
-                    onClick={() => turn.mutate({ chosenOptionId: o.id })}
+                    onClick={() =>
+                      turn.mutate({
+                        chosenOptionId: o.id,
+                        chosenLabel: o.label,
+                      })
+                    }
                   >
                     {o.label}
                   </Button>

@@ -20,9 +20,16 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: { findUnique: jest.fn() },
-    appointmentSupportThread: { upsert: jest.fn(), update: jest.fn() },
+    appointmentSupportThread: {
+      upsert: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
     supportMessage: { create: jest.fn() },
-    supportTicket: { create: jest.fn() },
+    supportTicket: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    supportTicketCounter: { upsert: jest.fn() },
+    user: { findMany: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -37,9 +44,16 @@ import { runSupportTurn } from "@/lib/support/service";
 
 const mockPrisma = prisma as unknown as {
   appointment: { findUnique: jest.Mock };
-  appointmentSupportThread: { upsert: jest.Mock; update: jest.Mock };
+  appointmentSupportThread: {
+    upsert: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+  };
   supportMessage: { create: jest.Mock };
-  supportTicket: { create: jest.Mock };
+  supportTicket: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+  supportTicketCounter: { upsert: jest.Mock };
+  user: { findMany: jest.Mock };
   $transaction: jest.Mock;
 };
 const mockBuildContext = buildSupportContext as unknown as jest.Mock;
@@ -92,7 +106,20 @@ beforeEach(() => {
       : (arg as (tx: unknown) => unknown)(mockPrisma),
   );
   mockPrisma.supportMessage.create.mockResolvedValue({});
-  mockPrisma.appointmentSupportThread.update.mockResolvedValue({});
+  // #705 — the thread row is also the message-sequence allocator, so every
+  // write path reads `messageSeq` back off this update.
+  mockPrisma.appointmentSupportThread.update.mockResolvedValue({
+    messageSeq: 0,
+  });
+  mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({ count: 1 });
+  mockPrisma.appointmentSupportThread.findUniqueOrThrow.mockResolvedValue({
+    status: "ESCALATED",
+    messageSeq: 0,
+  });
+  mockPrisma.supportTicketCounter.upsert.mockResolvedValue({ nextSeq: 2 });
+  mockPrisma.supportTicket.findUnique.mockResolvedValue(null);
+  mockPrisma.supportTicket.update.mockResolvedValue({});
+  mockPrisma.user.findMany.mockResolvedValue([]);
 });
 
 describe("runSupportTurn", () => {
@@ -176,15 +203,41 @@ describe("runSupportTurn", () => {
     expect(mockPrisma.supportMessage.create).toHaveBeenCalledTimes(1);
   });
 
-  it("does not persist a duplicate bubble when a press re-presents the same node", async () => {
+  it("answers instead of going silent when nothing matched, keeping the chips live", async () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
     );
     const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "bogus" });
-    expect(r?.currentNodeId).toBe("start");
-    // The caller still receives the prompt (UI converges), but nothing new is
-    // written — one press can never append two identical bubbles.
-    expect(mockPrisma.supportMessage.create).not.toHaveBeenCalled();
+    expect(r?.currentNodeId).toBe("start"); // cursor did not move
+    // Exactly one bubble, and it is NOT a verbatim repeat of the prompt: this
+    // used to persist nothing at all, so a user who typed at a prompt watched
+    // their message land and the bot say nothing back.
+    const bodies = mockPrisma.supportMessage.create.mock.calls.map(
+      (c) => c[0].data,
+    );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].sender).toBe("BOT");
+    expect(bodies[0].body).toMatch(/didn't catch that/i);
+    // The options ride along, or the prompt becomes a dead end — no buttons,
+    // and free text cannot advance it.
+    expect(bodies[0].metadata.options.length).toBeGreaterThan(0);
+    expect(bodies[0].metadata.nodeId).toBe("start");
+  });
+
+  it("records the intent chip as the user's first message", async () => {
+    // The walk can only name an option it matched, and the entry present()
+    // matches nothing — so the transcript opened with a bot prompt and no
+    // record of what the user had actually asked for.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: null }),
+    );
+    await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    const written = mockPrisma.supportMessage.create.mock.calls.map(
+      (c) => c[0].data,
+    );
+    expect(written[0].sender).toBe("USER");
+    expect(written[0].body).toBeTruthy();
+    expect(written[1].sender).toBe("BOT");
   });
 
   it("clicking the active intent chip restarts the flow at its entry", async () => {
