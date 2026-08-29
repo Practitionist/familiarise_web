@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, LifeBuoy, Send, UserRound, Bot } from "lucide-react";
+import { CalendarDays, LifeBuoy, Send } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -67,7 +67,11 @@ interface TurnResult {
   activeChannel: string;
   currentNodeId: string | null;
   /** The bot's own reply. Rendered straight from here — see `onSuccess`. */
-  messages: { sender: Sender; body: string; metadata?: MessageMetadata | null }[];
+  messages: {
+    sender: Sender;
+    body: string;
+    metadata?: MessageMetadata | null;
+  }[];
   escalated: boolean;
   resolved: boolean;
   actions: SupportAction[];
@@ -188,9 +192,7 @@ export function SupportThreadSheet({
       const said = vars.userMessage ?? vars.chosenLabel;
       if (said) {
         qc.setQueryData<ThreadData>(queryKey, (old) =>
-          appendMessages(old, [
-            { sender: "USER", body: said, pending: true },
-          ]),
+          appendMessages(old, [{ sender: "USER", body: said, pending: true }]),
         );
       }
       return { previous };
@@ -290,6 +292,13 @@ export function SupportThreadSheet({
     !isHuman && !isResolved ? (activePrompt?.metadata?.options ?? []) : [];
   const started = !!thread;
   const turnPending = turn.isPending;
+  // The hand-off sits immediately before the first AGENT message. A thread that
+  // has escalated but whose staff reply has not landed yet still gets the
+  // marker, at the end — otherwise the drawer looks like the bot simply gave
+  // up on the user.
+  const firstAgent = messages.findIndex((m) => m.sender === "AGENT");
+  const handoffIndex =
+    firstAgent >= 0 ? firstAgent : isHuman ? messages.length : -1;
 
   // Keep the newest bubble in view. The transcript is a plain overflow
   // container, so past the drawer height every reply lands below the fold and
@@ -334,81 +343,106 @@ export function SupportThreadSheet({
           </SheetDescription>
         </SheetHeader>
 
-        {/* Conversation */}
-        <div className="flex-1 space-y-3 overflow-y-auto px-5 pb-2">
-          {!started && (
-            <p className="text-sm text-muted-foreground">
-              What do you need help with?
-            </p>
-          )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={
-                m.sender === "USER" ? "flex justify-end" : "flex justify-start"
-              }
-            >
-              <div
-                className={
-                  "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
-                  (m.sender === "USER"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-foreground") +
-                  (m.pending ? " opacity-70" : "")
-                }
-              >
-                <span className="mb-0.5 flex items-center gap-1 text-[10px] uppercase tracking-wide opacity-60">
-                  {m.sender === "USER" ? (
-                    <UserRound className="h-3 w-3" />
-                  ) : (
-                    <Bot className="h-3 w-3" />
-                  )}
-                  {m.sender === "AGENT" ? "Support" : m.sender.toLowerCase()}
-                </span>
-                {m.body}
+        {/* Conversation. The inner wrapper bottom-aligns a short transcript
+            against the composer instead of stranding it at the top of an empty
+            panel, and still scrolls normally once it outgrows the drawer. */}
+        <div className="flex-1 overflow-y-auto px-5 pb-2">
+          <div className="flex min-h-full flex-col justify-end space-y-3">
+            {!started && (
+              <p className="text-sm text-muted-foreground">
+                What do you need help with?
+              </p>
+            )}
+            {messages.map((m, i) => (
+              <div key={m.id}>
+                {/* Where the bot stopped and a person took over. Without it the
+                    hand-off is invisible inside the drawer even though the page
+                    behind it says "With our team". */}
+                {i === handoffIndex && (
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-[11px] text-muted-foreground">
+                      Passed to our support team
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                )}
+                <div
+                  className={
+                    m.sender === "USER"
+                      ? "flex justify-end"
+                      : "flex justify-start"
+                  }
+                >
+                  {/* No "USER"/"BOT" caption: nobody labels their own messages,
+                      and "BOT" contradicted the header's "you're connected with
+                      our support team". Side and colour carry the speaker; the
+                      divider above carries who is answering. */}
+                  <div
+                    className={
+                      "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
+                      (m.sender === "USER"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-foreground") +
+                      (m.pending ? " opacity-70" : "")
+                    }
+                  >
+                    {m.body}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
 
-          {/* The bot is working. Uber's own write-up calls this out as the
+            {/* The bot is working. Uber's own write-up calls this out as the
               contract of a request/response flow engine: the user waits, and a
               visual indicator tells them why. */}
-          {turnPending && (
-            <div className="flex justify-start">
-              <div
-                className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
-                role="status"
-                aria-label="Support is typing"
-              >
-                {[0, 150, 300].map((delay) => (
-                  <span
-                    key={delay}
-                    className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/40"
-                    style={{ animationDelay: `${delay}ms` }}
-                  />
-                ))}
+            {handoffIndex === messages.length && (
+              <div className="flex items-center gap-2">
+                <span className="h-px flex-1 bg-border" />
+                <span className="text-[11px] text-muted-foreground">
+                  Passed to our support team
+                </span>
+                <span className="h-px flex-1 bg-border" />
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Offered actions from the latest turn (informational, not executed) */}
-          {lastActions.map(describeAction).map((desc, i) =>
-            desc ? (
-              <div
-                key={i}
-                className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground"
-              >
-                {desc}
+            {turnPending && (
+              <div className="flex justify-start">
+                <div
+                  className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
+                  role="status"
+                  aria-label="Support is typing"
+                >
+                  {[0, 150, 300].map((delay) => (
+                    <span
+                      key={delay}
+                      className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground/40"
+                      style={{ animationDelay: `${delay}ms` }}
+                    />
+                  ))}
+                </div>
               </div>
-            ) : null,
-          )}
+            )}
 
-          {isResolved && (
-            <Badge variant="secondary" className="mt-1">
-              Resolved
-            </Badge>
-          )}
-          <div ref={endRef} />
+            {/* Offered actions from the latest turn (informational, not executed) */}
+            {lastActions.map(describeAction).map((desc, i) =>
+              desc ? (
+                <div
+                  key={i}
+                  className="rounded-lg border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground"
+                >
+                  {desc}
+                </div>
+              ) : null,
+            )}
+
+            {isResolved && (
+              <Badge variant="secondary" className="mt-1">
+                Resolved
+              </Badge>
+            )}
+            <div ref={endRef} />
+          </div>
         </div>
 
         {/* Controls */}
@@ -438,7 +472,10 @@ export function SupportThreadSheet({
                     size="sm"
                     disabled={turnPending}
                     onClick={() =>
-                      turn.mutate({ category: i.category, chosenLabel: i.label })
+                      turn.mutate({
+                        category: i.category,
+                        chosenLabel: i.label,
+                      })
                     }
                   >
                     {i.label}
