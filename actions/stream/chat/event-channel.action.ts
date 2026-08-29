@@ -1,6 +1,7 @@
 "use server";
 
 import * as Sentry from "@sentry/nextjs";
+import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
@@ -141,6 +142,38 @@ async function syncUserOrSkipOnConsent(
 }
 
 /**
+ * Adds the user to a channel that is assumed to already exist.
+ *
+ * @returns false when the add failed in a way that suggests the channel is not
+ * there yet, so the caller should create it. A Stream outage is rethrown rather
+ * than reported as "missing", so we don't follow it with a pointless create
+ * that fast-fails too (#473).
+ */
+async function tryAddToExistingChannel(
+  channel: ReturnType<StreamChat["channel"]>,
+  channelId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    await withStreamCircuitBreaker(
+      () => channel.addMembers([userId]),
+      () => {
+        throw new StreamUnavailableError();
+      },
+    );
+    markMembership(channelId, userId, true);
+    streamLogger.debug("Added user to existing channel", { channelId, userId });
+    return true;
+  } catch (addError) {
+    if (addError instanceof StreamUnavailableError) throw addError;
+    streamLogger.debug("Channel may not exist, attempting creation", {
+      channelId,
+    });
+    return false;
+  }
+}
+
+/**
  * Add a user to an event channel, creating the channel if it doesn't exist
  * Uses caching to avoid redundant operations
  */
@@ -174,28 +207,8 @@ export async function addUserToEventChannel(
     const channel = client.channel(channelType, channelId);
 
     // Try to add member directly (works for existing channels)
-    try {
-      // #473 — breaker-open rethrows StreamUnavailableError, which propagates
-      // out of the outer try (so we don't masquerade an outage as "channel
-      // missing" and attempt a pointless create that also fast-fails).
-      await withStreamCircuitBreaker(
-        () => channel.addMembers([userId]),
-        () => {
-          throw new StreamUnavailableError();
-        },
-      );
-      markMembership(channelId, userId, true);
-      streamLogger.debug("Added user to existing channel", {
-        channelId,
-        userId,
-      });
+    if (await tryAddToExistingChannel(channel, channelId, userId)) {
       return { success: true, channelId };
-    } catch (addError) {
-      if (addError instanceof StreamUnavailableError) throw addError;
-      // Channel might not exist, try to create it
-      streamLogger.debug("Channel may not exist, attempting creation", {
-        channelId,
-      });
     }
 
     // Channel doesn't exist, create it based on event type

@@ -121,19 +121,30 @@ export const useGetCallById = (callId: string) => {
     // one, and a `setState` after unmount.
     let cancelled = false;
 
+    // #1270 — `callInstance.get()` below applies the call type's
+    // camera_default_on/mic_default_on, so the devices are LIVE from that line
+    // on. Every exit that does not hand the instance to state — a `cancelled`
+    // bail, a throw, an unmount mid-flight — used to drop the only reference to
+    // it and leave the camera light on for the life of the tab.
+    //
+    // Declared out here so the effect's cleanup can release an instance whose
+    // `get()`/`join()` is still pending. The handle is deliberately NOT cleared
+    // on release: `applyDeviceConfig` runs at the TAIL of `get()`, so a cleanup
+    // that fires mid-flight can release devices that are then re-enabled a
+    // moment later. Keeping the handle lets the `finally` — which runs after
+    // `get()` settles — release them again. Teardown is idempotent, and being
+    // called twice is much cheaper than the leak.
+    let inFlight: Call | null = null;
+    let adopted = false;
+    const releaseIfUnadopted = async () => {
+      if (!adopted && inFlight) await leaveCallAndReleaseMedia(inFlight);
+    };
+
     const run = async () => {
       setIsCallLoading(true);
       setError(null);
 
       const isRejoin = rejoinKey > 0;
-
-      // #1270 — `callInstance.get()` below applies the call type's
-      // camera_default_on/mic_default_on, so the devices are LIVE from that
-      // line on. Every exit that does not hand the instance to state — a
-      // `cancelled` bail, a throw — used to drop the only reference to it and
-      // leave the camera light on for the life of the tab.
-      let inFlight: Call | null = null;
-      let adopted = false;
 
       try {
         // Release the dead instance BEFORE acquiring a new one, so the camera
@@ -224,7 +235,7 @@ export const useGetCallById = (callId: string) => {
       } finally {
         // Anything still in flight here was never handed to state, so nothing
         // else can ever release it.
-        if (!adopted && inFlight) await leaveCallAndReleaseMedia(inFlight);
+        await releaseIfUnadopted();
         if (!cancelled) setIsCallLoading(false);
       }
     };
@@ -233,6 +244,9 @@ export const useGetCallById = (callId: string) => {
 
     return () => {
       cancelled = true;
+      // Do not wait for the in-flight SDK call to settle before cutting
+      // capture — the user has already navigated away.
+      void releaseIfUnadopted();
     };
   }, [client, callId, rejoinKey]);
 
