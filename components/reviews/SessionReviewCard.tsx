@@ -31,11 +31,13 @@ import { throwSupportError } from "@/lib/support/error-copy";
 
 interface ReviewableSession {
   appointmentId: string;
+  consultantName: string | null;
   title: string;
   existingReview: {
     id: string;
     rating: number;
     reviewDescription: string | null;
+    isAnonymous?: boolean;
   } | null;
 }
 
@@ -69,6 +71,7 @@ export function SessionReviewCard({
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
   const [text, setText] = useState("");
+  const [anonymous, setAnonymous] = useState(false);
 
   useEffect(() => {
     // Reset on absence too, and key on the appointment: without either, moving
@@ -76,6 +79,7 @@ export function SessionReviewCard({
     // text sitting in the form, ready to be posted against the wrong session.
     setRating(existing?.rating ?? 0);
     setText(existing?.reviewDescription ?? "");
+    setAnonymous(existing?.isAnonymous ?? false);
   }, [existing, appointmentId]);
 
   const save = useMutation({
@@ -83,7 +87,11 @@ export function SessionReviewCard({
       // Explicit null when cleared, never undefined: UpdateReviewSchema is
       // `.partial()`, so undefined means "leave it alone" and a consultee
       // deleting their written review could never actually delete it.
-      const body = { rating, reviewDescription: text.trim() || null };
+      const body = {
+        rating,
+        reviewDescription: text.trim() || null,
+        isAnonymous: anonymous,
+      };
       const res = existing
         ? await fetch(`/api/user/reviews/${existing.id}`, {
             method: "PUT",
@@ -145,12 +153,19 @@ export function SessionReviewCard({
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
+      {/* Named for the person, because that is who the user thinks they are
+          reviewing and whose profile it lands on. The session is provenance —
+          it proves the review is genuine and it is what let them in here — so
+          it sits underneath as context rather than as the subject. */}
       <h3 className="text-sm font-medium text-foreground">
-        {existing ? "Your public review" : "Review this session publicly"}
+        {existing ? "Your review of " : "Review "}
+        {session.consultantName ?? "this expert"}
       </h3>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        This one is public — it appears on the expert&apos;s profile with your
-        name and the date. Your private rating above stays between you and us.
+        {session.title}
+        {" · "}
+        Public — it appears on their profile with the date. One review per
+        expert; you can edit it after a later session.
       </p>
 
       <div className="mt-3 flex items-center gap-1">
@@ -188,6 +203,21 @@ export function SessionReviewCard({
         onChange={(e) => setText(e.target.value)}
         placeholder="What was useful, and what could have been better? (optional)"
       />
+
+      <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={anonymous}
+          onChange={(e) => setAnonymous(e.target.checked)}
+        />
+        {/* Authenticity never depended on the name: the review is welded to a
+            paid, attended session either way. Hiding it costs no trust and
+            buys candour from someone who may want to book this person again. */}
+        <span>
+          Post as <strong>Verified client</strong> instead of my name
+        </span>
+      </label>
 
       <div className="mt-3 flex items-center gap-2">
         <Button

@@ -45,10 +45,22 @@ export async function GET(
         appointmentId,
       });
     }
-    // Every call of this booking the caller has rated, so the detail page can
-    // show a per-session breakdown rather than one number for the package.
+    // #705 — the CONSULTANT sees the individual ratings their calls received.
+    // A deliberate product call: at this volume an aggregate over two ratings
+    // tells nobody anything, so the detail is what makes it actionable. The
+    // copy the rater sees says so plainly — nothing here is promised private.
+    // On a 1:1 booking this identifies the rater, which is exactly why it is
+    // disclosed rather than quietly enabled.
+    const asProvider =
+      appointmentRaterRole(auth.userId, auth.detail) === "PROVIDER";
+
+    // Every call of this booking the caller has rated (or, for the provider,
+    // every attendee rating on it), so the timeline can show a per-session
+    // breakdown instead of one number for the package.
     const feedback = await prisma.appointmentFeedback.findMany({
-      where: { appointmentId, userId: auth.userId },
+      where: asProvider
+        ? { appointmentId, raterRole: "CONSULTEE" }
+        : { appointmentId, userId: auth.userId },
       select: {
         id: true,
         slotOfAppointmentId: true,
@@ -56,6 +68,7 @@ export async function GET(
         comment: true,
         createdAt: true,
       },
+      // A provider could otherwise infer a rater from ordering on a group call.
       orderBy: { createdAt: "asc" },
     });
     return NextResponse.json({ data: feedback });

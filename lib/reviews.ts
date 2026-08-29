@@ -114,6 +114,9 @@ export async function recomputeConsultantRating(
 export interface ReviewableSession {
   appointmentId: string;
   consultantProfileId: string;
+  /** Whose profile this review lands on — the card says the name, because that
+   *  is who the user thinks they are reviewing. */
+  consultantName: string | null;
   /** The unit this review's rating folds into — see recomputeConsultantRating. */
   ratingUnitId: string;
   appointmentType: AppointmentsType;
@@ -185,26 +188,59 @@ function loadReviewableAppointments(
       consultation: {
         select: {
           consultationPlan: {
-            select: { title: true, consultantProfileId: true },
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
           },
         },
       },
       subscription: {
         select: {
           subscriptionPlan: {
-            select: { title: true, consultantProfileId: true },
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
           },
         },
       },
-      trialSession: { select: { consultantProfileId: true } },
+      trialSession: {
+        select: {
+          consultantProfileId: true,
+          consultantProfile: { select: { user: { select: { name: true } } } },
+        },
+      },
       webinar: {
         select: {
-          webinarPlan: { select: { title: true, consultantProfileId: true } },
+          webinarPlan: {
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
         },
       },
       class: {
         select: {
-          classPlan: { select: { title: true, consultantProfileId: true } },
+          classPlan: {
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
         },
       },
       slotsOfAppointment: {
@@ -215,7 +251,12 @@ function loadReviewableAppointments(
       },
       consultantReviews: {
         where: { consulteeProfileId, deletedAt: null },
-        select: { id: true, rating: true, reviewDescription: true },
+        select: {
+          id: true,
+          rating: true,
+          reviewDescription: true,
+          isAnonymous: true,
+        },
         take: 1,
       },
     },
@@ -252,6 +293,13 @@ function describe(row: AppointmentRow): ReviewableSession | null {
   return {
     appointmentId: row.id,
     consultantProfileId,
+    consultantName:
+      row.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+      row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+      row.trialSession?.consultantProfile?.user?.name ??
+      row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+      row.class?.classPlan?.consultantProfile?.user?.name ??
+      null,
     ratingUnitId,
     appointmentType: row.appointmentType,
     title:

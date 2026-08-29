@@ -24,10 +24,13 @@ export function SessionRatingRow({
   appointmentId,
   slotId,
   existingRating,
+  readOnly = false,
 }: {
   appointmentId: string;
   slotId: string;
   existingRating: number | null;
+  /** The consultant's view: what this call scored, not something to set. */
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -66,6 +69,28 @@ export function SessionRatingRow({
       });
     },
   });
+
+  // Nothing to show a consultant on a call nobody rated — an empty star row
+  // reads as a zero rather than as an absence.
+  if (readOnly && !existingRating) return null;
+
+  if (readOnly) {
+    return (
+      <div className="flex items-center gap-0.5" title="Rated by the attendee">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Star
+            key={n}
+            className={
+              "h-3.5 w-3.5 " +
+              ((existingRating ?? 0) >= n
+                ? "fill-foreground text-foreground"
+                : "text-muted-foreground/30")
+            }
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div

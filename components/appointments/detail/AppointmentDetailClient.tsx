@@ -127,7 +127,7 @@ export function AppointmentDetailClient({
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
   // Which calls of this booking the viewer has already rated.
-  const ratedSlots = useSessionFeedback(appointmentId, role === "consultee");
+  const ratedSlots = useSessionFeedback(appointmentId, true);
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   if (isLoading && !detail) {
@@ -350,19 +350,16 @@ export function AppointmentDetailClient({
                   // rates. Attendees only: the API authorizes any participant,
                   // and a consultant rating their own session would feed the
                   // org quality average.
-                  renderSessionExtra={
-                    role === "consultee"
-                      ? (session) => (
-                          <SessionRatingRow
-                            appointmentId={
-                              session.appointmentId ?? appointmentId
-                            }
-                            slotId={session.slotId}
-                            existingRating={ratedSlots[session.slotId] ?? null}
-                          />
-                        )
-                      : undefined
-                  }
+                  renderSessionExtra={(session) => (
+                    <SessionRatingRow
+                      appointmentId={session.appointmentId ?? appointmentId}
+                      slotId={session.slotId}
+                      existingRating={ratedSlots[session.slotId] ?? null}
+                      // The consultant sees what a call scored; only the
+                      // attendee can set it.
+                      readOnly={role !== "consultee"}
+                    />
+                  )}
                   sessions={vm.sessions}
                   joinWindowMs={joinWindowMs}
                   defaultExpanded
