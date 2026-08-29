@@ -147,13 +147,34 @@ export async function POST(req: NextRequest) {
     // the recomputed average (P2034 aborts one, retry then sees the committed row).
     const newReview = await withSerializableRetry(() =>
       prisma.$transaction(async (tx) => {
-      const created = await tx.consultantReview.create({
-        data: {
+      // UPSERT, not create. There is one review per consultant per consultee,
+      // so a second session with the same person updates the opinion rather
+      // than colliding on the unique — and `appointmentId`/`ratingUnitId` move
+      // to the session that prompted this edit, which is what keeps the group
+      // weighting pointed at the most recent thing they actually attended.
+      const created = await tx.consultantReview.upsert({
+        where: {
+          consultantProfileId_consulteeProfileId: {
+            consultantProfileId: reviewable.consultantProfileId,
+            consulteeProfileId: sessionConsulteeProfileId,
+          },
+        },
+        update: {
+          rating: validatedData.rating,
+          reviewDescription: validatedData.reviewDescription,
+          appointmentId: reviewable.appointmentId,
+          ratingUnitId: reviewable.ratingUnitId,
+          isAnonymous: validatedData.isAnonymous ?? undefined,
+          // A moderated-away review must not be resurrected by re-submitting.
+          deletedAt: undefined,
+        },
+        create: {
           rating: validatedData.rating,
           reviewDescription: validatedData.reviewDescription,
           consultantProfileId: reviewable.consultantProfileId,
           consulteeProfileId: sessionConsulteeProfileId,
           appointmentId: reviewable.appointmentId,
+          isAnonymous: validatedData.isAnonymous ?? false,
           // Denormalized at write time: `groupBy` can only group on this
           // model's own scalars, and this is what makes a 200-seat webinar one
           // data point instead of two hundred.

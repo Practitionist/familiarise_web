@@ -24,12 +24,25 @@ export const MIN_RATED_UNITS_FOR_PUBLIC_SCORE = 5;
  * offline session looks like. Excluding it would silently deny a review to
  * everyone whose session did not run through the video stack.
  */
-const HELD_SLOT = {
-  deletedAt: null,
-  completionStatus: {
-    in: ["COMPLETED", "UNVERIFIED"] as SlotCompletionStatus[],
-  },
-};
+function heldSlot(userId: string) {
+  return {
+    deletedAt: null,
+    OR: [
+      {
+        completionStatus: {
+          in: ["COMPLETED", "UNVERIFIED"] as SlotCompletionStatus[],
+        },
+      },
+      // Or THIS user was demonstrably in the call. `completionStatus` only
+      // flips when the call.session_ended webhook lands, which fires after the
+      // LAST participant leaves plus an inactivity timeout — so without this
+      // the post-call prompt shows nothing to whoever leaves first, which is
+      // most people. Attendance is the stronger proof anyway: it distinguishes
+      // "bought a seat" from "was actually there".
+      { meetingSession: { attendances: { some: { userId } } } },
+    ],
+  };
+}
 
 /**
  * Recompute the denormalized rating columns on ConsultantProfile.
@@ -131,18 +144,18 @@ function loadReviewableAppointments(
         // 1:1 arms — the wrapper IS the relationship, so ownership is the gate.
         {
           consultation: { requestedById: consulteeProfileId },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         {
           subscription: { requestedById: consulteeProfileId },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         {
           trialSession: {
             consulteeProfileId,
             status: { in: ["COMPLETED", "CONVERTED"] },
           },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         // Group arms — there is no Attendee model: registration IS the m:n
         // between the user and every slot of the shared appointment. A paid
@@ -151,14 +164,14 @@ function loadReviewableAppointments(
         {
           webinarId: { not: null },
           slotsOfAppointment: {
-            some: { ...HELD_SLOT, user: { some: { id: userId } } },
+            some: { ...heldSlot(userId), user: { some: { id: userId } } },
           },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
         {
           classId: { not: null },
           slotsOfAppointment: {
-            some: { ...HELD_SLOT, user: { some: { id: userId } } },
+            some: { ...heldSlot(userId), user: { some: { id: userId } } },
           },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
@@ -195,7 +208,7 @@ function loadReviewableAppointments(
         },
       },
       slotsOfAppointment: {
-        where: HELD_SLOT,
+        where: heldSlot(userId),
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
         take: 1,

@@ -38,6 +38,12 @@ interface SessionTimelineProps {
    * Defaults to true so multi-session plans show the full list.
    */
   defaultExpanded?: boolean;
+  /**
+   * Rendered at the end of a past session's row. #705 uses it for the per-call
+   * rating, so the question sits on the session being rated instead of in a
+   * separate card that could only describe the whole booking.
+   */
+  renderSessionExtra?: (session: SessionVM) => React.ReactNode;
 }
 
 interface SessionGroup {
@@ -111,6 +117,7 @@ export function SessionTimeline({
   joinWindowMs = CONSULTEE_JOIN_WINDOW_MS,
   className,
   defaultExpanded = true,
+  renderSessionExtra,
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
@@ -227,6 +234,10 @@ export function SessionTimeline({
                 {format(group.endTime, "h:mm a")}
               </span>
             </div>
+
+            {renderSessionExtra && status !== "upcoming" && !joinable
+              ? renderSessionExtra(group.slots[group.slots.length - 1])
+              : null}
 
             {joinable ? (
               <button
