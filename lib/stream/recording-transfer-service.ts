@@ -15,17 +15,10 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 // sweep-stuck-webhook-events — died during module evaluation and none had ever
 // completed a run. Same clients, same helpers, no marker.
 import {
-  supabase,
-  supabaseAdmin,
   ensureBucketExists,
   generateStorageFileName,
 } from "@/lib/supabase-storage-core";
-
-// Recordings bucket name
-const RECORDINGS_BUCKET = "recordings";
-
-// Use admin client for storage operations to bypass RLS
-const storageClient = supabaseAdmin || supabase;
+import { RECORDINGS_BUCKET, storageClient } from "./recording-storage";
 
 // Maximum file size for direct transfer (500MB)
 // #899 — uploads now stream (no in-memory buffering), but the recordings
@@ -658,77 +651,5 @@ export class RecordingTransferService {
       });
       return { success: false, error: errorMessage };
     }
-  }
-
-  /**
-   * Delete ONLY the Supabase storage object — no DB side effects.
-   *
-   * Retention cleanup (#899) uses this instead of deleteRecordingFromSupabase
-   * so the row's status flip to EXPIRED and the OrgAuditLog write land
-   * atomically in the caller's own transaction. Flipping status here would
-   * tombstone the row before the audit write; the cleanup candidate query
-   * filters `status notIn [EXPIRED, FAILED]`, so a failed audit write would
-   * never be retried and the audit trail would be lost permanently.
-   */
-  static async deleteSupabaseObject(
-    supabasePath: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    const { error } = await storageClient.storage
-      .from(RECORDINGS_BUCKET)
-      .remove([supabasePath]);
-    if (error) {
-      streamLogger.error("Failed to delete Supabase object", error, {
-        path: supabasePath,
-      });
-      return { success: false, error: error.message };
-    }
-    return { success: true };
-  }
-
-  /**
-   * Get the best available URL for a recording
-   * Returns Supabase URL if available, otherwise Stream URL
-   * @param recording The recording object
-   */
-  /**
-   * Generate a presigned URL for a Supabase-stored recording.
-   * URLs expire after the specified duration (default: 1 hour).
-   * Requires the recordings bucket to be private (not public).
-   */
-  static async generateSignedUrl(
-    storagePath: string,
-    expiresIn: number = 3600,
-  ): Promise<string | null> {
-    const { data, error } = await storageClient.storage
-      .from(RECORDINGS_BUCKET)
-      .createSignedUrl(storagePath, expiresIn);
-
-    if (error || !data?.signedUrl) {
-      streamLogger.error("Failed to generate signed URL", error, {
-        storagePath,
-      });
-      return null;
-    }
-
-    return data.signedUrl;
-  }
-
-  /**
-   * Get the best available playback URL for a recording.
-   * For Supabase storage: generates a 1-hour presigned URL.
-   * For Stream S3: returns the temporary URL directly.
-   */
-  static async getBestRecordingUrl(
-    recording: RecordingRow,
-  ): Promise<string | null> {
-    if (recording.status === "AVAILABLE" && recording.supabasePath) {
-      return this.generateSignedUrl(recording.supabasePath);
-    }
-
-    if (recording.status === "READY" && recording.recordingUrl) {
-      return recording.recordingUrl;
-    }
-
-    return null;
   }
 }

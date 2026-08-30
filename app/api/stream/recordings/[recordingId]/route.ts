@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -239,7 +239,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Get the best available URL (async — generates presigned URL for Supabase)
     const playbackUrl =
-      await RecordingTransferService.getBestRecordingUrl(recording);
+      await getBestRecordingUrl(recording);
 
     return NextResponse.json({
       recording: {

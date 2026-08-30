@@ -25,7 +25,7 @@
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { deleteRecordingObject } from "@/lib/stream/recording-storage";
 
 export interface StreamRetentionResult {
   scanned: number;
@@ -81,7 +81,7 @@ async function collectTombstoneIds(
         // + audit log land together in the transaction below so a partial
         // failure can't tombstone the row before the audit write (which the
         // `notIn [EXPIRED]` candidate filter would then never retry).
-        const del = await RecordingTransferService.deleteSupabaseObject(
+        const del = await deleteRecordingObject(
           candidate.supabasePath!,
         );
         if (del.success) {

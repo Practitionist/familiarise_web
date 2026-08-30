@@ -40,12 +40,12 @@ jest.mock("../../lib/stream/recording-service", () => ({
   RecordingService: { getRecordingById: jest.fn() },
 }));
 
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
+jest.mock("../../lib/stream/recording-storage", () => ({
   __esModule: true,
-  RecordingTransferService: {
-    getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-    generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-  },
+  getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  isDurablyOurs: jest.fn(() => true),
+  durablyOursWhere: jest.fn(() => ({})),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -70,12 +70,12 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import prisma from "../../lib/prisma";
 import { getSession } from "../../lib/auth-server";
 import { RecordingService } from "../../lib/stream/recording-service";
-import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
+import { getBestRecordingUrl } from "../../lib/stream/recording-storage";
 import { GET } from "../../app/api/stream/recordings/[recordingId]/route";
 
 const mockedGetSession = getSession as jest.Mock;
 const mockedGetRecording = RecordingService.getRecordingById as jest.Mock;
-const mockedBestUrl = RecordingTransferService.getBestRecordingUrl as jest.Mock;
+const mockedBestUrl = getBestRecordingUrl as unknown as jest.Mock;
 const db = prisma as unknown as {
   orgAuditLog: { create: jest.Mock };
   systemEvent: { create: jest.Mock };
