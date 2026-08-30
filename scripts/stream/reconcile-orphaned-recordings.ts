@@ -85,6 +85,50 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
 /**
+ * Re-ask Stream what it holds for each session, and create whatever rows are
+ * missing.
+ *
+ * Shared by both passes. `syncSessionRecordings` is idempotent — it skips any
+ * `streamRecordingId` that already has a row — so this is safe to run over a
+ * session that is already complete, and the two passes differ only in which
+ * sessions they select and how the result is counted.
+ *
+ * One failing session must not abort the rest: a Stream 500 on one call says
+ * nothing about the next, and this job's whole purpose is to notice recordings
+ * that are quietly missing.
+ */
+async function runRecoveryPass(
+  sessions: unknown[],
+  errorLabel: string,
+  result: OrphanedRecordingResult,
+): Promise<{ created: number; empty: number }> {
+  let created = 0;
+  let empty = 0;
+
+  for (const session of sessions) {
+    const recovered: RecordingRow[] = [];
+    try {
+      await RecordingService.syncSessionRecordings(
+        session as SyncableSession,
+        recovered,
+      );
+    } catch (error) {
+      result.success = false;
+      result.errors.push(
+        `${errorLabel} ${(session as { id: string }).id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      continue;
+    }
+    if (recovered.length > 0) created += recovered.length;
+    else empty++;
+  }
+
+  return { created, empty };
+}
+
+/**
  * The appointment shape `syncSessionRecordings` needs to title a recording and
  * to mirror the parent's org tag. Identical to the consultant sync path's
  * include, and it has to be: the two produce the same rows.
@@ -170,23 +214,9 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     },
   });
 
-  for (const session of orphaned) {
-    const recovered: RecordingRow[] = [];
-    try {
-      await RecordingService.syncSessionRecordings(
-        session as SyncableSession,
-        recovered,
-      );
-    } catch (error) {
-      result.success = false;
-      result.errors.push(
-        `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    if (recovered.length > 0) result.recovered += recovered.length;
-    else result.stillMissing++;
-  }
+  const orphanPass = await runRecoveryPass(orphaned, "session", result);
+  result.recovered += orphanPass.created;
+  result.stillMissing += orphanPass.empty;
 
   // Second pass: sessions that already have a Recording.
   //
@@ -220,26 +250,16 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     });
     result.partialScanned = partial.length;
 
-    for (const session of partial) {
-      const recovered: RecordingRow[] = [];
-      try {
-        await RecordingService.syncSessionRecordings(
-          session as SyncableSession,
-          recovered,
-        );
-      } catch (error) {
-        result.success = false;
-        result.errors.push(
-          `partial session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
-      }
-      // Counted separately from `recovered`: a row created here means an
-      // earlier delivery was lost for a session we already believed complete,
-      // which is a different and more alarming signal than a session that
-      // never arrived at all.
-      result.partialRecovered += recovered.length;
-    }
+    // Counted separately from `recovered`: a row created here means an earlier
+    // delivery was lost for a session we already believed complete, which is a
+    // different and more alarming signal than one that never arrived at all.
+    // `empty` is not tracked — a complete session legitimately yields nothing.
+    const partialPass = await runRecoveryPass(
+      partial,
+      "partial session",
+      result,
+    );
+    result.partialRecovered += partialPass.created;
   }
 
   console.log(
