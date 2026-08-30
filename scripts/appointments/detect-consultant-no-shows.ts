@@ -20,9 +20,9 @@
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
-import { createSupportTicket } from "@/lib/support/create-ticket";
+import { createSupportTicket } from "../../lib/support/create-ticket";
 import { SupportIssueType } from "@prisma/client";
-import { getCallPresenceEvidence } from "@/lib/stream/call-presence";
+import { getCallPresenceEvidence } from "../../lib/stream/call-presence";
 import {
   AppointmentStatus,
   CancellationReason,
