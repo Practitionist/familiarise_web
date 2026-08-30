@@ -139,7 +139,7 @@ describe("ensure-webhook-subscription", () => {
     expect(mockUpdateAppSettings).toHaveBeenCalledTimes(1);
     for (const id of ["hook_live", "hook_second"]) {
       const h = submitted().find((x) => x.id === id);
-      expect(h?.event_types).toContain("message.flagged");
+      expect(h?.event_types).toContain("call.recording_ready");
     }
   });
 
@@ -206,15 +206,16 @@ describe("ensure-webhook-subscription — check mode exit codes", () => {
   });
 
   it("fails when an event has no hook that may carry it — in EVERY mode", async () => {
-    // A `video`-scoped hook cannot carry `user.flagged` or `message.flagged`.
-    // `--apply` cannot fix this either: the remedy is a new chat hook, which
-    // decides a public URL and belongs to a human. Reporting success here is
-    // how chat moderation would stay dead with the script saying it is fine.
-    const videoOnly = { ...liveWebhook, product: "video" };
-    mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+    // Every handled event is `video`-scoped since #1270, so a `chat`-only hook
+    // can carry none of them. `--apply` cannot fix this either: the remedy is a
+    // new hook, which decides a public URL and belongs to a human. Reporting
+    // success here is how a whole feature stays dead with the script saying it
+    // is fine.
+    const chatOnly = { ...liveWebhook, product: "chat" };
+    mockGetAppSettings.mockResolvedValue(appWith([chatOnly]));
     expect(await ensureWebhookSubscription("check")).toBe(DRIFT_EXIT_CODE);
 
-    mockGetAppSettings.mockResolvedValue(appWith([videoOnly]));
+    mockGetAppSettings.mockResolvedValue(appWith([chatOnly]));
     expect(await ensureWebhookSubscription("apply")).toBe(DRIFT_EXIT_CODE);
   });
 
