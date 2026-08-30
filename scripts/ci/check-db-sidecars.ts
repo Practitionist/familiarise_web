@@ -16,6 +16,11 @@
  * Skips cleanly (exit 0) when DATABASE_URL is absent, so forks and PRs without
  * secrets are not punished.
  */
+// Without this the script reads a bare process.env, finds no DATABASE_URL, and
+// self-skips with exit 0 — which is how this guard reported success on every CI
+// run while never once executing. CI writes the secret to .env as a FILE; only
+// Next loads that implicitly. Every other DB-touching script here does the same.
+import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -31,12 +36,77 @@ type Expected = {
   source: string;
 };
 
+/**
+ * Strip SQL comments before matching.
+ *
+ * check-constraints.sql carries a block of PROPOSED constraints commented out
+ * with `--`, waiting on the data to be clean enough to apply them. Matching the
+ * raw text counted those proposals as required objects, so the guard demanded
+ * three constraints nobody had ever agreed to create. Nothing surfaced it
+ * because the guard also self-skipped in CI for want of DATABASE_URL, so it had
+ * never once run — the bug and the reason nobody saw it were the same bug.
+ *
+ * Quote-aware: a `--` inside a string literal is data, not a comment, and
+ * dollar-quoted bodies (trigger functions live in `$$ ... $$`) must survive
+ * intact or every trigger in the file stops being seen.
+ */
+function stripSqlComments(sql: string): string {
+  let out = "";
+  let i = 0;
+  let inSingle = false;
+  let dollarTag: string | null = null;
+
+  while (i < sql.length) {
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, i)) {
+        out += dollarTag;
+        i += dollarTag.length;
+        dollarTag = null;
+      } else {
+        out += sql[i++];
+      }
+      continue;
+    }
+    if (inSingle) {
+      out += sql[i];
+      if (sql[i] === "'") inSingle = false;
+      i++;
+      continue;
+    }
+    const dollar = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+    if (dollar) {
+      dollarTag = dollar[0];
+      out += dollarTag;
+      i += dollarTag.length;
+      continue;
+    }
+    if (sql[i] === "'") {
+      inSingle = true;
+      out += sql[i++];
+      continue;
+    }
+    if (sql.startsWith("--", i)) {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+    if (sql.startsWith("/*", i)) {
+      const end = sql.indexOf("*/", i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      continue;
+    }
+    out += sql[i++];
+  }
+  return out;
+}
+
 function parseSidecars(): Expected[] {
   const expected: Expected[] = [];
   for (const file of fs
     .readdirSync(SQL_DIR)
     .filter((f) => f.endsWith(".sql"))) {
-    const sql = fs.readFileSync(path.join(SQL_DIR, file), "utf8");
+    const sql = stripSqlComments(
+      fs.readFileSync(path.join(SQL_DIR, file), "utf8"),
+    );
 
     for (const m of sql.matchAll(
       /ALTER\s+TABLE\s+"(\w+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"/gi,
