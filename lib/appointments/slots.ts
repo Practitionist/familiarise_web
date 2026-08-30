@@ -41,7 +41,20 @@ export interface SessionSlotLike {
   endsAt?: Date | string | null;
   isTentative?: boolean | null;
   completionStatus?: string | null;
-  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+  meetingSession?: {
+    id: string;
+    endedAt: Date | string | null;
+    /**
+     * #1270 — REQUIRED, not optional, and deliberately so. `isDeliberateEnd`
+     * treats an absent reason as deliberate, which is the safe reading for a
+     * historical row written before the column existed. But it is the WRONG
+     * reading for a projection that simply forgot to select it: every
+     * timed-out session would read as deliberately ended and lock people out
+     * of their own booking, which is the bug this predicate exists to prevent.
+     * Making it required means a query that omits it fails to compile instead.
+     */
+    endedReason: string | null;
+  } | null;
 }
 
 /**
@@ -196,7 +209,7 @@ export function getSlotJoinState(
   if (slot.isTentative) return "disabled";
   if (isDeadSlot(slot)) return "disabled";
   // Session manually ended early by the host.
-  if (toDateOrNull(slot.meetingSession?.endedAt ?? null)) return "ended";
+  if (isDeliberateEnd(slot.meetingSession)) return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const now = (opts?.now ?? new Date()).getTime();
@@ -267,6 +280,38 @@ export function groupSlotsIntoRuns<T extends SessionSlotLike>(
   return runs.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }
 
+/**
+ * Reasons a session is over FOR GOOD, as opposed to merely not currently live.
+ *
+ * #1270 — every gate used to read `endedAt` alone, and `endedAt` is written by
+ * four different things. Stream fires `call.session_ended` after
+ * `inactivity_timeout_seconds` (30s on the live call type) once the LAST
+ * participant leaves, which stamps `session_timeout`. So both people in a 1:1
+ * losing signal for half a minute — a wifi handoff, a tunnel, a closed lid —
+ * ended their paid consultation permanently, for both of them, mid-session.
+ * The reconciler's guesses (`reconciled_no_end`, `stream_not_found`) had the
+ * same effect.
+ *
+ * A deliberate end is the host closing the room, or maintenance draining it.
+ * Everything else means "nobody is in there right now", which is a very
+ * different question from "you may not come back".
+ */
+const DELIBERATE_END_REASONS = new Set(["call_ended", "maintenance"]);
+
+export function isDeliberateEnd(
+  session?: {
+    endedAt: Date | string | null;
+    endedReason?: string | null;
+  } | null,
+): boolean {
+  if (!session?.endedAt) return false;
+  // A row with no reason predates the reason column; treat it as deliberate,
+  // which is the conservative reading for historical data.
+  return session.endedReason
+    ? DELIBERATE_END_REASONS.has(session.endedReason)
+    : true;
+}
+
 /** The run containing `slotId`, or null when the row is dead/absent. */
 export function findSessionRun<T extends SessionSlotLike>(
   slots: T[],
@@ -288,9 +333,7 @@ export function getSessionJoinState<T extends SessionSlotLike>(
   // #1061 — the host ends ONE call for the run, and only the row that carried
   // the MeetingSession learns about it. Which row that was must not decide
   // whether Join re-lights into a fresh empty room for the rest of the hour.
-  if (
-    run.slots.some((slot) => toDateOrNull(slot.meetingSession?.endedAt ?? null))
-  )
+  if (run.slots.some((slot) => isDeliberateEnd(slot.meetingSession)))
     return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
@@ -362,7 +405,11 @@ export function getSessionVMJoinState(
       isTentative: session.isTentative,
       completionStatus: session.completionStatus,
       meetingSession: session.meetingEndedAt
-        ? { id: session.slotId, endedAt: session.meetingEndedAt }
+        ? {
+            id: session.slotId,
+            endedAt: session.meetingEndedAt,
+            endedReason: session.meetingEndedReason,
+          }
         : null,
     },
   ]);

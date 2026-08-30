@@ -78,6 +78,7 @@ function session(extra: Partial<SessionVM> = {}): SessionVM {
     isTentative: false,
     completionStatus: "SCHEDULED",
     meetingEndedAt: null,
+    meetingEndedReason: null,
     ...extra,
   };
 }

@@ -20,10 +20,11 @@ import { type Call, CallingState } from "@stream-io/video-react-sdk";
  */
 function localDevices(call: Call) {
   // #1270 — a Call handle that never reached `get()`/`join()` has no device
-  // managers yet, and teardown now runs on exactly those paths (a mint that
-  // only created the room, a join that threw). Reading `.state` off an absent
-  // manager threw from inside the cleanup, which then masked the real error.
-  // Teardown must never be the thing that fails.
+  // managers yet, and teardown runs on exactly that path when a join throws.
+  // (It used to run on the dashboard mint too; that mint is server-side now and
+  // builds no handle at all.) Reading `.state` off an absent manager threw from
+  // inside the cleanup, which then masked the real error. Teardown must never
+  // be the thing that fails.
   return [call.camera, call.microphone, call.screenShare].filter(Boolean);
 }
 
