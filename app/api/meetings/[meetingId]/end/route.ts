@@ -1,11 +1,8 @@
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { resolveMeetingAccess } from "@/lib/meetings/access";
+import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
   getStreamVideoClient,
-  isStreamConfigured,
   StreamUnavailableError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
@@ -50,57 +47,17 @@ export async function POST(
 ) {
   let meetingIdForLog: string | undefined;
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 },
-      );
-    }
-
-    // A suspended user must not end anyone's call (#693).
-    if (session.user.banned) {
-      return NextResponse.json({ error: "Account suspended" }, { status: 403 });
-    }
-
-    const { meetingId } = await params;
+    const guard = await guardMeetingRoute(params, "end");
+    if (!guard.ok) return guard.response;
+    const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
-    if (!meetingId) {
-      return NextResponse.json(
-        { error: "Meeting ID is required" },
-        { status: 400 },
-      );
-    }
-
-    if (!isStreamConfigured()) {
-      streamLogger.error("Stream not configured — cannot end meeting");
-      return NextResponse.json(
-        { error: "Video is not available" },
-        { status: 503 },
-      );
-    }
-
-    const access = await resolveMeetingAccess(meetingId, session.user.id);
-
-    if (!access.hasAccess) {
-      streamLogger.warn("Meeting end refused", {
-        userId: session.user.id,
-        meetingId,
-        reason: access.reason,
-      });
-      return NextResponse.json(
-        { error: access.message, reason: access.reason },
-        { status: access.reason === "not_found" ? 404 : 403 },
-      );
-    }
 
     // A participant is authorized to BE in this call and not to close it. The
     // distinction is the whole point of the route, so it gets its own refusal
     // rather than reusing the access one.
     if (access.role !== "host") {
       streamLogger.warn("Meeting end refused — caller is not the host", {
-        userId: session.user.id,
+        userId,
         meetingId,
         role: access.role,
       });
@@ -120,7 +77,7 @@ export async function POST(
     );
 
     streamLogger.info("Meeting ended by host", {
-      userId: session.user.id,
+      userId,
       meetingId,
     });
 
