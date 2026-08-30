@@ -35,13 +35,18 @@ async function main(): Promise<void> {
     console.log(`   Recordings recovered:${result.recovered}`);
     console.log(`   Still missing:       ${result.stillMissing}`);
     console.log(`   Past Stream retention: ${result.unrecoverable}`);
+    console.log(`   Partial re-checked:   ${result.partialScanned}`);
+    console.log(`   Segments recovered:  ${result.partialRecovered}`);
 
     if (process.env.GITHUB_ACTIONS && process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(
         process.env.GITHUB_OUTPUT,
         `scanned=${result.scanned}\nrecovered=${result.recovered}\n` +
           `still_missing=${result.stillMissing}\n` +
-          `unrecoverable=${result.unrecoverable}\nsuccess=${result.success}\n`,
+          `unrecoverable=${result.unrecoverable}\n` +
+          `partial_scanned=${result.partialScanned}\n` +
+          `partial_recovered=${result.partialRecovered}\n` +
+          `success=${result.success}\n`,
       );
     }
 
@@ -55,6 +60,26 @@ async function main(): Promise<void> {
         tags: { subsystem: "jobs", job: "reconcile-orphaned-recordings" },
         extra: { recovered: result.recovered, scanned: result.scanned },
       });
+    }
+
+    // Worse news than the above, and worth its own alert. A row created here
+    // means a session we already believed complete was missing a file: Stream
+    // fires `recording_ready` once per file and splits anything over two hours,
+    // so this is a delivery lost from the MIDDLE of a set. Nothing else would
+    // ever have noticed — the session had recordings, so the orphan pass could
+    // not see it, and the day-fourteen deletion would have taken the rest.
+    if (result.partialRecovered > 0) {
+      Sentry.captureMessage(
+        "Recovered recording segments from a session that looked complete",
+        {
+          level: "warning",
+          tags: { subsystem: "jobs", job: "reconcile-orphaned-recordings" },
+          extra: {
+            partialRecovered: result.partialRecovered,
+            partialScanned: result.partialScanned,
+          },
+        },
+      );
     }
 
     // These are gone. Stream has deleted the file, so no future run can
