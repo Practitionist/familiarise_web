@@ -130,13 +130,16 @@ const rows = buildRows();
  * itself.
  */
 const EXTRA_UNLOADABLE: Record<string, string> = {
-  // `cache(...)` is called at module scope, and react@18.3.1 — the version
-  // package.json actually pins — does not export `cache` at all. It resolves in
-  // the app only because Next aliases `react` to its own vendored React 19
-  // inside the RSC layer, which the module's own docstring records. A bare Node
-  // process gets the declared React and a TypeError.
-  "lib/auth-server.ts":
-    "calls React `cache()` at module scope; that export only exists in the react-server build",
+  // #1275 — `lib/auth-server.ts` was here. It called React's `cache()` at
+  // module scope, and react@18.3.1 (the version package.json pins) has no such
+  // export, so a bare Node process got a TypeError before any job's own code
+  // ran. The memo is built on first call now and falls back to an unmemoized
+  // reader when `cache` is absent, so the module loads anywhere.
+  //
+  // Kept as an empty registry rather than deleted: the mechanism it catches —
+  // a module that imports fine but throws on a runtime export — does not
+  // announce itself in an import graph, so the next one has to be named here
+  // too.
 };
 
 /**
@@ -150,35 +153,22 @@ const EXTRA_UNLOADABLE: Record<string, string> = {
  * outlive the problem it describes.
  */
 const KNOWN_UNRUNNABLE: Record<string, string> = {
-  // All eight reach `lib/auth-server.ts`, and all eight were verified by hand:
-  // importing each core under `npx tsx` fails with
-  // "(0 , import_react.cache) is not a function". `react@18.3.1` — the version
-  // package.json pins and `npm ci` installs — genuinely has no `cache` export
-  // (`typeof require("react").cache === "undefined"`), so this is not a
-  // resolution subtlety.
+  // #1275 — EMPTY, and that is the point.
   //
-  // Seven of them reach it the same way:
-  //   scripts/** core → lib/payments/payouts/earnings-service
-  //     → lib/collaborators/service → actions/stream/chat/event-channel.action
-  //     → lib/auth-server
-  // and the eighth, sweep-stuck-webhook-events, arrives via
-  // app/api/webhooks/razorpay-dispatch → lib/payments/webhooks/handlers
-  //   → actions/stream/chat/channel.action → actions/stream/chat/user.action.
+  // Eight workflows lived here. All eight reached `lib/auth-server.ts`, which
+  // called React's `cache()` at module scope; `react@18.3.1` has no `cache`
+  // export, so every one of them threw during module evaluation before a line
+  // of its own code ran. Seven were the payments and payouts reconciliation
+  // layer; the eighth was `sweep-stuck-webhook-events`, the durability backstop
+  // the Stream webhook route explicitly delegates to. None had ever completed
+  // a run.
   //
-  // Fixing it is one of two changes, and both belong to the money and auth
-  // subsystems rather than here: make `getSessionCached` lazy so the `cache()`
-  // call happens on first use inside a request, or cut the server actions'
-  // dependency out of the service layer the crons share. Found by #1270.
-  "handle-lost-disputes.yml": "lib/auth-server.ts via collaborators/service",
-  "handle-stuck-payouts.yml": "lib/auth-server.ts via collaborators/service",
-  "process-payouts.yml": "lib/auth-server.ts via collaborators/service",
-  "reconcile-orphaned-confirmations.yml":
-    "lib/auth-server.ts via collaborators/service",
-  "reconcile-payment-status.yml":
-    "lib/auth-server.ts via collaborators/service",
-  "reconcile-payout-status.yml": "lib/auth-server.ts via collaborators/service",
-  "sync-payment-earnings.yml": "lib/auth-server.ts via collaborators/service",
-  "sweep-stuck-webhook-events.yml": "lib/auth-server.ts via razorpay-dispatch",
+  // The fix was ten lines: build the memo on first call rather than at import,
+  // and fall back to the unmemoized reader when `cache` is absent — which in a
+  // one-shot cron process is the correct behaviour, not a degraded one.
+  //
+  // Leave this empty. An entry here is a job that cannot run, and every one
+  // should be a bug with an issue rather than a line in a registry.
 };
 
 const unloadableModules = new Set([
