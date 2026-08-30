@@ -118,6 +118,17 @@ const statusLabel: Record<SessionStatus, string> = {
   upcoming: "upcoming",
 };
 
+/**
+ * Why a row that looks actionable is not. Only the two states that can confuse
+ * someone carry a reason; everything else is self-evident from its label.
+ */
+const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
+  noRecord:
+    "No meeting record found for this session. It may have been missed or held outside the platform.",
+  joinable:
+    "This session's time has arrived, but it cannot be joined from here.",
+};
+
 export function SessionTimeline({
   sessions,
   isJoining = false,
@@ -269,13 +280,7 @@ export function SessionTimeline({
                   "text-[10px] font-medium uppercase text-muted-foreground/70",
                   status === "noRecord" && "text-amber-500 dark:text-amber-400",
                 )}
-                title={
-                  status === "noRecord"
-                    ? "No meeting record found for this session. It may have been missed or held outside the platform."
-                    : status === "joinable"
-                      ? "This session's time has arrived, but it cannot be joined from here."
-                      : undefined
-                }
+                title={INERT_STATUS_TITLES[status]}
               >
                 {statusLabel[status]}
               </span>
