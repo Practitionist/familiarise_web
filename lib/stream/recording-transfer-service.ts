@@ -8,11 +8,18 @@ import { RecordingStatus } from "@prisma/client";
 import type { RecordingRow } from "./recording-types";
 import { streamLogger } from "@/lib/stream-logger";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import supabase, {
-  ensureBucketExists,
+// #1270 — the leaf module, NOT `@/lib/supabase`. That one opens with
+// `import "server-only"`, which throws outside Next's `react-server` resolution
+// condition, so every cron that reaches this service — mark-expired-recordings,
+// cleanup-old-stream-recordings, transfer-expiring-recordings and
+// sweep-stuck-webhook-events — died during module evaluation and none had ever
+// completed a run. Same clients, same helpers, no marker.
+import {
+  supabase,
   supabaseAdmin,
+  ensureBucketExists,
   generateStorageFileName,
-} from "@/lib/supabase";
+} from "@/lib/supabase-storage-core";
 
 // Recordings bucket name
 const RECORDINGS_BUCKET = "recordings";

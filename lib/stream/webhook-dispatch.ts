@@ -29,12 +29,6 @@ import {
   StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
 import {
-  handleUserFlagged,
-  handleMessageFlagged,
-  StreamUserFlaggedEvent,
-  StreamMessageFlaggedEvent,
-} from "@/lib/stream/chat-moderation-handlers";
-import {
   logWebhookEvent,
   markWebhookEventProcessed,
   isDbHealthy,
@@ -57,7 +51,6 @@ export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
 export function isHandledEventType(t: string): t is HandledEventType {
   return (HANDLED_EVENT_TYPES as readonly string[]).includes(t);
 }
-
 
 // Base event schema for all Stream webhook events
 // call_cid is optional because chat moderation events don't include it
@@ -156,26 +149,6 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
   session_id: z.string(),
   duration_seconds: z.number().optional(),
   participant: streamParticipantSchema,
-});
-
-// Chat moderation: user flagged schema
-const streamUserFlaggedSchema = streamBaseEventSchema.extend({
-  type: z.literal("user.flagged"),
-  user: z.object({ id: z.string() }).optional(),
-  target_user: z.object({ id: z.string() }).optional(),
-});
-
-// Chat moderation: message flagged schema
-const streamMessageFlaggedSchema = streamBaseEventSchema.extend({
-  type: z.literal("message.flagged"),
-  user: z.object({ id: z.string() }).optional(),
-  message: z
-    .object({
-      id: z.string(),
-      text: z.string().optional(),
-      user: z.object({ id: z.string() }).optional(),
-    })
-    .optional(),
 });
 
 /**
@@ -328,8 +301,7 @@ export async function processStreamEvent(
 
         // STR-4 — per-attendee presence
         case "call.session_participant_joined": {
-          const joinedEvent =
-            streamSessionParticipantJoinedSchema.parse(event);
+          const joinedEvent = streamSessionParticipantJoinedSchema.parse(event);
           await handleSessionParticipantJoined(
             joinedEvent as StreamSessionParticipantJoinedEvent,
           );
@@ -344,24 +316,6 @@ export async function processStreamEvent(
           break;
         }
 
-        // Chat moderation events
-        case "user.flagged": {
-          const userFlaggedEvent = streamUserFlaggedSchema.parse(event);
-          await handleUserFlagged(
-            userFlaggedEvent as StreamUserFlaggedEvent,
-          );
-          break;
-        }
-
-        case "message.flagged": {
-          const messageFlaggedEvent =
-            streamMessageFlaggedSchema.parse(event);
-          await handleMessageFlagged(
-            messageFlaggedEvent as StreamMessageFlaggedEvent,
-          );
-          break;
-        }
-
         default: {
           // Compile-time proof that the switch covers HANDLED_EVENT_TYPES. The
           // guard above narrows eventType to that union, so adding an entry to
@@ -369,7 +323,9 @@ export async function processStreamEvent(
           // this assignment stops compiling. No cast — a cast would make it
           // always pass, which is the whole failure mode this replaces.
           const exhaustive: never = eventType;
-          throw new Error(`Unreachable Stream event type: ${String(exhaustive)}`);
+          throw new Error(
+            `Unreachable Stream event type: ${String(exhaustive)}`,
+          );
         }
       }
     } catch (handlerError) {

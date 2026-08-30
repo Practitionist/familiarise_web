@@ -1007,31 +1007,92 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
    USING (bucket_id = 'recordings');
    ```
 
-### Cron Job Configuration
+### The scheduled fleet behind recordings
 
-Set up a cron job to process expiring recordings:
+Four scheduled workflows keep the recording pipeline honest. Each one runs as a
+bare `npx tsx jobs/...` process under GitHub Actions, takes the fleet cron lock
+so that a manual dispatch cannot race the schedule, and writes a
+`SystemJobExecution` row that the staff Jobs page reads.
 
-```typescript
-// Example: Run daily at 3:00 AM UTC
-// 0 3 * * *
+| Workflow                            | Schedule (UTC)         | What it does                                                                                                                                                                                                                                                                 |
+| ----------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transfer-expiring-recordings.yml`  | Every six hours at :58 | Copies every `SUPABASE_PERMANENT` recording out of Stream's S3 before the fourteen-day URL lapses, warns consultants whose `STREAM_ONLY` recordings are about to expire, and pages when a permanent recording is within seventy-two hours of expiry and still untransferred. |
+| `mark-expired-recordings.yml`       | Daily at 03:20         | Flips `STREAM_S3` recordings whose `streamUrlExpiresAt` has passed to `EXPIRED`, so the dashboard stops offering a URL that no longer resolves.                                                                                                                              |
+| `cleanup-old-stream-recordings.yml` | Daily at 03:00         | Deletes the Supabase object and tombstones the row for every recording past its organization's `streamRecordingRetentionDays`. This is the erasure half of the retention promise, so a failure here is a compliance problem rather than an untidy database.                  |
+| `reconcile-orphaned-recordings.yml` | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                                                                                                                         |
 
-import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+### Recovering a recording whose webhook never arrived
 
-async function processExpiringRecordings() {
-  const result = await RecordingTransferService.processExpiringRecordings(
-    14, // daysBeforeExpiry — full Stream URL lifetime, sweeps near-ready (#899)
-    10, // batchSize
-  );
+A recording reaches the database exactly one way in normal operation: Stream
+delivers `call.recording_ready` and the webhook route writes a `Recording` row.
+When that delivery is lost, nothing in the system notices. The `MeetingSession`
+still carries `recordingStartedAt`, because our own code wrote it rather than a
+webhook, so the database records that a recording was started and simply has no
+row for the recording itself.
 
-  console.log(`Processed: ${result.processed}`);
-  console.log(`Succeeded: ${result.succeeded}`);
-  console.log(`Failed: ${result.failed}`);
+Before #1270 the only repair was `POST /api/stream/recordings/sync`, which a
+consultant has to click from the recordings page. That is not a backstop,
+because the person who would click it is the person who does not yet know
+anything is missing. Stream deletes the file fourteen days after the call, so a
+dropped webhook was a permanent loss of the customer's recording on a
+fourteen-day fuse — and #1134 established that dropped webhooks here were not
+hypothetical, since every delivery was lost for the whole period the webhook
+secret was unset in production.
 
-  // Also mark expired recordings
-  const expired = await RecordingTransferService.markExpiredRecordings();
-  console.log(`Marked expired: ${expired}`);
-}
-```
+`jobs/stream/reconcile-orphaned-recordings.ts` closes that gap. It selects every
+meeting session whose `recordingStartedAt` falls between two hours and fourteen
+days ago and which has no `Recording` row, asks Stream directly what recordings
+exist for that call, and writes whatever it finds through
+`RecordingService.syncSessionRecordings` — the same single writer the
+user-triggered sync uses, so a reconciled row is indistinguishable from a
+webhook-written one. The two-hour floor exists because Stream needs minutes to
+finish the egress and upload for a long session, and sweeping earlier would race
+the webhook it is backstopping.
+
+The job reports three counts, and each one means something different. A non-zero
+`recovered` is good news about this job and bad news about the webhook, so it
+raises a Sentry warning: the row exists now, but it only exists because a
+delivery was lost. A non-zero `stillMissing` means Stream held nothing for a call
+that claims to have been recorded, which usually means the recording failed
+rather than that it was lost in transit. A non-zero `unrecoverable` counts
+sessions already past Stream's retention window; those recordings are gone for
+good, and the number only grows, which makes it the honest measure of what the
+missing webhook secret cost.
+
+### Subscription drift is checked, not assumed
+
+`scripts/stream/ensure-webhook-subscription.ts` compares the event types the live
+Stream hook is subscribed to against `HANDLED_EVENT_TYPES`, the single list that
+`lib/stream/webhook-dispatch.ts` also reads. Run it with no flags to see the
+difference, with `--apply` to widen the hook, and with `--check` for the CI mode,
+which never writes, annotates each finding for the Actions log and exits `2` when
+the live app does not cover everything the dispatcher handles. An exit code of
+`1` is different and means the check could not run at all, usually because the
+runner has no Stream credentials.
+
+`.github/workflows/stream-webhook-drift.yml` runs the `--check` mode daily and on
+any pull request that touches the handled event list or the script itself.
+Applying is deliberately left to a human, because `--apply` calls
+`updateAppSettings` on a shared production Stream app that has no rehearsal
+environment.
+
+### Never import `@/lib/supabase` from a cron job
+
+`lib/supabase.ts` opens with `import "server-only"`. That marker package's main
+entry does nothing but throw; Next resolves it to an empty module under the
+`react-server` export condition, and every other resolver — including the bare
+Node process a workflow runs — gets the throw. Five scheduled workflows reached
+it transitively and therefore died during module evaluation, before a line of
+their own code ran, on every run they had ever had.
+
+The Supabase clients and the storage primitives a job needs now live in
+`lib/supabase-storage-core.ts`, which carries no marker. `lib/supabase.ts`
+re-exports every one of those names, so application code is unaffected and still
+gets the client-import guard. `__tests__/maintenance/workflow-import-env.test.ts`
+re-derives each scheduled workflow's import graph on every test run and fails if
+any of them reaches a `server-only` module again, or if a job that reaches the
+Supabase client module is not given the `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` that module throws without.
 
 ---
 

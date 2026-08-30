@@ -28,6 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { FINANCIAL_JOB_NAMES } from "../../lib/maintenance-cron";
+import { entrypointOf } from "../fixtures/workflow-introspection";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -42,13 +43,16 @@ const LOCK_EXEMPT: Record<string, string> = {
   // lib/payments/payouts/payout-service.ts.
   "process-payouts.yml": "lock:payout_processing in payout-service.ts",
   "create-payout-batch.yml": "lock:payout_batch_creation in payout-service.ts",
-  // Bespoke lock plus a circuit breaker, because the job fans out to Stream's
-  // API and has to stop pounding it when that API is the thing failing.
-  "stream-sync.yml": "SYNC_LOCK_KEY in scripts/stream/stream-sync.ts",
   // The dead-man switch itself. Locking it through Redis would make the
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
   "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
+  // #1270 — a drift DETECTOR, not a job. It runs the operator script in
+  // `--check` mode, which makes no Stream write and no database write; the
+  // whole run is one `getAppSettings` read. Two concurrent reads cost one
+  // extra API call, so a lock would buy nothing and would give a read-only
+  // guard a hard dependency on Redis.
+  "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
 };
 
 interface Row {
@@ -91,26 +95,6 @@ function findLock(
   if (!m) return null;
   const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
   return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
-}
-
-/** Extract the `.ts` file a workflow actually executes. */
-function entrypointOf(workflowSrc: string): string | null {
-  const tsx = workflowSrc.match(/tsx@[\d.]+\s+([^\s"']+\.ts)/);
-  if (tsx) return tsx[1];
-
-  // S6505-hardened variant (#1234): workflows running the locally-installed
-  // binary directly instead of on-demand npx resolution.
-  const localTsx = workflowSrc.match(/node_modules\/\.bin\/tsx\s+([^\s"']+\.ts)/);
-  if (localTsx) return localTsx[1];
-
-  const npmScript = workflowSrc.match(/run:\s*npm run ([a-z0-9:_-]+)/);
-  if (npmScript) {
-    const pkg = JSON.parse(read(path.join(ROOT, "package.json")) ?? "{}");
-    const cmd: string = pkg.scripts?.[npmScript[1]] ?? "";
-    const hit = cmd.match(/([^\s"']+\.ts)/);
-    return hit ? hit[1] : null;
-  }
-  return null;
 }
 
 function buildRegistry(): Row[] {
