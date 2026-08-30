@@ -96,7 +96,7 @@ const recordingFixture = {
   durationInMinutes: 45,
   recordedAt: new Date("2026-08-12T10:00:00Z"),
   status: "AVAILABLE",
-  storageType: "SUPABASE",
+  storageType: "PLATFORM",
   thumbnailUrl: "https://cdn.example/thumb.jpg",
   resolution: "1080p",
   previewClipUrl: "https://cdn.example/clip.mp4",
@@ -194,7 +194,7 @@ describe("GET /api/stream/recordings/[recordingId] — operator access", () => {
     expect(body.recording).toMatchObject({
       id: RECORDING_ID,
       status: "AVAILABLE",
-      storageType: "SUPABASE",
+      storageType: "PLATFORM",
       durationInMinutes: 45,
     });
 
@@ -298,8 +298,8 @@ describe("no route hands out a raw Stream S3 link", () => {
     const src = read("app/api/organizations/[orgId]/stream/calls/route.ts");
     for (const field of [
       "recordingUrl",
-      "supabaseUrl",
-      "supabasePath",
+      "storageUrl",
+      "storagePath",
       "thumbnailUrl",
       "previewClipUrl",
       "streamRecordingId",

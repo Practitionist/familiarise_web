@@ -49,7 +49,7 @@ const ALLOWED_VIDEO_TYPES = [
  * Joins through Recording → MeetingSession → SlotOfAppointment → Appointment → Event → Plan.
  */
 function buildStoragePolicyFilter(
-  policyFilter: "SUPABASE_PERMANENT" | "ALL",
+  policyFilter: "PERMANENT" | "ALL",
 ): object {
   if (policyFilter === "ALL") return {};
 
@@ -61,14 +61,14 @@ function buildStoragePolicyFilter(
             {
               webinar: {
                 webinarPlan: {
-                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                  recordingStoragePolicy: "PERMANENT" as const,
                 },
               },
             },
             {
               class: {
                 classPlan: {
-                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                  recordingStoragePolicy: "PERMANENT" as const,
                 },
               },
             },
@@ -300,8 +300,8 @@ export class RecordingTransferService {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabasePath: storagePath,
-          storageType: "SUPABASE",
+          storagePath: storagePath,
+          storageType: "PLATFORM",
           status: "AVAILABLE" as RecordingStatus,
           transferredAt: new Date(),
           fileSize: fileSize,
@@ -341,13 +341,13 @@ export class RecordingTransferService {
    */
   /**
    * Process expiring recordings that should be transferred to Supabase.
-   * @param policyFilter - "SUPABASE_PERMANENT" to only auto-transfer premium plans,
+   * @param policyFilter - "PERMANENT" to only auto-transfer premium plans,
    *                       "ALL" to transfer everything (manual/legacy mode)
    */
   static async processExpiringRecordings(
     daysBeforeExpiry: number = 5,
     batchSize: number = 10,
-    policyFilter: "SUPABASE_PERMANENT" | "ALL" = "SUPABASE_PERMANENT",
+    policyFilter: "PERMANENT" | "ALL" = "PERMANENT",
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -455,7 +455,7 @@ export class RecordingTransferService {
         storageType: "STREAM_S3",
         status: "READY",
         streamUrlExpiresAt: { lte: threshold, gt: new Date() },
-        ...buildStoragePolicyFilter("SUPABASE_PERMANENT"),
+        ...buildStoragePolicyFilter("PERMANENT"),
       },
     });
   }
@@ -603,19 +603,19 @@ export class RecordingTransferService {
         return { success: false, error: "Recording not found" };
       }
 
-      if (!recording.supabasePath) {
+      if (!recording.storagePath) {
         return { success: false, error: "Recording not stored in Supabase" };
       }
 
       // Delete from Supabase
       const { error: deleteError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
-        .remove([recording.supabasePath]);
+        .remove([recording.storagePath]);
 
       if (deleteError) {
         streamLogger.error("Failed to delete from Supabase", deleteError, {
           recordingId,
-          path: recording.supabasePath,
+          path: recording.storagePath,
         });
         return { success: false, error: deleteError.message };
       }
@@ -624,8 +624,8 @@ export class RecordingTransferService {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabaseUrl: null,
-          supabasePath: null,
+          storageUrl: null,
+          storagePath: null,
           storageType: "STREAM_S3",
           status:
             recording.streamUrlExpiresAt &&
@@ -637,7 +637,7 @@ export class RecordingTransferService {
 
       streamLogger.info("Recording deleted from Supabase", {
         recordingId,
-        path: recording.supabasePath,
+        path: recording.storagePath,
       });
 
       return { success: true };

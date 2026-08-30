@@ -24,7 +24,7 @@ const recordingsSelect = {
     id: true,
     title: true,
     recordingUrl: true,
-    supabaseUrl: true,
+    storageUrl: true,
     thumbnailUrl: true,
     status: true,
     durationInMinutes: true,

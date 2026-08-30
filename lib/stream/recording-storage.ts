@@ -28,7 +28,7 @@ export const storageClient = supabaseAdmin || supabase;
  * Stream deletes its own copy after fourteen days, so a recording that is only
  * there cannot back a sold replay. Three surfaces gate on that — publish,
  * purchase, and the marketplace listing query — and each carried its own copy
- * of the pair `status === "AVAILABLE" && storageType === "SUPABASE"`, which
+ * of the pair `status === "AVAILABLE" && storageType === "PLATFORM"`, which
  * spells the vendor into the business rule and drifts three ways.
  *
  * Callers pass `status` explicitly because the route loader renames the column
@@ -39,7 +39,7 @@ export function isDurablyOurs(recording: {
   storageType: string;
 }): boolean {
   return (
-    recording.status === "AVAILABLE" && recording.storageType === "SUPABASE"
+    recording.status === "AVAILABLE" && recording.storageType === "PLATFORM"
   );
 }
 
@@ -52,7 +52,7 @@ export function isDurablyOurs(recording: {
  * caller's query. Same reasoning as `dmEligibleStatusFilter()`.
  */
 export function durablyOursWhere(): Prisma.RecordingWhereInput {
-  return { status: "AVAILABLE", storageType: "SUPABASE" };
+  return { status: "AVAILABLE", storageType: "PLATFORM" };
 }
 
 /**
@@ -84,11 +84,11 @@ export async function generateSignedUrl(
  */
 export async function getBestRecordingUrl(recording: {
   status: string;
-  supabasePath: string | null;
+  storagePath: string | null;
   recordingUrl: string | null;
 }): Promise<string | null> {
-  if (recording.status === "AVAILABLE" && recording.supabasePath) {
-    return generateSignedUrl(recording.supabasePath);
+  if (recording.status === "AVAILABLE" && recording.storagePath) {
+    return generateSignedUrl(recording.storagePath);
   }
 
   if (recording.status === "READY" && recording.recordingUrl) {

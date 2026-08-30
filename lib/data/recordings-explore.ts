@@ -4,7 +4,7 @@
  * One source of truth for the marketplace listing filter — the API route and
  * the ISR page both call these, so a relaxed filter can never ship on one
  * surface only. Select allowlists expose ONLY listing metadata: playback URLs
- * (recordingUrl, supabasePath) must never reach an anonymous response.
+ * (recordingUrl, storagePath) must never reach an anonymous response.
  *
  * Consultant identity travels Recording → MeetingSession → SlotOfAppointment
  * → Appointment → (Webinar|Class)Plan → ConsultantProfile — there is no

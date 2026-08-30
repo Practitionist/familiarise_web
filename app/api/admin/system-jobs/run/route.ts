@@ -393,7 +393,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
         RecordingTransferService.processExpiringRecordings(
           14,
           10,
-          "SUPABASE_PERMANENT",
+          "PERMANENT",
         ),
     );
     return {
