@@ -13,7 +13,15 @@ import {
 
 export const DEFAULT_MEETING_DURATION_MS = 60 * 60 * 1000;
 
-/** Consultee join window (pre-start). */
+/**
+ * Consultee join window (pre-start).
+ *
+ * #1270 — this and its consultant sibling are the ONLY two join windows in the
+ * product. Six surfaces used to declare their own, landing on four different
+ * answers, so the same booking opened at four different times depending on
+ * which page the user happened to be looking at. Every caller imports one of
+ * these two; nobody re-declares a literal.
+ */
 export const CONSULTEE_JOIN_WINDOW_MS = 10 * 60 * 1000;
 /** Consultant join window (pre-start) — hosts get in earlier to set up. */
 export const CONSULTANT_JOIN_WINDOW_MS = 15 * 60 * 1000;
@@ -330,6 +338,38 @@ export function getJoinableSlot<T extends SessionSlotLike>(
   opts?: { joinWindowMs?: number; now?: Date },
 ): T | null {
   return getJoinableSession(slots, opts)?.anchor ?? null;
+}
+
+/**
+ * Join state for a mapper-emitted `SessionVM`.
+ *
+ * The mappers already collapse a booking's slot rows into runs (#1061), so one
+ * `SessionVM` IS one session — this only re-shapes it into the structural form
+ * the shared predicate reads. It exists because the timeline used to answer
+ * "is this joinable?" from the clock alone and therefore could not see a call
+ * the host had already ended (#1270).
+ */
+export function getSessionVMJoinState(
+  session: SessionVM,
+  opts?: { joinWindowMs?: number; now?: Date },
+): SlotJoinState {
+  const [run] = groupSlotsIntoRuns<SessionSlotLike>([
+    {
+      id: session.slotId,
+      appointmentId: session.appointmentId,
+      startsAt: session.startsAt,
+      endsAt: session.endsAt,
+      isTentative: session.isTentative,
+      completionStatus: session.completionStatus,
+      meetingSession: session.meetingEndedAt
+        ? { id: session.slotId, endedAt: session.meetingEndedAt }
+        : null,
+    },
+  ]);
+  // Cancelled and rescheduled rows never survive the grouping, so no run at
+  // all is the same answer as a tentative one: there is nothing to join.
+  if (!run) return "disabled";
+  return getSessionJoinState(run, opts);
 }
 
 function sessionEnd(session: SessionVM): number {

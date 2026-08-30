@@ -3,11 +3,8 @@
 import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { getGlobalVideoClient } from "@/lib/stream/disconnect";
-import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import type { TAppointment } from "@/types/appointment";
 import type { SlotOfAppointment } from "@prisma/client";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -17,7 +14,6 @@ import type { SlotPreference } from "@/components/scheduling/slot-picker-policy"
 
 interface UseEventActionsOptions {
   appointmentId?: string;
-  appointment?: TAppointment;
   rawSlots: SlotOfAppointment[];
   title: string;
   consultant: string;
@@ -107,7 +103,6 @@ function describeRefund(refund: CancelRefund): string {
 
 export function useEventActions({
   appointmentId,
-  appointment,
   rawSlots,
   title,
   consultant: _consultant,
@@ -115,7 +110,6 @@ export function useEventActions({
   consulteeId: consulteeIdOverride,
 }: UseEventActionsOptions) {
   const { toast } = useToast();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const params = useParams<{ consulteeId: string }>();
   // Caller's resolved id first: on the org detail route the param is absent,
@@ -146,7 +140,6 @@ export function useEventActions({
   };
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isJoining, setIsJoining] = useState(false);
   const [showRescheduleDialog, setShowRescheduleDialog] = useState(false);
   const [showConfirmReschedule, setShowConfirmReschedule] = useState(false);
   const [showReportDialog, setShowReportDialog] = useState(false);
@@ -319,62 +312,8 @@ export function useEventActions({
     }
   };
 
-  const handleJoinSession = async (forceSlot?: SlotOfAppointment) => {
-    const slotToUse = forceSlot || getJoinableSlot();
-
-    // Singleton at click time: the SDK context is scoped to /meetings now, and
-    // this is the same instance <StreamVideo> would return (#248 idiom).
-    const client = getGlobalVideoClient();
-    if (!client) {
-      toast({
-        title: "Not signed in",
-        description:
-          "Video client not initialized. Please sign in to join the meeting.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!appointment || !slotToUse) {
-      toast({
-        title: "Unable to join",
-        description: "Meeting information is not available.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsJoining(true);
-    try {
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        appointment,
-        slotToUse,
-      );
-      toast({
-        title: "Joining meeting",
-        description: "You will now be redirected to the meeting room.",
-      });
-      router.push(`/meetings/${meetingId}`);
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      console.error("Error joining meeting:", error);
-      toast({
-        title: "Error joining meeting",
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        variant: "destructive",
-      });
-      setIsJoining(false);
-    }
-  };
-
   return {
     isLoading,
-    isJoining,
     joinableSlot: getJoinableSlot(),
     showRescheduleDialog,
     setShowRescheduleDialog,
@@ -388,6 +327,5 @@ export function useEventActions({
     handleReschedule,
     handleCancelClick,
     handleCancelConfirm,
-    handleJoinSession,
   };
 }
