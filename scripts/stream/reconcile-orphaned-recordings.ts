@@ -48,6 +48,13 @@ export interface OrphanedRecordingResult {
   stillMissing: number;
   /** Sessions already past Stream's retention, reported and not retried. */
   unrecoverable: number;
+  /**
+   * Sessions that already had at least one `Recording` and were re-examined
+   * anyway, because having SOME recordings does not mean having ALL of them.
+   */
+  partialScanned: number;
+  /** Rows created by that second pass — segments an earlier run never saw. */
+  partialRecovered: number;
   success: boolean;
   errors: string[];
 }
@@ -76,6 +83,64 @@ const MAX_SESSIONS_PER_RUN = 200;
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * Re-ask Stream what it holds for each session, and create whatever rows are
+ * missing.
+ *
+ * Shared by both passes. `syncSessionRecordings` is idempotent — it skips any
+ * `streamRecordingId` that already has a row — so this is safe to run over a
+ * session that is already complete, and the two passes differ only in which
+ * sessions they select and how the result is counted.
+ *
+ * One failing session must not abort the rest: a Stream 500 on one call says
+ * nothing about the next, and this job's whole purpose is to notice recordings
+ * that are quietly missing.
+ */
+async function runRecoveryPass(
+  sessions: unknown[],
+  errorLabel: string,
+  result: OrphanedRecordingResult,
+): Promise<{ created: number; empty: number }> {
+  let created = 0;
+  let empty = 0;
+
+  for (const session of sessions) {
+    const recovered: RecordingRow[] = [];
+    const id = (session as { id: string }).id;
+    let outcome;
+    try {
+      outcome = await RecordingService.syncSessionRecordings(
+        session as SyncableSession,
+        recovered,
+      );
+    } catch (error) {
+      result.success = false;
+      result.errors.push(
+        `${errorLabel} ${id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+
+    // `syncSessionRecordings` swallows Stream and persistence failures so one
+    // bad session cannot abort a batch, which means the throw above almost never
+    // fires in production. Reading a swallowed failure as "no recordings found"
+    // is exactly the mistake this job exists to catch — an unreachable Stream
+    // would have been counted as checked-and-empty, with the run still green.
+    if (!outcome.ok) {
+      result.success = false;
+      result.errors.push(
+        `${errorLabel} ${id}: sync failed (${outcome.reason})`,
+      );
+      continue;
+    }
+
+    if (recovered.length > 0) created += recovered.length;
+    else empty++;
+  }
+
+  return { created, empty };
+}
 
 /**
  * The appointment shape `syncSessionRecordings` needs to title a recording and
@@ -115,6 +180,8 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     recovered: 0,
     stillMissing: 0,
     unrecoverable: 0,
+    partialScanned: 0,
+    partialRecovered: 0,
     success: true,
     errors: [],
   };
@@ -161,22 +228,62 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     },
   });
 
-  for (const session of orphaned) {
-    const recovered: RecordingRow[] = [];
-    try {
-      await RecordingService.syncSessionRecordings(
-        session as SyncableSession,
-        recovered,
-      );
-    } catch (error) {
-      result.success = false;
-      result.errors.push(
-        `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    if (recovered.length > 0) result.recovered += recovered.length;
-    else result.stillMissing++;
+  // Select the partial candidates BEFORE the orphan pass runs.
+  //
+  // The orphan pass creates Recording rows. A session it repairs then matches
+  // `recordings: { some: {} }`, so querying afterwards would hand this run its
+  // own output — consuming the partial budget, inflating `partialScanned`, and
+  // displacing a session that was genuinely short all along. Snapshotting first
+  // means the two passes see disjoint sets.
+  const partialBudget = MAX_SESSIONS_PER_RUN - orphaned.length;
+  const partial =
+    partialBudget > 0
+      ? await prisma.meetingSession.findMany({
+          where: {
+            recordingStartedAt: { gte: notBefore, lt: notAfter },
+            streamCallId: { not: "" },
+            recordings: { some: {} },
+          },
+          orderBy: { recordingStartedAt: "asc" },
+          take: partialBudget,
+          include: orphanedSessionInclude,
+        })
+      : [];
+
+  const orphanPass = await runRecoveryPass(orphaned, "session", result);
+  result.recovered += orphanPass.created;
+  result.stillMissing += orphanPass.empty;
+
+  // Second pass: sessions that already have a Recording.
+  //
+  // `recordings: { none: {} }` above can only see a session that received
+  // NOTHING. But Stream fires `call.recording_ready` once per FILE, and splits
+  // any session over two hours into separate files — so a three-file session is
+  // three deliveries. Lose the second and third and the session has one row,
+  // fails `none: {}`, and is never looked at again. The missing segments are
+  // silently gone at day fourteen.
+  //
+  // That is not hypothetical here: the webhook endpoint rejected every delivery
+  // for months (it required a secret Stream does not issue), and exactly one
+  // Stream event has been received since the fix. Partial delivery is the
+  // expected shape of recovery, not an edge case.
+  //
+  // Shares the orphan pass's budget, so a session with nothing is always
+  // preferred over one that merely might be short. `syncSessionRecordings` is
+  // idempotent — it skips any `streamRecordingId` that already has a row — so
+  // re-examining a complete session costs one Stream read and writes nothing.
+  result.partialScanned = partial.length;
+  if (partial.length > 0) {
+    // Counted separately from `recovered`: a row created here means an earlier
+    // delivery was lost for a session we already believed complete, which is a
+    // different and more alarming signal than one that never arrived at all.
+    // `empty` is not tracked — a complete session legitimately yields nothing.
+    const partialPass = await runRecoveryPass(
+      partial,
+      "partial session",
+      result,
+    );
+    result.partialRecovered += partialPass.created;
   }
 
   console.log(
@@ -186,6 +293,8 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
       recovered: result.recovered,
       stillMissing: result.stillMissing,
       unrecoverable: result.unrecoverable,
+      partialScanned: result.partialScanned,
+      partialRecovered: result.partialRecovered,
       errorCount: result.errors.length,
       timestamp: new Date().toISOString(),
     }),
