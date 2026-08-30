@@ -107,20 +107,34 @@ async function runRecoveryPass(
 
   for (const session of sessions) {
     const recovered: RecordingRow[] = [];
+    const id = (session as { id: string }).id;
+    let outcome;
     try {
-      await RecordingService.syncSessionRecordings(
+      outcome = await RecordingService.syncSessionRecordings(
         session as SyncableSession,
         recovered,
       );
     } catch (error) {
       result.success = false;
       result.errors.push(
-        `${errorLabel} ${(session as { id: string }).id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `${errorLabel} ${id}: ${error instanceof Error ? error.message : String(error)}`,
       );
       continue;
     }
+
+    // `syncSessionRecordings` swallows Stream and persistence failures so one
+    // bad session cannot abort a batch, which means the throw above almost never
+    // fires in production. Reading a swallowed failure as "no recordings found"
+    // is exactly the mistake this job exists to catch — an unreachable Stream
+    // would have been counted as checked-and-empty, with the run still green.
+    if (!outcome.ok) {
+      result.success = false;
+      result.errors.push(
+        `${errorLabel} ${id}: sync failed (${outcome.reason})`,
+      );
+      continue;
+    }
+
     if (recovered.length > 0) created += recovered.length;
     else empty++;
   }
@@ -214,6 +228,28 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
     },
   });
 
+  // Select the partial candidates BEFORE the orphan pass runs.
+  //
+  // The orphan pass creates Recording rows. A session it repairs then matches
+  // `recordings: { some: {} }`, so querying afterwards would hand this run its
+  // own output — consuming the partial budget, inflating `partialScanned`, and
+  // displacing a session that was genuinely short all along. Snapshotting first
+  // means the two passes see disjoint sets.
+  const partialBudget = MAX_SESSIONS_PER_RUN - orphaned.length;
+  const partial =
+    partialBudget > 0
+      ? await prisma.meetingSession.findMany({
+          where: {
+            recordingStartedAt: { gte: notBefore, lt: notAfter },
+            streamCallId: { not: "" },
+            recordings: { some: {} },
+          },
+          orderBy: { recordingStartedAt: "asc" },
+          take: partialBudget,
+          include: orphanedSessionInclude,
+        })
+      : [];
+
   const orphanPass = await runRecoveryPass(orphaned, "session", result);
   result.recovered += orphanPass.created;
   result.stillMissing += orphanPass.empty;
@@ -232,24 +268,12 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
   // Stream event has been received since the fix. Partial delivery is the
   // expected shape of recovery, not an edge case.
   //
-  // Runs after the orphan pass and shares its budget, so a session with nothing
-  // is always preferred over one that merely might be short. `syncSessionRecordings`
-  // is idempotent — it skips any `streamRecordingId` that already has a row — so
+  // Shares the orphan pass's budget, so a session with nothing is always
+  // preferred over one that merely might be short. `syncSessionRecordings` is
+  // idempotent — it skips any `streamRecordingId` that already has a row — so
   // re-examining a complete session costs one Stream read and writes nothing.
-  const partialBudget = MAX_SESSIONS_PER_RUN - orphaned.length;
-  if (partialBudget > 0) {
-    const partial = await prisma.meetingSession.findMany({
-      where: {
-        recordingStartedAt: { gte: notBefore, lt: notAfter },
-        streamCallId: { not: "" },
-        recordings: { some: {} },
-      },
-      orderBy: { recordingStartedAt: "asc" },
-      take: partialBudget,
-      include: orphanedSessionInclude,
-    });
-    result.partialScanned = partial.length;
-
+  result.partialScanned = partial.length;
+  if (partial.length > 0) {
     // Counted separately from `recovered`: a row created here means an earlier
     // delivery was lost for a session we already believed complete, which is a
     // different and more alarming signal than one that never arrived at all.

@@ -36,7 +36,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
-jest.mock("../../lib/stream-client", () => ({ isStreamConfigured: () => true }));
+jest.mock("../../lib/stream-client", () => ({
+  isStreamConfigured: () => true,
+}));
 
 jest.mock("../../lib/stream/recording-service", () => ({
   RecordingService: {
@@ -55,7 +57,7 @@ const isPass = (call: unknown[], key: "none" | "some") =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockCount.mockResolvedValue(0);
-  mockSync.mockResolvedValue(undefined);
+  mockSync.mockResolvedValue({ ok: true });
 });
 
 describe("orphan reconciler — partially delivered sessions", () => {
@@ -90,7 +92,7 @@ describe("orphan reconciler — partially delivered sessions", () => {
     // syncSessionRecordings pushes newly created rows into the array it is given.
     mockSync.mockImplementation((_s: unknown, out: unknown[]) => {
       out.push({ id: "rec-segment-2" });
-      return Promise.resolve();
+      return Promise.resolve({ ok: true });
     });
 
     const result = await reconcileOrphanedRecordings();
@@ -108,13 +110,38 @@ describe("orphan reconciler — partially delivered sessions", () => {
       streamCallId: `slot-${i}`,
     }));
     mockFindMany.mockImplementation((args: { where?: unknown }) =>
-      Promise.resolve(JSON.stringify(args.where).includes('"none":{}') ? many : []),
+      Promise.resolve(
+        JSON.stringify(args.where).includes('"none":{}') ? many : [],
+      ),
     );
 
     const result = await reconcileOrphanedRecordings();
 
     expect(mockFindMany.mock.calls.some((c) => isPass(c, "some"))).toBe(false);
     expect(result.partialScanned).toBe(0);
+  });
+
+  it("treats a SWALLOWED sync failure as a failure, not as an empty result", async () => {
+    // `syncSessionRecordings` catches Stream and persistence errors internally so
+    // one bad session cannot abort a batch — so it RESOLVES on failure and the
+    // try/catch below almost never fires in production. Reading that as "no
+    // recordings found" is the exact mistake this job exists to catch: an
+    // unreachable Stream would be counted as checked-and-empty, run still green.
+    mockFindMany.mockImplementation((args: { where?: unknown }) =>
+      Promise.resolve(
+        JSON.stringify(args.where).includes('"none":{}')
+          ? [{ id: "orphan-1", streamCallId: "slot-1" }]
+          : [],
+      ),
+    );
+    mockSync.mockResolvedValue({ ok: false, reason: "stream-unreachable" });
+
+    const result = await reconcileOrphanedRecordings();
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]).toContain("stream-unreachable");
+    // And crucially NOT counted as a session Stream had nothing for.
+    expect(result.stillMissing).toBe(0);
   });
 
   it("does not let one failing session abort the rest of the pass", async () => {
@@ -128,7 +155,9 @@ describe("orphan reconciler — partially delivered sessions", () => {
           : [],
       ),
     );
-    mockSync.mockImplementationOnce(() => Promise.reject(new Error("stream 500")));
+    mockSync.mockImplementationOnce(() =>
+      Promise.reject(new Error("stream 500")),
+    );
 
     const result = await reconcileOrphanedRecordings();
 
