@@ -40,12 +40,12 @@ jest.mock("../../lib/stream/recording-service", () => ({
   RecordingService: { getRecordingById: jest.fn() },
 }));
 
-jest.mock("../../lib/stream/recording-transfer-service", () => ({
+jest.mock("../../lib/stream/recording-storage", () => ({
   __esModule: true,
-  RecordingTransferService: {
-    getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-    generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-  },
+  getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  isDurablyOurs: jest.fn(() => true),
+  durablyOursWhere: jest.fn(() => ({})),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -70,12 +70,12 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import prisma from "../../lib/prisma";
 import { getSession } from "../../lib/auth-server";
 import { RecordingService } from "../../lib/stream/recording-service";
-import { RecordingTransferService } from "../../lib/stream/recording-transfer-service";
+import { getBestRecordingUrl } from "../../lib/stream/recording-storage";
 import { GET } from "../../app/api/stream/recordings/[recordingId]/route";
 
 const mockedGetSession = getSession as jest.Mock;
 const mockedGetRecording = RecordingService.getRecordingById as jest.Mock;
-const mockedBestUrl = RecordingTransferService.getBestRecordingUrl as jest.Mock;
+const mockedBestUrl = getBestRecordingUrl as unknown as jest.Mock;
 const db = prisma as unknown as {
   orgAuditLog: { create: jest.Mock };
   systemEvent: { create: jest.Mock };
@@ -96,7 +96,7 @@ const recordingFixture = {
   durationInMinutes: 45,
   recordedAt: new Date("2026-08-12T10:00:00Z"),
   status: "AVAILABLE",
-  storageType: "SUPABASE",
+  storageType: "PLATFORM",
   thumbnailUrl: "https://cdn.example/thumb.jpg",
   resolution: "1080p",
   previewClipUrl: "https://cdn.example/clip.mp4",
@@ -194,7 +194,7 @@ describe("GET /api/stream/recordings/[recordingId] — operator access", () => {
     expect(body.recording).toMatchObject({
       id: RECORDING_ID,
       status: "AVAILABLE",
-      storageType: "SUPABASE",
+      storageType: "PLATFORM",
       durationInMinutes: 45,
     });
 
@@ -298,8 +298,8 @@ describe("no route hands out a raw Stream S3 link", () => {
     const src = read("app/api/organizations/[orgId]/stream/calls/route.ts");
     for (const field of [
       "recordingUrl",
-      "supabaseUrl",
-      "supabasePath",
+      "storageUrl",
+      "storagePath",
       "thumbnailUrl",
       "previewClipUrl",
       "streamRecordingId",

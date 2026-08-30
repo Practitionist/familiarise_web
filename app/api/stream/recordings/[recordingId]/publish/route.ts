@@ -14,6 +14,7 @@ import {
   isDiscoverablePlanPlan,
   resolvePreviewTranscript,
 } from "@/lib/stream/recording-listing-access";
+import { isDurablyOurs } from "@/lib/stream/recording-storage";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -96,7 +97,12 @@ export async function POST(
     const loaded = guard.loaded;
 
     // A sold replay must outlive any single session: Stream URLs die ≤14d.
-    if (loaded.recordingStatus !== "AVAILABLE" || loaded.storageType !== "SUPABASE") {
+    if (
+      !isDurablyOurs({
+        status: loaded.recordingStatus,
+        storageType: loaded.storageType,
+      })
+    ) {
       return NextResponse.json(
         {
           error:

@@ -4473,15 +4473,15 @@ model MeetingAttendance {
 // Recording storage types
 
 enum RecordingStorageType {
-  STREAM_S3 // Default: expires in 2 weeks
-  SUPABASE // Permanent storage
+  STREAM_S3 // Stream's own bucket — Stream deletes it after 14 days
+  PLATFORM // Our bucket, whichever vendor backs it — no expiry
 }
 
 // Recording storage policy for plans (determines where recordings are stored)
 
 enum RecordingStoragePolicy {
   STREAM_ONLY // 2-week temporary storage (free tier)
-  SUPABASE_PERMANENT // Permanent storage (premium tier)
+  PERMANENT // Kept in our own bucket indefinitely (premium tier)
 }
 
 // Recording status lifecycle
@@ -4563,9 +4563,11 @@ model Recording {
   storageType RecordingStorageType @default(STREAM_S3)
   status      RecordingStatus      @default(READY)
 
-  // Supabase permanent storage
-  supabaseUrl  String?
-  supabasePath String?
+  // #1280 — vendor-neutral: Stream can write straight into our bucket via
+  // recording_external_storage, and the bucket behind it is a deployment
+  // choice, so neither the column nor the enum names one.
+  storageUrl  String?
+  storagePath String?
 
   // Media metadata
   thumbnailUrl String?
@@ -4590,8 +4592,8 @@ model Recording {
   transferFailureAlertedAt DateTime? @db.Timestamptz
 
   // #366 curated marketplace listing — opt-in per recording. Publishing is
-  // only valid for status=AVAILABLE && storageType=SUPABASE (Stream URLs die
-  // in ≤14d, so a STREAM_ONLY recording must never be sold) on webinar/class
+  // only valid once the recording is durably ours (Stream URLs die in ≤14d,
+  // so a STREAM_ONLY recording must never be sold) on webinar/class
   // plans, with consultant redistribution-consent attestation (audit-logged).
   listingStatus      RecordingListingStatus @default(DRAFT)
   listPricePaise     BigInt?

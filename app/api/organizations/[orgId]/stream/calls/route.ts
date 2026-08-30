@@ -81,7 +81,7 @@ export async function GET(
           ? {
               // #1270 — an explicit allowlist, not an `include`, and it names
               // no field that reaches the media: not `recordingUrl`, not
-              // `supabaseUrl`, not `supabasePath`, not the thumbnail, the
+              // `storageUrl`, not `storagePath`, not the thumbnail, the
               // preview clip or the Stream identifiers. What stays is the
               // retention picture the compliance pull actually exists for —
               // whether a recording exists, whether it survived the transfer,
