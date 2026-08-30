@@ -5,9 +5,11 @@
  * the Stream write of moderation actions whose recorded outcome says it failed,
  * so a ban taken while Stream was down stops depending on someone noticing.
  *
- * Schedule: every ~15 minutes (CRON_SECRET-gated, like the other cleanup jobs).
- * The scheduling workflow is not in this change — `.github/workflows` is owned
- * by a sibling PR — so until it lands this runs on demand only.
+ * Schedule: every 30 minutes, `CRON_SECRET`-gated like the other cleanup jobs,
+ * driven by `.github/workflows/retry-moderation-enforcement.yml`. Scheduled
+ * rather than on-demand because the failure it repairs is invisible from the
+ * product: the database says banned and the moderator was told it worked, so
+ * nobody would think to press a button.
  */
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";

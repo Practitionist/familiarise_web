@@ -144,7 +144,10 @@ export async function POST(req: NextRequest) {
       contentUrl,
       reviewId,
       streamMessageId,
-      streamChannelCid,
+      // NB: `streamChannelCid` is accepted by the schema and deliberately NOT
+      // read. The cid stored comes from Stream's own answer — see
+      // resolveReportedMessage — because a caller-supplied one pointed the
+      // staff deep-link wherever the reporter chose.
     } = parsed.data;
 
     // Validate required fields
