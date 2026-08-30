@@ -137,22 +137,53 @@ async function readAllMembers(
  * single human being holds that role, which is the condition that decides
  * between a security fix and a total video outage.
  *
- * Stops at the first hit, so on a healthy app this reads one page.
+ * #1270 review — EVERY member of EVERY open call, not merely one. An earlier
+ * version stopped at the first hit, which defeated the whole point: a call with
+ * three members where only one held `call_member` passed pre-flight, the apply
+ * path then stripped `join-call` from `user` and `guest`, and the other two
+ * were locked out of a call they were entitled to join. A guard against a
+ * partial outage must not itself be satisfied by a partial result.
+ *
+ * Memberless open calls stay valid. They have no one to lock out, and the join
+ * route is their only way in by design.
+ *
+ * Scans every open call, so this is O(open calls) rather than O(1) — acceptable
+ * for a one-shot pre-flight run by a human before an irreversible grant change.
  */
 export async function anyOpenCallMemberHolds(
   client: StreamVideoClient,
   role: string = MEMBER_ROLE,
-): Promise<{ found: boolean; callsScanned: number }> {
+): Promise<{
+  found: boolean;
+  callsScanned: number;
+  /** Calls holding at least one member WITHOUT the role — the lockout set. */
+  callsWithUncoveredMembers: string[];
+  membersMissingRole: number;
+}> {
   let callsScanned = 0;
+  let membersWithRole = 0;
+  let membersMissingRole = 0;
+  const callsWithUncoveredMembers: string[] = [];
 
   for await (const call of iterateOpenCalls(client)) {
     callsScanned++;
-    if (call.members.some((member) => member.role === role)) {
-      return { found: true, callsScanned };
+    const missing = call.members.filter((member) => member.role !== role);
+    membersWithRole += call.members.length - missing.length;
+    if (missing.length > 0) {
+      membersMissingRole += missing.length;
+      callsWithUncoveredMembers.push(call.id);
     }
   }
 
-  return { found: false, callsScanned };
+  return {
+    // Nobody is locked out only when no member anywhere lacks the role. A run
+    // that saw no members at all is vacuously fine — see the note above.
+    found:
+      membersMissingRole === 0 && (membersWithRole > 0 || callsScanned > 0),
+    callsScanned,
+    callsWithUncoveredMembers,
+    membersMissingRole,
+  };
 }
 
 export interface Options {

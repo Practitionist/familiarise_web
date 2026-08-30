@@ -96,7 +96,7 @@ const EndCallButton = () => {
       endingRef.current = false;
       router.push(getDashboardUrl());
     }
-  }, [call, isEnding, getDashboardUrl, router]);
+  }, [call, getDashboardUrl, router]);
 
   useEffect(() => {
     let interval: number;

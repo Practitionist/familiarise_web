@@ -19,6 +19,7 @@
 const mockGetSession = jest.fn();
 const mockResolveMeetingAccess = jest.fn();
 const mockEnd = jest.fn();
+const mockVideoCall = jest.fn();
 
 jest.mock("../../lib/auth", () => ({
   auth: { api: { getSession: (...a: unknown[]) => mockGetSession(...a) } },
@@ -45,7 +46,15 @@ jest.mock("../../lib/stream-client", () => ({
   },
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
   getStreamVideoClient: jest.fn(() => ({
-    video: { call: () => ({ end: (...a: unknown[]) => mockEnd(...a) }) },
+    video: {
+      // #1270 review — the arguments are the assertion. This used to discard
+      // them, so the route could have ended `slot-abc` instead of the id the
+      // MeetingSession actually points at and every test still passed.
+      call: (...a: unknown[]) => {
+        mockVideoCall(...a);
+        return { end: (...b: unknown[]) => mockEnd(...b) };
+      },
+    },
   })),
 }));
 
@@ -165,6 +174,9 @@ describe("POST /api/meetings/[meetingId]/end", () => {
 
     expect(res.status).toBe(200);
     expect(mockEnd).toHaveBeenCalledTimes(1);
+    // The whole point of the test: the id came from the session row, not the
+    // route param. `params` resolves to `slot-abc`.
+    expect(mockVideoCall).toHaveBeenCalledWith("default", "legacy-uuid");
   });
 
   it("reports a Stream outage as 503, not 500", async () => {

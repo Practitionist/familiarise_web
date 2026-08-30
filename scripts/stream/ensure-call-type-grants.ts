@@ -35,7 +35,10 @@ import "dotenv/config";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getStreamVideoClient, isStreamConfigured } from "../../lib/stream-client";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+} from "../../lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 // The role every participant is given by /api/meetings/[meetingId]/join, by the
 // server-side mint, and by the backfill. Imported rather than restated: a typo
@@ -205,7 +208,7 @@ async function requireSomeoneHoldsMemberRole(
 ): Promise<boolean> {
   if (!opts.apply || opts.restore) return true;
 
-  let scan: { found: boolean; callsScanned: number };
+  let scan: Awaited<ReturnType<typeof anyOpenCallMemberHolds>>;
   try {
     scan = await anyOpenCallMemberHolds(client, MEMBER_ROLE);
   } catch (err) {
@@ -230,11 +233,21 @@ async function requireSomeoneHoldsMemberRole(
 
   if (scan.found) return true;
 
+  // #1270 review — a PARTIAL result is a refusal too. The check used to pass on
+  // one member anywhere holding the role, so a mixed roster satisfied it and the
+  // members who lacked the role were locked out by this very write.
   console.error(
     `\n🛑 Refusing to apply.\n` +
-      `\nScanned ${scan.callsScanned} open call(s) and NOT ONE member holds` +
-      `\n\`${MEMBER_ROLE}\`. After this write that role is the only thing that admits` +
-      `\nanyone, so every one of those calls becomes unjoinable the moment it lands.` +
+      `\nScanned ${scan.callsScanned} open call(s). ${scan.membersMissingRole} member(s)` +
+      `\nacross ${scan.callsWithUncoveredMembers.length} call(s) do NOT hold \`${MEMBER_ROLE}\`.` +
+      `\nAfter this write that role is the only thing that admits anyone, so each` +
+      `\nof those members is locked out of a call they are entitled to join.` +
+      (scan.callsWithUncoveredMembers.length > 0
+        ? `\n\nAffected calls: ${scan.callsWithUncoveredMembers.slice(0, 10).join(", ")}` +
+          (scan.callsWithUncoveredMembers.length > 10
+            ? ` … and ${scan.callsWithUncoveredMembers.length - 10} more`
+            : ``)
+        : ``) +
       `\n\nBackfill the role first, then re-run:` +
       `\n  npx tsx scripts/stream/backfill-call-member-role.ts` +
       `\n  npx tsx scripts/stream/backfill-call-member-role.ts --apply\n`,
@@ -248,7 +261,9 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   if (!requireDeployConfirmation(opts)) return 1;
 
   if (!isStreamConfigured()) {
-    console.error("Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET");
+    console.error(
+      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
+    );
     return 1;
   }
 
@@ -309,7 +324,9 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   const after = JSON.stringify(grants, null, 2);
 
   if (before === after) {
-    console.log(`✅ call type "${STREAM_CALL_TYPE}" already has the desired grants — no change`);
+    console.log(
+      `✅ call type "${STREAM_CALL_TYPE}" already has the desired grants — no change`,
+    );
     return 0;
   }
 
@@ -376,7 +393,10 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
   // against our own intent: the join route assigns `call_member`, so if Stream
   // did not store join-call on that role, every participant is locked out of
   // every call. Checked here, after the write, where it can genuinely fail.
-  if (!opts.restore && !(verify.grants[MEMBER_ROLE] ?? []).includes(JOIN_CALL)) {
+  if (
+    !opts.restore &&
+    !(verify.grants[MEMBER_ROLE] ?? []).includes(JOIN_CALL)
+  ) {
     console.error(
       `\n🚨 ${MEMBER_ROLE} does NOT hold ${JOIN_CALL} on Stream after this write.` +
         `\n   Every participant is locked out of every call. Roll back NOW:` +
@@ -385,7 +405,10 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     return 1;
   }
 
-  if (settingsAfter !== settingsBefore || notificationsAfter !== notificationsBefore) {
+  if (
+    settingsAfter !== settingsBefore ||
+    notificationsAfter !== notificationsBefore
+  ) {
     // Written to a file, not just stderr. This is the only copy of the config
     // Stream just discarded, the `settings` block is a couple of kilobytes of
     // recording layout, and an operator who scrolls away or closes the terminal
@@ -409,7 +432,11 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
       writeFileSync(preImagePath, preImage);
     } catch (err) {
       // Falling back to stderr is worse but not nothing.
-      console.error(`(could not write the pre-image to ${preImagePath}:`, err, ")");
+      console.error(
+        `(could not write the pre-image to ${preImagePath}:`,
+        err,
+        ")",
+      );
       console.error(preImage);
     }
 
@@ -423,7 +450,9 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     return 1;
   }
 
-  console.log(`\n✅ applied — settings and notification_settings verified unchanged.`);
+  console.log(
+    `\n✅ applied — settings and notification_settings verified unchanged.`,
+  );
   console.log(`   Revert the grants with: --apply --restore-user-join`);
   return 0;
 }
