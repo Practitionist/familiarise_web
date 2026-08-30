@@ -2,7 +2,7 @@
  * Turn off the `default` call type's billable and unused capabilities, and stop
  * a thirty-second empty room from ending a live session.
  *
- * Four changes, none of which need a deploy:
+ * Six changes, none of which need a deploy:
  *
  *   audio.noise_cancellation.mode  auto-on -> available
  *     Krisp bills per participant-minute. `auto-on` means the moment
@@ -12,6 +12,8 @@
  *     it a deliberate client-side decision.
  *
  *   frame_recording.mode           available -> disabled
+ *   individual_recording.mode      available -> disabled
+ *   raw_recording.mode             available -> disabled
  *   ingress.enabled                true      -> false
  *     Stream ships permissive call-type defaults, so "we have not built it" and
  *     "it cannot be started" are different statements (#1160). Both are billable
@@ -77,6 +79,8 @@ const BACKUP_DIR = ".stream-backups";
 const TARGET = {
   noiseCancellation: "available",
   frameRecording: "disabled",
+  individualRecording: "disabled",
+  rawRecording: "disabled",
   ingressEnabled: false,
   inactivityTimeoutSeconds: 900,
 } as const;
@@ -111,6 +115,8 @@ function describe(settings: CallSettingsResponse): string[] {
   return [
     `audio.noise_cancellation.mode      = ${settings.audio?.noise_cancellation?.mode}`,
     `frame_recording.mode               = ${settings.frame_recording?.mode}`,
+    `individual_recording.mode          = ${settings.individual_recording?.mode}`,
+    `raw_recording.mode                 = ${settings.raw_recording?.mode}`,
     `ingress.enabled                    = ${settings.ingress?.enabled}`,
     `session.inactivity_timeout_seconds = ${settings.session?.inactivity_timeout_seconds}`,
   ];
@@ -139,6 +145,14 @@ async function main(): Promise<number> {
   if (settingsBefore.frame_recording?.mode !== TARGET.frameRecording)
     changes.push(
       `frame_recording.mode: ${settingsBefore.frame_recording?.mode} -> ${TARGET.frameRecording}`,
+    );
+  if (settingsBefore.individual_recording?.mode !== TARGET.individualRecording)
+    changes.push(
+      `individual_recording.mode: ${settingsBefore.individual_recording?.mode} -> ${TARGET.individualRecording}`,
+    );
+  if (settingsBefore.raw_recording?.mode !== TARGET.rawRecording)
+    changes.push(
+      `raw_recording.mode: ${settingsBefore.raw_recording?.mode} -> ${TARGET.rawRecording}`,
     );
   if (settingsBefore.ingress?.enabled !== TARGET.ingressEnabled)
     changes.push(
@@ -239,6 +253,8 @@ async function main(): Promise<number> {
         ...settingsBefore.frame_recording,
         mode: TARGET.frameRecording,
       },
+      individual_recording: { mode: TARGET.individualRecording },
+      raw_recording: { mode: TARGET.rawRecording },
       ingress: { enabled: TARGET.ingressEnabled },
       session: {
         inactivity_timeout_seconds: TARGET.inactivityTimeoutSeconds,
@@ -265,6 +281,10 @@ async function main(): Promise<number> {
       TARGET.noiseCancellation && "noise_cancellation",
     settingsAfter.frame_recording?.mode !== TARGET.frameRecording &&
       "frame_recording",
+    settingsAfter.individual_recording?.mode !== TARGET.individualRecording &&
+      "individual_recording",
+    settingsAfter.raw_recording?.mode !== TARGET.rawRecording &&
+      "raw_recording",
     settingsAfter.ingress?.enabled !== TARGET.ingressEnabled && "ingress",
     settingsAfter.session?.inactivity_timeout_seconds !==
       TARGET.inactivityTimeoutSeconds && "inactivity_timeout_seconds",
@@ -277,7 +297,7 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  console.log("✅ all four settings stored as intended");
+  console.log("✅ all settings stored as intended");
   return 0;
 }
 
