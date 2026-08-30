@@ -267,10 +267,10 @@ export async function addUserToEventChannel(
     } catch (createError) {
       if (!isChannelAlreadyExistsError(createError)) throw createError;
 
-      streamLogger.info(
-        "Lost channel-create race; adopting existing channel",
-        { channelId, userId },
-      );
+      streamLogger.info("Lost channel-create race; adopting existing channel", {
+        channelId,
+        userId,
+      });
 
       // The winner's roster snapshot may predate us — retry our own membership
       // once. Best-effort: a failed retry is logged, never thrown, so the
@@ -510,59 +510,6 @@ async function getEventData(eventType: EventType, eventId: string) {
 
     default:
       return null;
-  }
-}
-
-/**
- * Get all event channels for a user
- */
-export async function getUserEventChannels(userId: string) {
-  userIdSchema.parse(userId);
-
-  const client = getStreamChatClient();
-
-  try {
-    // #1270 — this asked for `limit: 100` and read one page. Stream answers
-    // `queryChannels` with at most 30 rows whatever the caller asks for, so
-    // "all event channels for a user" was the 30 most recently active ones.
-    // Page it properly; a breaker-open page comes back empty and simply ends
-    // the walk, which keeps the #473 degrade below intact.
-    const { channels, truncated } = await queryChannelsPaged((opts) =>
-      // #473 — dashboard hot path. Breaker-open returns an empty channel list
-      // so the page renders (degraded) rather than hanging on the 30s Stream
-      // timeout. T is inferred from the operation, so [] needs no cast.
-      withStreamCircuitBreaker(
-        () =>
-          client.queryChannels(
-            { members: { $in: [userId] } },
-            { last_message_at: -1 },
-            opts,
-          ),
-        () => [],
-      ),
-    );
-
-    if (truncated) {
-      streamLogger.warn("User channel list truncated at Stream's offset cap", {
-        userId,
-        returned: channels.length,
-      });
-    }
-
-    return channels.map((channel) => ({
-      id: channel.id,
-      type: channel.type,
-      // Access custom channel data with type assertion (stream-chat v9)
-      name: (channel.data as { name?: string } | undefined)?.name,
-      memberCount: Object.keys(channel.state.members || {}).length,
-    }));
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to get user event channels", error, { userId });
-    throw error;
   }
 }
 
@@ -968,7 +915,11 @@ async function getDmPairsForUser(
       const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
       if (!consultantUserId || consultantUserId === userId) continue;
       const organizationId = bookingOrgId(c);
-      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      const channelId = getDmChannelId(
+        consultantUserId,
+        userId,
+        organizationId,
+      );
       pairMap.set(channelId, {
         consultantUserId,
         consulteeUserId: userId,
@@ -980,7 +931,11 @@ async function getDmPairsForUser(
         sub.subscriptionPlan?.consultantProfile?.user?.id;
       if (!consultantUserId || consultantUserId === userId) continue;
       const organizationId = bookingOrgId(sub);
-      const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+      const channelId = getDmChannelId(
+        consultantUserId,
+        userId,
+        organizationId,
+      );
       pairMap.set(channelId, {
         consultantUserId,
         consulteeUserId: userId,
@@ -1170,9 +1125,7 @@ async function getWebinarIdsForUser(
   );
 
   const results = await Promise.all(queries);
-  return dedupeLive(results, (row) =>
-    webinarRetentionWindow(row.appointment),
-  );
+  return dedupeLive(results, (row) => webinarRetentionWindow(row.appointment));
 }
 
 /**

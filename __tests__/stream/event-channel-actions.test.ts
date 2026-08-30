@@ -528,93 +528,6 @@ describe("Event Channel Actions", () => {
     });
   });
 
-  describe("getUserEventChannels", () => {
-    it("should query and return user channels", async () => {
-      mockStreamClient.queryChannels.mockResolvedValue([
-        {
-          id: "webinar-123",
-          type: "team",
-          data: { name: "Test Webinar" },
-          state: { members: { user1: {}, user2: {} } },
-        },
-        {
-          id: "consultation-456",
-          type: "messaging",
-          data: { name: "Test Consultation" },
-          state: { members: { user1: {}, consultant: {} } },
-        },
-      ]);
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      const channels = await getUserEventChannels("user1");
-
-      // #1270 — 30, not the 100 this used to ask for: Stream trims the
-      // response to 30 whatever you request, so 100 was a fiction that made
-      // the caller believe one page was the whole list.
-      expect(mockStreamClient.queryChannels).toHaveBeenCalledWith(
-        { members: { $in: ["user1"] } },
-        { last_message_at: -1 },
-        { limit: 30, offset: 0 },
-      );
-      expect(channels).toHaveLength(2);
-      expect(channels[0].id).toBe("webinar-123");
-      expect(channels[0].type).toBe("team");
-      expect(channels[0].memberCount).toBe(2);
-    });
-
-    it("should return empty array when user has no channels", async () => {
-      mockStreamClient.queryChannels.mockResolvedValue([]);
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      const channels = await getUserEventChannels("user-no-channels");
-
-      expect(channels).toHaveLength(0);
-    });
-
-    it("should handle channel with undefined name", async () => {
-      mockStreamClient.queryChannels.mockResolvedValue([
-        {
-          id: "test-channel",
-          type: "team",
-          data: {},
-          state: { members: { user1: {} } },
-        },
-      ]);
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      const channels = await getUserEventChannels("user1");
-
-      expect(channels[0].name).toBeUndefined();
-    });
-
-    it("should throw on empty user ID", async () => {
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      await expect(getUserEventChannels("")).rejects.toThrow();
-    });
-
-    it("should throw and log error when query fails", async () => {
-      mockStreamClient.queryChannels.mockRejectedValue(new Error("API error"));
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      await expect(getUserEventChannels("user1")).rejects.toThrow("API error");
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        "Failed to get user event channels",
-        expect.any(Error),
-        expect.any(Object),
-      );
-    });
-  });
-
   describe("syncUserEventChannels", () => {
     it("should skip when user already synced", async () => {
       mockCache.initialSyncCompletedUsers.add("user-already-synced");
@@ -1010,35 +923,6 @@ describe("Event Channel Actions", () => {
           })).slice(opts.offset, opts.offset + served);
         },
       );
-
-    it("requests a second page when the first comes back exactly full", async () => {
-      serveCappedPages(45);
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      const channels = await getUserEventChannels("user-with-45");
-
-      expect(mockStreamClient.queryChannels).toHaveBeenCalledTimes(2);
-      expect(channels).toHaveLength(45);
-    });
-
-    it("advances the offset by the rows returned, not by the limit asked for", async () => {
-      serveCappedPages(75);
-
-      const { getUserEventChannels } =
-        await import("../../actions/stream/chat/event-channel.action");
-
-      await getUserEventChannels("user-with-75");
-
-      // `offset += 100` against 30-row pages would have skipped 70 channels
-      // on the very first hop.
-      expect(
-        mockStreamClient.queryChannels.mock.calls.map(
-          ([, , opts]: [unknown, unknown, { offset: number }]) => opts.offset,
-        ),
-      ).toEqual([0, 30, 60]);
-    });
 
     it("revokes a stale DM sitting past the first page", async () => {
       mockPrisma.user.findUnique.mockResolvedValue({
