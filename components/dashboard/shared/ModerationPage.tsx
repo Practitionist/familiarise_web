@@ -7,15 +7,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-
 
 import {
   ResponsiveModal,
@@ -102,12 +98,26 @@ const formatDate = (dateString: string) => {
   });
 };
 
+/**
+ * The enforcement suffix shown beside a target's role. Extracted from a nested
+ * ternary (Sonar S3358): "banned" and "suspended until X" are different states,
+ * not two branches of one, and reading them as a lookup makes that plain.
+ */
+function describeEnforcementState(target: {
+  banned?: boolean | null;
+  banExpires?: string | null;
+}): string {
+  if (!target.banned) return "";
+  if (!target.banExpires) return " • banned";
+  return ` • suspended until ${formatDate(target.banExpires)}`;
+}
+
 /** Statuses the action route still accepts; anything else answers 409. */
-const OPEN_REPORT_STATUSES: string[] = [
+const OPEN_REPORT_STATUSES = new Set<string>([
   "PENDING",
   "UNDER_REVIEW",
   "ESCALATED",
-];
+]);
 
 const REPORT_STATUS_FILTERS = [
   { value: "PENDING", label: "Pending" },
@@ -147,7 +157,9 @@ const enforcementIncomplete = (
  * written since #693 and read by nothing, which is how a ban that never reached
  * Stream looked identical to one that did.
  */
-function EnforcementSummary({ action }: { action: ModerationLatestAction }) {
+function EnforcementSummary({
+  action,
+}: Readonly<{ action: ModerationLatestAction }>) {
   const sideEffects = action.sideEffects;
   const incomplete = enforcementIncomplete(sideEffects);
   const cancelled = sideEffects?.cancellations?.engagementsCancelled ?? 0;
@@ -166,7 +178,8 @@ function EnforcementSummary({ action }: { action: ModerationLatestAction }) {
           <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
         )}
         <Label className="text-sm font-medium">
-          {action.actionType.replace(/_/g, " ")} — {formatDate(action.createdAt)}
+          {action.actionType.replace(/_/g, " ")} —{" "}
+          {formatDate(action.createdAt)}
         </Label>
       </div>
       {incomplete && (
@@ -269,9 +282,7 @@ export function ModerationPage() {
     }> => {
       const params = new URLSearchParams({ status: statusFilter });
       if (debouncedSearch) params.set("search", debouncedSearch);
-      const response = await fetch(
-        `/api/staff/moderation/reports?${params}`,
-      );
+      const response = await fetch(`/api/staff/moderation/reports?${params}`);
       if (!response.ok) throw new Error("Failed to fetch reports");
       return response.json();
     },
@@ -280,8 +291,7 @@ export function ModerationPage() {
   const reports = reportsData?.reports ?? [];
   // Banning is ADMIN-only server-side. Trusting the server's answer rather than
   // guessing from the session keeps the button and the 403 in agreement.
-  const canModerateUsers =
-    reportsData?.capabilities?.canModerateUsers ?? false;
+  const canModerateUsers = reportsData?.capabilities?.canModerateUsers ?? false;
 
   // Fetch profile verifications
   const {
@@ -491,7 +501,7 @@ export function ModerationPage() {
    * than being shown to every moderator and answering 403 on click.
    */
   const availableActions = (report: ModerationReport): ReportActionButton[] => {
-    if (!OPEN_REPORT_STATUSES.includes(report.status)) return [];
+    if (!OPEN_REPORT_STATUSES.has(report.status)) return [];
     const actions: ReportActionButton[] = [
       {
         key: "DISMISS",
@@ -681,7 +691,9 @@ export function ModerationPage() {
                   {stats?.pendingProfiles ?? 0}
                 </p>
               )}
-              <p className="text-sm text-muted-foreground">Profiles to Verify</p>
+              <p className="text-sm text-muted-foreground">
+                Profiles to Verify
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -1032,7 +1044,9 @@ export function ModerationPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{consulteeName}</p>
-                              <span className="text-muted-foreground/70">→</span>
+                              <span className="text-muted-foreground/70">
+                                →
+                              </span>
                               <p className="text-muted-foreground">
                                 {consultantName}
                               </p>
@@ -1157,11 +1171,7 @@ export function ModerationPage() {
                     </p>
                     <p className="text-xs text-muted-foreground/70">
                       {selectedReport.targetUser.role}
-                      {selectedReport.targetUser.banned
-                        ? selectedReport.targetUser.banExpires
-                          ? ` • suspended until ${formatDate(selectedReport.targetUser.banExpires)}`
-                          : " • banned"
-                        : ""}
+                      {describeEnforcementState(selectedReport.targetUser)}
                     </p>
                   </div>
                 </div>
@@ -1211,7 +1221,9 @@ export function ModerationPage() {
                       min={1}
                       max={365}
                       className="w-24"
-                      value={Number.isFinite(suspensionDays) ? suspensionDays : ""}
+                      value={
+                        Number.isFinite(suspensionDays) ? suspensionDays : ""
+                      }
                       onChange={(e) => {
                         // NaN sentinel lets the field be cleared while typing;
                         // the Suspend button disables until a valid number is back

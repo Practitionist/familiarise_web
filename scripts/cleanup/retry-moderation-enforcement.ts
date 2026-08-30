@@ -98,6 +98,9 @@ async function writeSummary(
 ): Promise<void> {
   await prisma.moderationAction.update({
     where: { id: actionId },
+    // NOT structuredClone (Sonar S7784) — see the note in
+    // lib/moderation/side-effects.ts. Optional fields must be dropped, not
+    // preserved as `undefined`, for Prisma's InputJsonValue.
     data: { sideEffects: JSON.parse(JSON.stringify(summary)) },
   });
 }

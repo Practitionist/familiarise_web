@@ -380,6 +380,10 @@ export async function persistActionSideEffects(
   await prisma.moderationAction
     .update({
       where: { id: actionId },
+      // NOT structuredClone (Sonar S7784): this is a SERIALIZATION, not a
+      // deep clone. `SideEffectSummary` has five optional fields, and Prisma's
+      // InputJsonValue rejects `undefined` in an object — the JSON round-trip
+      // strips those keys, structuredClone would preserve them.
       data: { sideEffects: JSON.parse(JSON.stringify(sideEffects)) },
     })
     .catch(captureModerationError);

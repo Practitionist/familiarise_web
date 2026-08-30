@@ -10,7 +10,7 @@
  * the failure it repairs is invisible from the product, so nobody would think
  * to press a button.
  */
-import fs from "fs";
+import fs from "node:fs";
 import * as Sentry from "@sentry/nextjs";
 
 import {
