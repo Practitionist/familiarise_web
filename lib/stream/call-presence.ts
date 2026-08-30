@@ -20,7 +20,10 @@
  * participants in the session — so two, in a 1:1 consultation, means both
  * parties were there whatever our rows say.
  */
-import { getStreamVideoClient, withStreamCircuitBreaker } from "@/lib/stream-client";
+import {
+  getStreamVideoClient,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 
