@@ -16,8 +16,10 @@
 
 import { stripSqlComments } from "../../scripts/ci/check-db-sidecars";
 
-const CONSTRAINT_RE = /ALTER\s+TABLE\s+"(\w+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"/gi;
-const INDEX_RE = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi;
+const CONSTRAINT_RE =
+  /ALTER\s+TABLE\s+"(\w+)"\s+ADD\s+CONSTRAINT\s+"([^"]+)"/gi;
+const INDEX_RE =
+  /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi;
 
 const names = (sql: string, re: RegExp) =>
   [...stripSqlComments(sql).matchAll(re)].map((m) => m[m.length - 1]);
@@ -46,7 +48,10 @@ CREATE UNIQUE INDEX "idx_after_nested" ON "T" (a);`;
   it("does not treat a -- inside a string literal as a comment", () => {
     const sql = `ALTER TABLE "T" ADD CONSTRAINT "keeps_literal" CHECK (note <> 'a -- b');
 ALTER TABLE "U" ADD CONSTRAINT "after_literal" CHECK (x > 0);`;
-    expect(names(sql, CONSTRAINT_RE)).toEqual(["keeps_literal", "after_literal"]);
+    expect(names(sql, CONSTRAINT_RE)).toEqual([
+      "keeps_literal",
+      "after_literal",
+    ]);
   });
 
   it("leaves dollar-quoted trigger bodies intact", () => {
