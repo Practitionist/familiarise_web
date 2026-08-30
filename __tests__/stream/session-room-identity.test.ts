@@ -709,7 +709,15 @@ describe("a refused join creates nothing on Stream", () => {
 
   it("does not mint a call for a slot that is not one", async () => {
     // The other precondition hoisted with the gate. Unresolvable id, so the
-    // anchor lookup falls back to this object and the shape check sees it.
+    // anchor lookup falls back to this object.
+    //
+    // #1270 review — the refusal a stranger sees is the ENTITLEMENT one, not
+    // the shape or booking-state one. Entitlement was moved ahead of
+    // `getMeetingCreationRefusal` because that helper reads the persisted slot
+    // and its parent booking status for any id it is handed, and returns the
+    // result to the caller as data: running it first let anyone who guessed a
+    // slot id learn another user's booking state. One answer, and it tells
+    // them nothing.
     seed([]);
 
     await expect(
@@ -718,7 +726,29 @@ describe("a refused join creates nothing on Stream", () => {
         startsAt: "not a date",
         endsAt: null,
       }),
-    ).rejects.toThrow("Invalid slot for meeting session");
+    ).rejects.toThrow("You are not a participant in this session.");
+
+    expect(mockStreamCallsCreated).toEqual([]);
+  });
+
+  it("tells a stranger nothing about the booking they guessed at", async () => {
+    // The leak, stated as a test: a real slot on a real booking whose state
+    // WOULD produce a distinctive refusal. The caller is not on it, so they
+    // must get the same answer as for a slot that does not exist at all.
+    seed([
+      slotRow("A", "10:00", "10:30", {
+        isTentative: true,
+        user: [{ id: "someone-else" }],
+      }),
+    ]);
+
+    await expect(
+      getOrCreateAppointmentMeeting({
+        id: "A",
+        startsAt: "10:00",
+        endsAt: "10:30",
+      }),
+    ).rejects.toThrow("You are not a participant in this session.");
 
     expect(mockStreamCallsCreated).toEqual([]);
   });

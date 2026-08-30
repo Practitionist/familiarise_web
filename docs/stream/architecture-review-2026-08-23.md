@@ -7,7 +7,7 @@ Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. All three HIGH fin
 
 > **Status addendum (2026-08-30):** this is a dated snapshot and is left
 > unmodified below, but one part of it has since been superseded. #1270 moved
-> call creation out of the browser entirely, so where §2 says "First Join mints
+> call creation out of the browser entirely, so where §1.3 “Meeting lifecycle” says "First Join mints
 > deterministically (`getOrCreateAppointmentMeeting`)" the mint is now the
 > server action `provisionAppointmentMeeting`, the call's author is the
 > appointment's host rather than whoever clicked, and members are named

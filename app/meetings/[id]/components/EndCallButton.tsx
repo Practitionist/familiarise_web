@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useCall } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
@@ -9,6 +9,9 @@ import { Loader2, PhoneOff } from "lucide-react";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 import { useSessionInfo } from "../session-info";
 
+/** A generous bound on the end request; a healthy round trip is far under it. */
+const END_CALL_TIMEOUT_MS = 10_000;
+
 const EndCallButton = () => {
   const call = useCall();
   const router = useRouter();
@@ -16,6 +19,7 @@ const EndCallButton = () => {
   const [isPressed, setIsPressed] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isEnding, setIsEnding] = useState(false);
+  const endingRef = useRef(false);
 
   // Get proper dashboard URL based on user role and profile
   const getDashboardUrl = useCallback(() => {
@@ -38,8 +42,13 @@ const EndCallButton = () => {
   }, [session]);
 
   const endCall = useCallback(async () => {
-    if (isEnding) return; // Prevent multiple calls
-
+    // #1270 — a ref, not the `isEnding` state. This is invoked from inside a
+    // `setProgress` updater, and React may run an updater more than once; both
+    // runs close over the same `isEnding === false` and sail past a state
+    // guard. That used to mean a duplicate `call.endCall()`; now it means a
+    // second POST to the end route.
+    if (endingRef.current) return;
+    endingRef.current = true;
     setIsEnding(true);
 
     try {
@@ -55,7 +64,11 @@ const EndCallButton = () => {
       if (call?.id) {
         const response = await fetch(
           `/api/meetings/${encodeURIComponent(call.id)}/end`,
-          { method: "POST" },
+          // `fetch` has no default timeout. Without a bound, a stalled network
+          // leaves the host on a disabled "Ending call…" spinner, still
+          // broadcasting, with the teardown and navigation in `finally` never
+          // reached. Ten seconds is well past a healthy round trip.
+          { method: "POST", signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS) },
         );
         if (!response.ok) {
           throw new Error(`End call failed with status ${response.status}`);
@@ -80,6 +93,7 @@ const EndCallButton = () => {
         console.error("Error releasing media while ending call:", error);
       }
       setIsEnding(false);
+      endingRef.current = false;
       router.push(getDashboardUrl());
     }
   }, [call, isEnding, getDashboardUrl, router]);

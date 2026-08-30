@@ -1,7 +1,11 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -296,11 +300,16 @@ async function meetingPolicyRefusal(args: {
 async function callHasLiveParticipants(streamCallId: string): Promise<boolean> {
   if (!isStreamConfigured()) return false;
   try {
-    const call = getStreamVideoClient().video.call(
-      STREAM_CALL_TYPE,
-      toCallId(streamCallId),
+    // #1270 review — through the breaker, like every other server-side Stream
+    // call in this cohort. Without it, during a Stream incident this probe runs
+    // on the request thread for every refused join and waits out the SDK's
+    // 30-second default, and its failures never feed the breaker that exists to
+    // stop exactly that.
+    const { call: state } = await withStreamCircuitBreaker(() =>
+      getStreamVideoClient()
+        .video.call(STREAM_CALL_TYPE, toCallId(streamCallId))
+        .get(),
     );
-    const { call: state } = await call.get();
     if (state.ended_at) return false;
     return (state.session?.participants?.length ?? 0) > 0;
   } catch {

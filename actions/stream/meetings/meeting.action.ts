@@ -697,7 +697,14 @@ export async function getMeetingCreationRefusal(
     streamLogger.error("Failed to pre-check meeting creation", error, {
       slotId: slot.id,
     });
-    return null;
+    // #1270 — a refusal we could not evaluate is a refusal, not a pass.
+    // Answering `null` here meant "nothing refuses this", so a slot read that
+    // threw let the mint proceed; `createDbMeetingSession` then re-ran the same
+    // check, and a second read that succeeded threw — leaving the orphaned,
+    // billable Stream room the caller's ordering exists to prevent. The
+    // caller's own message is deliberately vague: a transient read failure is
+    // not the user's business, and it must not leak booking state either.
+    return "We could not verify this session just now. Please try again.";
   }
 }
 
@@ -1018,20 +1025,35 @@ export async function provisionAppointmentMeeting(
     return { ok: true, streamCallId: existingMeetingSession.streamCallId };
   }
 
-  // #1077 — anything that can refuse this join runs BEFORE the mint. Blocked
-  // after it, Stream keeps a call no MeetingSession row points at, stamped with
-  // whatever bounds and members were computed at the blocked moment.
-  const refusal = await getMeetingCreationRefusal(anchorSlot);
-  if (refusal) return { ok: false, refusal };
-
-  // Entitlement, before the Stream write rather than after it. The browser used
-  // to mint the call and only then call `createDbMeetingSession`, which is
-  // where the check lived — so an unentitled caller could leave a real,
-  // billable Stream room behind even though the database refused to record it.
+  // Entitlement FIRST — ahead of the booking-state refusal, not just ahead of
+  // the mint. #1270 review: `refuseMeetingCreation` reads the persisted slot and
+  // its parent booking status for any slotId it is handed, and the resulting
+  // string is returned to the caller as data. Running it first meant an
+  // unentitled caller who guessed a slot id learned another user's booking
+  // state — "This session is not confirmed yet.", "This session was cancelled
+  // or moved." A stranger gets one answer now, and it tells them nothing.
+  //
+  // It is also ahead of the Stream write for the original #1077 reason: the
+  // browser used to mint the call and only then call `createDbMeetingSession`,
+  // where the check lived, so an unentitled caller left a real billable Stream
+  // room behind that the database refused to record.
   const authorized = await readSlotForCaller(anchorSlot.id);
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
   }
+
+  // #1077 — anything that can refuse this join runs BEFORE the mint. Blocked
+  // after it, Stream keeps a call no MeetingSession row points at, stamped with
+  // whatever bounds and members were computed at the blocked moment.
+  //
+  // #1270 review: `getMeetingCreationRefusal` swallows every error and answers
+  // `null`, so a slot read that THREW used to read as "nothing refuses this"
+  // and the mint proceeded — then `createDbMeetingSession` re-ran the same
+  // check, and if that second read succeeded it threw, leaving exactly the
+  // orphaned billable room the ordering above exists to prevent. A refusal we
+  // could not evaluate is now a refusal.
+  const refusal = await getMeetingCreationRefusal(anchorSlot);
+  if (refusal) return { ok: false, refusal };
 
   if (!isStreamConfigured()) {
     streamLogger.error("Stream not configured — cannot provision meeting", {
