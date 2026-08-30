@@ -57,6 +57,37 @@ Three things derive from runs and never from individual rows.
 - **Join state.** The join window, and the check for a call the host has already ended, are both measured over `[run.startsAt, run.endsAt]`. Measured per row, a two-hour class stops being joinable thirty minutes in.
 - **The session count and label.** A four-hour booking is one session running 12:30 to 16:30, not eight half-hour sessions of which the list shows the first. The same applies to "sessions this week", progress text, and anything else that counts.
 
+## The Join Gate
+
+Whether a person may open the video room for a booking is decided by three independent questions, and every surface that renders a Join affordance must ask all three. They live in `lib/appointments/slots.ts` and `lib/appointments/status.ts` so that no page has to answer them for itself.
+
+### Is the session inside its window?
+
+`getSessionJoinState(run)` answers this over the whole run, never over a single row. It returns one of four values. A `countdown` session has not opened yet, a `joinable` one is open now, an `ended` one is over, and a `disabled` one is a tentative placeholder or a dead row that can never be joined at all. The window itself is a role-dependent lead time before the session starts, and there are exactly two of them.
+
+| Constant                     | Value      | Who it applies to                                                        |
+| ---------------------------- | ---------- | ------------------------------------------------------------------------ |
+| `CONSULTEE_JOIN_WINDOW_MS`   | 10 minutes | Learners, on every consultee and organization-member surface.             |
+| `CONSULTANT_JOIN_WINDOW_MS`  | 15 minutes | Hosts, so that they can be in the room before the first attendee arrives. |
+
+Both constants are exported from `lib/appointments/slots.ts` and every caller imports one of them. Declaring the value locally is what #1270 removed: six surfaces had each written their own, landing on four different answers, so the same booking opened at four different times depending on which page the user happened to be looking at. The planner in particular gave a host a ten-minute window while the appointments list beside it gave the same host fifteen.
+
+An `ended` session is not merely one whose clock has run out. When the host closes the call, the `MeetingSession` row records `endedAt`, and from that moment the session is over even though its slot rows still run for another forty minutes. Any surface that compares only `startsAt` and `endsAt` will keep offering Join for the rest of the booked hour and will drop whoever clicks it into a fresh, empty room. That is the defect `getSessionVMJoinState` exists to prevent for the mapper-emitted `SessionVM` rows that the session timeline renders.
+
+### Is the booking confirmed?
+
+An open window is a statement about the clock, not about the booking. `isConfirmedStatus(status)` is the second half of the gate, and it admits only `APPROVED`, `SCHEDULED` and `IN_PROGRESS`. It therefore refuses a booking still at `APPROVED_PENDING_PAYMENT` or `AWAITING_PAYMENT`, where the slot is held but nobody has paid, and it refuses the terminal states, where the session has already been closed out or called off. Both sides of a booking use the same predicate, which is what #1270 restored: the consultee adapter had always required it while the consultant adapter tested only that the row was not in the cancelled bucket, and the consultant home tab tested nothing at all.
+
+### Is the surface allowed to hand over a join handler?
+
+The third question is asked by the adapter, not by the shared helpers. A read-only surface renders the timeline without an `onJoinSession` callback, and a session that is live but whose booking the adapter has refused must then read as a state rather than as an action. `SessionTimeline` renders the Join button only when a handler is present and shows a muted, non-actionable label otherwise, because a row that says "JOIN" in unmuted text and does nothing when clicked is worse than one that says nothing at all.
+
+### The development escape hatch
+
+`NEXT_PUBLIC_ENABLE_DEV_TOOLS` is the single flag that opens the force-join backdoor, and it is opt-in: `.env.sample` ships it as `"false"`. Keying the backdoor off `NODE_ENV` instead means it is open on every local run whether or not the developer asked for it, which is why #1270 standardised the surfaces that did so.
+
+The backdoor is always **additive**. It adds a separately labelled "Join (Dev)" affordance in the places where the real Join is absent; it never relaxes, re-labels or un-disables the real one. The consultant home tab used to do exactly that — the dev arm *was* the gate — with the side effect that every genuine Join on a development build was mislabelled as a dev join.
+
 ## Week Boundaries (Sunday-Saturday)
 
 All week-based calculations use **Sunday as the first day** of the week.

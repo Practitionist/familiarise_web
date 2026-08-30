@@ -42,7 +42,7 @@ export interface StreamRecording {
  * rather than a Prisma payload type: the consultant and consultee paths reach
  * this point through different `include` shapes.
  */
-type SyncableSession = {
+export type SyncableSession = {
   id: string;
   streamCallId: string | null;
   slotOfAppointment: {
@@ -728,8 +728,14 @@ export class RecordingService {
    *
    * Failures are swallowed per session, deliberately: one unreachable call must
    * not abandon the rest of the sync.
+   *
+   * Public since #1270 for a third caller,
+   * `scripts/stream/reconcile-orphaned-recordings.ts`. It stays the ONLY
+   * writer: the nightly reconciliation decides WHICH sessions to look at, this
+   * decides what a Stream recording becomes in our database. A second copy of
+   * the loop is how the org-tag gap above came to exist twice.
    */
-  private static async syncSessionRecordings(
+  static async syncSessionRecordings(
     session: SyncableSession,
     syncedRecordings: RecordingRow[],
   ): Promise<void> {

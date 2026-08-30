@@ -191,6 +191,12 @@ export const AUDIT_ACTIONS = {
     // Emitted by the Stream recording retention cron when it tombstones
     // a recording older than the org's `streamRecordingRetentionDays`.
     STREAM_RECORDING_DELETED: "STREAM_RECORDING_DELETED",
+    // #1270 — emitted whenever a platform operator (ADMIN or STAFF) reads a
+    // recording they have no participation in. The operator path used to be
+    // less accountable than the tenant path: deleting and exporting recordings
+    // wrote a row, reaching in and watching one wrote nothing. `details.played`
+    // distinguishes metadata-only (STAFF) from playback (ADMIN).
+    STREAM_RECORDING_ACCESSED: "STREAM_RECORDING_ACCESSED",
     // Emitted from GET /api/organizations/[orgId]/stream/calls when a
     // MANAGER+ exports the call/recording metadata (compliance pull).
     STREAM_CALLS_EXPORTED: "STREAM_CALLS_EXPORTED",

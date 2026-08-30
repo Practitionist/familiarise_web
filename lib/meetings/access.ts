@@ -1,11 +1,14 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
   getCurrentOrNextSession,
   getSessionJoinState,
+  isDeliberateEnd,
 } from "@/lib/appointments/slots";
 import {
   isCancelledLikeStatus,
@@ -87,61 +90,61 @@ export type MeetingAppointment =
 
 /** Hoisted so `MeetingAppointment` can be inferred from the real query. */
 const MEETING_SESSION_INCLUDE = {
-      slotOfAppointment: {
+  slotOfAppointment: {
+    include: {
+      user: { select: { id: true } },
+      appointment: {
         include: {
-          user: { select: { id: true } },
-          appointment: {
+          consultation: {
             include: {
-              consultation: {
-                include: {
-                  consultationPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
+              consultationPlan: {
+                select: {
+                  consultantProfileId: true,
+                  recordingEnabled: true,
                 },
-              },
-              subscription: {
-                include: {
-                  subscriptionPlan: {
-                    select: {
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              webinar: {
-                include: {
-                  webinarPlan: {
-                    select: {
-                      id: true,
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              class: {
-                include: {
-                  classPlan: {
-                    select: {
-                      id: true,
-                      consultantProfileId: true,
-                      recordingEnabled: true,
-                    },
-                  },
-                },
-              },
-              trialSession: {
-                select: { consultantProfileId: true, status: true },
               },
             },
           },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  consultantProfileId: true,
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                select: {
+                  id: true,
+                  consultantProfileId: true,
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                select: {
+                  id: true,
+                  consultantProfileId: true,
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
+          trialSession: {
+            select: { consultantProfileId: true, status: true },
+          },
         },
       },
-    } satisfies Prisma.MeetingSessionInclude;
+    },
+  },
+} satisfies Prisma.MeetingSessionInclude;
 
 function loadMeetingSession(meetingId: string) {
   return prisma.meetingSession.findUnique({
@@ -201,13 +204,14 @@ const REJOIN_GRACE_MS = 30 * 60 * 1000;
  * cancellation, or on an unpaid tentative booking — every one of those rules
  * lived only in React. This answers "is this session live/open yet?" from the
  * same run/window helpers the dashboards use, so the gate and the affordance
-* cannot drift.
+ * cannot drift.
  *
  * Returns null when joining is permitted; otherwise a user-facing refusal.
  */
 async function meetingPolicyRefusal(args: {
   appointmentId: string;
   role: Exclude<MeetingRole, null>;
+  streamCallId: string;
 }): Promise<string | null> {
   const now = new Date();
 
@@ -221,7 +225,9 @@ async function meetingPolicyRefusal(args: {
       isTentative: true,
       completionStatus: true,
       appointmentId: true,
-      meetingSession: { select: { id: true, endedAt: true } },
+      meetingSession: {
+        select: { id: true, endedAt: true, endedReason: true },
+      },
     },
   });
 
@@ -248,21 +254,56 @@ async function meetingPolicyRefusal(args: {
           : CONSULTEE_JOIN_WINDOW_MS) / 60000
       } minutes before the start time.`;
     case "ended": {
-      // Host ended the call → closed for everyone. Time-passed → brief
-      // rejoin grace for reconnects during an overrun.
-      const hostEndedEarly = run.slots.some(
-        (slot) => Boolean(slot.meetingSession?.endedAt),
-      );
-      if (
-        !hostEndedEarly &&
-        now.getTime() <= run.endsAt.getTime() + REJOIN_GRACE_MS
-      ) {
-        return null;
+      // A DELIBERATE end — the host closing the room, or a maintenance drain —
+      // closes it for everyone, immediately. An inactivity timeout does not:
+      // see isDeliberateEnd. #1270.
+      if (run.slots.some((slot) => isDeliberateEnd(slot.meetingSession))) {
+        return "This session has ended.";
       }
+
+      // Inside the clock grace, a reconnect is fine.
+      if (now.getTime() <= run.endsAt.getTime() + REJOIN_GRACE_MS) return null;
+
+      // #1270 — past the clock grace, ask the room rather than the calendar.
+      // Sessions overrun, and a fixed window locked a dropped participant out
+      // of a call that was demonstrably still running with their counterpart
+      // in it. Only reached on the path that was about to refuse, so the happy
+      // path pays nothing for it.
+      if (await callHasLiveParticipants(args.streamCallId)) return null;
+
       return "This session has ended.";
     }
     default:
       return null;
+  }
+}
+
+/**
+ * Does this call currently have anyone in it?
+ *
+ * #1270 — the rejoin grace used to be a fixed 30 minutes from the SCHEDULED
+ * end, which locked a dropped participant out of a session that was visibly
+ * still running. Sessions overrun; the calendar is a worse authority on
+ * "is this over" than the room itself.
+ *
+ * Fail-open on a Stream error, deliberately: this runs only where the caller
+ * was otherwise about to be refused, and an outage should not convert
+ * "probably still talking" into "you may not return". A stale or missing call
+ * simply reports nobody home and the refusal stands.
+ */
+async function callHasLiveParticipants(streamCallId: string): Promise<boolean> {
+  if (!isStreamConfigured()) return false;
+  try {
+    const call = getStreamVideoClient().video.call(
+      STREAM_CALL_TYPE,
+      toCallId(streamCallId),
+    );
+    const { call: state } = await call.get();
+    if (state.ended_at) return false;
+    return (state.session?.participants?.length ?? 0) > 0;
+  } catch {
+    // Includes "call does not exist", which is a legitimate no.
+    return false;
   }
 }
 
@@ -338,6 +379,7 @@ export async function resolveMeetingAccess(
     const refusal = await meetingPolicyRefusal({
       appointmentId: appointment.id,
       role,
+      streamCallId,
     });
     if (refusal) {
       return {
