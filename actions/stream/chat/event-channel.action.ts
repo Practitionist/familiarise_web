@@ -26,6 +26,11 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  queryChannelsPaged,
+} from "@/lib/stream/batch";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import {
   DEFAULT_RETENTION_DAYS,
@@ -222,7 +227,12 @@ export async function addUserToEventChannel(
     // Create channel with all data and members in a single atomic call
     // This fixes the "created_by_id must be provided" error and reduces 3 API calls to 1
     const { consultantId, members, name } = eventData;
-    const allMembers = Array.from(new Set([consultantId, ...members, userId]));
+    // #1270 — host and joiner FIRST. `Webinar.maxParticipants` is unbounded and
+    // only the first 100 members fit in the create() body, so ordering decides
+    // who is guaranteed a seat in the atomic call and who arrives in a
+    // follow-up request that can fail on its own. The person whose click
+    // triggered this create is the one who must not be the casualty.
+    const allMembers = Array.from(new Set([consultantId, userId, ...members]));
 
     // Ensure all members exist in Stream Chat before creating the channel
     // Without this, channel creation fails with "users don't exist" error
@@ -234,7 +244,7 @@ export async function addUserToEventChannel(
       name,
       created_by_id: consultantId,
       [`${eventType}_id`]: eventId,
-      members: allMembers,
+      members: createMemberChunk(allMembers),
     };
     const channelWithData = client.channel(
       channelType,
@@ -276,6 +286,12 @@ export async function addUserToEventChannel(
         });
       }
     }
+
+    // #1270 — everyone past the create() chunk, 100 at a time. Runs after an
+    // adopted race too: the winner created the same channel from the same
+    // roster, so the same remainder is owed either way and `addMembers` is
+    // idempotent for anyone already in.
+    await addRemainingMembers(channelWithData, allMembers);
 
     // Lazy-create bypasses createChannel, so the #899 channel-scoped host
     // grant is repeated here. Non-fatal: chat still works without it.
@@ -506,19 +522,32 @@ export async function getUserEventChannels(userId: string) {
   const client = getStreamChatClient();
 
   try {
-    // #473 — dashboard hot path. Breaker-open returns an empty channel list so
-    // the page renders (degraded) rather than hanging on the 30s Stream timeout.
-    const channels = await withStreamCircuitBreaker(
-      () =>
-        client.queryChannels(
-          { members: { $in: [userId] } },
-          { last_message_at: -1 },
-          { limit: 100 },
-        ),
-      // #473 — degrade to an empty list when the breaker is open (T is inferred
-      // from the operation, so the empty array needs no cast).
-      () => [],
+    // #1270 — this asked for `limit: 100` and read one page. Stream answers
+    // `queryChannels` with at most 30 rows whatever the caller asks for, so
+    // "all event channels for a user" was the 30 most recently active ones.
+    // Page it properly; a breaker-open page comes back empty and simply ends
+    // the walk, which keeps the #473 degrade below intact.
+    const { channels, truncated } = await queryChannelsPaged((opts) =>
+      // #473 — dashboard hot path. Breaker-open returns an empty channel list
+      // so the page renders (degraded) rather than hanging on the 30s Stream
+      // timeout. T is inferred from the operation, so [] needs no cast.
+      withStreamCircuitBreaker(
+        () =>
+          client.queryChannels(
+            { members: { $in: [userId] } },
+            { last_message_at: -1 },
+            opts,
+          ),
+        () => [],
+      ),
     );
+
+    if (truncated) {
+      streamLogger.warn("User channel list truncated at Stream's offset cap", {
+        userId,
+        returned: channels.length,
+      });
+    }
 
     return channels.map((channel) => ({
       id: channel.id,
@@ -698,30 +727,48 @@ export async function syncUserEventChannels(
     const BATCH_SIZE = 5;
 
     // --- Reconciliation pass: remove user from stale channels ---
-    // Query Stream for every channel this user currently belongs to.
-    // Paginate to handle users with 100+ channel memberships.
-    const PAGE_SIZE = 100;
-    let allStreamChannels: Awaited<ReturnType<typeof client.queryChannels>> =
-      [];
-    let offset = 0;
-    let page;
-    do {
-      // #473 — breaker-open returns [] so reconciliation simply skips the
-      // stale-cleanup pass this run rather than blocking the sync on a dead
-      // Stream backend; the add-pass above already short-circuits too.
-      page = await withStreamCircuitBreaker(
-        () =>
-          client.queryChannels(
-            { members: { $in: [userId] } },
-            {},
-            { limit: PAGE_SIZE, offset },
-          ),
-        () => [], // #473 — degrade to empty page when the breaker is open.
+    //
+    // #1270 — this walk used to ask for pages of 100 and stop as soon as a page
+    // came back smaller than that. Stream never returns more than 30 rows from
+    // `queryChannels`, so the very first page was "short", the loop ended, and
+    // reconciliation only ever examined a user's first 30 memberships. Anything
+    // past that — a DM revoked when a booking was cancelled, say, sitting at
+    // position 41 — was never seen, never classified stale, and never removed.
+    // That is the DM revocation leak. `queryChannelsPaged` pages at the real
+    // cap and advances by the rows actually returned.
+    //
+    // Sorted by `created_at` ascending, not left unsorted. Offset paging is
+    // only coherent over a stable order, and Stream's default sort is
+    // `last_message_at` — which moves while we walk, so an active channel can
+    // jump from page three to page one and push an unread one off the end.
+    // A channel's creation time never changes.
+    const { channels: streamChannels, truncated } = await queryChannelsPaged(
+      (opts) =>
+        // #473 — breaker-open returns [] so reconciliation simply skips the
+        // stale-cleanup pass this run rather than blocking the sync on a dead
+        // Stream backend.
+        withStreamCircuitBreaker(
+          () =>
+            client.queryChannels(
+              { members: { $in: [userId] } },
+              { created_at: 1 },
+              opts,
+            ),
+          () => [],
+        ),
+    );
+
+    // Stream stops serving past offset 1000, so a user with more memberships
+    // than that gets a partial reconcile. Under-revoking is the safe direction
+    // — a channel we never looked at keeps its member, it does not lose one —
+    // but it is a silent partial result, so say so rather than let the run
+    // report a clean sweep it did not perform.
+    if (truncated) {
+      streamLogger.warn(
+        "Reconciliation truncated at Stream's offset cap; some memberships were not examined",
+        { userId, examined: streamChannels.length },
       );
-      allStreamChannels = allStreamChannels.concat(page);
-      offset += PAGE_SIZE;
-    } while (page.length === PAGE_SIZE);
-    const streamChannels = allStreamChannels;
+    }
 
     // Only clean up channels with managed prefixes — preserve collab, support,
     // and manually-created channels that aren't part of the event/dm lifecycle.
