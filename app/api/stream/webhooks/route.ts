@@ -25,6 +25,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
+import { gunzip as gunzipCb } from "node:zlib";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { streamLogger } from "@/lib/stream-logger";
 import {
@@ -33,6 +35,46 @@ import {
   recordStreamEventReceipt,
   streamBaseEventSchema,
 } from "@/lib/stream/webhook-dispatch";
+
+const gunzip = promisify(gunzipCb);
+
+/**
+ * Read the delivery body as the bytes Stream SIGNED.
+ *
+ * Stream computes its HMAC over the UNCOMPRESSED payload, then optionally gzips
+ * it on the wire. `enable_hook_payload_compression` defaults to **true** for
+ * apps created after 2026-05-07, with a 256-byte threshold that every recording
+ * and session event clears. This app currently has it unset — verified against
+ * the live settings — so today the body arrives as plain text and `req.text()`
+ * was right by accident.
+ *
+ * The accident is not worth relying on. If a gzipped body ever arrives, the
+ * signature computed over the compressed bytes cannot match, this route answers
+ * 401, and Stream treats a 401 as FINAL — it is not in the retryable set, so
+ * the event is dropped and never redelivered. Every attendance row, recording
+ * and session-end would vanish silently, which is exactly the shape of the
+ * #1134 outage: 0 WebhookEvent rows, 0 MeetingAttendance, 1,663 sessions that
+ * never ended.
+ *
+ * Detecting the gzip magic bytes rather than trusting `Content-Encoding` is
+ * deliberate: a platform layer may decompress the body and leave the header on,
+ * or pass it through and strip it. The bytes cannot lie about what they are.
+ */
+async function readSignedBody(req: NextRequest): Promise<string> {
+  const raw = Buffer.from(await req.arrayBuffer());
+
+  // 0x1f 0x8b — the gzip magic number. Two bytes is enough; nothing else Stream
+  // sends starts with them, since a JSON payload begins with `{`.
+  const isGzipped = raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b;
+  if (!isGzipped) return raw.toString("utf8");
+
+  const decompressed = await gunzip(raw);
+  streamLogger.debug("Decompressed a gzipped Stream webhook payload", {
+    compressedBytes: raw.length,
+    decompressedBytes: decompressed.length,
+  });
+  return decompressed.toString("utf8");
+}
 
 /**
  * Verify Stream webhook signature using HMAC SHA256
@@ -101,8 +143,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Read request body
-  const body = await req.text();
+  // The bytes Stream signed — decompressed first when the delivery is gzipped.
+  // See readSignedBody.
+  const body = await readSignedBody(req);
 
   // Verify signature
   const isValid = await verifyStreamSignature(req, body, secret);
