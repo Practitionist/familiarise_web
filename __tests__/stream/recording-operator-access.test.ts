@@ -134,6 +134,9 @@ const callAs = async (role: string) => {
 };
 
 beforeEach(() => {
+  // Call history, not just return values — otherwise a later assertion can
+  // pass on a call an earlier test made.
+  jest.clearAllMocks();
   db.payment.findMany.mockResolvedValue([]);
   db.recordingPurchase.findFirst.mockResolvedValue(null);
   db.orgAuditLog.create.mockResolvedValue({ id: "audit-1" });

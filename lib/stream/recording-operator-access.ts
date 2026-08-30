@@ -125,5 +125,10 @@ export async function auditOperatorRecordingAccess(
     message: summary,
     context: details,
     correlationId: params.recordingId ?? params.meetingSessionId ?? null,
+    // For a B2C recording this row is the ONLY audit trail — there is no
+    // organization to carry an OrgAuditLog entry. Serving the read anyway when
+    // the insert failed would mean an unaudited operator access, which is the
+    // one thing this function exists to prevent.
+    strict: true,
   });
 }

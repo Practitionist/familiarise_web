@@ -58,7 +58,7 @@ if (session.user.role === "ADMIN") { ... }
 
 ### The back-office permission matrix
 
-`isPrivileged()` answers a coarse question, and it is the wrong question wherever ADMIN and STAFF should differ. [`lib/auth/backoffice-permissions.ts`](file:///Users/kaustavghosh/Desktop/familiarise_web/lib/auth/backoffice-permissions.ts) is the declared single source of truth for which platform role reaches which internal surface, and `requireBackofficeSurface(surface)` is the guard that consults it. The sidebar, the page guards and the API routes all read the same map, which is what keeps a surface out of the "tab shown, page redirects, API 403s" state.
+`isPrivileged()` answers a coarse question, and it is the wrong question wherever ADMIN and STAFF should differ. [`lib/auth/backoffice-permissions.ts`](../../lib/auth/backoffice-permissions.ts) is the declared single source of truth for which platform role reaches which internal surface, and `requireBackofficeSurface(surface)` is the guard that consults it. The sidebar, the page guards and the API routes all read the same map, which is what keeps a surface out of the "tab shown, page redirects, API 403s" state.
 
 The policy the matrix encodes is that staff own support end-to-end, read every money surface without mutating any of it, and admin alone executes money, owns org lifecycle and platform config, and takes the irreversible user actions. Two recent additions are worth naming because they are the shape the matrix exists for.
 
@@ -93,7 +93,7 @@ orgRoleSatisfies("LEARNER", "MANAGER");    // false — 20 < 60
 
 ## 6. API Helpers Inventory
 
-All helpers live in [`lib/auth-helpers.ts`](file:///Users/kaustavghosh/Desktop/familiarise_web/lib/auth-helpers.ts).
+All helpers live in [`lib/auth-helpers.ts`](../../lib/auth-helpers.ts).
 
 ### 6.1 Session Helpers
 
