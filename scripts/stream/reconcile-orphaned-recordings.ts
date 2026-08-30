@@ -1,0 +1,199 @@
+/**
+ * Orphaned Recording Reconciliation — Core Logic (#1270)
+ *
+ * A recording reaches our database exactly one way in normal operation: Stream
+ * delivers `call.recording_ready` and the webhook writes a `Recording` row.
+ * When that delivery is lost — a narrowed subscription, a missing webhook
+ * secret, a 5xx from our own route during a deploy — nothing notices. The
+ * `MeetingSession` still carries `recordingStartedAt`, because the START of the
+ * recording was written by our own code rather than by a webhook, so the
+ * database says a recording was made and simply has no row for it.
+ *
+ * The only existing repair was `RecordingService.syncRecordingsFor*`, reachable
+ * solely through `POST /api/stream/recordings/sync`, which a consultant has to
+ * click. That is not a backstop, because the person who would click it is the
+ * person who does not yet know anything is missing.
+ *
+ * The deadline is what makes this urgent rather than untidy. Stream keeps a
+ * recording for fourteen days and then deletes the file. A dropped webhook is
+ * therefore a silent, permanent loss of the customer's recording on a
+ * fourteen-day fuse, and #1134 established that dropped webhooks here were not
+ * hypothetical: for the entire period the webhook secret was unset in
+ * production, every single delivery was lost.
+ *
+ * This sweep asks Stream directly for the recordings of any session that claims
+ * to have one and has no row, and writes what it finds through the same single
+ * writer the user-triggered sync uses.
+ *
+ * Imported by:
+ * - jobs/stream/reconcile-orphaned-recordings.ts (GitHub Actions)
+ * - app/api/admin/system-jobs/run/route.ts (operator surface)
+ */
+
+import prisma from "../../lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
+import {
+  RecordingService,
+  type SyncableSession,
+} from "@/lib/stream/recording-service";
+import { isStreamConfigured } from "@/lib/stream-client";
+import type { RecordingRow } from "@/lib/stream/recording-types";
+
+export interface OrphanedRecordingResult {
+  /** Sessions that claim a recording and have no `Recording` row. */
+  scanned: number;
+  /** `Recording` rows created from what Stream actually held. */
+  recovered: number;
+  /** Sessions Stream had nothing for — the file is gone, or never existed. */
+  stillMissing: number;
+  /** Sessions already past Stream's retention, reported and not retried. */
+  unrecoverable: number;
+  success: boolean;
+  errors: string[];
+}
+
+/**
+ * Stream deletes a recording fourteen days after the call. Looking further back
+ * than that only produces `listRecordings` calls that can never return
+ * anything, so the window is the retention period itself. Anything older is
+ * counted as unrecoverable and reported rather than retried forever.
+ */
+const STREAM_RETENTION_DAYS = 14;
+
+/**
+ * How long to let the normal path finish before treating a session as orphaned.
+ *
+ * `call.recording_ready` is not immediate — Stream has to finish the egress and
+ * upload the file, which takes minutes for a long session. Sweeping too early
+ * would race the webhook and issue a `listRecordings` for a file that is still
+ * being written, so this is generous: a recording that has not arrived two
+ * hours after the call is not late, it is lost.
+ */
+const MIN_AGE_HOURS = 2;
+
+/** Bounded per run so one backlog cannot hold the workflow open. */
+const MAX_SESSIONS_PER_RUN = 200;
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * The appointment shape `syncSessionRecordings` needs to title a recording and
+ * to mirror the parent's org tag. Identical to the consultant sync path's
+ * include, and it has to be: the two produce the same rows.
+ */
+const orphanedSessionInclude = {
+  slotOfAppointment: {
+    include: {
+      appointment: {
+        include: {
+          consultation: { include: { consultationPlan: true } },
+          subscription: { include: { subscriptionPlan: true } },
+          webinar: { include: { webinarPlan: true } },
+          class: { include: { classPlan: true } },
+        },
+      },
+    },
+  },
+} as const;
+
+export async function reconcileOrphanedRecordings(): Promise<OrphanedRecordingResult> {
+  // #476 — entry-level cron lock, in the CORE so the Actions entry and the
+  // operator surface both inherit it. Fail-open: the work is idempotent
+  // (`syncSessionRecordings` skips a `streamRecordingId` it already has), so a
+  // double run costs duplicate Stream reads and nothing else.
+  return withCronLock(
+    "reconcile-orphaned-recordings",
+    { failMode: "open" },
+    () => reconcileOrphanedRecordingsUnlocked(),
+  );
+}
+
+async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingResult> {
+  const result: OrphanedRecordingResult = {
+    scanned: 0,
+    recovered: 0,
+    stillMissing: 0,
+    unrecoverable: 0,
+    success: true,
+    errors: [],
+  };
+
+  if (!isStreamConfigured()) {
+    // Not a quiet success. This job's entire purpose is to notice that
+    // recordings are not arriving, and a run that could not ask Stream has
+    // noticed nothing — reporting green would reproduce the failure mode.
+    result.errors.push("Stream is not configured — cannot reconcile");
+    result.success = false;
+    return result;
+  }
+
+  const now = Date.now();
+  const notBefore = new Date(now - STREAM_RETENTION_DAYS * DAY_MS);
+  const notAfter = new Date(now - MIN_AGE_HOURS * HOUR_MS);
+
+  // The indicator is `recordingStartedAt`, not `isRecording`. `isRecording` is
+  // cleared when the call stops, so it is false for exactly the sessions this
+  // job cares about; `recordingStartedAt` is the durable record that a
+  // recording was started, and our own code wrote it rather than a webhook.
+  const orphaned = await prisma.meetingSession.findMany({
+    where: {
+      recordingStartedAt: { gte: notBefore, lt: notAfter },
+      streamCallId: { not: "" },
+      recordings: { none: {} },
+    },
+    orderBy: { recordingStartedAt: "asc" },
+    take: MAX_SESSIONS_PER_RUN,
+    include: orphanedSessionInclude,
+  });
+
+  result.scanned = orphaned.length;
+
+  // Past the retention window there is nothing left to fetch. Counted and
+  // reported so the number is visible — it is the count of recordings this
+  // platform has permanently lost, which is the figure that should drive
+  // whether the webhook itself gets more attention.
+  result.unrecoverable = await prisma.meetingSession.count({
+    where: {
+      recordingStartedAt: { lt: notBefore },
+      streamCallId: { not: "" },
+      recordings: { none: {} },
+    },
+  });
+
+  for (const session of orphaned) {
+    const recovered: RecordingRow[] = [];
+    try {
+      await RecordingService.syncSessionRecordings(
+        session as SyncableSession,
+        recovered,
+      );
+    } catch (error) {
+      result.success = false;
+      result.errors.push(
+        `session ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    if (recovered.length > 0) result.recovered += recovered.length;
+    else result.stillMissing++;
+  }
+
+  console.log(
+    JSON.stringify({
+      event: "reconcile_orphaned_recordings",
+      scanned: result.scanned,
+      recovered: result.recovered,
+      stillMissing: result.stillMissing,
+      unrecoverable: result.unrecoverable,
+      errorCount: result.errors.length,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+
+  return result;
+}
+
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}
