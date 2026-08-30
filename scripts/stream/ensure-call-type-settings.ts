@@ -72,8 +72,13 @@ import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import type { CallSettingsResponse } from "@stream-io/node-sdk";
 import { getStreamVideoClient } from "@/lib/stream-client";
+// The same constant the app itself resolves calls against, not an env var —
+// `ensure-call-type-grants.ts` imports it from here too. Reading a separate
+// env var would let the grants script and this one harden DIFFERENT call
+// types, which is the divergence class this subsystem keeps repeating.
+import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
 
-const CALL_TYPE = process.env.STREAM_CALL_TYPE || "default";
+const CALL_TYPE = STREAM_CALL_TYPE;
 const BACKUP_DIR = ".stream-backups";
 
 const TARGET = {
