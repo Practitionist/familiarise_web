@@ -78,11 +78,7 @@ export function useLazyJoinMeeting() {
 
       try {
         const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-        const meetingId = await getOrCreateAppointmentMeeting(
-          client,
-          appointment,
-          relevantSlot,
-        );
+        const meetingId = await getOrCreateAppointmentMeeting(relevantSlot);
         router.push(`/meetings/${meetingId}`);
         toast({
           title: "Joining meeting",

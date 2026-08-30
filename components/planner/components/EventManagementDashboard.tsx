@@ -16,7 +16,7 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportClientFailure } from "@/lib/errors/classification/client-failure";
 import { failureToast } from "@/components/ui/failure-toast";
-import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import type { MeetingSlot } from "@/lib/meeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   getCurrentOrNextSession,
@@ -203,18 +203,8 @@ export function EventManagementDashboard({
         endsAt: slot.endsAt,
         appointmentId: webinar.appointment.id,
       };
-      const meetingAppointment: MeetingAppointment = {
-        id: webinar.appointment.id,
-        appointmentType: "WEBINAR",
-        slotsOfAppointment: [meetingSlot],
-        webinar: { webinarPlan: { title: webinar.webinarPlan.title } },
-      };
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        streamClient,
-        meetingAppointment,
-        meetingSlot,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(meetingSlot);
       toast({
         title: "Joining meeting",
         description: "Redirecting to the meeting room.",
@@ -294,18 +284,8 @@ export function EventManagementDashboard({
         endsAt: targetSlot.endsAt,
         appointmentId: targetAppt.id,
       };
-      const meetingAppointment: MeetingAppointment = {
-        id: targetAppt.id,
-        appointmentType: "CLASS",
-        slotsOfAppointment: [meetingSlot],
-        class: { classPlan: { title: classEvent.classPlan.title } },
-      };
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        streamClient,
-        meetingAppointment,
-        meetingSlot,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(meetingSlot);
       toast({
         title: "Joining meeting",
         description: "Redirecting to the meeting room.",

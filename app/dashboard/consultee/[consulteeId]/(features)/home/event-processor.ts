@@ -71,7 +71,11 @@ export interface ProcessedEvent {
  */
 export type ProcessedSlot = MeetingSlot & {
   completionStatus?: string | null;
-  meetingSession?: { id: string; endedAt: Date | string | null } | null;
+  meetingSession?: {
+    id: string;
+    endedAt: Date | string | null;
+    endedReason: string | null;
+  } | null;
 };
 
 /**
@@ -135,7 +139,11 @@ function toSlotContexts(
     isTentative: boolean;
     appointmentId: string | null;
     completionStatus?: string | null;
-    meetingSession?: { id: string; endedAt: Date | string | null } | null;
+    meetingSession?: {
+    id: string;
+    endedAt: Date | string | null;
+    endedReason: string | null;
+  } | null;
   }>,
   appointmentId: string,
 ): SlotWithContext[] {
