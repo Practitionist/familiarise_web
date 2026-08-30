@@ -42,7 +42,7 @@ The recording system enables consultants to record webinars and classes for late
 - **Automatic webhook processing** - Recording lifecycle managed via webhooks
 - **Idempotent operations** - Safe to receive duplicate webhook events
 - **Automatic transfer** - The `recording_ready` webhook enqueues the permanent-storage transfer immediately (via Next.js `after()`), and a cron job runs as a backstop sweeper that picks up any recording the webhook missed before its Stream URL expires
-- **Role-based access** - Different permissions for consultants, consultees, and admins
+- **Capability-based access** - Consultants, consultees, collaborators and replay buyers each reach a recording through a distinct ownership or entitlement path, and platform operators reach it through the back-office permission matrix: staff see metadata, admin alone plays the session, and either one is audited (#1270)
 
 ---
 
@@ -655,22 +655,53 @@ Stop recording for a video call.
 
 Get a single recording by ID.
 
-**Authorization:** Consultant (own recordings) or Consultee (paid enrollments) or Admin
+**Authorization:** the consultant who delivered the session, an accepted collaborator on its plan, a consultee holding a net-positive payment for the plan, or a standalone replay buyer. Platform operators reach it through the back-office matrix instead: `recordings.read` admits ADMIN and STAFF, while `recordings.play` is ADMIN-only. See the [Operator access](#operator-access-admin--staff) section below.
 
-**Response:**
+The response always carries an `access` object so a client can tell "you may not play this" apart from "there is nothing to play yet" — both of which present as a null `playbackUrl`.
+
+**Response (full access):**
 
 ```json
 {
-  "id": "clx123...",
-  "title": "Webinar: Introduction to React - Jan 15, 2025",
-  "recordingUrl": "https://...",
-  "supabaseUrl": "https://...",
-  "durationInMinutes": 45,
-  "recordedAt": "2025-01-15T10:00:00Z",
-  "status": "AVAILABLE",
-  "storageType": "SUPABASE"
+  "recording": {
+    "id": "clx123...",
+    "title": "Webinar: Introduction to React - Jan 15, 2025",
+    "playbackUrl": "https://...",
+    "thumbnailUrl": "https://...",
+    "previewClipUrl": "https://...",
+    "durationInMinutes": 45,
+    "recordedAt": "2025-01-15T10:00:00Z",
+    "status": "AVAILABLE",
+    "storageType": "SUPABASE"
+  },
+  "access": { "level": "FULL" }
 }
 ```
+
+**Response (staff, metadata only):**
+
+```json
+{
+  "recording": {
+    "id": "clx123...",
+    "title": "Webinar: Introduction to React - Jan 15, 2025",
+    "playbackUrl": null,
+    "thumbnailUrl": null,
+    "previewClipUrl": null,
+    "durationInMinutes": 45,
+    "recordedAt": "2025-01-15T10:00:00Z",
+    "status": "AVAILABLE",
+    "storageType": "SUPABASE",
+    "streamUrlExpiresAt": null
+  },
+  "access": {
+    "level": "METADATA_ONLY",
+    "reason": "Playback requires the recordings.play permission; staff receive metadata only."
+  }
+}
+```
+
+Every media URL is withheld from the metadata-only response, not only `playbackUrl`. A thumbnail is a frame of the session and the preview clip is a cut of it, so returning either would hand over exactly the content the cap exists to protect. The expiry branch behaves differently too: a full-access caller receives a `410` when a `STREAM_S3` recording's link has lapsed, whereas a metadata-only caller receives the record with `streamUrlExpiresAt` populated, because diagnosing that expiry is the reason a support agent is looking at all.
 
 ---
 
@@ -707,6 +738,8 @@ Sync recordings from Stream API for the current user.
   "recordings": [ ... ]
 }
 ```
+
+**Rate limit:** three calls per five minutes per user, via `streamRecordingSyncLimiter`. One POST here walks every session the caller owns or is enrolled in and issues a `listRecordings` request to Stream for each of them, so a single authenticated account could otherwise force an unbounded and billable fan-out. The edge `stream: api` rule already matched this path, but it is keyed by IP at sixty per minute, which neither identifies the caller nor reflects what the endpoint costs to serve. The user-keyed limiter is sized on what the feature is for: somebody presses "Sync" because a replay is missing, and the answer does not change on the second press.
 
 ---
 
@@ -815,13 +848,42 @@ Receives webhook events from Stream.
 
 ### Recording Operations
 
-| Role           | Start | Stop | View Own | View All | Transfer | Delete |
-| -------------- | :---: | :--: | :------: | :------: | :------: | :----: |
-| **Consultant** |  Yes  | Yes  |   Yes    |    No    |   Yes    |   No   |
-| **Consultee**  |  No   |  No  |  Yes\*   |    No    |    No    |   No   |
-| **Admin**      |  No   |  No  |   Yes    |   Yes    |    No    |   No   |
+| Role           | Start | Stop | View Own | Metadata (any) | Play (any) | Transfer | Delete |
+| -------------- | :---: | :--: | :------: | :------------: | :--------: | :------: | :----: |
+| **Consultant** |  Yes  | Yes  |   Yes    |       No       |     No     |   Yes    |   No   |
+| **Consultee**  |  No   |  No  |  Yes\*   |       No       |     No     |    No    |   No   |
+| **Staff**      |  No   |  No  |   Yes    |      Yes       |   **No**   |    No    |   No   |
+| **Admin**      |  No   |  No  |   Yes    |      Yes       |    Yes     |    No    |   No   |
 
 \*Consultees can only view recordings for webinars/classes they have a live paid enrollment for. As of #689 (STR-1), a successful payment alone is no longer sufficient — the entitlement nets any refunds, so a fully-refunded buyer loses access while a partially-refunded buyer keeps it.
+
+### Operator access (ADMIN / STAFF)
+
+Until #1270 the operator grant was a single line — `if (isPrivileged(session.user.role)) hasAccess = true` — in both `GET /api/stream/recordings/[recordingId]` and `GET /api/stream/meetings/[streamCallId]/recording-info`. Because `isPrivileged` returns true for STAFF as well as ADMIN, any staff member could fetch a playback URL for any recording on the platform, including a 1:1 consultation they had no relationship to, and nothing was written anywhere to record that they had. The operator path was therefore strictly less accountable than the tenant path, where deleting a recording or exporting a call log already produced an `OrgAuditLog` row.
+
+Three rules now hold, and they are implemented once in `lib/stream/recording-operator-access.ts` so no route can restate them differently.
+
+First, the grant is resolved through `BACKOFFICE_PERMISSIONS`, which is the declared single source of truth for who reaches which internal surface. `recordings.read` covers metadata and admits both ADMIN and STAFF; `recordings.play` covers any URL that renders the session and admits ADMIN alone. A bare `isPrivileged` call left the grant invisible to the file that is supposed to enumerate it.
+
+Second, staff receive metadata only. Everything a support agent needs in order to answer "where is my replay" — status, storage type, duration, recorded-at, and the Stream URL expiry — is metadata, and none of it requires watching the session. The session content belongs to the two people who agreed to record it for each other, not to the platform.
+
+Third, the operator branch is evaluated last, after every ownership and entitlement path. A staff member who actually delivered or bought the session passes one of those checks and keeps full playback; the operator branch only ever catches somebody with no relationship to the session at all. ADMIN is the one exception and short-circuits first, because holding `recordings.play` means the ownership walk cannot widen anything for them.
+
+### Auditing a privileged read
+
+Every read that is granted by the operator branch writes a trail before the response is built, and before any playback URL is minted, so the trail cannot lag the access it describes. There are two sinks.
+
+`OrgAuditLog` receives a `STREAM_RECORDING_ACCESSED` row whenever the session belongs to an organization, so the tenant can see that a platform operator reached into their sessions. `actorMembershipId` is null because the operator is acting as the platform rather than as a member; the actor's user id and role live in `details`, alongside `played`, which distinguishes a metadata read from playback. This write is deliberately not swallowed — it mirrors the sibling compliance export at `app/api/organizations/[orgId]/stream/calls/route.ts`, where a read that cannot be audited is not served.
+
+`SystemEvent` receives a `STREAM_RECORDING_ACCESS` row on every privileged read, including B2C recordings that have no tenant to write to. It is recorded at `WARN` severity rather than `INFO` so that reaching into someone else's session stands out when an on-call engineer scans the platform trail. `recordSystemEvent` is best-effort by its own contract, which is the honest ceiling today: there is no platform-wide audit table to write to instead, and introducing one is a schema change.
+
+### Playback URLs never leave the handler raw
+
+`Recording.recordingUrl` holds Stream's pre-signed S3 link. It is valid for fourteen days and carries its own credentials, so anybody who ends up holding the string can fetch the video with no session and no membership — a forwarded email, a pasted chat message, an exported CSV, or a third-party tool consuming the API all suffice. `GET /api/organizations/[orgId]/stream/calls` used to return that column verbatim to any org MANAGER+ when called with `?withRecordings=1`.
+
+That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `supabaseUrl`, not `supabasePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
+
+The route deliberately offers no playback arm at all, not even a short-lived signed one. [ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md) is the governing rule — an organization may see that a session happened, not what happened in it — and it considered and rejected exactly that design, on the grounds that an audit row does not change what a member has to assume about who can watch their coaching session. The equivalent allowlist already existed in `lib/api/scope/list-recordings.ts` for the org recordings page; this route was the arm the July 2026 audit missed.
 
 ### Access Verification Logic
 
@@ -875,17 +937,20 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 | `lib/stream/recording-handlers.ts`         | Webhook event handlers         |
 | `lib/stream/recording-utils.ts`            | Helper functions               |
 | `lib/stream/recording-types.ts`            | Prisma payload types           |
+| `lib/stream/recording-operator-access.ts`  | Operator grant + audit (#1270) |
 
 ### API Routes
 
-| File                                                        | Endpoint           |
-| ----------------------------------------------------------- | ------------------ |
-| `app/api/stream/recordings/start/route.ts`                  | POST /start        |
-| `app/api/stream/recordings/stop/route.ts`                   | POST /stop         |
-| `app/api/stream/recordings/sync/route.ts`                   | POST /sync         |
-| `app/api/stream/recordings/[recordingId]/route.ts`          | GET /:id           |
-| `app/api/stream/recordings/[recordingId]/transfer/route.ts` | POST /:id/transfer |
-| `app/api/stream/webhooks/route.ts`                          | Webhook handler    |
+| File                                                             | Endpoint            |
+| ---------------------------------------------------------------- | ------------------- |
+| `app/api/stream/recordings/start/route.ts`                       | POST /start         |
+| `app/api/stream/recordings/stop/route.ts`                        | POST /stop          |
+| `app/api/stream/recordings/sync/route.ts`                        | POST /sync          |
+| `app/api/stream/recordings/[recordingId]/route.ts`               | GET /:id            |
+| `app/api/stream/recordings/[recordingId]/transfer/route.ts`      | POST /:id/transfer  |
+| `app/api/stream/webhooks/route.ts`                               | Webhook handler     |
+| `app/api/stream/meetings/[streamCallId]/recording-info/route.ts` | GET recording state |
+| `app/api/organizations/[orgId]/stream/calls/route.ts`            | GET org call export |
 
 ### Session Handlers
 
