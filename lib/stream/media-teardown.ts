@@ -19,7 +19,12 @@ import { type Call, CallingState } from "@stream-io/video-react-sdk";
  * no-op.
  */
 function localDevices(call: Call) {
-  return [call.camera, call.microphone, call.screenShare];
+  // #1270 — a Call handle that never reached `get()`/`join()` has no device
+  // managers yet, and teardown now runs on exactly those paths (a mint that
+  // only created the room, a join that threw). Reading `.state` off an absent
+  // manager threw from inside the cleanup, which then masked the real error.
+  // Teardown must never be the thing that fails.
+  return [call.camera, call.microphone, call.screenShare].filter(Boolean);
 }
 
 /**
@@ -33,7 +38,7 @@ export function stopLocalTracks(call: Call | null | undefined): void {
   if (!call) return;
 
   for (const device of localDevices(call)) {
-    for (const track of device.state.mediaStream?.getTracks() ?? []) {
+    for (const track of device.state?.mediaStream?.getTracks() ?? []) {
       try {
         track.stop();
       } catch {
