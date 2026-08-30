@@ -21,13 +21,13 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { createSupportTicket } from "../../lib/support/create-ticket";
-import { SupportIssueType } from "@prisma/client";
 import { getCallPresenceEvidence } from "../../lib/stream/call-presence";
 import {
   AppointmentStatus,
   CancellationReason,
   PaymentStatus,
   SlotCompletionStatus,
+  SupportIssueType,
 } from "@prisma/client";
 import {
   notifyAppointmentCancelled,
@@ -232,6 +232,43 @@ export async function refusalFromStreamEvidence(
 }
 
 /**
+ * What Stream says about a booking's sessions, for the both-absent decision.
+ *
+ * `sawSomeone` true means our attendance rows are wrong rather than the room
+ * being empty — a lost delivery. `evidenceMissing` true means Stream cannot
+ * speak for at least one session, so nothing here is safe to conclude.
+ */
+async function streamPresenceAcross(
+  sessions: { streamCallId: string }[],
+): Promise<{ sawSomeone: boolean; evidenceMissing: boolean }> {
+  let sawSomeone = false;
+  let evidenceMissing = false;
+  for (const session of sessions) {
+    const evidence = await getCallPresenceEvidence(session.streamCallId);
+    if (!evidence) {
+      evidenceMissing = true;
+      continue;
+    }
+    if (evidence.unique > 0) sawSomeone = true;
+  }
+  return { sawSomeone, evidenceMissing };
+}
+
+/** Has a ticket already been raised for this consultation on a previous run? */
+async function bothAbsentTicketExists(
+  consultationId: string,
+): Promise<boolean> {
+  const existing = await prisma.supportTicket.findFirst({
+    where: {
+      consultationId,
+      issueType: SupportIssueType.TECHNICAL_ISSUES,
+    },
+    select: { id: true },
+  });
+  return existing !== null;
+}
+
+/**
  * Nobody joined at all — detected, never auto-decided.
  *
  * #1280: there is no both-absent detector, so a consultation where neither
@@ -278,18 +315,10 @@ export async function detectBothAbsent(
 
       // Corroborate: no attendance rows is not evidence of an empty room when
       // the rows come from deliveries that can be lost.
-      let streamSawSomeone = false;
-      let evidenceMissing = false;
-      for (const session of sessions) {
-        const evidence = await getCallPresenceEvidence(session.streamCallId);
-        if (!evidence) {
-          evidenceMissing = true;
-          continue;
-        }
-        if (evidence.unique > 0) streamSawSomeone = true;
-      }
+      const { sawSomeone, evidenceMissing } =
+        await streamPresenceAcross(sessions);
 
-      if (streamSawSomeone) {
+      if (sawSomeone) {
         // Someone WAS there and we have no row for them — a lost delivery, and
         // this is the only place it becomes visible.
         Sentry.captureMessage(
@@ -309,14 +338,7 @@ export async function detectBothAbsent(
 
       // Idempotent: this runs on a cron, and `createSupportTicket` documents
       // that callers own their own dedup.
-      const existing = await prisma.supportTicket.findFirst({
-        where: {
-          consultationId: consultation.id,
-          issueType: SupportIssueType.TECHNICAL_ISSUES,
-        },
-        select: { id: true },
-      });
-      if (existing) continue;
+      if (await bothAbsentTicketExists(consultation.id)) continue;
 
       const planTitle = consultation.consultationPlan?.title ?? "consultation";
       await createSupportTicket({
