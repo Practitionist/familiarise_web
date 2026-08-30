@@ -50,72 +50,84 @@ type Expected = {
  * dollar-quoted bodies (trigger functions live in `$$ ... $$`) must survive
  * intact or every trigger in the file stops being seen.
  */
+/** Index just past the closing quote of a single-quoted literal opened at `i`. */
+function scanSingleQuoted(sql: string, i: number): number {
+  let j = i + 1;
+  while (j < sql.length && sql[j] !== "'") j++;
+  return Math.min(j + 1, sql.length);
+}
+
+/** Index just past the closing tag of a dollar-quoted body opened at `i`. */
+function scanDollarQuoted(sql: string, i: number, tag: string): number {
+  const close = sql.indexOf(tag, i + tag.length);
+  return close === -1 ? sql.length : close + tag.length;
+}
+
+/**
+ * Index just past the end of a block comment opened at `i`.
+ *
+ * Block comments NEST in Postgres, unlike C: `/* a /* b *\/ c *\/` is one
+ * comment. Scanning to the first close would leave ` c *\/` behind as apparent
+ * SQL.
+ */
+function scanBlockComment(sql: string, i: number): number {
+  let depth = 1;
+  let j = i + 2;
+  while (j < sql.length && depth > 0) {
+    if (sql.startsWith("/*", j)) {
+      depth++;
+      j += 2;
+    } else if (sql.startsWith("*/", j)) {
+      depth--;
+      j += 2;
+    } else {
+      j++;
+    }
+  }
+  return j;
+}
+
+/**
+ * Strip SQL comments before matching.
+ *
+ * check-constraints.sql carries a block of PROPOSED constraints commented out
+ * with `--`, waiting on the data to be clean enough to apply them. Matching the
+ * raw text counted those proposals as required objects, so the guard demanded
+ * three constraints nobody had ever agreed to create. Nothing surfaced it
+ * because the guard also self-skipped in CI for want of DATABASE_URL, so it had
+ * never once run — the bug and the reason nobody saw it were the same bug.
+ *
+ * Two things must survive: a `--` inside a string literal is data, and trigger
+ * bodies live in dollar-quoted blocks that routinely contain `--`.
+ *
+ * A comment is replaced by a SPACE, never by nothing. Postgres treats comments
+ * as whitespace, so one can legally be the only separator between two tokens —
+ * dropping it turned `CREATE/* x *\/INDEX "i"` into `CREATEINDEX "i"`, and the
+ * parser then missed an object that IS declared.
+ */
 export function stripSqlComments(sql: string): string {
   let out = "";
   let i = 0;
-  let inSingle = false;
-  let dollarTag: string | null = null;
 
   while (i < sql.length) {
-    if (dollarTag) {
-      if (sql.startsWith(dollarTag, i)) {
-        out += dollarTag;
-        i += dollarTag.length;
-        dollarTag = null;
-      } else {
-        out += sql[i++];
-      }
-      continue;
-    }
-    if (inSingle) {
-      out += sql[i];
-      if (sql[i] === "'") inSingle = false;
-      i++;
-      continue;
-    }
     const dollar = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
     if (dollar) {
-      dollarTag = dollar[0];
-      out += dollarTag;
-      i += dollarTag.length;
-      continue;
-    }
-    if (sql[i] === "'") {
-      inSingle = true;
-      out += sql[i++];
-      continue;
-    }
-    if (sql.startsWith("--", i)) {
+      const end = scanDollarQuoted(sql, i, dollar[0]);
+      out += sql.slice(i, end);
+      i = end;
+    } else if (sql[i] === "'") {
+      const end = scanSingleQuoted(sql, i);
+      out += sql.slice(i, end);
+      i = end;
+    } else if (sql.startsWith("--", i)) {
       while (i < sql.length && sql[i] !== "\n") i++;
-      continue;
-    }
-    if (sql.startsWith("/*", i)) {
-      // Postgres replaces a comment with WHITESPACE, not with nothing, so a
-      // comment can legally sit between two tokens with no other separator.
-      // Dropping it outright turned `CREATE/* note */INDEX "x"` into
-      // `CREATEINDEX "x"`, and the regex then failed to see a genuinely
-      // declared object — the guard passing because it had stopped looking.
-      //
-      // Block comments also NEST in Postgres, unlike C: `/* a /* b */ c */` is
-      // one comment. Scanning to the first `*/` would leave ` c */` behind as
-      // apparent SQL.
-      let depth = 1;
-      i += 2;
-      while (i < sql.length && depth > 0) {
-        if (sql.startsWith("/*", i)) {
-          depth++;
-          i += 2;
-        } else if (sql.startsWith("*/", i)) {
-          depth--;
-          i += 2;
-        } else {
-          i++;
-        }
-      }
       out += " ";
-      continue;
+    } else if (sql.startsWith("/*", i)) {
+      i = scanBlockComment(sql, i);
+      out += " ";
+    } else {
+      out += sql[i++];
     }
-    out += sql[i++];
   }
   return out;
 }

@@ -113,7 +113,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, val) => {
     if (!val || typeof val !== "object" || Array.isArray(val)) return val;
     const entries = Object.entries(val as Record<string, unknown>);
-    return Object.fromEntries(entries.sort(byCodeUnit));
+    return Object.fromEntries(entries.toSorted(byCodeUnit));
   });
 }
 
