@@ -134,6 +134,17 @@ const SYSTEM_JOBS = [
     schedule,
     category: "Stream",
   })),
+  {
+    // #1270. Not yet on a schedule — the workflow that will drive it belongs to
+    // a sibling change — so the Jobs page shows it as on-demand rather than
+    // implying a cadence that nothing keeps.
+    id: "retry-moderation-enforcement",
+    name: "Retry Moderation Enforcement",
+    description:
+      "Re-drive the Stream ban, deactivation or message delete of moderation actions whose recorded outcome says it failed",
+    schedule: "On demand",
+    category: "Moderation",
+  },
 ];
 
 /**

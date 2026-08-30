@@ -1743,6 +1743,10 @@ erDiagram
 
 Staff-operated content moderation with aggregated report counts and typed enforcement actions.
 
+A report points at the content it is about, and which pointer is set depends on the report type. A `REVIEW` report carries `reviewId`, and a `MESSAGE` report carries `streamMessageId` together with the `streamChannelCid` of the conversation it came from (#1270). Those two columns are what `CONTENT_REMOVED` deletes on Stream, and they are also the key that `POST /api/report` aggregates duplicate reports on, so two complaints about two different messages from the same author no longer collapse into one row. Both are nullable, because a report about a profile or a document has neither.
+
+`ModerationAction.sideEffects` holds the post-hoc record of what each enforcement step actually did — sessions revoked, appointments cancelled, refunds issued, and the per-step outcome of the Stream write. It is read by the moderation queue, so a ban whose Stream revocation failed is visible as such, and by the retry sweep, which treats `stream: "failed"` as its work queue and stamps `stream: "gave_up"` once a row is past its retry budget.
+
 ```mermaid
 erDiagram
     User {
@@ -1756,7 +1760,10 @@ erDiagram
         ModerationReportType type
         ModerationReportStatus status
         int reportCount
+        string contentText
         string reviewId
+        string streamMessageId
+        string streamChannelCid
         datetime resolvedAt
     }
     ModerationAction {
@@ -1958,7 +1965,7 @@ Every enum in the schema and its values.
 | `SupportPriority` | LOW, MEDIUM, HIGH, URGENT |
 | `ModerationReportType` | REVIEW, PROFILE, MESSAGE, DOCUMENT, OTHER |
 | `ModerationReportStatus` | PENDING, UNDER_REVIEW, DISMISSED, ACTION_TAKEN, ESCALATED |
-| `ModerationActionType` | WARNING_ISSUED, CONTENT_REMOVED, USER_SUSPENDED, USER_BANNED, PROFILE_UNVERIFIED, NO_ACTION |
+| `ModerationActionType` | WARNING_ISSUED, CONTENT_REMOVED, USER_SUSPENDED, USER_BANNED, PROFILE_UNVERIFIED, NO_ACTION, USER_REINSTATED |
 | `HrisProvider` | WORKDAY, BAMBOOHR, SAP, ORACLE, CERIDIAN, DARWINBOX, CSV |
 | `HrisSyncStatus` | PENDING, RUNNING, COMPLETED, FAILED |
 | `SystemJobStatus` | RUNNING, COMPLETED, FAILED, CANCELLED |
