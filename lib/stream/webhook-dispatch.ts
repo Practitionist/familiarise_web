@@ -165,6 +165,32 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
  * the sweeper re-drives it.
  */
 /**
+ * Is this event for a call type this app actually uses?
+ *
+ * Every handler resolves its row with `call_cid.split(":")[1]`, discarding the
+ * type half. The app only ever uses `default`, but the Stream app also carries
+ * the built-in `livestream`, `audio_room` and `development` types, and on all
+ * three the plain `user` role holds `create-call` — `development` grants it
+ * `start-recording`, `start-transcription` and `start-broadcasting` outright.
+ * Tokens here are app-wide (`generateUserToken`, no `call_cids`), so any
+ * signed-in user holds one that works on them.
+ *
+ * That let a user who knew one of their own anchor slot ids call `getOrCreate`
+ * on `development:slot-<id>`, record whatever they liked, and have Stream
+ * deliver a genuine, correctly-signed `call.recording_ready` whose id half
+ * collided with a real MeetingSession — binding their recording to someone
+ * else's appointment. Signature checking is no defence: the event is authentic.
+ * The same collision reached the session handlers, where injected participant
+ * events feed attendance, which feeds no-show detection, which issues refunds.
+ *
+ * Checked once, at the boundary, so a type added later cannot reintroduce it by
+ * forgetting one of the eight call sites.
+ */
+function isOwnCallType(callCid: string | undefined): boolean {
+  return !callCid || callTypeFromCid(callCid) === STREAM_CALL_TYPE;
+}
+
+/**
  * Write the delivery down, and nothing else.
  *
  * Split out of `processStreamEvent` so the route can call it BEFORE it
@@ -256,40 +282,14 @@ export async function processStreamEvent(
       return;
     }
 
-    // Refuse events for any call type but ours.
-    //
-    // Every handler resolves its row with `call_cid.split(":")[1]`, discarding
-    // the type. The app only ever uses `default`, but the Stream app also ships
-    // the built-in `livestream`, `audio_room` and `development` types, and on
-    // all three the plain `user` role holds `create-call` — `development` grants
-    // it `start-recording`, `start-transcription` and `start-broadcasting`
-    // outright. Tokens here are app-wide (`generateUserToken`, no `call_cids`),
-    // so any signed-in user holds them.
-    //
-    // That let a user who knew one of their own anchor slot ids — they all do —
-    // call `getOrCreate` on `development:slot-<id>`, record whatever they liked,
-    // and have Stream deliver a genuine, correctly-signed `call.recording_ready`
-    // whose id half collides with a real MeetingSession. The handler bound the
-    // attacker's recording to someone else's appointment, inheriting its title
-    // and organizationId, indistinguishable from a real one. Signature checking
-    // is no defence: the event is authentic. The same collision reached the
-    // session handlers, where injected participant events feed attendance, which
-    // feeds no-show detection, which issues refunds.
-    //
-    // Checked once here rather than at the eight call sites, so a type added
-    // later cannot reintroduce it by forgetting.
-    const eventCallType = baseEvent.call_cid
-      ? callTypeFromCid(baseEvent.call_cid)
-      : STREAM_CALL_TYPE;
-    if (eventCallType !== STREAM_CALL_TYPE) {
+    if (!isOwnCallType(baseEvent.call_cid)) {
       streamLogger.warn("Refused Stream webhook for a foreign call type", {
         eventId,
         eventType,
         call_cid: baseEvent.call_cid,
-        callType: eventCallType,
         expected: STREAM_CALL_TYPE,
       });
-      await markWebhookEventProcessed(eventId, undefined);
+      await markWebhookEventProcessed(eventId);
       return;
     }
 

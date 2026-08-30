@@ -125,7 +125,7 @@ describe("webhook call-type guard", () => {
 
   it("still marks a refused event processed, so the sweeper does not re-drive it forever", async () => {
     await dispatch(RECORDING_READY("development:slot-abc"), "evt-marked");
-    expect(mockMarkProcessed).toHaveBeenCalledWith("evt-marked", undefined);
+    expect(mockMarkProcessed).toHaveBeenCalledWith("evt-marked");
   });
 
   it("treats a bare id with no type prefix as the app's own type", async () => {

@@ -104,16 +104,17 @@ function parseArgs(argv: string[]): Options {
  * here is expensive — this is the check that says whether a config wipe just
  * happened. Code-unit ordering, never `localeCompare`.
  */
+function byCodeUnit([a]: [string, unknown], [b]: [string, unknown]): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, val) =>
-    val && typeof val === "object" && !Array.isArray(val)
-      ? Object.fromEntries(
-          Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0,
-          ),
-        )
-      : val,
-  );
+  return JSON.stringify(value, (_key, val) => {
+    if (!val || typeof val !== "object" || Array.isArray(val)) return val;
+    const entries = Object.entries(val as Record<string, unknown>);
+    return Object.fromEntries(entries.sort(byCodeUnit));
+  });
 }
 
 function describe(settings: CallSettingsResponse): string[] {
@@ -185,7 +186,10 @@ async function main(): Promise<number> {
   }
 
   mkdirSync(BACKUP_DIR, { recursive: true });
-  const preImagePath = `${BACKUP_DIR}/call-type-${CALL_TYPE}.${new Date().toISOString()}.json`;
+  // `:` from toISOString is an illegal filename character on Windows, where
+  // writeFileSync would throw before the probe had a chance to run.
+  const stamp = new Date().toISOString().replace(/:/g, "-");
+  const preImagePath = `${BACKUP_DIR}/call-type-${CALL_TYPE}.${stamp}.json`;
   writeFileSync(
     preImagePath,
     JSON.stringify(

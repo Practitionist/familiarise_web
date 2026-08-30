@@ -50,7 +50,7 @@ type Expected = {
  * dollar-quoted bodies (trigger functions live in `$$ ... $$`) must survive
  * intact or every trigger in the file stops being seen.
  */
-function stripSqlComments(sql: string): string {
+export function stripSqlComments(sql: string): string {
   let out = "";
   let i = 0;
   let inSingle = false;
@@ -90,8 +90,29 @@ function stripSqlComments(sql: string): string {
       continue;
     }
     if (sql.startsWith("/*", i)) {
-      const end = sql.indexOf("*/", i + 2);
-      i = end === -1 ? sql.length : end + 2;
+      // Postgres replaces a comment with WHITESPACE, not with nothing, so a
+      // comment can legally sit between two tokens with no other separator.
+      // Dropping it outright turned `CREATE/* note */INDEX "x"` into
+      // `CREATEINDEX "x"`, and the regex then failed to see a genuinely
+      // declared object — the guard passing because it had stopped looking.
+      //
+      // Block comments also NEST in Postgres, unlike C: `/* a /* b */ c */` is
+      // one comment. Scanning to the first `*/` would leave ` c */` behind as
+      // apparent SQL.
+      let depth = 1;
+      i += 2;
+      while (i < sql.length && depth > 0) {
+        if (sql.startsWith("/*", i)) {
+          depth++;
+          i += 2;
+        } else if (sql.startsWith("*/", i)) {
+          depth--;
+          i += 2;
+        } else {
+          i++;
+        }
+      }
+      out += " ";
       continue;
     }
     out += sql[i++];
@@ -210,9 +231,14 @@ async function main(): Promise<void> {
   );
 }
 
-main()
-  .catch((err) => {
-    console.error("check-db-sidecars: fatal", err);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+// Only run when invoked as a script. `stripSqlComments` is unit-tested, and a
+// bare `main()` at module scope meant importing it opened a database connection
+// and raced the test runner's teardown.
+if (process.argv[1] && /check-db-sidecars/.test(process.argv[1])) {
+  main()
+    .catch((err) => {
+      console.error("check-db-sidecars: fatal", err);
+      process.exitCode = 1;
+    })
+    .finally(() => prisma.$disconnect());
+}
