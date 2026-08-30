@@ -7,6 +7,11 @@ import {
   getCurrentOrNextSession,
   getSessionJoinState,
 } from "@/lib/appointments/slots";
+import {
+  isCancelledLikeStatus,
+  isCompletedLikeStatus,
+  isConfirmedStatus,
+} from "@/lib/appointments/status";
 
 /**
  * #1134 P0-1 — the single definition of "may this user join this meeting".
@@ -146,13 +151,40 @@ function loadMeetingSession(meetingId: string) {
 }
 
 /**
- * Booking states from which a join is refused outright, regardless of time.
+ * Whether a booking's own status permits joining its room at all, and what to
+ * say when it does not (#1270).
+ *
+ * This used to be a DENYLIST of three values — CANCELLED, REJECTED, EXPIRED —
+ * while the Join affordance in every dashboard is an ALLOWLIST,
+ * `isConfirmedStatus` = {APPROVED, SCHEDULED, IN_PROGRESS}. Everything in
+ * neither set passed the server gate while the UI hid the button: PENDING, a
+ * DRAFT webinar, and — the one that mattered — `APPROVED_PENDING_PAYMENT` and
+ * its trial twin `AWAITING_PAYMENT`. A consultant who typed /meetings/<id>
+ * walked into a booking nobody had paid for. #1272 closed that in the UI only.
+ * The two now read the same predicate, which is what the header of this file
+ * says the whole module exists for.
+ *
+ * Completed-like statuses are the deliberate exception, and they are handed to
+ * the time gate rather than refused here. `meetingPolicyRefusal` already owns
+ * "has this session finished", including the 30-minute reconnect grace, and it
+ * is stricter than a status check everywhere except inside that grace — where a
+ * status check would be WRONG. `app/api/cleanup/auto-complete-trials` marks a
+ * trial COMPLETED as soon as ANY of its slot rows has ended, with no buffer, so
+ * refusing on status alone could eject a live trial rather than close a hole.
+ *
+ * @returns The refusal message, or null when the status permits a join.
  */
-const TERMINAL_APPOINTMENT_STATUSES = new Set([
-  "CANCELLED",
-  "REJECTED",
-  "EXPIRED",
-]);
+function bookingStatusRefusal(status: string | null): string | null {
+  if (!status) return null;
+  if (isConfirmedStatus(status) || isCompletedLikeStatus(status)) return null;
+  // Cancelled, rejected and expired are over for good; everything else that
+  // lands here — pending, awaiting payment, a draft event — is a booking that
+  // has not been confirmed yet, and says so in the same words the tentative
+  // slot check uses.
+  return isCancelledLikeStatus(status)
+    ? "This booking is no longer active."
+    : "This session is not confirmed yet.";
+}
 
 /**
  * How long after the scheduled run end a disconnected participant may still
@@ -279,23 +311,24 @@ export async function resolveMeetingAccess(
     message: string,
   ): Promise<MeetingAccess> => {
     // The booking's status lives on its parent row, not on Appointment.
+    //
+    // #1270 — the trial's status is now passed through as itself. It used to be
+    // flattened to "CANCELLED" for two values and to null for every other one,
+    // which is how AWAITING_PAYMENT — the trial equivalent of
+    // APPROVED_PENDING_PAYMENT — reached the room without anyone paying.
     const bookingStatus =
       appointment.consultation?.status ??
       appointment.subscription?.status ??
       appointment.webinar?.status ??
       appointment.class?.status ??
-      (appointment.trialSession?.status === "CANCELLED" ||
-      appointment.trialSession?.status === "REJECTED"
-        ? "CANCELLED"
-        : null);
-    if (
-      (bookingStatus && TERMINAL_APPOINTMENT_STATUSES.has(bookingStatus)) ||
-      appointment.deletedAt
-    ) {
+      appointment.trialSession?.status ??
+      null;
+    const statusRefusal = bookingStatusRefusal(bookingStatus);
+    if (statusRefusal || appointment.deletedAt) {
       return {
         hasAccess: false,
         role: null,
-        message: "This booking is no longer active.",
+        message: statusRefusal ?? "This booking is no longer active.",
         reason: "unauthorized",
         streamCallId,
         meetingSessionId,

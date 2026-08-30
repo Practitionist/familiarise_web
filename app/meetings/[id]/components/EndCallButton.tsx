@@ -43,10 +43,29 @@ const EndCallButton = () => {
     setIsEnding(true);
 
     try {
-      await call?.endCall();
+      // #1270 — the server ends the call, not this button.
+      //
+      // `call.endCall()` worked because `end-call` is granted to `call_member`
+      // and the join route gives every participant that role, so any consultee
+      // could end a consultation from devtools; the only barrier was this
+      // component not rendering for them. Going through the route means the
+      // grant can be revoked without taking the host's own control down with
+      // it, and it re-checks host-ness against the database rather than against
+      // call data.
+      if (call?.id) {
+        const response = await fetch(
+          `/api/meetings/${encodeURIComponent(call.id)}/end`,
+          { method: "POST" },
+        );
+        if (!response.ok) {
+          throw new Error(`End call failed with status ${response.status}`);
+        }
+      }
     } catch (error) {
       // Navigating away regardless, so the failure is logged rather than
-      // blocking the exit.
+      // blocking the exit. The host still leaves and their media is still
+      // released below; the room may simply outlive them, which is what a
+      // failed end has always meant.
       console.error("Error ending call:", error);
     } finally {
       // Unconditional, and in `finally`: releasing the hardware used to sit

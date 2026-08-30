@@ -346,11 +346,7 @@ export function useEventActions({
 
     setIsJoining(true);
     try {
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        appointment,
-        slotToUse,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(slotToUse);
       toast({
         title: "Joining meeting",
         description: "You will now be redirected to the meeting room.",

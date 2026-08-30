@@ -19,6 +19,10 @@
 const mockGetCallType = jest.fn();
 const mockUpdateCallType = jest.fn();
 const mockWriteFileSync = jest.fn();
+// #1270 — the pre-flight assertion reads real member records before it will
+// write. These back it.
+const mockQueryCalls = jest.fn();
+const mockQueryMembers = jest.fn();
 
 // The drift branch writes the recovery pre-image to disk. Unmocked, every run of
 // this suite would leave a real file in tmpdir — and the payload, which is the
@@ -31,6 +35,8 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       getCallType: mockGetCallType,
       updateCallType: mockUpdateCallType,
+      queryCalls: mockQueryCalls,
+      call: () => ({ queryMembers: mockQueryMembers }),
     },
   })),
 }));
@@ -75,6 +81,18 @@ function applied(): Record<string, string[]> {
  */
 let stored: Record<string, string[]>;
 
+/** One open call whose members hold the roles given. */
+function openCallWithMembers(roles: Array<string | undefined>) {
+  mockQueryCalls.mockResolvedValue({
+    calls: [{ call: { id: "slot-A", type: "default" } }],
+    next: undefined,
+  });
+  mockQueryMembers.mockResolvedValue({
+    members: roles.map((role, i) => ({ user_id: `user-${i}`, role })),
+    next: undefined,
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   stored = LIVE_GRANTS();
@@ -85,6 +103,9 @@ beforeEach(() => {
       return {};
     },
   );
+  // A healthy app: the join route has been running and members hold the role
+  // the write below is about to make load-bearing.
+  openCallWithMembers(["call_member", "call_member"]);
 });
 
 describe("ensure-call-type-grants", () => {
@@ -245,6 +266,77 @@ describe("ensure-call-type-grants", () => {
 
     expect(code).toBe(0);
     expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #1270 — the blind spot in the post-apply guard.
+   *
+   * That guard confirms Stream STORED `join-call` on `call_member`, which it
+   * always will, because the transform writes it a few lines earlier. It says
+   * nothing about whether anybody HOLDS the role — and until the mint started
+   * naming members `call_member`, the answer for every call created by the app
+   * was no: the consultant was stamped `host` (not a role on this call type at
+   * all) and everyone else `user`. A green run and a total video outage.
+   */
+  describe("pre-flight: somebody has to hold the role", () => {
+    it("refuses to apply when no member of any open call holds call_member", async () => {
+      openCallWithMembers(["host", "user"]);
+
+      const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
+
+      expect(code).toBe(1);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("applies when at least one member holds it", async () => {
+      openCallWithMembers(["host", "call_member"]);
+
+      const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
+
+      expect(code).toBe(0);
+      expect(mockUpdateCallType).toHaveBeenCalled();
+    });
+
+    it("applies when there are no open calls to lock anyone out of", async () => {
+      // A quiet app or a fresh environment. Refusing here would make the script
+      // unrunnable rather than safe.
+      mockQueryCalls.mockResolvedValue({ calls: [], next: undefined });
+
+      const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
+
+      expect(code).toBe(0);
+      expect(mockUpdateCallType).toHaveBeenCalled();
+    });
+
+    it("treats an unreadable roster as a refusal, not as an empty one", async () => {
+      // A Stream outage must not be mistaken for "nobody holds the role", and
+      // it must not be waved through either. The question went unanswered, so
+      // the write does not happen.
+      mockQueryCalls.mockRejectedValue(new Error("stream down"));
+
+      const code = await ensureCallTypeGrants({ apply: true, restore: false, deployConfirmed: true });
+
+      expect(code).toBe(1);
+      expect(mockUpdateCallType).not.toHaveBeenCalled();
+    });
+
+    it("does not scan on a dry run", async () => {
+      await ensureCallTypeGrants({ apply: false, restore: false, deployConfirmed: false });
+
+      expect(mockQueryCalls).not.toHaveBeenCalled();
+    });
+
+    it("does not scan on a rollback", async () => {
+      // --restore-user-join hands `join-call` BACK to `user`. It can only widen
+      // access, so gating it on who holds `call_member` would block the very
+      // command an operator reaches for when they are already locked out.
+      openCallWithMembers(["host", "user"]);
+
+      const code = await ensureCallTypeGrants({ apply: true, restore: true, deployConfirmed: false });
+
+      expect(code).toBe(0);
+      expect(mockQueryCalls).not.toHaveBeenCalled();
+    });
   });
 
   it("restores join-call without handing back recording control", async () => {

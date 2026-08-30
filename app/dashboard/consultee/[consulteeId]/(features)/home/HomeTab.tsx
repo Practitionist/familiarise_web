@@ -691,11 +691,7 @@ export default function HomeTab({
     try {
       // #248: lazy-import the meeting helper (it imports the SDK) on demand.
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        client,
-        event.joinableAppointment,
-        event.joinableSlot,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(event.joinableSlot);
       router.push(`/meetings/${meetingId}`);
       toast({
         title: "Joining meeting",
