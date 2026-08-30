@@ -78,59 +78,62 @@ const SYSTEM_JOBS = [
   // four of these jobs crashed at import on every scheduled run without anyone
   // seeing a gap. The ids match the `withCronLock` job names, which are what
   // `SystemJobExecution.jobId` carries, so the last-run stats below resolve.
-  {
-    id: "stream-sync",
-    name: "Stream User Sync",
-    description: "Soft-delete Stream users that no longer exist in the database",
-    schedule: "Daily (03:40 UTC)",
+  //
+  // Built from tuples rather than seven object literals: the shape is identical
+  // across the fleet, and repeating it is what pushed this file's duplication
+  // past the quality gate.
+  ...(
+    [
+      [
+        "stream-sync",
+        "Stream User Sync",
+        "Soft-delete Stream users that no longer exist in the database",
+        "Daily (03:40 UTC)",
+      ],
+      [
+        "mark-expired-recordings",
+        "Mark Expired Recordings",
+        "Tombstone recordings whose Stream S3 URL has lapsed",
+        "Daily (03:20 UTC)",
+      ],
+      [
+        "transfer-expiring-recordings",
+        "Transfer Expiring Recordings",
+        "Copy permanent-policy recordings to Supabase before Stream deletes them",
+        "Every 6 hours",
+      ],
+      [
+        "cleanup-old-stream-recordings",
+        "Stream Recording Retention Sweep",
+        "Delete Supabase objects and tombstone recordings past each org's retention window",
+        "Daily (03:00 UTC)",
+      ],
+      [
+        "reconcile-orphaned-recordings",
+        "Reconcile Orphaned Recordings",
+        "Recover recordings whose call.recording_ready webhook was never delivered",
+        "Daily (05:00 UTC)",
+      ],
+      [
+        "expire-event-channels",
+        "Expire Event Chat Channels",
+        "Freeze webinar and class chat after 7 days, delete at retention",
+        "Daily (04:35 UTC)",
+      ],
+      [
+        "reconcile-orphaned-sessions",
+        "Reconcile Orphaned Meeting Sessions",
+        "Close meeting sessions whose call.session_ended webhook never landed",
+        "Every 30 minutes",
+      ],
+    ] as const
+  ).map(([id, name, description, schedule]) => ({
+    id,
+    name,
+    description,
+    schedule,
     category: "Stream",
-  },
-  {
-    id: "mark-expired-recordings",
-    name: "Mark Expired Recordings",
-    description: "Tombstone recordings whose Stream S3 URL has lapsed",
-    schedule: "Daily (03:20 UTC)",
-    category: "Stream",
-  },
-  {
-    id: "transfer-expiring-recordings",
-    name: "Transfer Expiring Recordings",
-    description:
-      "Copy permanent-policy recordings to Supabase before Stream deletes them",
-    schedule: "Every 6 hours",
-    category: "Stream",
-  },
-  {
-    id: "cleanup-old-stream-recordings",
-    name: "Stream Recording Retention Sweep",
-    description:
-      "Delete Supabase objects and tombstone recordings past each org's retention window",
-    schedule: "Daily (03:00 UTC)",
-    category: "Stream",
-  },
-  {
-    id: "reconcile-orphaned-recordings",
-    name: "Reconcile Orphaned Recordings",
-    description:
-      "Recover recordings whose call.recording_ready webhook was never delivered",
-    schedule: "Daily (05:00 UTC)",
-    category: "Stream",
-  },
-  {
-    id: "expire-event-channels",
-    name: "Expire Event Chat Channels",
-    description: "Freeze webinar and class chat after 7 days, delete at retention",
-    schedule: "Daily (04:35 UTC)",
-    category: "Stream",
-  },
-  {
-    id: "reconcile-orphaned-sessions",
-    name: "Reconcile Orphaned Meeting Sessions",
-    description:
-      "Close meeting sessions whose call.session_ended webhook never landed",
-    schedule: "Every 30 minutes",
-    category: "Stream",
-  },
+  })),
 ];
 
 /**
@@ -169,7 +172,10 @@ export async function GET() {
 
     return NextResponse.json({ jobs: jobsWithStats });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching system jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch system jobs" },

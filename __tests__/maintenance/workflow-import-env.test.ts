@@ -37,6 +37,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { entrypointOf } from "../fixtures/workflow-introspection";
 
 const ROOT = path.join(__dirname, "..", "..");
 const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
@@ -75,26 +76,6 @@ function resolveImport(fromFile: string, spec: string): string | null {
     if (fs.existsSync(base + suffix)) return base + suffix;
   }
   return fs.existsSync(base) && fs.statSync(base).isFile() ? base : null;
-}
-
-/** Extract the `.ts` file a workflow actually executes. */
-function entrypointOf(workflowSrc: string): string | null {
-  const tsx = workflowSrc.match(/tsx@[\d.]+\s+([^\s"']+\.ts)/);
-  if (tsx) return tsx[1];
-
-  const localTsx = workflowSrc.match(
-    /node_modules\/\.bin\/tsx\s+([^\s"']+\.ts)/,
-  );
-  if (localTsx) return localTsx[1];
-
-  const npmScript = workflowSrc.match(/run:\s*npm run ([a-z0-9:_-]+)/);
-  if (npmScript) {
-    const pkg = JSON.parse(read(path.join(ROOT, "package.json")) ?? "{}");
-    const cmd: string = pkg.scripts?.[npmScript[1]] ?? "";
-    const hit = cmd.match(/([^\s"']+\.ts)/);
-    return hit ? hit[1] : null;
-  }
-  return null;
 }
 
 /** Every first-party module an entrypoint pulls in, transitively. */

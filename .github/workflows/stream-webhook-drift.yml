@@ -58,6 +58,13 @@ jobs:
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
       STREAM_API_SECRET: ${{ secrets.STREAM_API_SECRET }}
       NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
+      # `lib/stream-client` pulls in `lib/redis`, which throws at module scope
+      # without Upstash credentials — the same import-time crash class this PR
+      # exists to fix, reintroduced by its own new workflow. A read-only drift
+      # check takes no lock and stores nothing, so the in-memory stub is the
+      # right answer here rather than handing production Redis credentials to a
+      # job that has no use for them.
+      USE_MOCK_REDIS: "true"
 
     steps:
       - name: Checkout code
