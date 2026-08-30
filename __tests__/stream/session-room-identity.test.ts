@@ -23,6 +23,13 @@ jest.mock("@stream-io/video-react-sdk", () => ({
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
 }));
+// #1270 — meeting.action now syncs call members to Stream before naming them,
+// which pulls the chat client (and its ESM-only node-sdk) into this module
+// graph. Mocked here for the same reason every other Stream suite mocks it.
+jest.mock("../../actions/stream/chat/user.action", () => ({
+  upsertUsersToStream: jest.fn().mockResolvedValue({ users: {} }),
+}));
+
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: {
     debug: jest.fn(),
