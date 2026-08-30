@@ -83,7 +83,25 @@ const create = jest.fn(async ({ data }: CreateArgs) => {
   return row;
 });
 
+const mockGetMessage = jest.fn();
+
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+
+// #1270 — the report route verifies a reported message against Stream now, so
+// its module graph reaches the ESM-only node SDK. Mocked for the same reason
+// every other suite in this repo mocks it.
+jest.mock("../../lib/stream-client", () => ({
+  getStreamChatClient: () => ({ getMessage: mockGetMessage }),
+}));
+
+jest.mock("../../lib/stream-logger", () => ({
+  streamLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -133,6 +151,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   rows.length = 0;
   (getSession as jest.Mock).mockResolvedValue({ user: { id: "reporter-1" } });
+  // #1270 — the route resolves the reported message against Stream and requires
+  // its author to be the reported user. These fixtures report `target-1`, so
+  // Stream answers with a message they wrote.
+  mockGetMessage.mockImplementation(async (id: string) => ({
+    message: { id, cid: "messaging:chan-1", user: { id: "target-1" } },
+  }));
 });
 
 describe("POST /api/report — message reports aggregate per message", () => {
@@ -176,6 +200,8 @@ describe("POST /api/report — message reports aggregate per message", () => {
     await post(
       messageReport({
         streamMessageId: "msg-1",
+        // #1270 review — deliberately WRONG, and deliberately ignored. The cid
+        // stored is Stream's, not the caller's.
         streamChannelCid: "messaging:dm-1",
       }),
     );
@@ -184,8 +210,51 @@ describe("POST /api/report — message reports aggregate per message", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           streamMessageId: "msg-1",
-          streamChannelCid: "messaging:dm-1",
+          streamChannelCid: "messaging:chan-1",
         }),
+      }),
+    );
+  });
+
+  it("refuses to store a message the reported user did not write", async () => {
+    // The vulnerability, pinned. `CONTENT_REMOVED` forwards the stored id to
+    // Stream's server-side delete, so accepting a caller's word for whose
+    // message it is let a reporter have an arbitrary message deleted, using a
+    // staff moderator as the instrument.
+    mockGetMessage.mockResolvedValue({
+      message: {
+        id: "msg-1",
+        cid: "messaging:chan-1",
+        user: { id: "somebody-else" },
+      },
+    });
+
+    const res = await post(messageReport({ streamMessageId: "msg-1" }));
+
+    // The report is still accepted — a human should read it — but it carries no
+    // message identity, so no enforcement can act on the wrong message.
+    expect(res.status).toBe(201);
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          streamMessageId: null,
+          streamChannelCid: null,
+        }),
+      }),
+    );
+  });
+
+  it("stores no message identity when Stream cannot be reached", async () => {
+    // Degrades to the pre-#1270 behaviour rather than refusing the report: a
+    // reporter should not be blocked because Stream is briefly unavailable.
+    mockGetMessage.mockRejectedValue(new Error("stream is down"));
+
+    const res = await post(messageReport({ streamMessageId: "msg-1" }));
+
+    expect(res.status).toBe(201);
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ streamMessageId: null }),
       }),
     );
   });

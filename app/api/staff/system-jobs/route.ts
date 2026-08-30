@@ -135,14 +135,14 @@ const SYSTEM_JOBS = [
     category: "Stream",
   })),
   {
-    // #1270. Not yet on a schedule — the workflow that will drive it belongs to
-    // a sibling change — so the Jobs page shows it as on-demand rather than
-    // implying a cadence that nothing keeps.
+    // #1270 — scheduled at `8-59/30 * * * *` by
+    // .github/workflows/retry-moderation-enforcement.yml. Enforcement already
+    // reported as done should not wait an hour to become true.
     id: "retry-moderation-enforcement",
     name: "Retry Moderation Enforcement",
     description:
       "Re-drive the Stream ban, deactivation or message delete of moderation actions whose recorded outcome says it failed",
-    schedule: "On demand",
+    schedule: "Every 30 minutes",
     category: "Moderation",
   },
 ];

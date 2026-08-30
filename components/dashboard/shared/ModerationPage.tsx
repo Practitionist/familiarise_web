@@ -1271,7 +1271,13 @@ export function ModerationPage() {
                       }
                       disabled={busy || action.disabled}
                     >
-                      {reportActionMutation.isPending ? (
+                      {/* #1270 review — the CLICKED button only. `isPending`
+                          is shared by every generated action, so one running
+                          action used to spin all of them and read as though the
+                          whole panel were busy. */}
+                      {reportActionMutation.isPending &&
+                      reportActionMutation.variables?.action ===
+                        action.key ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : (
                         <Icon className="h-4 w-4 mr-2" />

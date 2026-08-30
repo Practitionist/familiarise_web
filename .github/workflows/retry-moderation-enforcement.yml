@@ -50,6 +50,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # No git write happens here, so the runner has no use for a token that
+          # can push. Leaving it persisted is a credential sitting in a process
+          # that runs third-party package code.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5

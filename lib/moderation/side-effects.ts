@@ -40,6 +40,12 @@ export interface ModerationReportRef {
   reviewId: string | null;
   /** #1270 — set on MESSAGE reports; what CONTENT_REMOVED deletes on Stream. */
   streamMessageId?: string | null;
+  /**
+   * #1270 — the channel the message lives in, canonical from Stream. Carried
+   * with the id because the two are only useful together, and because the
+   * retry sweep was forwarding one without the other.
+   */
+  streamChannelCid?: string | null;
 }
 
 export interface ModerationSideEffectInput {
@@ -377,16 +383,41 @@ export async function persistActionSideEffects(
   actionId: string,
   sideEffects: SideEffectSummary,
 ): Promise<void> {
-  await prisma.moderationAction
-    .update({
+  const write = () =>
+    prisma.moderationAction.update({
       where: { id: actionId },
       // NOT structuredClone (Sonar S7784): this is a SERIALIZATION, not a
       // deep clone. `SideEffectSummary` has five optional fields, and Prisma's
       // InputJsonValue rejects `undefined` in an object — the JSON round-trip
       // strips those keys, structuredClone would preserve them.
       data: { sideEffects: JSON.parse(JSON.stringify(sideEffects)) },
-    })
-    .catch(captureModerationError);
+    });
+
+  try {
+    await write();
+  } catch (first) {
+    // #1270 review — this row IS the outbox. `retry-moderation-enforcement`
+    // selects on `sideEffects.stream === "failed"`, so losing this write does
+    // not merely lose a status field: it loses the queue entry, and a ban that
+    // never reached Stream is then never retried and never surfaced. Swallowing
+    // it, as this used to, made the one durable record of an unlanded
+    // enforcement the most disposable thing in the flow.
+    captureModerationError(first);
+    try {
+      await write();
+    } catch (second) {
+      // Both attempts gone. Nothing downstream can recover this, so it is
+      // raised at a level a human sees rather than logged and forgotten.
+      Sentry.captureException(
+        second instanceof Error ? second : new Error(String(second)),
+        {
+          level: "fatal",
+          tags: { subsystem: "moderation", op: "persistActionSideEffects" },
+          extra: { actionId, streamOutcome: sideEffects.stream ?? null },
+        },
+      );
+    }
+  }
 }
 
 async function runNotification(

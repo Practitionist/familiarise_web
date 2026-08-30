@@ -74,6 +74,7 @@ type ActionRow = {
     targetUserId: string;
     reviewId: string | null;
     streamMessageId: string | null;
+    streamChannelCid: string | null;
   };
 };
 
@@ -89,6 +90,9 @@ function reportRefOf(row: ActionRow): ModerationReportRef {
     targetUserId: row.report.targetUserId,
     reviewId: row.report.reviewId,
     streamMessageId: row.report.streamMessageId,
+    // #1270 review — the delete needs the channel too. Selecting only the id
+    // meant the re-drive could not address the message it was retrying.
+    streamChannelCid: row.report.streamChannelCid,
   };
 }
 
@@ -165,6 +169,7 @@ async function retryModerationEnforcementUnlocked(
           targetUserId: true,
           reviewId: true,
           streamMessageId: true,
+          streamChannelCid: true,
         },
       },
     },
@@ -185,6 +190,10 @@ async function retryModerationEnforcementUnlocked(
   for (const row of rows) {
     await retryOne(row, { maxAttempts, giveUpOlderThan }, result);
   }
+
+  // #1270 review — a sweep that left enforcement unlanded did not succeed.
+  // `jobs/` reads this to decide the workflow's exit code.
+  result.success = result.errors.length === 0 && result.gaveUp === 0;
 
   return result;
 }

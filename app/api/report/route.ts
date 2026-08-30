@@ -16,6 +16,8 @@ import {
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import { getStreamChatClient } from "@/lib/stream-client";
+import { streamLogger } from "@/lib/stream-logger";
 
 // #831 — raw destructuring accepted unbounded strings; every user-typed
 // field now carries a .max()
@@ -63,6 +65,54 @@ function contentScopeFor(
  * POST /api/report
  * Submit a content report
  */
+
+/**
+ * Resolve a reported Stream message with SERVER credentials, and only accept it
+ * when its author really is the person being reported.
+ *
+ * #1270 review — the ids arrived from the browser. `CONTENT_REMOVED` later
+ * forwards the stored `streamMessageId` to Stream's server-side delete, so a
+ * caller who reported user X while supplying a message authored by someone else
+ * could get an arbitrary message deleted, using a staff moderator as the
+ * instrument. The channel cid was caller-supplied too, so the staff deep-link
+ * pointed wherever the reporter chose.
+ *
+ * Both now come from Stream's own answer, or the report is stored with no
+ * message identity at all — which degrades to the pre-#1270 behaviour (a report
+ * a human reads) rather than refusing the report outright. A reporter should
+ * not be blocked because Stream is briefly unavailable.
+ */
+async function resolveReportedMessage(
+  streamMessageId: string | undefined,
+  targetUserId: string,
+): Promise<{ streamMessageId: string | null; streamChannelCid: string | null }> {
+  const none = { streamMessageId: null, streamChannelCid: null };
+  if (!streamMessageId) return none;
+
+  try {
+    const { message } = await getStreamChatClient().getMessage(streamMessageId);
+    if (!message?.user?.id || message.user.id !== targetUserId) {
+      streamLogger.warn("Report named a message the reported user did not send", {
+        streamMessageId,
+        targetUserId,
+        actualAuthor: message?.user?.id ?? null,
+      });
+      return none;
+    }
+    return {
+      streamMessageId: message.id,
+      // Canonical, from Stream — never the caller's.
+      streamChannelCid: message.cid ?? null,
+    };
+  } catch (error) {
+    streamLogger.warn("Could not resolve a reported Stream message", {
+      streamMessageId,
+      error: String(error),
+    });
+    return none;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -195,6 +245,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Verified against Stream, not trusted from the caller — see
+    // resolveReportedMessage.
+    const verifiedMessage = await resolveReportedMessage(
+      streamMessageId,
+      targetUserId,
+    );
+
     // Create new report
     const report = await prisma.moderationReport.create({
       data: {
@@ -206,8 +263,7 @@ export async function POST(req: NextRequest) {
         contentText,
         contentUrl,
         reviewId,
-        streamMessageId,
-        streamChannelCid,
+        ...verifiedMessage,
       },
     });
 
