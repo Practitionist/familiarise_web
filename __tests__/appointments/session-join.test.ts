@@ -261,7 +261,13 @@ describe("the join window spans the whole session", () => {
 });
 
 describe("ending the call ends the session", () => {
-  const ended = { id: "ms-1", endedAt: at("10:10") };
+  // #1270 — a DELIBERATE end. `session_timeout` is tested separately, in
+  // meeting-join-gate; this suite is about the run-level "ended" state.
+  const ended = {
+    id: "ms-1",
+    endedAt: at("10:10"),
+    endedReason: "call_ended",
+  };
 
   it("does not re-light Join later in the booked hour", () => {
     const slots = oneHour();

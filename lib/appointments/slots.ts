@@ -44,7 +44,16 @@ export interface SessionSlotLike {
   meetingSession?: {
     id: string;
     endedAt: Date | string | null;
-    endedReason?: string | null;
+    /**
+     * #1270 — REQUIRED, not optional, and deliberately so. `isDeliberateEnd`
+     * treats an absent reason as deliberate, which is the safe reading for a
+     * historical row written before the column existed. But it is the WRONG
+     * reading for a projection that simply forgot to select it: every
+     * timed-out session would read as deliberately ended and lock people out
+     * of their own booking, which is the bug this predicate exists to prevent.
+     * Making it required means a query that omits it fails to compile instead.
+     */
+    endedReason: string | null;
   } | null;
 }
 
@@ -396,7 +405,11 @@ export function getSessionVMJoinState(
       isTentative: session.isTentative,
       completionStatus: session.completionStatus,
       meetingSession: session.meetingEndedAt
-        ? { id: session.slotId, endedAt: session.meetingEndedAt }
+        ? {
+            id: session.slotId,
+            endedAt: session.meetingEndedAt,
+            endedReason: session.meetingEndedReason,
+          }
         : null,
     },
   ]);

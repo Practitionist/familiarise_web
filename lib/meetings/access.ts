@@ -286,10 +286,12 @@ async function meetingPolicyRefusal(args: {
  * still running. Sessions overrun; the calendar is a worse authority on
  * "is this over" than the room itself.
  *
- * Fail-open on a Stream error, deliberately: this runs only where the caller
- * was otherwise about to be refused, and an outage should not convert
- * "probably still talking" into "you may not return". A stale or missing call
- * simply reports nobody home and the refusal stands.
+ * Fails CLOSED on a Stream error, and that is the right direction here even
+ * though it reads backwards. This probe only ever ADDS permission: it runs
+ * solely on the path that was already about to refuse, because the scheduled
+ * end plus the grace has passed. So "we could not ask the room" lands on the
+ * same answer the caller would have got without the probe at all. Failing open
+ * would be a new grant issued on the strength of an outage.
  */
 async function callHasLiveParticipants(streamCallId: string): Promise<boolean> {
   if (!isStreamConfigured()) return false;

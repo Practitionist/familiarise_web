@@ -118,7 +118,7 @@ const appointmentInclude = {
         select: userSelectFields,
       },
       meetingSession: {
-        select: { id: true, endedAt: true },
+        select: { id: true, endedAt: true, endedReason: true },
       },
     },
   },

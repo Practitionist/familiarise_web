@@ -68,7 +68,11 @@ interface StoredSlot {
   endsAt: Date;
   isTentative: boolean;
   completionStatus: string;
-  meetingSession: { id: string; endedAt: Date | null } | null;
+  meetingSession: {
+    id: string;
+    endedAt: Date | null;
+    endedReason: string | null;
+  } | null;
   user: Array<{ id: string }>;
 }
 
@@ -221,7 +225,11 @@ interface PayloadSlot {
   endsAt: string | null;
   isTentative: boolean;
   completionStatus: string;
-  meetingSession: { id: string; endedAt: string | null } | null;
+  meetingSession: {
+    id: string;
+    endedAt: string | null;
+    endedReason: string | null;
+  } | null;
 }
 
 async function plannerClasses() {
@@ -293,7 +301,7 @@ describe("the planner payload carries what a class join reads", () => {
     // "joinable".
     seedClass([
       liveSitting({
-        meetingSession: { id: "ms-1", endedAt: hoursFromNow(-0.1) },
+        meetingSession: { id: "ms-1", endedAt: hoursFromNow(-0.1) , endedReason: null},
       }),
     ]);
 
