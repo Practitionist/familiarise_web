@@ -33,6 +33,7 @@ const mockGetSession = jest.fn();
 const mockResolveMeetingAccess = jest.fn();
 const mockGetOrCreate = jest.fn();
 const mockUpdateCallMembers = jest.fn();
+const mockUpsertUsersToStream = jest.fn();
 
 /** Ordered log of what the route did, so we can assert sequence, not just calls. */
 let sequence: string[] = [];
@@ -43,6 +44,10 @@ jest.mock("../../lib/auth", () => ({
 
 jest.mock("next/headers", () => ({
   headers: async () => new Headers(),
+}));
+
+jest.mock("../../actions/stream/chat/user.action", () => ({
+  upsertUsersToStream: (...a: unknown[]) => mockUpsertUsersToStream(...a),
 }));
 
 jest.mock("../../lib/meetings/access", () => ({
@@ -114,6 +119,7 @@ beforeEach(() => {
   });
   mockGetOrCreate.mockResolvedValue({});
   mockUpdateCallMembers.mockResolvedValue({});
+  mockUpsertUsersToStream.mockResolvedValue({ users: {} });
 });
 
 describe("POST /api/meetings/[meetingId]/join", () => {
@@ -126,6 +132,32 @@ describe("POST /api/meetings/[meetingId]/join", () => {
       "getOrCreate",
       "updateCallMembers",
     ]);
+  });
+
+  // #1270 — the regression this suite missed for 17 days. It asserted the
+  // ORDER of the Stream calls but never their arguments, so a bare
+  // `getOrCreate()` looked identical to a correct one. Server-side auth carries
+  // no user context, so Stream rejects an authorless create on every request —
+  // a total video outage that every existing assertion here still passed.
+  it("names an author on getOrCreate, which server-side auth requires", async () => {
+    await POST(req, { params });
+
+    expect(mockGetOrCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ created_by_id: expect.any(String) }),
+      }),
+    );
+  });
+
+  it("syncs the caller to Stream before naming them as a member", async () => {
+    await POST(req, { params });
+
+    // Stream refuses an operation naming a user it does not hold, and a token
+    // alone never creates one.
+    expect(mockUpsertUsersToStream).toHaveBeenCalled();
+    expect(mockUpsertUsersToStream.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpdateCallMembers.mock.invocationCallOrder[0],
+    );
   });
 
   it("creates the call before granting membership on it", async () => {
