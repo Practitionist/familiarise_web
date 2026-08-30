@@ -298,9 +298,9 @@ export function isDeliberateEnd(
   if (!session?.endedAt) return false;
   // A row with no reason predates the reason column; treat it as deliberate,
   // which is the conservative reading for historical data.
-  return session.endedReason == null
-    ? true
-    : DELIBERATE_END_REASONS.has(session.endedReason);
+  return session.endedReason
+    ? DELIBERATE_END_REASONS.has(session.endedReason)
+    : true;
 }
 
 /** The run containing `slotId`, or null when the row is dead/absent. */
