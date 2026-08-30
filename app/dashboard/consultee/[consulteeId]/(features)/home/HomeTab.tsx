@@ -55,7 +55,10 @@ import {
   isInactiveStatus,
   isConfirmedStatus,
 } from "@/lib/appointments/status-guards";
-import { getSessionJoinState } from "@/lib/appointments/slots";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  getSessionJoinState,
+} from "@/lib/appointments/slots";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
@@ -84,8 +87,6 @@ const staggerChildren = {
     transition: { staggerChildren: 0.08 },
   },
 };
-
-const JOIN_WINDOW_BEFORE_START_MS = 10 * 60 * 1000; // 10 minutes
 
 const fadeInUp = {
   hidden: { opacity: 0, y: 16 },
@@ -153,7 +154,10 @@ function UpcomingSessionCard({
   const isWithinJoinWindow =
     !!event.joinableSession &&
     getSessionJoinState(event.joinableSession, {
-      joinWindowMs: JOIN_WINDOW_BEFORE_START_MS,
+      // #1270 — the shared constant, not a local 10-minute literal. This
+      // page declared its own, which is how the product ended up with four
+      // different answers to "when does Join light up?".
+      joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
     }) === "joinable";
 
   // Type badges - outline/border style only, no background colors
