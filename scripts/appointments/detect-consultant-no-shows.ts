@@ -18,7 +18,9 @@
  * one session out of N, which needs its own design); see the TODO below.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
+import { getCallPresenceEvidence } from "@/lib/stream/call-presence";
 import {
   AppointmentStatus,
   CancellationReason,
@@ -47,6 +49,14 @@ export interface NoShowResult {
   success: boolean;
   detected: number;
   refunded: number;
+  /**
+   * Candidates the attendance rows called a no-show and Stream did not.
+   *
+   * Non-zero means a `call.session_participant_joined` delivery was lost: the
+   * consultant WAS in the call and our rows do not know it. Every one of these
+   * is a refund that would have been issued wrongly before this check existed.
+   */
+  contradicted: number;
   errors: string[];
   timestamp: string;
 }
@@ -164,6 +174,44 @@ function evaluateConsultantNoShow(
   if (!consulteeJoined || consultantJoined) return null;
 
   return { consultantUserId, consulteeUserId, appointmentId };
+}
+
+/**
+ * Does Stream's own record of the call contradict a no-show finding?
+ *
+ * `evaluateConsultantNoShow` infers absence from a MISSING attendance row, and
+ * those rows come from per-participant webhook deliveries that can be lost
+ * independently. Losing only the consultant's produces a textbook false
+ * positive: consultee present, consultant "absent", full refund against someone
+ * who was there.
+ *
+ * Stream is an independent witness that does not depend on our webhook pipeline
+ * having worked. Two distinct participants in a 1:1 consultation means both
+ * parties were present, whatever our rows say.
+ *
+ * Returns the reason to REFUSE, or null to proceed. Refusing on missing evidence
+ * is deliberate: this function guards an automatic, customer-visible refund, and
+ * "we could not check" is not "it definitely happened". The cost of refusing
+ * wrongly is a support ticket; the cost of refunding wrongly is re-charging a
+ * customer by hand.
+ */
+async function refusalFromStreamEvidence(
+  consultation: NoShowCandidate,
+): Promise<string | null> {
+  const callIds = (consultation.appointment?.slotsOfAppointment ?? [])
+    .map((slot) => slot.meetingSession?.streamCallId)
+    .filter((id): id is string => !!id);
+
+  if (callIds.length === 0) return "no Stream call on any slot";
+
+  for (const callId of callIds) {
+    const evidence = await getCallPresenceEvidence(callId);
+    if (!evidence) return `Stream has no report for ${callId}`;
+    if (evidence.unique >= 2) {
+      return `Stream saw ${evidence.unique} distinct participants on ${callId}`;
+    }
+  }
+  return null;
 }
 
 // Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
@@ -303,6 +351,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
   const errors: string[] = [];
   let detected = 0;
   let refunded = 0;
+  let contradicted = 0;
 
   const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
 
@@ -317,6 +366,26 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
     try {
       const party = evaluateConsultantNoShow(consultation);
       if (!party) continue;
+
+      // Corroborate against Stream before moving money. Our attendance rows are
+      // webhook-derived and each party's arrives separately, so the predicate
+      // above can be satisfied by a LOST DELIVERY rather than a real absence.
+      const refusal = await refusalFromStreamEvidence(consultation);
+      if (refusal) {
+        contradicted++;
+        console.log(
+          `\n🛑 Not a no-show after all: consultation ${consultation.id} — ${refusal}`,
+        );
+        // Worth an alert rather than a log line. Either a webhook was lost — in
+        // which case attendance data is wrong platform-wide and this is the only
+        // place it surfaces — or the detector's own predicate needs revisiting.
+        Sentry.captureMessage("Consultant no-show refused on Stream evidence", {
+          level: "warning",
+          tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
+          extra: { consultationId: consultation.id, refusal },
+        });
+        continue;
+      }
 
       detected++;
       console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
@@ -352,6 +421,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
   console.log("\n📊 No-Show Summary:");
   console.log(`   Detected: ${detected}`);
   console.log(`   Refunded: ${refunded}`);
+  console.log(`   Refused on Stream evidence: ${contradicted}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
     errors.forEach((e) => console.log(`   - ${e}`));
@@ -361,6 +431,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
     success: errors.length === 0,
     detected,
     refunded,
+    contradicted,
     errors,
     timestamp: new Date().toISOString(),
   };
