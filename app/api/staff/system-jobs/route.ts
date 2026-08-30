@@ -134,6 +134,17 @@ const SYSTEM_JOBS = [
     schedule,
     category: "Stream",
   })),
+  {
+    // #1270 — scheduled at `8-59/30 * * * *` by
+    // .github/workflows/retry-moderation-enforcement.yml. Enforcement already
+    // reported as done should not wait an hour to become true.
+    id: "retry-moderation-enforcement",
+    name: "Retry Moderation Enforcement",
+    description:
+      "Re-drive the Stream ban, deactivation or message delete of moderation actions whose recorded outcome says it failed",
+    schedule: "Every 30 minutes",
+    category: "Moderation",
+  },
 ];
 
 /**

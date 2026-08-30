@@ -5818,6 +5818,11 @@ enum ModerationActionType {
   USER_BANNED
   PROFILE_UNVERIFIED
   NO_ACTION
+  // #1270 — the inverse of USER_BANNED. A permanent ban deactivates the target
+  // on Stream, and nothing ever undid that, so a reversed ban left an account
+  // that could sign in but never chat again. Recording the reversal here keeps
+  // the whole enforcement history on one report.
+  USER_REINSTATED
 }
 
 enum ProfileVerificationStatus {
@@ -5860,6 +5865,14 @@ model ModerationReport {
   // Optional entity references
   reviewId String? // If reporting a ConsultantReview
 
+  // #1270 — a MESSAGE report carried no pointer to the message it was about.
+  // CONTENT_REMOVED therefore had nothing to delete (it fell through to the
+  // review soft-delete, which no-ops on a null reviewId), and dedup collapsed
+  // every message report against a user onto one row. Both are the message
+  // identity Stream's server-side deleteMessage needs.
+  streamMessageId  String?
+  streamChannelCid String? // "messaging:<id>" — for the staff link back to the thread
+
   // Staff assignment
   assignedToId String?
 
@@ -5878,6 +5891,8 @@ model ModerationReport {
   @@index([targetUserId])
   @@index([assignedToId])
   @@index([createdAt])
+  // #1270 — the per-message dedup lookup in POST /api/report.
+  @@index([streamMessageId])
 }
 
 model ModerationAction {
