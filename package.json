@@ -48,7 +48,7 @@
     "scripts:delete-dependabot-prs": "npx ts-node scripts/delete-dependabot-prs.ts",
     "test:race": "npx tsx tests/typescript/race-conditions/master-runner.ts",
     "test:race:parallel": "npx tsx tests/typescript/race-conditions/master-runner.ts parallel",
-    "scripts:stream-sync": "npx ts-node -P tsconfig.scripts.json jobs/stream-sync.ts",
+    "scripts:stream-sync": "npx tsx jobs/stream/stream-sync.ts",
     "scripts:sync-env-github": "npx ts-node -P tsconfig.scripts.json scripts/update-env-github-actions.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",

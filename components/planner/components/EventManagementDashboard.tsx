@@ -18,6 +18,7 @@ import { reportClientFailure } from "@/lib/errors/classification/client-failure"
 import { failureToast } from "@/components/ui/failure-toast";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
+  CONSULTANT_JOIN_WINDOW_MS,
   getCurrentOrNextSession,
   getJoinableSession,
   getSessionJoinState,
@@ -47,9 +48,6 @@ import {
   Video,
   GraduationCap,
 } from "lucide-react";
-
-/** The planner has always let hosts in 10 minutes early; kept as-is. */
-const PLANNER_JOIN_WINDOW_MS = 10 * 60 * 1000;
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
@@ -106,8 +104,10 @@ export function EventManagementDashboard({
     return () => clearInterval(timer);
   }, []);
 
-  // Compute which webinar/class events are currently joinable (within 10 min
-  // before start to end). #1061 — measured over the run of slot rows the
+  // Compute which webinar/class events are currently joinable (inside the
+  // shared host window before start, through to end). #1270 — the planner
+  // used to declare its own 10-minute constant, so the SAME host got in five
+  // minutes later here than from the appointments list. #1061 — measured over the run of slot rows the
   // session is stored as; the old `slotsOfAppointment[0]` read closed the
   // window 30 minutes into anything longer than half an hour.
   const joinableEventIds = useMemo(() => {
@@ -116,7 +116,7 @@ export function EventManagementDashboard({
     for (const webinar of webinars) {
       const run = getJoinableSession(
         webinar.appointment?.slotsOfAppointment ?? [],
-        { joinWindowMs: PLANNER_JOIN_WINDOW_MS, now },
+        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS, now },
       );
       if (run && webinar.id) ids.add(webinar.id);
     }
@@ -125,7 +125,7 @@ export function EventManagementDashboard({
       // For classes, check the nearest upcoming appointment
       for (const appt of cls.appointments ?? []) {
         const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-          joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
           now,
         });
         if (run && cls.id) ids.add(cls.id);
@@ -165,7 +165,7 @@ export function EventManagementDashboard({
     // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
     const slots = webinar.appointment?.slotsOfAppointment ?? [];
     const run =
-      getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ??
+      getJoinableSession(slots, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ??
       getCurrentOrNextSession(slots);
     const slot = run?.anchor;
     if (!run || !slot || !webinar.appointment) {
@@ -184,7 +184,7 @@ export function EventManagementDashboard({
     // guard this change exists to build. Countdown still gets in, because
     // hosts have always been able to open the room a little early.
     if (
-      getSessionJoinState(run, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ===
+      getSessionJoinState(run, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ===
       "ended"
     ) {
       toast({
@@ -267,7 +267,7 @@ export function EventManagementDashboard({
 
     for (const appt of classEvent.appointments ?? []) {
       const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-        joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,
       });
       if (run) {

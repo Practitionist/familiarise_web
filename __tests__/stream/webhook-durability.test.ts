@@ -160,13 +160,14 @@ describe("the handled-event list and the switch cannot drift apart", () => {
 
   it("covers the four categories the subscription depends on", () => {
     // Verified against the live app's hook config: it was subscribed to six of
-    // these ten, which is why attendance and chat moderation shipped dead.
-    // ensure-webhook-subscription.ts widens it; this pins what it must widen to.
+    // these, which is why attendance shipped dead. ensure-webhook-subscription.ts
+    // widens it; this pins what it must widen to. The chat moderation events
+    // were removed in #1270 — see the note in lib/stream/webhook-events.ts.
     for (const t of [
       "call.recording_ready",
       "call.session_ended",
       "call.session_participant_joined",
-      "message.flagged",
+      "call.ended",
     ]) {
       expect(HANDLED_EVENT_TYPES as readonly string[]).toContain(t);
     }
