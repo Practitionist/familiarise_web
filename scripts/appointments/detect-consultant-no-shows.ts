@@ -21,7 +21,10 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { createSupportTicket } from "../../lib/support/create-ticket";
-import { getCallPresenceEvidence } from "../../lib/stream/call-presence";
+import {
+  getCallPresenceEvidence,
+  type CallPresenceEvidence,
+} from "../../lib/stream/call-presence";
 import {
   AppointmentStatus,
   CancellationReason,
@@ -214,6 +217,7 @@ function evaluateConsultantNoShow(
  */
 export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
+  lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
   const callIds = (consultation.appointment?.slotsOfAppointment ?? [])
     .map((slot) => slot.meetingSession?.streamCallId)
@@ -222,7 +226,7 @@ export async function refusalFromStreamEvidence(
   if (callIds.length === 0) return "no Stream call on any slot";
 
   for (const callId of callIds) {
-    const evidence = await getCallPresenceEvidence(callId);
+    const evidence = await lookup(callId);
     if (!evidence) return `Stream has no report for ${callId}`;
     if (evidence.unique >= 2) {
       return `Stream saw ${evidence.unique} distinct participants on ${callId}`;
@@ -230,6 +234,35 @@ export async function refusalFromStreamEvidence(
   }
   return null;
 }
+
+/**
+ * Marks a ticket as this job's, so its idempotency check cannot be satisfied by
+ * an unrelated ticket. Matching on `issueType` alone meant a user filing their
+ * own technical-issues ticket during the failed call permanently suppressed the
+ * escalation — losing it in exactly the case where they had complained.
+ */
+const BOTH_ABSENT_TITLE_PREFIX = "Nobody joined the session for";
+
+/**
+ * A per-run cache over `getCallPresenceEvidence`.
+ *
+ * The consultant-fault pass and the both-absent pass examine overlapping
+ * candidates — a booking refused on Stream evidence keeps its APPROVED status
+ * and is therefore still a candidate for the second pass. Without this its
+ * report is fetched twice, and the calls are sequential inside a held cron lock.
+ */
+function makePresenceLookup() {
+  const cache = new Map<string, Promise<CallPresenceEvidence | null>>();
+  return (callId: string) => {
+    const hit = cache.get(callId);
+    if (hit) return hit;
+    const pending = getCallPresenceEvidence(callId);
+    cache.set(callId, pending);
+    return pending;
+  };
+}
+
+type PresenceLookup = ReturnType<typeof makePresenceLookup>;
 
 /**
  * What Stream says about a booking's sessions, for the both-absent decision.
@@ -240,11 +273,12 @@ export async function refusalFromStreamEvidence(
  */
 async function streamPresenceAcross(
   sessions: { streamCallId: string }[],
+  lookup: PresenceLookup,
 ): Promise<{ sawSomeone: boolean; evidenceMissing: boolean }> {
   let sawSomeone = false;
   let evidenceMissing = false;
   for (const session of sessions) {
-    const evidence = await getCallPresenceEvidence(session.streamCallId);
+    const evidence = await lookup(session.streamCallId);
     if (!evidence) {
       evidenceMissing = true;
       continue;
@@ -262,6 +296,7 @@ async function bothAbsentTicketExists(
     where: {
       consultationId,
       issueType: SupportIssueType.TECHNICAL_ISSUES,
+      title: { startsWith: BOTH_ABSENT_TITLE_PREFIX },
     },
     select: { id: true },
   });
@@ -288,10 +323,10 @@ async function bothAbsentTicketExists(
  * both-absent, whatever our rows say.
  */
 export async function detectBothAbsent(
-  graceCutoff: Date,
+  candidates: NoShowCandidate[],
   errors: string[],
+  lookup: PresenceLookup,
 ): Promise<number> {
-  const candidates = await findNoShowCandidates(graceCutoff);
   let raised = 0;
 
   for (const consultation of candidates) {
@@ -315,8 +350,10 @@ export async function detectBothAbsent(
 
       // Corroborate: no attendance rows is not evidence of an empty room when
       // the rows come from deliveries that can be lost.
-      const { sawSomeone, evidenceMissing } =
-        await streamPresenceAcross(sessions);
+      const { sawSomeone, evidenceMissing } = await streamPresenceAcross(
+        sessions,
+        lookup,
+      );
 
       if (sawSomeone) {
         // Someone WAS there and we have no row for them — a lost delivery, and
@@ -345,7 +382,7 @@ export async function detectBothAbsent(
         // The consultee carries the financial risk here — they paid and got
         // nothing — so the ticket belongs to them.
         userId: consulteeUserId,
-        title: `Nobody joined the session for ${planTitle}`,
+        title: `${BOTH_ABSENT_TITLE_PREFIX} ${planTitle}`,
         description:
           `Neither party has a recorded join for this consultation, and Stream ` +
           `reports no participants on ${sessions.length} session(s).\n\n` +
@@ -514,6 +551,8 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
   let refunded = 0;
   let contradicted = 0;
   let bothAbsentTickets = 0;
+  // One cache for the whole run: both passes examine overlapping candidates.
+  const presence = makePresenceLookup();
 
   const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
 
@@ -534,7 +573,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
       // Corroborate against Stream before moving money. Our attendance rows are
       // webhook-derived and each party's arrives separately, so the predicate
       // above can be satisfied by a LOST DELIVERY rather than a real absence.
-      const refusal = await refusalFromStreamEvidence(consultation);
+      const refusal = await refusalFromStreamEvidence(consultation, presence);
       if (refusal) {
         contradicted++;
         console.log(
@@ -584,7 +623,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
 
   // Runs after the consultant-fault pass so a session it already cancelled is
   // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
-  bothAbsentTickets = await detectBothAbsent(graceCutoff, errors);
+  bothAbsentTickets = await detectBothAbsent(candidates, errors, presence);
 
   console.log("\n📊 No-Show Summary:");
   console.log(`   Detected: ${detected}`);

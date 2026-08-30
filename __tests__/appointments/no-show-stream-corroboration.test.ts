@@ -39,12 +39,35 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("@sentry/nextjs", () => ({ captureMessage: jest.fn() }));
+const mockCapture = jest.fn();
+jest.mock("@sentry/nextjs", () => ({
+  captureMessage: (...a: unknown[]) => mockCapture(...a),
+}));
 
 import {
   refusalFromStreamEvidence,
   detectBothAbsent,
 } from "../../scripts/appointments/detect-consultant-no-shows";
+
+/**
+ * Both passes share one per-run presence cache in production. The tests supply
+ * the same shape so a call id is looked up at most once here too.
+ */
+const lookup = (id: string) => mockEvidence(id);
+
+/** A lookup with the same memoizing contract as the production one. */
+let lookupCalls = 0;
+function makeCountingLookup() {
+  const cache = new Map<string, Promise<unknown>>();
+  return (id: string) => {
+    const hit = cache.get(id);
+    if (hit) return hit as never;
+    lookupCalls++;
+    const pending = mockEvidence(id);
+    cache.set(id, pending);
+    return pending as never;
+  };
+}
 
 const candidate = (streamCallIds: string[], attendeeIds: string[][] = []) => ({
   id: "consult-1",
@@ -67,6 +90,7 @@ const candidate = (streamCallIds: string[], attendeeIds: string[][] = []) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  lookupCalls = 0;
   mockFindFirst.mockResolvedValue(null);
   mockCreateTicket.mockResolvedValue({ id: "ticket-1" });
 });
@@ -118,7 +142,7 @@ describe("nobody joined — ticket, never an automatic refund", () => {
     mockFindMany.mockResolvedValue([candidate(["slot-1"])]);
     mockEvidence.mockResolvedValue({ unique: 0, maxConcurrent: 0 });
 
-    const raised = await detectBothAbsent(new Date(), []);
+    const raised = await detectBothAbsent(await mockFindMany(), [], lookup);
 
     expect(raised).toBe(1);
     const ticket = mockCreateTicket.mock.calls[0][0];
@@ -133,8 +157,31 @@ describe("nobody joined — ticket, never an automatic refund", () => {
     mockEvidence.mockResolvedValue({ unique: 0, maxConcurrent: 0 });
     mockFindFirst.mockResolvedValue({ id: "existing-ticket" });
 
-    expect(await detectBothAbsent(new Date(), [])).toBe(0);
+    expect(await detectBothAbsent(await mockFindMany(), [], lookup)).toBe(0);
     expect(mockCreateTicket).not.toHaveBeenCalled();
+  });
+
+  it("is not suppressed by an unrelated technical-issues ticket", async () => {
+    // Matching on issueType alone let a ticket the USER filed during the failed
+    // call satisfy the dedup, so the paid-but-empty session lost its escalation
+    // in exactly the case where someone had complained about it.
+    mockFindMany.mockResolvedValue([candidate(["slot-1"])]);
+    mockEvidence.mockResolvedValue({ unique: 0, maxConcurrent: 0 });
+    mockFindFirst.mockResolvedValue(null);
+
+    expect(await detectBothAbsent(await mockFindMany(), [], lookup)).toBe(1);
+    const where = mockFindFirst.mock.calls[0][0].where;
+    expect(where.title).toEqual({
+      startsWith: "Nobody joined the session for",
+    });
+  });
+
+  it("looks a call id up at most once per run", async () => {
+    mockFindMany.mockResolvedValue([candidate(["slot-1", "slot-1"])]);
+    mockEvidence.mockResolvedValue({ unique: 0, maxConcurrent: 0 });
+
+    await detectBothAbsent(await mockFindMany(), [], makeCountingLookup());
+    expect(lookupCalls).toBe(1);
   });
 
   it("does not call it both-absent when Stream saw someone", async () => {
@@ -143,22 +190,28 @@ describe("nobody joined — ticket, never an automatic refund", () => {
     mockFindMany.mockResolvedValue([candidate(["slot-1"])]);
     mockEvidence.mockResolvedValue({ unique: 1, maxConcurrent: 1 });
 
-    expect(await detectBothAbsent(new Date(), [])).toBe(0);
+    expect(await detectBothAbsent(await mockFindMany(), [], lookup)).toBe(0);
     expect(mockCreateTicket).not.toHaveBeenCalled();
+    // The alert IS the feature here: this branch is the only place a lost
+    // `call.session_participant_joined` delivery becomes visible at all.
+    expect(mockCapture).toHaveBeenCalledWith(
+      expect.stringContaining("Stream saw participants"),
+      expect.objectContaining({ level: "warning" }),
+    );
   });
 
   it("stays silent when Stream cannot speak for the session either", async () => {
     mockFindMany.mockResolvedValue([candidate(["slot-1"])]);
     mockEvidence.mockResolvedValue(null);
 
-    expect(await detectBothAbsent(new Date(), [])).toBe(0);
+    expect(await detectBothAbsent(await mockFindMany(), [], lookup)).toBe(0);
     expect(mockCreateTicket).not.toHaveBeenCalled();
   });
 
   it("skips a session someone did attend", async () => {
     mockFindMany.mockResolvedValue([candidate(["slot-1"], [["consultee-1"]])]);
 
-    expect(await detectBothAbsent(new Date(), [])).toBe(0);
+    expect(await detectBothAbsent(await mockFindMany(), [], lookup)).toBe(0);
     expect(mockEvidence).not.toHaveBeenCalled();
     expect(mockCreateTicket).not.toHaveBeenCalled();
   });
