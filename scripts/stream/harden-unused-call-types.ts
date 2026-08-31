@@ -89,7 +89,7 @@ export const BILLABLE_PERMISSIONS = [
   "start-broadcasting",
 ];
 
-const STRIP = [...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS];
+const STRIP = new Set([...REACH_PERMISSIONS, ...BILLABLE_PERMISSIONS]);
 
 interface Options {
   apply: boolean;
@@ -97,6 +97,70 @@ interface Options {
 
 function parseArgs(argv: string[]): Options {
   return { apply: argv.includes("--apply") };
+}
+
+/**
+ * Strip the end-user grants from one call type. Returns whether anything was
+ * pending, so the caller can report a dry run honestly.
+ */
+async function hardenOne(
+  client: ReturnType<typeof getStreamVideoClient>,
+  typeName: string,
+  apply: boolean,
+): Promise<{ changed: boolean; failed: boolean }> {
+  const before = await client.video.getCallType({ name: typeName });
+  const grants: Record<string, string[]> = { ...before.grants };
+
+  const removals: string[] = [];
+  for (const role of END_USER_ROLES) {
+    const held = grants[role];
+    if (!held) continue;
+    const kept = held.filter((perm) => !STRIP.has(perm));
+    if (kept.length === held.length) continue;
+    removals.push(
+      `  ${typeName}/${role}: -${held.length - kept.length} (${held
+        .filter((p) => STRIP.has(p))
+        .join(", ")})`,
+    );
+    grants[role] = kept;
+  }
+
+  if (removals.length === 0) {
+    console.log(`✅ ${typeName} — already hardened`);
+    return { changed: false, failed: false };
+  }
+
+  console.log(`\n${typeName}:`);
+  for (const line of removals) console.log(line);
+  if (!apply) return { changed: true, failed: false };
+
+  // Only now — a dry run must leave the working tree exactly as it found it,
+  // and creating the backup directory before the apply check did not.
+  mkdirSync(BACKUP_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/:/g, "-");
+  const preImage = `${BACKUP_DIR}/call-type-${typeName}.grants.${stamp}.json`;
+  writeFileSync(preImage, JSON.stringify(before.grants, null, 2));
+  console.log(`  pre-image → ${preImage}`);
+
+  await client.video.updateCallType({ name: typeName, grants });
+
+  // Read back rather than trusting the write. A grants map is exactly the thing
+  // that is catastrophic to get wrong and invisible when you do.
+  const after = await client.video.getCallType({ name: typeName });
+  const leaked = END_USER_ROLES.flatMap((role) =>
+    (after.grants[role] ?? [])
+      .filter((perm) => STRIP.has(perm))
+      .map((perm) => `${role}:${perm}`),
+  );
+  if (leaked.length > 0) {
+    console.error(
+      `  🚨 still granted after the write: ${leaked.join(", ")}` +
+        `\n     restore from ${preImage}`,
+    );
+    return { changed: true, failed: true };
+  }
+  console.log(`  ✅ verified`);
+  return { changed: true, failed: false };
 }
 
 async function main(): Promise<number> {
@@ -111,62 +175,12 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  mkdirSync(BACKUP_DIR, { recursive: true });
   let changedTypes = 0;
 
   for (const typeName of UNUSED_TYPES) {
-    const before = await client.video.getCallType({ name: typeName });
-    const grants: Record<string, string[]> = { ...before.grants };
-
-    const removals: string[] = [];
-    for (const role of END_USER_ROLES) {
-      const held = grants[role];
-      if (!held) continue;
-      const kept = held.filter((perm) => !STRIP.includes(perm));
-      if (kept.length !== held.length) {
-        removals.push(
-          `  ${typeName}/${role}: -${held.length - kept.length} (${held
-            .filter((p) => STRIP.includes(p))
-            .join(", ")})`,
-        );
-        grants[role] = kept;
-      }
-    }
-
-    if (removals.length === 0) {
-      console.log(`✅ ${typeName} — already hardened`);
-      continue;
-    }
-
-    console.log(`\n${typeName}:`);
-    for (const line of removals) console.log(line);
-    changedTypes++;
-
-    if (!opts.apply) continue;
-
-    const stamp = new Date().toISOString().replace(/:/g, "-");
-    const preImage = `${BACKUP_DIR}/call-type-${typeName}.grants.${stamp}.json`;
-    writeFileSync(preImage, JSON.stringify(before.grants, null, 2));
-    console.log(`  pre-image → ${preImage}`);
-
-    await client.video.updateCallType({ name: typeName, grants });
-
-    // Read back rather than trusting the write. A grants map is exactly the
-    // thing that is catastrophic to get wrong and invisible when you do.
-    const after = await client.video.getCallType({ name: typeName });
-    const leaked = END_USER_ROLES.flatMap((role) =>
-      (after.grants[role] ?? [])
-        .filter((perm) => STRIP.includes(perm))
-        .map((perm) => `${role}:${perm}`),
-    );
-    if (leaked.length > 0) {
-      console.error(
-        `  🚨 still granted after the write: ${leaked.join(", ")}` +
-          `\n     restore from ${preImage}`,
-      );
-      return 1;
-    }
-    console.log(`  ✅ verified`);
+    const { changed, failed } = await hardenOne(client, typeName, opts.apply);
+    if (failed) return 1;
+    if (changed) changedTypes++;
   }
 
   if (changedTypes === 0) {
