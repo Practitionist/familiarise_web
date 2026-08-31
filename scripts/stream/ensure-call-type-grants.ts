@@ -465,6 +465,29 @@ export async function ensureCallTypeGrants(opts: Options): Promise<number> {
     return 1;
   }
 
+  // The rollback needs verifying too, and used to get none: BOTH post-write
+  // grant checks are gated on `!opts.restore`, so `--restore-user-join` reached
+  // the settings comparison, found nothing moved, and returned 0 — reporting
+  // success without ever asking whether the restoration landed.
+  //
+  // That is backwards. The rollback is the emergency path: it is reached when
+  // the revocation has already locked people out, and "it worked" is the one
+  // thing the operator cannot afford to be told wrongly. Only asserted when
+  // this run actually intended to restore the grant, so a rollback of a call
+  // type that never had it does not fail on a no-op.
+  if (
+    opts.restore &&
+    (grants[MEMBER_ROLE] ?? []).includes(END_CALL) &&
+    !(verify.grants[MEMBER_ROLE] ?? []).includes(END_CALL)
+  ) {
+    console.error(
+      `\n🚨 ${MEMBER_ROLE} still lacks ${END_CALL} on Stream after the rollback.` +
+        `\n   Hosts cannot end a call, which is the state this rollback exists to` +
+        `\n   undo. Do NOT report this run as successful.`,
+    );
+    return 1;
+  }
+
   if (
     settingsAfter !== settingsBefore ||
     notificationsAfter !== notificationsBefore

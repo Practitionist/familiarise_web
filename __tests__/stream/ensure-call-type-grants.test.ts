@@ -550,6 +550,34 @@ describe("ensure-call-type-grants", () => {
     expect(applied().call_member).not.toContain("start-recording");
   });
 
+  it("fails the ROLLBACK if Stream did not restore end-call to call_member", async () => {
+    // Both post-write grant checks are gated on `!opts.restore`, so before this
+    // the rollback path reached the settings comparison, found nothing moved,
+    // and returned 0 — reporting success without asking whether the restoration
+    // landed. That is the wrong way round: the rollback is the emergency path,
+    // reached when the revocation has already locked people out.
+    await ensureCallTypeGrants({
+      apply: true,
+      restore: false,
+      deployConfirmed: true,
+    });
+    mockGetCallType.mockClear();
+
+    // A stale second read: Stream reports the post-revocation grants, i.e. the
+    // restore did not take.
+    mockGetCallType
+      .mockResolvedValueOnce(mockCallType(EXPECTED_GRANTS_AFTER()))
+      .mockResolvedValueOnce(mockCallType(EXPECTED_GRANTS_AFTER()));
+
+    const code = await ensureCallTypeGrants({
+      apply: true,
+      restore: true,
+      deployConfirmed: false,
+    });
+
+    expect(code).toBe(1);
+  });
+
   it("fails the run if Stream reads back end-call still on call_member", async () => {
     // The mirror of the join-call assertion. A silently-ignored revocation would
     // leave every attendee able to end a paid consultation while this script

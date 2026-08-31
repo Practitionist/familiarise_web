@@ -191,6 +191,31 @@ export async function ensureAppSettings(opts: Options): Promise<number> {
   // a state that is otherwise identical to the one we started in.
   console.log("Probing whether updateApp merges or replaces…");
   const fpBefore = fingerprint(before);
+
+  // The probe is only a probe if it actually sends a field.
+  //
+  // `AppResponseFields` types `moderation_enabled` as a required boolean and
+  // the live app returns `true` — but the type describes a contract, not a
+  // runtime guarantee, and this subsystem has been burned by trusting the
+  // declared shape over the live one before. If the field were ever absent,
+  // `JSON.stringify({ moderation_enabled: undefined })` is `{}`: the request
+  // would carry nothing, Stream would change nothing, the fingerprint would
+  // match, and the probe would report CLEAN having tested nothing at all — then
+  // license the real write against the document holding `event_hooks`.
+  //
+  // A probe that can silently pass is worse than no probe, so an absent field
+  // is a refusal rather than a warning.
+  if (typeof before.moderation_enabled !== "boolean") {
+    console.error(
+      `\n🛑 Refusing to apply — cannot build a meaningful no-op probe.` +
+        `\n   \`moderation_enabled\` read back as ${String(before.moderation_enabled)},` +
+        `\n   so the probe request would serialise to {} and prove nothing about` +
+        `\n   whether updateApp merges or replaces. Nothing was written.` +
+        `\n   Pre-image: ${preImagePath}\n`,
+    );
+    return 1;
+  }
+
   await client.updateApp({ moderation_enabled: before.moderation_enabled });
   const probed = (await client.getApp()).app;
   const probeDrift = diffFingerprints(fpBefore, fingerprint(probed));

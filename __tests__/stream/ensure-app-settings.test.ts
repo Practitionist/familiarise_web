@@ -188,11 +188,40 @@ describe("ensure-app-settings", () => {
     expect(code).toBe(1);
   });
 
+  it("refuses to write when the probe field is absent", async () => {
+    // `AppResponseFields` types `moderation_enabled` as a required boolean, but
+    // a type describes a contract, not what the wire returns. If it were ever
+    // absent the probe body serialises to `{}` — Stream changes nothing, the
+    // fingerprint matches, and the probe reports CLEAN having tested nothing,
+    // then licenses the real write against the document holding `event_hooks`.
+    // A probe that can silently pass is worse than no probe.
+    mockGetApp.mockResolvedValue(
+      LIVE_APP({ moderation_enabled: undefined as unknown as boolean }),
+    );
+
+    const code = await ensureAppSettings({ apply: true });
+
+    expect(code).toBe(1);
+    expect(mockUpdateApp).not.toHaveBeenCalled();
+    // The pre-image is still written — it is the operator's record of the state
+    // they were refused against.
+    expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it("does not mistake key ORDER for a wiped config", async () => {
     // Two independent reads. Response key order is not stable, and a false
     // positive tells an operator their webhook subscription was just destroyed.
+    //
+    // The reorder has to happen on an object with MORE THAN ONE key, or the
+    // test is vacuous: an earlier version reassigned the single-key
+    // `file_upload_config`, which produces identical key order, so the
+    // fingerprints matched under plain `JSON.stringify` and the case passed
+    // with `canonical` deleted. The event hook has eight keys.
     const reordered = LIVE_APP();
-    reordered.app.file_upload_config = { size_limit: 0 } as never;
+    const [hook] = LIVE_HOOK();
+    reordered.app.event_hooks = [
+      Object.fromEntries(Object.entries(hook).toReversed()) as typeof hook,
+    ];
     mockGetApp
       .mockResolvedValueOnce(LIVE_APP())
       .mockResolvedValueOnce(reordered)
