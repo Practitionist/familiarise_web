@@ -89,6 +89,19 @@ export function setCurrentStreamUserId(userId: string | null): void {
  * Call this before signing out to ensure clean disconnection.
  */
 export async function disconnectStreamClients(): Promise<void> {
+  // #1304 review — capture what we are tearing down, and only clear THAT.
+  //
+  // The awaits below take real time, and the provider retries connecting on
+  // failure. A retry landing mid-teardown publishes new clients and new store
+  // state, and the code after the awaits would then null a client nobody asked
+  // it to touch and reset a snapshot describing a live session — leaving the
+  // app connected on Stream's side and disconnected in its own state.
+  //
+  // The ref-nulling half of that race predates this change; adding
+  // `resetStreamConnection` widened it to the store, which is what surfaced it.
+  const teardownChat = globalChatClient;
+  const teardownVideo = globalVideoClient;
+
   const promises: Promise<void>[] = [];
 
   if (globalChatClient) {
@@ -121,11 +134,27 @@ export async function disconnectStreamClients(): Promise<void> {
     }
   }
 
-  // Always clear global state regardless of disconnect outcome. Nulling after
-  // (attempted) disconnect avoids another code path adopting a still-connecting
-  // client; doing it unconditionally avoids leaking refs when disconnect fails.
-  globalChatClient = null;
-  globalVideoClient = null;
+  // Clear global state regardless of disconnect OUTCOME — a failed
+  // `disconnectUser` must not leak the ref — but only for the clients this call
+  // actually tore down. If a newer connection replaced one while we waited, it
+  // is not ours to null.
+  const supersededChat = globalChatClient !== teardownChat;
+  const supersededVideo = globalVideoClient !== teardownVideo;
+
+  if (!supersededChat) globalChatClient = null;
+  if (!supersededVideo) globalVideoClient = null;
+
+  if (supersededChat || supersededVideo) {
+    // Worth a line: it means a sign-out and a reconnect interleaved, and the
+    // reconnect won. Nothing is broken, but the session the user ended is not
+    // the session the app is now holding.
+    streamLogger.warn(
+      "Stream teardown superseded by a newer connection; leaving it alone",
+      { supersededChat, supersededVideo },
+    );
+    return;
+  }
+
   currentUserId = null;
   clearAllStreamCaches();
 

@@ -81,6 +81,39 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     ).toBe("org-5");
   });
 
+  it("picks the SAME org whatever order the relation returns", () => {
+    // #1304 review — Prisma relations come back unordered, and `find()` took
+    // whichever tagged row arrived first. With two different orgs present the
+    // answer changed between reads, and because the DM channel id is a function
+    // of the org, one relationship would mint `dmo-<digest(A)>` on one path and
+    // `dmo-<digest(B)>` on another: two channels, split history.
+    const forwards = bookingOrgId({
+      classPlan: { organizationId: null },
+      appointments: [{ organizationId: "org-b" }, { organizationId: "org-a" }],
+    });
+    const backwards = bookingOrgId({
+      classPlan: { organizationId: null },
+      appointments: [{ organizationId: "org-a" }, { organizationId: "org-b" }],
+    });
+
+    expect(forwards).toBe(backwards);
+  });
+
+  it("ignores untagged appointments when choosing", () => {
+    // A mixed personal/org-funded set must still resolve to the org, not to
+    // null — which is the half `find()` already got right and must not regress.
+    expect(
+      bookingOrgId({
+        subscriptionPlan: { organizationId: null },
+        appointments: [
+          { organizationId: null },
+          { organizationId: "org-z" },
+          { organizationId: null },
+        ],
+      }),
+    ).toBe("org-z");
+  });
+
   it("returns null for a wholly personal booking", () => {
     // Null must stay null: the create path spreads the field in only when it is
     // set, because a literal `organization_id: null` is a SET on Stream's side

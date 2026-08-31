@@ -1143,10 +1143,6 @@ streamLogger.error("Transfer failed", error, { recordingId });
 
 ---
 
-**Last Updated:** 2025-01-22
-
----
-
 ## Correction — 2026-09-01
 
 **The transfer pipeline described above has never executed once.** Measured
@@ -1177,3 +1173,7 @@ transfers permanently strand a recording, and a random path per retry that makes
 orphaned objects impossible to collect.
 
 **Do not read the section above as a description of production behaviour.**
+
+---
+
+**Last Updated:** 2026-09-01
