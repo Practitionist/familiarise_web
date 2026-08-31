@@ -155,7 +155,12 @@ export interface ExpireEventChannelsResult {
   dmFrozen: number;
   /** DM channels UNfrozen because the pair booked again. */
   dmUnfrozen: number;
-  deletedDms: number;
+  /**
+   * DM channels SENT for hard deletion. Not a count of channels that existed:
+   * `deleteChannels` is idempotent and reports a task id, so a pair past
+   * retention is re-sent each run until it ages out of the scan window.
+   */
+  dmDeleteRequests: number;
   errors: string[];
   success: boolean;
 }
@@ -280,10 +285,32 @@ async function loadEndedEvents(): Promise<EventRow[]> {
  * channel id rather than by pair keeps those apart, which matters because an
  * org-funded relationship can end while the personal one continues.
  */
-async function loadDmPairs(): Promise<DmPairRow[]> {
+async function loadDmPairs(): Promise<{
+  pairs: DmPairRow[];
+  /**
+   * True when either query filled its page, so the pair set may be INCOMPLETE.
+   *
+   * This is not a performance note. `lastActivityAt` is a MAX across every
+   * booking a pair shares, so a missing booking does not merely omit a pair —
+   * it can make a present one look dormant when it is not.
+   */
+  truncated: boolean;
+}> {
   const now = new Date();
+  const orgRetention = await loadOrgChatRetention();
+
+  // The scan window has to cover the LONGEST retention any org has actually
+  // configured, not the constant. `MAX_RETENTION_DAYS` is 365; an org that sets
+  // `chatRetentionDays` to 500 would have every one of its bookings dropped by
+  // the bound below and get no deletion at all — silently, and in the direction
+  // of keeping data forever rather than deleting it early.
+  const configuredMax = Math.max(
+    MAX_RETENTION_DAYS,
+    DEFAULT_CHAT_RETENTION_DAYS,
+    ...orgRetention.values(),
+  );
   const lookbackFrom = new Date(
-    now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
+    now.getTime() - (configuredMax + LOOKBACK_MARGIN_DAYS) * DAY_MS,
   );
 
   const bookingSelect = {
@@ -343,7 +370,6 @@ async function loadDmPairs(): Promise<DmPairRow[]> {
     }),
   ]);
 
-  const orgRetention = await loadOrgChatRetention();
   const byChannel = new Map<string, DmPairRow>();
 
   const add = (
@@ -434,15 +460,73 @@ async function loadDmPairs(): Promise<DmPairRow[]> {
     );
   }
 
-  return Array.from(byChannel.values());
+  return {
+    pairs: Array.from(byChannel.values()),
+    truncated:
+      consultations.length >= MAX_DM_PAIRS_PER_RUN ||
+      subscriptions.length >= MAX_DM_PAIRS_PER_RUN,
+  };
 }
 
-/** Per-org chat retention, read once rather than per booking. */
+/**
+ * Per-org chat retention, read once rather than per booking.
+ *
+ * Deliberately reads every organization rather than only those with a
+ * DM-eligible booking. The scan window below is derived from the LARGEST
+ * configured `chatRetentionDays`, and that has to include orgs whose bookings
+ * this run has not loaded yet — narrowing the query to the orgs already seen
+ * would make the window depend on the page, which is the same
+ * incomplete-input-drives-a-destructive-decision shape the truncation guard
+ * exists to prevent. Two columns across a table with tens of rows.
+ */
 async function loadOrgChatRetention(): Promise<Map<string, number>> {
   const orgs = await prisma.organization.findMany({
     select: { id: true, chatRetentionDays: true },
   });
   return new Map(orgs.map((o) => [o.id, o.chatRetentionDays]));
+}
+
+/**
+ * Sort every pair into freeze / unfreeze / delete.
+ *
+ * Pure, and extracted from `runDmStage` so it can be tested directly and so
+ * neither function carries the whole decision — the combined version tripped
+ * SonarCloud's cognitive-complexity gate at 20 against a limit of 15.
+ */
+function classifyDmPairs(
+  pairs: DmPairRow[],
+  now: number,
+): {
+  toFreeze: DmPairRow[];
+  toUnfreeze: DmPairRow[];
+  toDelete: DmPairRow[];
+  alreadyFrozen: number;
+} {
+  const toFreeze: DmPairRow[] = [];
+  const toUnfreeze: DmPairRow[] = [];
+  const toDelete: DmPairRow[] = [];
+  let alreadyFrozen = 0;
+
+  for (const pair of pairs) {
+    const dormantFor = now - pair.lastActivityAt.getTime();
+
+    if (dormantFor >= pair.retentionDays * DAY_MS) {
+      // Past retention wins, as in the event stage: no point freezing something
+      // being deleted.
+      toDelete.push(pair);
+    } else if (dormantFor >= DM_FREEZE_AFTER_DORMANT_DAYS * DAY_MS) {
+      // Each redundant updatePartial spends one of the app-wide 300/min budget,
+      // which is how the 2026-08-23 burst happened.
+      if (pair.chatFrozenAt) alreadyFrozen++;
+      else toFreeze.push(pair);
+    } else if (pair.chatFrozenAt) {
+      // Active again, and the ledger says we froze them. This is the branch the
+      // whole design turns on.
+      toUnfreeze.push(pair);
+    }
+  }
+
+  return { toFreeze, toUnfreeze, toDelete, alreadyFrozen };
 }
 
 /**
@@ -469,29 +553,14 @@ async function runDmStage(
   result: ExpireEventChannelsResult,
   freezeBudget: number,
 ): Promise<void> {
-  const now = Date.now();
-  const pairs = await loadDmPairs();
+  const { pairs, truncated } = await loadDmPairs();
   if (pairs.length === 0) return;
 
-  const toFreeze: DmPairRow[] = [];
-  const toUnfreeze: DmPairRow[] = [];
-  const toDelete: DmPairRow[] = [];
-
-  for (const pair of pairs) {
-    const dormantFor = now - pair.lastActivityAt.getTime();
-    if (dormantFor >= pair.retentionDays * DAY_MS) {
-      // Past retention wins, as in the event stage: no point freezing something
-      // being deleted.
-      toDelete.push(pair);
-    } else if (dormantFor >= DM_FREEZE_AFTER_DORMANT_DAYS * DAY_MS) {
-      if (pair.chatFrozenAt) result.skippedAlreadyFrozen++;
-      else toFreeze.push(pair);
-    } else if (pair.chatFrozenAt) {
-      // Active again, and the ledger says we froze them. This is the branch the
-      // whole design turns on.
-      toUnfreeze.push(pair);
-    }
-  }
+  const { toFreeze, toUnfreeze, toDelete, alreadyFrozen } = classifyDmPairs(
+    pairs,
+    Date.now(),
+  );
+  result.skippedAlreadyFrozen += alreadyFrozen;
 
   // Unfreeze FIRST, and outside the budget. A frozen channel belonging to an
   // active pair is a live user-facing fault; a dormant pair staying unfrozen
@@ -508,7 +577,31 @@ async function runDmStage(
     );
   }
 
-  // Delete. Same batching as the event stage; `deleteChannels` caps at 100 cids.
+  // Delete — but NEVER from a page that may be incomplete.
+  //
+  // Both booking queries cap at MAX_DM_PAIRS_PER_RUN and order by
+  // `requestedAt`, which is not the key dormancy is measured on. A long-running
+  // booking is requested once and then generates sessions for years, so it
+  // sorts old and is the first thing a full page drops. If a pair keeps one
+  // low-activity booking on the page and loses its active one, `lastActivityAt`
+  // is computed from the stale row, the pair classifies as past retention, and
+  // `hard_delete: true` destroys the chat history of a live consulting
+  // relationship. That is not recoverable.
+  //
+  // Freezing on a truncated page IS recoverable — the next run sees the pair as
+  // active and unfreezes it — so only the delete stage is withheld. The run is
+  // marked unsuccessful so the cron reports it rather than passing green while
+  // silently skipping work.
+  if (truncated) {
+    result.success = false;
+    result.errors.push(
+      `dm scan truncated at ${MAX_DM_PAIRS_PER_RUN} bookings — delete stage skipped ` +
+        `(${toDelete.length} candidates held back; an incomplete page can make an active pair look dormant)`,
+    );
+    return;
+  }
+
+  // Same batching as the event stage; `deleteChannels` caps at 100 cids.
   for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
     const cids = batch.map(
       (pair) => `${getChannelTypeFromId(pair.channelId)}:${pair.channelId}`,
@@ -517,7 +610,13 @@ async function runDmStage(
       await withStreamCircuitBreaker(() =>
         chat.deleteChannels(cids, { hard_delete: true }),
       );
-      result.deletedDms += cids.length;
+      // Counts channels SENT for deletion, not channels that existed to delete.
+      // `deleteChannels` is idempotent and returns a task id rather than a
+      // per-cid outcome, so a pair that crossed retention is re-sent on every
+      // run until it ages past the scan window — bounded by `lookbackFrom`
+      // (largest configured retention + 60 days), not unbounded, but real. The
+      // name says requests because that is what the number is.
+      result.dmDeleteRequests += cids.length;
     } catch (error) {
       result.success = false;
       result.errors.push(
@@ -558,26 +657,7 @@ async function applyDmFrozen(
   ).entries()) {
     if (batchIdx > 0) await pause(FREEZE_PACING_MS);
 
-    // Say so BEFORE freezing. Stream grants `use-frozen-channel` to no role, so
-    // a frozen channel refuses every send with no error text the user ever
-    // sees: they type, nothing happens, and there is no visible cause. Sending
-    // after the freeze would itself be refused, so the order is load-bearing.
-    //
-    // Only on the way in. Unfreezing needs no announcement — the channel simply
-    // works again, and a "you may post now" notice in a conversation nobody has
-    // touched for three months is noise.
-    if (frozen) {
-      await Promise.allSettled(
-        batch.map((pair) =>
-          sendSystemMessage(
-            pair.channelId,
-            "This conversation has been archived after 90 days without a session. " +
-              "The history stays available, and booking again reopens it.",
-            { event: "chat_frozen_dormant" },
-          ),
-        ),
-      );
-    }
+    await announceFreeze(batch, frozen);
 
     const outcomes = await Promise.allSettled(
       batch.map((pair) =>
@@ -607,25 +687,70 @@ async function applyDmFrozen(
       }
     });
 
-    const stamp = frozen ? new Date() : null;
-    try {
-      await Promise.all([
-        consultationIds.length > 0 &&
-          prisma.consultation.updateMany({
-            where: { id: { in: consultationIds } },
-            data: { chatFrozenAt: stamp },
-          }),
-        subscriptionIds.length > 0 &&
-          prisma.subscription.updateMany({
-            where: { id: { in: subscriptionIds } },
-            data: { chatFrozenAt: stamp },
-          }),
-      ]);
-    } catch (err) {
-      result.errors.push(
-        `dm ${verb} ledger: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    await writeDmLedger(consultationIds, subscriptionIds, frozen, verb, result);
+  }
+}
+
+/**
+ * Tell the pair why the channel is about to stop accepting messages.
+ *
+ * Before the freeze, not after: Stream grants `use-frozen-channel` to no role,
+ * so a frozen channel refuses every send with no error text the user ever sees
+ * — including this one, if it were sent second.
+ *
+ * Only on the way in. Unfreezing needs no announcement; the channel simply
+ * works again, and a "you may post now" notice in a conversation nobody has
+ * touched for three months is noise.
+ */
+async function announceFreeze(
+  batch: DmPairRow[],
+  frozen: boolean,
+): Promise<void> {
+  if (!frozen) return;
+  await Promise.allSettled(
+    batch.map((pair) =>
+      sendSystemMessage(
+        pair.channelId,
+        `This conversation has been archived after ${DM_FREEZE_AFTER_DORMANT_DAYS} days without a session. ` +
+          "The history stays available, and booking again reopens it.",
+        { event: "chat_frozen_dormant" },
+      ),
+    ),
+  );
+}
+
+/**
+ * Move the pair ledger to match what Stream confirmed.
+ *
+ * Every booking the pair shares, not just one: the read side takes
+ * MAX(chatFrozenAt) across the pair, so a partial write would let a second
+ * booking report the channel as unfrozen when it is not.
+ */
+async function writeDmLedger(
+  consultationIds: string[],
+  subscriptionIds: string[],
+  frozen: boolean,
+  verb: string,
+  result: ExpireEventChannelsResult,
+): Promise<void> {
+  const stamp = frozen ? new Date() : null;
+  try {
+    await Promise.all([
+      consultationIds.length > 0 &&
+        prisma.consultation.updateMany({
+          where: { id: { in: consultationIds } },
+          data: { chatFrozenAt: stamp },
+        }),
+      subscriptionIds.length > 0 &&
+        prisma.subscription.updateMany({
+          where: { id: { in: subscriptionIds } },
+          data: { chatFrozenAt: stamp },
+        }),
+    ]);
+  } catch (err) {
+    result.errors.push(
+      `dm ${verb} ledger: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -642,7 +767,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     skippedAlreadyFrozen: 0,
     dmFrozen: 0,
     dmUnfrozen: 0,
-    deletedDms: 0,
+    dmDeleteRequests: 0,
     errors: [],
     success: true,
   };
@@ -813,7 +938,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       deleted: result.deleted,
       dmFrozen: result.dmFrozen,
       dmUnfrozen: result.dmUnfrozen,
-      deletedDms: result.deletedDms,
+      dmDeleteRequests: result.dmDeleteRequests,
       errorCount: result.errors.length,
       timestamp: new Date().toISOString(),
     }),
@@ -829,7 +954,7 @@ if (require.main === module) {
       const result = await expireEventChannels();
       console.log(
         `Events — frozen: ${result.frozen}  deleted: ${result.deleted}\n` +
-          `DMs    — frozen: ${result.dmFrozen}  unfrozen: ${result.dmUnfrozen}  deleted: ${result.deletedDms}\n` +
+          `DMs    — frozen: ${result.dmFrozen}  unfrozen: ${result.dmUnfrozen}  delete-requests: ${result.dmDeleteRequests}\n` +
           `Errors: ${result.errors.length}`,
       );
       if (!result.success) process.exitCode = 1;

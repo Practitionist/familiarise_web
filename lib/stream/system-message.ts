@@ -33,7 +33,13 @@ export async function sendSystemMessage(
     const chat = getStreamChatClient();
     await chat
       .channel(getChannelTypeFromId(channelId), channelId)
-      .sendMessage({ text, type: "system", ...custom });
+      // `custom` FIRST. Spread last, a caller key named `type` or `text` would
+      // silently override the two fields this function's contract rests on —
+      // and `type: "system"` is load-bearing, because a regular message touches
+      // unread counts and would light up a badge for a conversation that has
+      // just gone read-only. No caller does this today; the ordering is what
+      // stops one doing it by accident.
+      .sendMessage({ ...custom, text, type: "system" });
     return true;
   } catch (error) {
     // Best-effort by construction. A courtesy notice failing must never stop

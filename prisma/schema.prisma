@@ -1058,6 +1058,11 @@ model Organization {
   /// floor: DPDP Rule 8(3) is a narrow preservation-for-State-access duty that
   /// does not commence until 13 May 2027 (see PR #1266), so a hard minimum here
   /// would over-state what binds us and rule out a shorter-retention tier.
+  ///
+  /// Any value is honoured. `jobs/stream/expire-event-channels.ts` derives its
+  /// scan window from the LARGEST value configured across all organizations
+  /// rather than from its own constant, so setting this above the 365-day
+  /// default widens the scan instead of silently falling outside it.
   chatRetentionDays Int @default(365)
 
   // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).

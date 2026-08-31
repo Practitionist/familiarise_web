@@ -31,6 +31,16 @@ const mockSubscriptionUpdateMany = jest.fn();
 const mockUpdatePartial = jest.fn();
 const mockDeleteChannels = jest.fn();
 const mockSendMessage = jest.fn();
+/**
+ * Captures `(type, id)` for every `client.channel()` call.
+ *
+ * Without it no test asserts WHICH channel was frozen: the identity case below
+ * re-derived both ids from `getDmChannelId` and compared them to each other,
+ * which passes even if the job addressed the wrong channel or the wrong Stream
+ * type. `lib/stream-channel-ids.ts` records that a wrong type resolved silently
+ * for months, which is exactly the failure this suite should catch.
+ */
+const mockChannel = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -58,10 +68,13 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: () => true,
   getStreamChatClient: () => ({
-    channel: () => ({
-      updatePartial: (...a: unknown[]) => mockUpdatePartial(...a),
-      sendMessage: (...a: unknown[]) => mockSendMessage(...a),
-    }),
+    channel: (...args: unknown[]) => {
+      mockChannel(...args);
+      return {
+        updatePartial: (...a: unknown[]) => mockUpdatePartial(...a),
+        sendMessage: (...a: unknown[]) => mockSendMessage(...a),
+      };
+    },
     deleteChannels: (...a: unknown[]) => mockDeleteChannels(...a),
   }),
   withStreamCircuitBreaker: async (op: () => unknown) => op(),
@@ -125,6 +138,7 @@ beforeEach(() => {
   mockUpdatePartial.mockResolvedValue(undefined);
   mockDeleteChannels.mockResolvedValue(undefined);
   mockSendMessage.mockResolvedValue(undefined);
+  mockChannel.mockReset();
 });
 
 describe("DM dormancy — freeze", () => {
@@ -178,7 +192,7 @@ describe("DM dormancy — freeze", () => {
     const result = await expireEventChannels();
 
     expect(result.dmFrozen).toBe(0);
-    expect(result.deletedDms).toBe(0);
+    expect(result.dmDeleteRequests).toBe(0);
   });
 
   it("does not re-freeze a pair the ledger already covers", async () => {
@@ -257,9 +271,16 @@ describe("DM dormancy — identity and retention", () => {
     const result = await expireEventChannels();
 
     expect(result.dmFrozen).toBe(1);
+
     const personalId = getDmChannelId(CONSULTANT, CONSULTEE);
-    const orgId = getDmChannelId(CONSULTANT, CONSULTEE, "org-1");
-    expect(personalId).not.toBe(orgId);
+    const orgChannelId = getDmChannelId(CONSULTANT, CONSULTEE, "org-1");
+    expect(personalId).not.toBe(orgChannelId);
+
+    // The org channel is the dormant one, so it — and only it — is addressed.
+    // Asserting the derived ids against each other proves nothing about what
+    // the job actually did; asserting the call does.
+    expect(mockChannel).toHaveBeenCalledWith("messaging", orgChannelId);
+    expect(mockChannel).not.toHaveBeenCalledWith("messaging", personalId);
   });
 
   it("deletes past retention rather than freezing", async () => {
@@ -267,7 +288,7 @@ describe("DM dormancy — identity and retention", () => {
 
     const result = await expireEventChannels();
 
-    expect(result.deletedDms).toBe(1);
+    expect(result.dmDeleteRequests).toBe(1);
     expect(result.dmFrozen).toBe(0);
     expect(mockDeleteChannels).toHaveBeenCalled();
   });
@@ -283,7 +304,59 @@ describe("DM dormancy — identity and retention", () => {
     const result = await expireEventChannels();
 
     // 150 days is under the 365 default but past this org's 120.
-    expect(result.deletedDms).toBe(1);
+    expect(result.dmDeleteRequests).toBe(1);
+  });
+
+  it("REFUSES to delete when the booking page was truncated", async () => {
+    // The critical case. Both queries cap at MAX_DM_PAIRS_PER_RUN and order by
+    // `requestedAt`, which is not the key dormancy is measured on — a booking
+    // requested once and running for years sorts old and is the first thing a
+    // full page drops. If a pair keeps a low-activity booking and loses its
+    // active one, `lastActivityAt` comes from the stale row, the pair reads as
+    // past retention, and `hard_delete: true` destroys the chat history of a
+    // live consulting relationship.
+    const full = Array.from({ length: 5000 }, (_, i) =>
+      consultation(`c${i}`, 400),
+    );
+    mockConsultationFindMany.mockResolvedValue(full);
+
+    const result = await expireEventChannels();
+
+    expect(mockDeleteChannels).not.toHaveBeenCalled();
+    expect(result.dmDeleteRequests).toBe(0);
+    // Reported, not silent: a run that skipped work must not pass green.
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes("truncated"))).toBe(true);
+  });
+
+  it("still FREEZES on a truncated page, because freezing is reversible", async () => {
+    // Withholding the freeze too would be over-correction. An over-eager freeze
+    // is undone by the next run's unfreeze branch; a hard delete is not undone
+    // by anything.
+    const full = Array.from({ length: 5000 }, (_, i) =>
+      consultation(`c${i}`, 120),
+    );
+    mockConsultationFindMany.mockResolvedValue(full);
+
+    const result = await expireEventChannels();
+
+    expect(result.dmFrozen).toBeGreaterThan(0);
+  });
+
+  it("widens the scan window for an org whose retention exceeds the constant", async () => {
+    // `MAX_RETENTION_DAYS` is 365. An org on 500 days would have every booking
+    // dropped by a window derived from the constant, and get no deletion at all
+    // — silently, and in the direction of keeping personal data forever.
+    mockOrganizationFindMany.mockResolvedValue([
+      { id: "org-1", chatRetentionDays: 500 },
+    ]);
+    mockConsultationFindMany.mockResolvedValue([
+      consultation("c1", 520, null, "org-1"),
+    ]);
+
+    const result = await expireEventChannels();
+
+    expect(result.dmDeleteRequests).toBe(1);
   });
 
   it("does not fail the event stage when the DM stage throws", async () => {
