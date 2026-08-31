@@ -46,6 +46,8 @@ import { getChannelDisplayInfo } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
+import { useSession } from "@/lib/auth-client";
+import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 
 interface ChannelMember {
   id: string;
@@ -90,6 +92,12 @@ export const ChannelInfoAndManageDialog = ({
 
   const displayName = displayInfo.displayName;
 
+  // The APP role, never `client.user.role` — same source and same reason as
+  // ChatSidebar, which carries the warning comment about this trap.
+  const { data: session } = useSession();
+  const serverFacts = useServerSessionFacts();
+  const appRole = session?.user?.role ?? serverFacts.role;
+
   // Check if current user is the event owner consultant.
   //
   // The `client.user.role === "CONSULTANT"` conjunct that used to be here could
@@ -107,8 +115,7 @@ export const ChannelInfoAndManageDialog = ({
   // Queried channels expose the creator as `created_by` (object);
   // `created_by_id` survives only on channels created in THIS session. Read
   // both, prefer the reliable one.
-  const creatorId =
-    channel.data?.created_by?.id ?? channel.data?.created_by_id;
+  const creatorId = channel.data?.created_by?.id ?? channel.data?.created_by_id;
   const isEventOwner = isEvent && creatorId === client?.userID;
 
   // Get the other user's ID for 1-on-1 DMs (for block/report)
@@ -288,13 +295,20 @@ export const ChannelInfoAndManageDialog = ({
   const canTruncateChannel = (() => {
     // In 1-on-1 DMs, both users can clear their view
     if (isDirectMessage && !displayInfo.isGroupDM) return true;
-    // In group DMs and channels, only creator or privileged roles
+    // In group DMs and channels, only creator or privileged roles.
+    //
+    // #1280 — the SECOND instance of the dead-role bug in this file, missed
+    // when `isEventOwner` was fixed a few lines above. `client.user.role` is the
+    // STREAM role, and `mapRoleToStream` (lib/user.ts:82) collapses every
+    // non-staff account to `"user"`, so `userRole === "CONSULTANT"` and
+    // `=== "CONSULTEE"` are false by construction. `isPrivileged` was therefore
+    // permanently false and only the creator could ever clear a group channel —
+    // staff and admins could not, despite the branch claiming they could.
+    //
+    // #1144 asked for a grep of this pattern generally. This is what it found.
     const isCreator = creatorId === client?.userID;
-    const userRole = client?.user?.role;
     const isPrivileged =
-      userRole === "CONSULTANT" ||
-      userRole === "ADMIN" ||
-      userRole === "STAFF";
+      appRole === "CONSULTANT" || appRole === "ADMIN" || appRole === "STAFF";
     return isCreator || isPrivileged;
   })();
 
@@ -314,8 +328,7 @@ export const ChannelInfoAndManageDialog = ({
         body: JSON.stringify({
           type: "PROFILE",
           reason: "User reported via chat",
-          description:
-            "User was reported from a direct message conversation",
+          description: "User was reported from a direct message conversation",
           targetUserId: otherUserId,
         }),
       });
@@ -750,7 +763,10 @@ export const ChannelInfoAndManageDialog = ({
       </ResponsiveModal>
 
       {/* Clear Chat Confirmation Dialog */}
-      <ResponsiveModal open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+      <ResponsiveModal
+        open={showClearConfirm}
+        onOpenChange={setShowClearConfirm}
+      >
         <ResponsiveModalContent className="sm:max-w-[400px]">
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>Clear chat history?</ResponsiveModalTitle>
