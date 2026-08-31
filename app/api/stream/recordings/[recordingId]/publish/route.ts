@@ -28,10 +28,7 @@ const PublishSchema = z.object({
   slug: z
     .string()
     .trim()
-    .regex(
-      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
-      "Lowercase letters, digits, dashes",
-    )
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, "Lowercase letters, digits, dashes")
     .min(3)
     .max(80)
     .optional(),
@@ -52,13 +49,13 @@ const PublishSchema = z.object({
  * Split-and-join rather than replace-and-trim. The previous form ended with
  * `.replace(/^-+|-+$/g, "")`, which SonarCloud flags as super-linear
  * (`typescript:S8786`) — an alternation of two greedy quantifiers, scanned
- * globally, is the shape that backtracks. It is currently the only Stream-owned
+ * globally, is the shape that backtracks. It is the only Stream-owned
  * contributor to the failing `new_reliability_rating` on `dev`.
  *
  * Honestly: V8 optimises this particular pattern and a 40,000-dash input still
  * returns in under a millisecond, so this is a gate fix and a simplification
- * rather than a demonstrated denial of service. The rewrite is worth taking
- * anyway because it is plainly linear and shorter.
+ * rather than a demonstrated denial of service. Worth taking anyway because it
+ * is plainly linear and shorter.
  *
  * Splitting on runs of non-alphanumerics and dropping the empty pieces removes
  * the need to trim at all: `filter(Boolean)` discards the leading and trailing
@@ -66,21 +63,21 @@ const PublishSchema = z.object({
  * can still leave is stripped explicitly — at most one, because `join("-")`
  * over non-empty parts never produces two in a row.
  *
- * Verified to return byte-identical output to the previous implementation
- * across leading/trailing punctuation, unicode, empty input, all-separator
- * input, and titles longer than the slice boundary.
+ * Verified byte-identical to the previous implementation across leading and
+ * trailing punctuation, unicode, empty input, all-separator input, and titles
+ * longer than the slice boundary.
  */
 function buildSlug(title: string, id: string): string {
-  const words = title
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
+  const words = title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   let base = words.join("-").slice(0, 60);
   if (base.endsWith("-")) base = base.slice(0, -1);
   return `${base || "recording"}-${id.slice(-6).toLowerCase()}`;
 }
 
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(
+  request: NextRequest,
+  { params }: RouteParams,
+) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
@@ -113,14 +110,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
-    const {
-      listingTitle,
-      listingDescription,
-      listPricePaise,
-      tags,
-      slug,
-      previewTranscript,
-    } = parsed.data;
+    const { listingTitle, listingDescription, listPricePaise, tags, slug, previewTranscript } =
+      parsed.data;
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
@@ -151,9 +142,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         {
           error:
             "This recording's plan is archived or its organization limits visibility.",
-          code: loaded.plan.plan.archivedAt
-            ? "PLAN_ARCHIVED"
-            : "ORG_VISIBILITY",
+          code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
         },
         { status: 403 },
       );
@@ -208,12 +197,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           consentAttestedById: session.user.id,
           previewTranscript: transcriptGate.transcript,
         },
-        select: {
-          id: true,
-          slug: true,
-          listingStatus: true,
-          publishedAt: true,
-        },
+        select: { id: true, slug: true, listingStatus: true, publishedAt: true },
       });
     } catch (updateError) {
       // Two concurrent publishes can pass the pre-check above; the @unique
@@ -246,7 +230,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+export async function DELETE(
+  _request: NextRequest,
+  { params }: RouteParams,
+) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
