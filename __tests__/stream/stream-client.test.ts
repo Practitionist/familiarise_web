@@ -17,12 +17,29 @@ jest.mock("@stream-io/node-sdk", () => ({
   StreamClient: mockStreamClientConstructor,
 }));
 
-// #473 — stream-client now imports withCircuitBreaker from lib/redis. Mock it
-// (the real module pulls in the un-transformed @upstash/redis ESM). A mutable
-// delegate lets the breaker-behaviour tests below override per-case; default is
-// a pass-through so closed-breaker behaviour is exercised (operation runs as-is).
+// #473 — stream-client goes through a circuit breaker from lib/redis. Mock the
+// module (the real one pulls in the un-transformed @upstash/redis ESM). A
+// mutable delegate lets the breaker-behaviour tests below override per-case;
+// default is a pass-through so closed-breaker behaviour is exercised.
+//
+// #1280 2.1 — it is now `createCircuitBreaker("stream")` rather than the shared
+// `withCircuitBreaker`, because Stream and Redis used to trip each other: five
+// Stream failures opened the breaker that booking-lock acquisition also went
+// through, so a video-vendor outage stopped checkout. The factory shape is what
+// keeps the two sets of failures apart, so the mock reproduces it.
 let mockWithCircuitBreaker: jest.Mock = jest.fn((op: () => unknown) => op());
+const mockCreateCircuitBreaker = jest.fn((name: string) => ({
+  run: (...args: unknown[]) => mockWithCircuitBreaker(...args),
+  reset: jest.fn(),
+  status: () => ({
+    name,
+    state: "CLOSED",
+    failures: 0,
+    lastFailure: null,
+  }),
+}));
 jest.mock("../../lib/redis", () => ({
+  createCircuitBreaker: (name: string) => mockCreateCircuitBreaker(name),
   withCircuitBreaker: (...args: unknown[]) => mockWithCircuitBreaker(...args),
 }));
 
