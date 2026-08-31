@@ -507,6 +507,15 @@ async function getEventData(eventType: EventType, eventId: string) {
             },
           },
           requestedBy: { include: { user: { select: { id: true } } } },
+          // #1280 PR 7 — the appointment is the second arm of `bookingOrgId`'s
+          // precedence. Without it this branch could only ever see the plan's
+          // org, so a personal plan booked under an organization would produce
+          // an untagged channel while the DM-eligibility path, which does read
+          // it, considered the pair org-scoped. These two arms are reachable
+          // only from tests today (the open route restricts `eventType` to
+          // webinar/class), but a resolver that disagrees with itself depending
+          // on the caller is exactly what this change exists to remove.
+          appointment: { select: { organizationId: true } },
         },
       });
       if (!consultation) return null;
@@ -522,6 +531,7 @@ async function getEventData(eventType: EventType, eventId: string) {
         name: consultation.consultationPlan.title,
         organizationId: bookingOrgId({
           consultationPlan: consultation.consultationPlan,
+          appointment: consultation.appointment,
         }),
       };
     }
@@ -538,6 +548,9 @@ async function getEventData(eventType: EventType, eventId: string) {
             },
           },
           requestedBy: { include: { user: { select: { id: true } } } },
+          // Plural here — a subscription holds many appointments and is funded
+          // once, so `bookingOrgId` takes the first org-tagged one.
+          appointments: { select: { organizationId: true } },
         },
       });
       if (!subscription) return null;
@@ -553,6 +566,7 @@ async function getEventData(eventType: EventType, eventId: string) {
         name: subscription.subscriptionPlan.title,
         organizationId: bookingOrgId({
           subscriptionPlan: subscription.subscriptionPlan,
+          appointments: subscription.appointments,
         }),
       };
     }

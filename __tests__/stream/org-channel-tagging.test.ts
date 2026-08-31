@@ -60,6 +60,27 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     ).toBe("org-3");
   });
 
+  it("resolves the appointment's org when the plan carries none", () => {
+    // The arm that was missing. A personal plan booked under an organization
+    // has its org on the APPOINTMENT, and the DM-eligibility path reads it —
+    // so a tagger that only looked at the plan would leave the channel
+    // untagged while the pair was treated as org-scoped elsewhere. A resolver
+    // that disagrees with itself depending on the caller is the bug class this
+    // whole change is about.
+    expect(
+      bookingOrgId({
+        consultationPlan: { organizationId: null },
+        appointment: { organizationId: "org-4" },
+      }),
+    ).toBe("org-4");
+    expect(
+      bookingOrgId({
+        subscriptionPlan: { organizationId: null },
+        appointments: [{ organizationId: null }, { organizationId: "org-5" }],
+      }),
+    ).toBe("org-5");
+  });
+
   it("returns null for a wholly personal booking", () => {
     // Null must stay null: the create path spreads the field in only when it is
     // set, because a literal `organization_id: null` is a SET on Stream's side
