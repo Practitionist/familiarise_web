@@ -60,6 +60,7 @@ import "dotenv/config";
 import { writeFileSync, mkdirSync } from "node:fs";
 import type { AppResponseFields } from "@stream-io/node-sdk";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
+import { canonical, diffFingerprints } from "@/lib/stream/config-fingerprint";
 
 const BACKUP_DIR = ".stream-backups";
 
@@ -74,25 +75,6 @@ interface Options {
 
 function parseArgs(argv: string[]): Options {
   return { apply: argv.includes("--apply") };
-}
-
-/**
- * Stable stringify so two independent reads of an unchanged document compare
- * equal. Response key order is not stable, and a false positive here would tell
- * an operator their webhook subscription had just been wiped when it had not.
- * Code-unit ordering, never `localeCompare` — same rule as the channel ids.
- */
-function byCodeUnit([a]: [string, unknown], [b]: [string, unknown]): number {
-  if (a < b) return -1;
-  return a > b ? 1 : 0;
-}
-
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, val) => {
-    if (!val || typeof val !== "object" || Array.isArray(val)) return val;
-    const entries = Object.entries(val as Record<string, unknown>);
-    return Object.fromEntries(entries.toSorted(byCodeUnit));
-  });
 }
 
 /**
@@ -119,13 +101,6 @@ function fingerprint(app: AppResponseFields): Record<string, string> {
     image_upload_config: canonical(app.image_upload_config),
     push_notifications: canonical(app.push_notifications),
   };
-}
-
-function diffFingerprints(
-  before: Record<string, string>,
-  after: Record<string, string>,
-): string[] {
-  return Object.keys(before).filter((k) => before[k] !== after[k]);
 }
 
 export async function ensureAppSettings(opts: Options): Promise<number> {

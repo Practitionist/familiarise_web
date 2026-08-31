@@ -46,6 +46,11 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { STREAM_CALL_TYPE } from "../../lib/stream/call-cid";
+// One implementation of the drift comparison, not three. This file,
+// ensure-call-type-settings.ts and ensure-app-settings.ts each had their own;
+// they must agree, because this is the check that decides whether an operator
+// is told a production config was just wiped.
+import { canonical } from "../../lib/stream/config-fingerprint";
 // The role every participant is given by /api/meetings/[meetingId]/join, by the
 // server-side mint, and by the backfill. Imported rather than restated: a typo
 // in this one string is a total video outage, and the two scripts have to agree
@@ -123,30 +128,6 @@ const RECORDING_REVOKED_ROLES = [...JOIN_REVOKED_ROLES, MEMBER_ROLE];
  * through the server.
  */
 const END_CALL_REVOKED_ROLES = RECORDING_REVOKED_ROLES;
-
-/**
- * Stable stringify for comparing two separate `getCallType` reads.
- *
- * Plain `JSON.stringify` preserves key insertion order, and the two snapshots
- * come from two independent responses — so an identical configuration whose keys
- * arrived in a different order would report as drift, write a pre-image, and
- * tell the operator Stream discarded settings it had not touched. A false alarm
- * on this particular check is expensive: it is the thing that says whether a
- * production config wipe just happened.
- *
- * Code-unit ordering, never `localeCompare` — same rule as the channel ids.
- */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, val) =>
-    val && typeof val === "object" && !Array.isArray(val)
-      ? Object.fromEntries(
-          Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0,
-          ),
-        )
-      : val,
-  );
-}
 
 interface Options {
   apply: boolean;
