@@ -24,7 +24,7 @@ const recordingsSelect = {
     id: true,
     title: true,
     recordingUrl: true,
-    supabaseUrl: true,
+    storageUrl: true,
     thumbnailUrl: true,
     status: true,
     durationInMinutes: true,
@@ -37,7 +37,12 @@ const slotsInclude = {
   include: {
     user: userSelect,
     meetingSession: {
-      select: { id: true, endedAt: true, recordings: recordingsSelect },
+      select: {
+        id: true,
+        endedAt: true,
+        endedReason: true,
+        recordings: recordingsSelect,
+      },
     },
   },
 } as const;

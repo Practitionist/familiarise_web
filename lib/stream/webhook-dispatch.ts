@@ -29,12 +29,6 @@ import {
   StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
 import {
-  handleUserFlagged,
-  handleMessageFlagged,
-  StreamUserFlaggedEvent,
-  StreamMessageFlaggedEvent,
-} from "@/lib/stream/chat-moderation-handlers";
-import {
   logWebhookEvent,
   markWebhookEventProcessed,
   isDbHealthy,
@@ -44,6 +38,7 @@ import {
 // so the type and the guard below could not see it. #1141 moved the list into
 // its own module so ensure-webhook-subscription.ts can read it too.
 import { HANDLED_EVENT_TYPES } from "@/lib/stream/webhook-events";
+import { STREAM_CALL_TYPE, callTypeFromCid } from "@/lib/stream/call-cid";
 export { HANDLED_EVENT_TYPES };
 
 /**
@@ -57,7 +52,6 @@ export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
 export function isHandledEventType(t: string): t is HandledEventType {
   return (HANDLED_EVENT_TYPES as readonly string[]).includes(t);
 }
-
 
 // Base event schema for all Stream webhook events
 // call_cid is optional because chat moderation events don't include it
@@ -158,26 +152,6 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
   participant: streamParticipantSchema,
 });
 
-// Chat moderation: user flagged schema
-const streamUserFlaggedSchema = streamBaseEventSchema.extend({
-  type: z.literal("user.flagged"),
-  user: z.object({ id: z.string() }).optional(),
-  target_user: z.object({ id: z.string() }).optional(),
-});
-
-// Chat moderation: message flagged schema
-const streamMessageFlaggedSchema = streamBaseEventSchema.extend({
-  type: z.literal("message.flagged"),
-  user: z.object({ id: z.string() }).optional(),
-  message: z
-    .object({
-      id: z.string(),
-      text: z.string().optional(),
-      user: z.object({ id: z.string() }).optional(),
-    })
-    .optional(),
-});
-
 /**
  * Process one verified Stream event.
  *
@@ -190,6 +164,32 @@ const streamMessageFlaggedSchema = streamBaseEventSchema.extend({
  * nobody to signal — a handler failure is stamped on the WebhookEvent row and
  * the sweeper re-drives it.
  */
+/**
+ * Is this event for a call type this app actually uses?
+ *
+ * Every handler resolves its row with `call_cid.split(":")[1]`, discarding the
+ * type half. The app only ever uses `default`, but the Stream app also carries
+ * the built-in `livestream`, `audio_room` and `development` types, and on all
+ * three the plain `user` role holds `create-call` — `development` grants it
+ * `start-recording`, `start-transcription` and `start-broadcasting` outright.
+ * Tokens here are app-wide (`generateUserToken`, no `call_cids`), so any
+ * signed-in user holds one that works on them.
+ *
+ * That let a user who knew one of their own anchor slot ids call `getOrCreate`
+ * on `development:slot-<id>`, record whatever they liked, and have Stream
+ * deliver a genuine, correctly-signed `call.recording_ready` whose id half
+ * collided with a real MeetingSession — binding their recording to someone
+ * else's appointment. Signature checking is no defence: the event is authentic.
+ * The same collision reached the session handlers, where injected participant
+ * events feed attendance, which feeds no-show detection, which issues refunds.
+ *
+ * Checked once, at the boundary, so a type added later cannot reintroduce it by
+ * forgetting one of the eight call sites.
+ */
+function isOwnCallType(callCid: string | undefined): boolean {
+  return !callCid || callTypeFromCid(callCid) === STREAM_CALL_TYPE;
+}
+
 /**
  * Write the delivery down, and nothing else.
  *
@@ -282,6 +282,17 @@ export async function processStreamEvent(
       return;
     }
 
+    if (!isOwnCallType(baseEvent.call_cid)) {
+      streamLogger.warn("Refused Stream webhook for a foreign call type", {
+        eventId,
+        eventType,
+        call_cid: baseEvent.call_cid,
+        expected: STREAM_CALL_TYPE,
+      });
+      await markWebhookEventProcessed(eventId);
+      return;
+    }
+
     try {
       switch (eventType) {
         // Recording events
@@ -328,8 +339,7 @@ export async function processStreamEvent(
 
         // STR-4 — per-attendee presence
         case "call.session_participant_joined": {
-          const joinedEvent =
-            streamSessionParticipantJoinedSchema.parse(event);
+          const joinedEvent = streamSessionParticipantJoinedSchema.parse(event);
           await handleSessionParticipantJoined(
             joinedEvent as StreamSessionParticipantJoinedEvent,
           );
@@ -344,24 +354,6 @@ export async function processStreamEvent(
           break;
         }
 
-        // Chat moderation events
-        case "user.flagged": {
-          const userFlaggedEvent = streamUserFlaggedSchema.parse(event);
-          await handleUserFlagged(
-            userFlaggedEvent as StreamUserFlaggedEvent,
-          );
-          break;
-        }
-
-        case "message.flagged": {
-          const messageFlaggedEvent =
-            streamMessageFlaggedSchema.parse(event);
-          await handleMessageFlagged(
-            messageFlaggedEvent as StreamMessageFlaggedEvent,
-          );
-          break;
-        }
-
         default: {
           // Compile-time proof that the switch covers HANDLED_EVENT_TYPES. The
           // guard above narrows eventType to that union, so adding an entry to
@@ -369,7 +361,9 @@ export async function processStreamEvent(
           // this assignment stops compiling. No cast — a cast would make it
           // always pass, which is the whole failure mode this replaces.
           const exhaustive: never = eventType;
-          throw new Error(`Unreachable Stream event type: ${String(exhaustive)}`);
+          throw new Error(
+            `Unreachable Stream event type: ${String(exhaustive)}`,
+          );
         }
       }
     } catch (handlerError) {

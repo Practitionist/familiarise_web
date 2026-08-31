@@ -7,6 +7,8 @@ import { cn } from "@/utils/tailwind";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   DEFAULT_MEETING_DURATION_MS,
+  getSessionVMJoinState,
+  isSessionOver,
 } from "@/lib/appointments/slots";
 import type { SessionVM } from "@/lib/appointments/view-model";
 import { CountdownBadge } from "./CountdownBadge";
@@ -56,19 +58,24 @@ interface SessionGroup {
   endTime: Date;
 }
 
+/**
+ * #1270 — the joinable branch used to be a bare clock comparison against
+ * `startsAt`/`endsAt`, which never consulted `meetingEndedAt`. A call the host
+ * had already closed therefore kept offering JOIN for the rest of the booked
+ * hour, dropping whoever clicked it into a fresh empty room. Routing through
+ * the shared predicate makes an ended run non-joinable here too.
+ */
 function slotStatus(slot: SessionVM, joinWindowMs: number): SessionStatus {
-  const now = Date.now();
-  const start = slot.startsAt.getTime();
-  const end = slot.endsAt
-    ? slot.endsAt.getTime()
-    : start + DEFAULT_MEETING_DURATION_MS;
-
-  if (now >= start - joinWindowMs && now <= end && !slot.isTentative) {
-    return "joinable";
-  }
-  if (now > end && slot.meetingEndedAt) return "completed";
-  if (now > end) return "noRecord";
-  return "upcoming";
+  const state = getSessionVMJoinState(slot, { joinWindowMs });
+  if (state === "joinable") return "joinable";
+  if (state === "countdown") return "upcoming";
+  // The host closing the call early is what separates a session we have a
+  // record of from one that simply ran past its slot with nobody in it.
+  if (slot.meetingEndedAt) return "completed";
+  // `disabled` on a session whose time has not arrived is a dead row
+  // (cancelled, or released for reschedule) — "no record" would be a lie
+  // about the future, so it keeps reading as upcoming.
+  return isSessionOver(slot) ? "noRecord" : "upcoming";
 }
 
 function sessionStatusOf(
@@ -106,11 +113,29 @@ const statusIcon: Record<SessionStatus, string> = {
   upcoming: "○",
 };
 
+/**
+ * The `joinable` entry is reachable ONLY when the row is inside its window and
+ * the caller supplied no join handler — a joinable row that can be joined
+ * renders the button instead. It used to read "JOIN" in unmuted text, so a row
+ * the adapter had deliberately refused looked like a live button and did
+ * nothing when clicked (#1270). It now names a state, not an action.
+ */
 const statusLabel: Record<SessionStatus, string> = {
   completed: "COMPLETED",
   noRecord: "NO RECORD",
-  joinable: "JOIN",
+  joinable: "IN PROGRESS",
   upcoming: "upcoming",
+};
+
+/**
+ * Why a row that looks actionable is not. Only the two states that can confuse
+ * someone carry a reason; everything else is self-evident from its label.
+ */
+const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
+  noRecord:
+    "No meeting record found for this session. It may have been missed or held outside the platform.",
+  joinable:
+    "This session's time has arrived, but it cannot be joined from here.",
 };
 
 export function SessionTimeline({
@@ -272,16 +297,10 @@ export function SessionTimeline({
             ) : (
               <span
                 className={cn(
-                  "text-[10px] font-medium uppercase",
-                  status === "completed" && "text-muted-foreground/70",
+                  "text-[10px] font-medium uppercase text-muted-foreground/70",
                   status === "noRecord" && "text-amber-500 dark:text-amber-400",
-                  status === "upcoming" && "text-muted-foreground/70",
                 )}
-                title={
-                  status === "noRecord"
-                    ? "No meeting record found for this session. It may have been missed or held outside the platform."
-                    : undefined
-                }
+                title={INERT_STATUS_TITLES[status]}
               >
                 {statusLabel[status]}
               </span>

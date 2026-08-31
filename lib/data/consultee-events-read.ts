@@ -154,7 +154,7 @@ export async function readConsulteeEvents(
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
-                    select: { id: true, endedAt: true },
+                    select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
               },
@@ -198,7 +198,7 @@ export async function readConsulteeEvents(
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
-                    select: { id: true, endedAt: true },
+                    select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
               },
@@ -264,7 +264,7 @@ export async function readConsulteeEvents(
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
-                    select: { id: true, endedAt: true },
+                    select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
               },
@@ -332,7 +332,7 @@ export async function readConsulteeEvents(
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
-                    select: { id: true, endedAt: true },
+                    select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
               },
@@ -385,7 +385,7 @@ export async function readConsulteeEvents(
                     },
                   },
                   meetingSession: {
-                    select: { id: true, endedAt: true },
+                    select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
               },

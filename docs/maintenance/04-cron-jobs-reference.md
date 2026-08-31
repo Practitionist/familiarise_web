@@ -1,6 +1,6 @@
 # Cron Jobs Reference
 
-The platform runs **61 scheduled GitHub Actions workflows**. Each one boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, and exits — no Next.js server, no middleware, and therefore none of the protections the request path takes for granted. Everything a cron job needs, it has to arrange for itself.
+The platform runs **65 scheduled GitHub Actions workflows**. Each one boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, and exits — no Next.js server, no middleware, and therefore none of the protections the request path takes for granted. Everything a cron job needs, it has to arrange for itself.
 
 This page is the inventory of that fleet. It was regenerated on **2026-08-14** directly from `.github/workflows/`, the entrypoints those workflows execute, and `lib/maintenance-cron.ts`, replacing a hand-written version that had drifted badly: it described 28 jobs and asserted that all of them called `abortIfMaintenance()`. Both claims were wrong, and the second one was wrong in the direction that gets a database corrupted during a migration.
 
@@ -10,18 +10,28 @@ Cron locking is now universal. Before PR 6 of that train, one scheduled job ran 
 
 The same PR gave the fleet a way to notice its own death. Every locked run refreshes a single Redis key, `cron:heartbeat:last`, and `GET /api/health` reports its age under `cron`. If that key goes stale for more than six hours the scheduled fleet has stopped — the one failure the Actions-API heartbeat below cannot report, because it would have stopped too.
 
+## What changed in #1270
+
+Running is not the same as being importable, and until #1270 nothing checked the difference. Five of these workflows had never completed a single run: their entrypoints reached `lib/supabase.ts`, which opens with `import "server-only"` — a marker package whose main entry does nothing but throw. Next resolves it to an empty module under the `react-server` export condition, and every other resolver, including the bare Node process a workflow runs, gets the throw. Each of those jobs therefore died during module evaluation, before a line of its own code ran, on every run it had ever had.
+
+Nothing surfaced it. The workflows went red, but they are low-traffic housekeeping jobs that nobody watches, and the consequences accumulate silently rather than breaking a user-facing path: recordings past their organization's retention window were never tombstoned and their Supabase objects were never deleted, which is a DPDP erasure gap; permanent-storage transfers never ran, so `STREAM_ONLY` recordings simply lapsed when Stream's fourteen-day URL expired; soft-deleted documents were never purged from storage; and the sweep that re-drives stuck webhook events was itself stuck.
+
+Building that guard immediately turned up a second, larger instance of the same class, which this PR records rather than fixes because the remedy belongs to the money and auth subsystems. Eight further workflows — `process-payouts`, `handle-stuck-payouts`, `reconcile-payout-status`, `reconcile-payment-status`, `sync-payment-earnings`, `handle-lost-disputes`, `reconcile-orphaned-confirmations` and `sweep-stuck-webhook-events` — reach `lib/auth-server.ts`, which calls React's `cache()` at module scope. The version of React this repository actually pins, 18.3.1, has no `cache` export at all; the call resolves inside the application only because Next aliases `react` to its own vendored React 19 in the RSC layer, which `lib/auth-server.ts` already documents. A bare Node process gets the declared React and a `TypeError`, so every one of those eight jobs dies during module evaluation exactly as the five above did. Seven arrive there through `lib/payments/payouts/earnings-service` → `lib/collaborators/service` → `actions/stream/chat/event-channel.action`, and the eighth through the Razorpay webhook dispatcher. Closing it means either making `getSessionCached` lazy so the `cache()` call happens on first use inside a request, or cutting the server actions out of the service layer the crons share. Until then the eight are listed in `KNOWN_UNRUNNABLE` in `__tests__/maintenance/workflow-import-env.test.ts`, which also fails if one of them quietly starts working, so the register cannot outlive the defect.
+
+Two things now prevent a repeat. The Supabase clients and storage primitives a job needs live in `lib/supabase-storage-core.ts`, which carries no marker, and `lib/supabase.ts` re-exports them so application code is unchanged and still gets its client-import guard. And `__tests__/maintenance/workflow-import-env.test.ts` re-derives every scheduled workflow's import graph on each CI run, failing when one reaches a `server-only` module or when a job that reaches the Supabase client module is not given the two environment variables that module throws without.
+
 ## The fleet at a glance
 
 | Property                                | Count |
 | --------------------------------------- | ----- |
-| Scheduled workflows                     | 61    |
-| Locked via `withCronLock`               | 57    |
-| — fail-closed                           | 22    |
-| — fail-open                             | 35    |
-| Locked by a bespoke Redis lock          | 3     |
-| Deliberately unlocked                   | 1     |
+| Scheduled workflows                     | 65    |
+| Locked via `withCronLock`               | 61    |
+| — fail-closed                           | 25    |
+| — fail-open                             | 36    |
+| Locked by a bespoke Redis lock          | 2     |
+| Deliberately unlocked                   | 2     |
 | On the financial list                   | 14    |
-| Without an `abortIfMaintenance()` guard | 12    |
+| Without an `abortIfMaintenance()` guard | 14    |
 
 ## How to read the tables
 
@@ -119,8 +129,10 @@ Chat channels, video sessions and the recordings they produce all live in Stream
 | **Cleanup Old Stream Recordings**<br>`cleanup-old-stream-recordings` | `0 3 * * *`    | `jobs/cleanup/cleanup-old-stream-recordings.ts`<br>→ `scripts/cleanup/cleanup-old-stream-recordings.ts` | open    | no        | `Recording` rows and Supabase objects deleted past org retention | Skips: OFFLINE     |
 | **Expire Event Chat Channels**<br>`expire-event-channels`            | `35 4 * * *`   | `jobs/stream/expire-event-channels.ts`                                                                  | open    | no        | Stream channels frozen then deleted; no DB writes                | Skips: OFFLINE     |
 | **Mark Expired Recordings**<br>`mark-expired-recordings`             | `20 3 * * *`   | `jobs/stream/mark-expired-recordings.ts`                                                                | open    | no        | `Recording` → EXPIRED past retention                             | Skips: OFFLINE     |
-| **Stream User Sync**<br>`stream-sync`                                | `40 3 * * *`   | `jobs/stream/stream-sync.ts`<br>→ `scripts/stream/stream-sync.ts`                                       | bespoke | no        | Stream Chat users soft-deleted; no DB writes                     | Skips: OFFLINE     |
+| **Stream User Sync**<br>`stream-sync`                                | `40 3 * * *`   | `jobs/stream/stream-sync.ts`<br>→ `scripts/stream/stream-sync.ts`                                       | closed  | no        | Stream Chat users soft-deleted; no DB writes                     | Skips: OFFLINE     |
 | **Transfer Expiring Recordings**<br>`transfer-expiring-recordings`   | `58 */6 * * *` | `jobs/stream/transfer-expiring-recordings.ts`                                                           | open    | no        | `Recording` storage path; copies Stream recordings into Supabase | Skips: OFFLINE     |
+| **Reconcile Orphaned Recordings**<br>`reconcile-orphaned-recordings`  | `0 5 * * *`    | `jobs/stream/reconcile-orphaned-recordings.ts`<br>→ `scripts/stream/reconcile-orphaned-recordings.ts`    | open    | no        | Creates `Recording` rows for sessions whose `call.recording_ready` webhook was lost | Skips: OFFLINE     |
+| **Stream Webhook Drift**<br>`stream-webhook-drift`                    | `15 5 * * *`   | `scripts/stream/ensure-webhook-subscription.ts --check`                                                 | none    | no        | Nothing. Reads Stream's app settings and fails the job on drift  | Runs anyway        |
 
 ## Housekeeping and platform hygiene
 
@@ -179,8 +191,8 @@ Four scheduled workflows do not use it, each for a stated reason.
 | --------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `process-payouts`     | `lock:payout_processing`               | Predates the wrapper and additionally guards the HTTP approval path, which the `cron:lock:` key shape does not reach.                                                         |
 | `create-payout-batch` | `lock:payout_batch_creation`           | Same lock family as above, held across a batch that outlives the default TTL.                                                                                                 |
-| `stream-sync`         | `SYNC_LOCK_KEY` plus a circuit breaker | Fans out to Stream's API and must stop retrying when that API is itself the failure.                                                                                          |
 | `cron-heartbeat`      | None, deliberately                     | Locking the dead-man switch through Redis would make the watchdog depend on the infrastructure it exists to report on. The check is read-only, so a double-run costs nothing. |
+| `stream-webhook-drift` | None, deliberately                    | A read-only drift check rather than a job. The whole run is one `getAppSettings` call, so a concurrent second run costs one extra API request, and a lock would give a guard a hard dependency on the infrastructure it does not need. |
 
 Each entry is mirrored in `LOCK_EXEMPT` in `__tests__/maintenance/cron-lock-registry.test.ts`. That test fails both when a new workflow appears without a lock and when an exempt workflow grows a real one, so the table above cannot rot without CI saying so.
 
@@ -208,4 +220,4 @@ The second closes that gap from the other side. Every locked run refreshes `cron
 
 This page is generated from the repository, so it is only as current as its last regeneration. The mechanical claims — how many workflows exist, which are locked, which are fail-closed, which are financial — are additionally asserted by `__tests__/maintenance/cron-lock-registry.test.ts`, so those cannot drift silently even between regenerations. The prose, the **Mutates** column and the group headings are hand-written and need a human to revisit them when a job's purpose changes.
 
-When adding a scheduled job, the checklist is: give it a `jobs/**` wrapper and a `scripts/**` or `lib/**` core, wrap the core in `withCronLock` with a deliberate `failMode`, call `abortIfMaintenance()` in the wrapper, add the job name to `FINANCIAL_JOB_NAMES` if it touches money, pick a cron minute no other job already uses, add the failure-notification step, and add a row here.
+When adding a scheduled job, the checklist is: give it a `jobs/**` wrapper and a `scripts/**` or `lib/**` core, wrap the core in `withCronLock` with a deliberate `failMode` stated as a string literal rather than computed, call `abortIfMaintenance()` in the wrapper, add the job name to `FINANCIAL_JOB_NAMES` if it touches money, pick a cron minute no other job already uses, keep every module in the entrypoint's import graph free of `server-only`, give the workflow every environment variable those modules read at import time, add the failure-notification step, and add a row here.
