@@ -42,7 +42,7 @@ import {
 import { useState } from "react";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
-import { getChannelDisplayInfo } from "./utils/channelUtils";
+import { getChannelDisplayInfo, viewerOwnsChannel } from "./utils/channelUtils";
 import { AddMembersDialog } from "./AddMembersDialog";
 import { isEventChannel } from "@/lib/stream-channel-ids";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
@@ -116,7 +116,8 @@ export const ChannelInfoAndManageDialog = ({
   // `created_by_id` survives only on channels created in THIS session. Read
   // both, prefer the reliable one.
   const creatorId = channel.data?.created_by?.id ?? channel.data?.created_by_id;
-  const isEventOwner = isEvent && creatorId === client?.userID;
+
+  const isEventOwner = isEvent && viewerOwnsChannel(creatorId, client?.userID);
 
   // Get the other user's ID for 1-on-1 DMs (for block/report)
   const otherUserId =
@@ -317,7 +318,7 @@ export const ChannelInfoAndManageDialog = ({
     // consultant and handed the non-owners a Stream authorization failure —
     // trading a dead button for one that visibly errors, which is worse. A
     // consultant qualifies here only by owning the channel.
-    const isCreator = creatorId === client?.userID;
+    const isCreator = viewerOwnsChannel(creatorId, client?.userID);
     const isOperator = appRole === "ADMIN" || appRole === "STAFF";
     return isCreator || isOperator;
   })();
