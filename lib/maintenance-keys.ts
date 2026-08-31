@@ -28,4 +28,13 @@ export const REDIS_KEYS = {
    * unfreezing approximately.
    */
   FROZEN_CHANNELS: "maintenance:frozen-channels",
+  /**
+   * Set when a freeze recorded some channels and then failed to record others.
+   *
+   * The ledger is written incrementally, so non-empty does not mean complete.
+   * Without this marker the unfreeze would reverse the recorded batch, skip the
+   * derived fallback because the ledger "looked fine", and leave the unrecorded
+   * batch frozen permanently.
+   */
+  FROZEN_LEDGER_INCOMPLETE: "maintenance:frozen-ledger-incomplete",
 } as const;

@@ -128,78 +128,108 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
     halfOpenSuccesses: 0,
   };
 
+  const log = (level: "log" | "warn" | "error", fields: object) => {
+    console[level](
+      JSON.stringify({
+        breaker: name,
+        timestamp: new Date().toISOString(),
+        ...fields,
+      }),
+    );
+  };
+
+  /**
+   * Is the breaker refusing right now?
+   *
+   * Also owns the OPEN→HALF_OPEN transition, because "has the reset window
+   * elapsed" and "should this call be refused" are the same question asked
+   * once. Split out of `run` for SonarCloud's cognitive-complexity gate — the
+   * combined version was 21 against a limit of 15, and a breaker whose state
+   * machine is hard to read is a bad thing to own.
+   */
+  function isRefusing(): boolean {
+    if (circuitBreaker.state !== "OPEN") return false;
+
+    const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
+    if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
+      circuitBreaker.state = "HALF_OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      log("log", { event: "circuit_breaker_half_open" });
+      return false;
+    }
+
+    log("warn", {
+      event: "circuit_breaker_rejected",
+      remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
+    });
+    return true;
+  }
+
+  /** Advance the state machine on a successful call. */
+  function recordSuccess(): void {
+    if (circuitBreaker.state === "HALF_OPEN") {
+      circuitBreaker.halfOpenSuccesses++;
+      if (
+        circuitBreaker.halfOpenSuccesses >=
+        CIRCUIT_CONFIG.halfOpenSuccessThreshold
+      ) {
+        circuitBreaker.state = "CLOSED";
+        circuitBreaker.failures = 0;
+        circuitBreaker.halfOpenSuccesses = 0;
+        log("log", {
+          event: "circuit_breaker_closed",
+          reason: "successful_half_open_tests",
+        });
+      }
+      return;
+    }
+    if (circuitBreaker.state === "CLOSED" && circuitBreaker.failures > 0) {
+      circuitBreaker.failures = 0;
+    }
+  }
+
+  /** Advance the state machine on a failure that counts. */
+  function recordFailure(): void {
+    circuitBreaker.failures++;
+    circuitBreaker.lastFailure = Date.now();
+
+    if (circuitBreaker.state === "HALF_OPEN") {
+      circuitBreaker.state = "OPEN";
+      circuitBreaker.halfOpenSuccesses = 0;
+      log("error", {
+        event: "circuit_breaker_reopened",
+        reason: "half_open_failure",
+      });
+      return;
+    }
+    if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
+      circuitBreaker.state = "OPEN";
+      log("error", {
+        event: "circuit_breaker_opened",
+        failures: circuitBreaker.failures,
+      });
+      Sentry.logger.warn(
+        Sentry.logger
+          .fmt`${name} circuit breaker: opened after ${circuitBreaker.failures} failures`,
+      );
+    }
+  }
+
   async function run<T>(
     operation: () => Promise<T>,
     fallback?: () => T,
     shouldTrip?: (error: unknown) => boolean,
   ): Promise<T> {
-    // Check circuit state
-    if (circuitBreaker.state === "OPEN") {
-      const timeSinceFailure = Date.now() - circuitBreaker.lastFailure;
-
-      if (timeSinceFailure > CIRCUIT_CONFIG.resetTimeout) {
-        // Transition to HALF_OPEN for testing
-        circuitBreaker.state = "HALF_OPEN";
-        circuitBreaker.halfOpenSuccesses = 0;
-        console.log(
-          JSON.stringify({
-            event: "circuit_breaker_half_open",
-            breaker: name,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } else {
-        // Circuit is still open, fail fast
-        console.warn(
-          JSON.stringify({
-            event: "circuit_breaker_rejected",
-            breaker: name,
-            remaining_ms: CIRCUIT_CONFIG.resetTimeout - timeSinceFailure,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-
-        if (fallback) return fallback();
-        // The message is load-bearing: `withStreamCircuitBreaker` matches on
-        // "circuit breaker is OPEN" to tell a fast-fail from a real error.
-        throw new Error(
-          `${name} circuit breaker is OPEN - service unavailable`,
-        );
-      }
+    if (isRefusing()) {
+      if (fallback) return fallback();
+      // The message is load-bearing: `withStreamCircuitBreaker` matches on
+      // "circuit breaker is OPEN" to tell a fast-fail from a real error.
+      throw new Error(`${name} circuit breaker is OPEN - service unavailable`);
     }
 
     try {
       const result = await operation();
-
-      // Success handling based on state
-      if (circuitBreaker.state === "HALF_OPEN") {
-        circuitBreaker.halfOpenSuccesses++;
-
-        if (
-          circuitBreaker.halfOpenSuccesses >=
-          CIRCUIT_CONFIG.halfOpenSuccessThreshold
-        ) {
-          // Enough successes, close the circuit
-          circuitBreaker.state = "CLOSED";
-          circuitBreaker.failures = 0;
-          circuitBreaker.halfOpenSuccesses = 0;
-          console.log(
-            JSON.stringify({
-              event: "circuit_breaker_closed",
-              breaker: name,
-              reason: "successful_half_open_tests",
-              timestamp: new Date().toISOString(),
-            }),
-          );
-        }
-      } else if (
-        circuitBreaker.state === "CLOSED" &&
-        circuitBreaker.failures > 0
-      ) {
-        // Reset failure count on success
-        circuitBreaker.failures = 0;
-      }
-
+      recordSuccess();
       return result;
     } catch (error) {
       // #899 — a caller-classified expected error (e.g. Stream "channel not
@@ -207,39 +237,7 @@ export function createCircuitBreaker(name: string): CircuitBreaker {
       // state so 404-style misses don't dilute the outage signal.
       if (shouldTrip && !shouldTrip(error)) throw error;
 
-      // Failure handling
-      circuitBreaker.failures++;
-      circuitBreaker.lastFailure = Date.now();
-
-      if (circuitBreaker.state === "HALF_OPEN") {
-        // Failed during half-open, back to open
-        circuitBreaker.state = "OPEN";
-        circuitBreaker.halfOpenSuccesses = 0;
-        console.error(
-          JSON.stringify({
-            event: "circuit_breaker_reopened",
-            breaker: name,
-            reason: "half_open_failure",
-            timestamp: new Date().toISOString(),
-          }),
-        );
-      } else if (circuitBreaker.failures >= CIRCUIT_CONFIG.failureThreshold) {
-        // Too many failures, open the circuit
-        circuitBreaker.state = "OPEN";
-        console.error(
-          JSON.stringify({
-            event: "circuit_breaker_opened",
-            breaker: name,
-            failures: circuitBreaker.failures,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-        Sentry.logger.warn(
-          Sentry.logger
-            .fmt`${name} circuit breaker: opened after ${circuitBreaker.failures} failures`,
-        );
-      }
-
+      recordFailure();
       if (fallback) return fallback();
       throw error;
     }

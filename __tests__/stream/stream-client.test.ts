@@ -27,7 +27,33 @@ jest.mock("@stream-io/node-sdk", () => ({
 // Stream failures opened the breaker that booking-lock acquisition also went
 // through, so a video-vendor outage stopped checkout. The factory shape is what
 // keeps the two sets of failures apart, so the mock reproduces it.
-let mockWithCircuitBreaker: jest.Mock = jest.fn((op: () => unknown) => op());
+/**
+ * Records what the breaker was told about each error.
+ *
+ * The default delegate ignored the third argument, so `shouldTrip` — the
+ * predicate that decides whether a failure counts toward opening the breaker —
+ * was invisible to every test. That is the main claim of the #1280 2.2 change:
+ * a suspended-app error must NOT trip Stream's breaker. Recording the verdict
+ * here is what makes it assertable.
+ */
+let lastShouldTripVerdict: boolean | null = null;
+const recordingBreaker = () =>
+  jest.fn(
+    async (
+      op: () => unknown,
+      _fallback?: () => unknown,
+      shouldTrip?: (e: unknown) => boolean,
+    ) => {
+      try {
+        return await op();
+      } catch (err) {
+        // Mirror the real breaker: consult the predicate, and rethrow either way.
+        lastShouldTripVerdict = shouldTrip ? shouldTrip(err) : true;
+        throw err;
+      }
+    },
+  );
+let mockWithCircuitBreaker: jest.Mock = recordingBreaker();
 const mockCreateCircuitBreaker = jest.fn((name: string) => ({
   run: (...args: unknown[]) => mockWithCircuitBreaker(...args),
   reset: jest.fn(),
@@ -57,14 +83,18 @@ describe("Stream Client Module", () => {
   const mockUserId = "test-user-123";
 
   beforeEach(() => {
+    lastShouldTripVerdict = null;
     jest.resetModules();
     process.env = {
       ...originalEnv,
       NEXT_PUBLIC_STREAM_API_KEY: mockApiKey,
       STREAM_API_SECRET: mockApiSecret,
     };
-    // Restore the default pass-through breaker between tests.
-    mockWithCircuitBreaker = jest.fn((op: () => unknown) => op());
+    // Restore the recording breaker between tests. It has to be the RECORDING
+    // one, not a bare pass-through: one case below swaps the delegate to
+    // capture `shouldTrip` and that assignment persists, so restoring a
+    // pass-through here left every later case unable to see the predicate.
+    mockWithCircuitBreaker = recordingBreaker();
     mockCaptureException.mockClear();
   });
 
@@ -330,9 +360,9 @@ describe("Stream Client Module", () => {
       ["generic error (no code/status)", {}, false],
     ])("classifies %s", async (_label, props, expected) => {
       const { isExpectedStreamError } = await import("@/lib/stream-client");
-      expect(isExpectedStreamError(Object.assign(new Error("boom"), props))).toBe(
-        expected,
-      );
+      expect(
+        isExpectedStreamError(Object.assign(new Error("boom"), props)),
+      ).toBe(expected);
     });
 
     it("returns false for non-Error values", async () => {
@@ -345,7 +375,9 @@ describe("Stream Client Module", () => {
   describe("withStreamCircuitBreaker", () => {
     const channelNotFound = () =>
       Object.assign(
-        new Error('StreamChat error code 16: UpdateChannel failed: "Can\'t find channel"'),
+        new Error(
+          'StreamChat error code 16: UpdateChannel failed: "Can\'t find channel"',
+        ),
         { code: 16, status: 404 },
       );
 
@@ -383,9 +415,91 @@ describe("Stream Client Module", () => {
       expect(shouldTrip!(new Error("ECONNREFUSED"))).toBe(true);
     });
 
+    describe("a suspended app is not an outage (#1280 2.2)", () => {
+      /** Stream code 99 / HTTP 403 — "App suspended", per their error table. */
+      const appSuspended = () =>
+        Object.assign(new Error("App suspended"), { code: 99, status: 403 });
+
+      it("does NOT let a suspended-app error trip the breaker", async () => {
+        // The whole point of the classification. Retrying cannot fix a
+        // suspension, and opening the breaker only hides the one fact a human
+        // can act on. Asserted through the recorded predicate verdict, which
+        // the mock ignored entirely before this change — so the main claim of
+        // #1280 2.2 was untested.
+        const { withStreamCircuitBreaker } =
+          await import("@/lib/stream-client");
+
+        await expect(
+          withStreamCircuitBreaker(() => Promise.reject(appSuspended())),
+        ).rejects.toThrow("App suspended");
+
+        expect(lastShouldTripVerdict).toBe(false);
+      });
+
+      it("escalates it to Sentry under its own reason, not the generic branch", async () => {
+        const { withStreamCircuitBreaker } =
+          await import("@/lib/stream-client");
+
+        await expect(
+          withStreamCircuitBreaker(() => Promise.reject(appSuspended())),
+        ).rejects.toThrow();
+
+        // Unlike a 429 it does not self-resolve, so it must still page — just
+        // as something billing-shaped rather than as one more Stream error in
+        // a flap.
+        expect(mockCaptureException).toHaveBeenCalledWith(
+          expect.any(Error),
+          expect.objectContaining({
+            tags: expect.objectContaining({ reason: "stream.billing" }),
+          }),
+        );
+      });
+
+      it("does NOT classify an invalid access key as billing", async () => {
+        // Stream code 2 is HTTP 401 "Access Key invalid" — a rotated-away or
+        // mistyped key. An earlier revision matched it, which would have sent
+        // whoever was on call to the billing page instead of the env vars, and
+        // excluded a real misconfiguration from the breaker.
+        const { isStreamBillingError } = await import("@/lib/stream-client");
+
+        expect(
+          isStreamBillingError(
+            Object.assign(new Error("Access Key invalid"), {
+              code: 2,
+              status: 401,
+            }),
+          ),
+        ).toBe(false);
+      });
+
+      it("does NOT classify a bare 403 as billing", async () => {
+        // Codes 17 (insufficient permissions) and 70 (no channel access) share
+        // 403, so matching the status alone laundered ordinary permission
+        // refusals into billing alerts.
+        const { isStreamBillingError } = await import("@/lib/stream-client");
+
+        expect(
+          isStreamBillingError(
+            Object.assign(new Error("Not allowed"), { code: 17, status: 403 }),
+          ),
+        ).toBe(false);
+        expect(
+          isStreamBillingError(
+            Object.assign(new Error("No channel access"), {
+              code: 70,
+              status: 403,
+            }),
+          ),
+        ).toBe(false);
+      });
+    });
+
     it("captures a genuine Stream error to Sentry and rethrows it", async () => {
       const { withStreamCircuitBreaker } = await import("@/lib/stream-client");
-      const err = Object.assign(new Error("Stream 500"), { code: 500, status: 500 });
+      const err = Object.assign(new Error("Stream 500"), {
+        code: 500,
+        status: 500,
+      });
 
       await expect(
         withStreamCircuitBreaker(() => Promise.reject(err)),
@@ -398,7 +512,9 @@ describe("Stream Client Module", () => {
 
     it("throws StreamUnavailableError (and reports it) when the breaker is OPEN with no fallback", async () => {
       mockWithCircuitBreaker = jest.fn(() =>
-        Promise.reject(new Error("Redis circuit breaker is OPEN - service unavailable")),
+        Promise.reject(
+          new Error("Redis circuit breaker is OPEN - service unavailable"),
+        ),
       );
 
       const { withStreamCircuitBreaker, StreamUnavailableError } =
@@ -415,7 +531,9 @@ describe("Stream Client Module", () => {
 
     it("runs the fallback (no throw, no Sentry) when the breaker is OPEN", async () => {
       mockWithCircuitBreaker = jest.fn(() =>
-        Promise.reject(new Error("Redis circuit breaker is OPEN - service unavailable")),
+        Promise.reject(
+          new Error("Redis circuit breaker is OPEN - service unavailable"),
+        ),
       );
 
       const { withStreamCircuitBreaker } = await import("@/lib/stream-client");

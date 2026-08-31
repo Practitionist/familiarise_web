@@ -201,30 +201,51 @@ export function isRateLimitError(error: unknown): boolean {
 }
 
 /**
- * A Stream refusal to serve because of BILLING is not an outage, and treating it
- * as one is how the most likely real incident at a pre-revenue company presents
- * as an unreadable flap.
+ * A Stream refusal to serve because the APP IS SUSPENDED is not an outage, and
+ * treating it as one is how the most likely real incident at a pre-revenue
+ * company presents as an unreadable flap.
  *
- * #1280 2.2 — only 404 and 429 were classified, so a MAU cap, a declined card or
- * a suspended account fell into the generic branch: Sentry error, breaker trips,
- * 30-second reset, half-open probe, trips again, forever. Nothing in that loop
- * says "we owe Stream money", which is the only fact that matters and the only
- * one a human can act on.
+ * #1280 2.2 — only 404 and 429 were classified, so a suspended account fell
+ * into the generic branch: Sentry error, breaker trips, 30-second reset,
+ * half-open probe, trips again, forever. Nothing in that loop says "we owe
+ * Stream money", which is the only fact a human can act on.
  *
- * Stream returns 402 for payment-required and 403 for a suspended or
- * over-quota app; the API error codes are 99 (app suspended) and 2
- * (authentication/permission at the app level). Matched on both surfaces
- * because the SDK does not guarantee which one is populated.
+ * ## Exactly one code, checked against Stream's published table
  *
- * Treated like 429 for the breaker — it does NOT trip, because retrying will not
+ * Read from <https://getstream.io/chat/docs/node/api_errors_response/>:
+ *
+ *   | code | HTTP | meaning              |
+ *   |------|------|----------------------|
+ *   |   99 |  403 | App suspended        |
+ *   |    2 |  401 | Access Key invalid   |
+ *   |   17 |  403 | Insufficient perms   |
+ *   |   70 |  403 | No channel access    |
+ *
+ * An earlier revision of this matched `402 || 403 || code 99 || code 2`, and
+ * three quarters of that was wrong in a way that mattered:
+ *
+ *   - **code 2 is authentication, not billing.** A rotated-away or mistyped
+ *     API key would have been excluded from the breaker and reported as "we owe
+ *     Stream money" — the single most misleading diagnosis available for a
+ *     misconfiguration, because it sends someone to the billing page instead of
+ *     the env vars.
+ *   - **a bare 403 is not billing either.** Codes 17 and 70 share it, so an
+ *     ordinary permission refusal would have been laundered into a billing
+ *     alert.
+ *   - **Stream documents no 402 at all.** Keeping it implied knowledge of a
+ *     contract that does not exist.
+ *
+ * So: code 99, and nothing else. Narrow and cited beats broad and guessed —
+ * anything this does not catch still reaches the generic branch, which pages.
+ *
+ * Treated like 429 for the breaker: it does NOT trip, because retrying cannot
  * fix it and opening the breaker only hides the cause. Unlike 429 it does not
- * self-resolve, so it escalates to its own Sentry alert with a `stream.billing`
- * tag rather than being silently swallowed.
+ * self-resolve, so it escalates to its own alert.
  */
 export function isStreamBillingError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const e = error as { code?: number | null; status?: number };
-  return e.status === 402 || e.status === 403 || e.code === 99 || e.code === 2;
+  const e = error as { code?: number | null };
+  return e.code === 99;
 }
 
 /**

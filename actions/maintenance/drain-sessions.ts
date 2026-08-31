@@ -420,6 +420,32 @@ async function recordFrozenChannels(
       ),
     );
   } catch (err) {
+    // #1302 review — a FAILED ledger write must be remembered, not just logged.
+    //
+    // Batches are recorded incrementally, so "the ledger is non-empty" and "the
+    // ledger is complete" are different claims. If batch A records, batch B
+    // freezes successfully, and B's write fails, the ledger holds only A — and
+    // the unfreeze, seeing a non-empty ledger, would reverse A, skip the
+    // derived fallback entirely, and leave every channel in B frozen after the
+    // OFF transition. Frozen means unwritable by every user AND every admin,
+    // with no error text and no visible cause.
+    //
+    // Best-effort, and its own failure is safe in the right direction: if this
+    // marker cannot be written then Redis is unwell, and the unfreeze's own
+    // `smembers` will fail too — which its catch already turns into the derived
+    // path with an error recorded.
+    //
+    // An earlier revision also kept a module-level `ledgerComplete` boolean as
+    // a belt-and-braces in-process signal. It was removed: it is redundant with
+    // the two paths above, and module state outlives a single call, so a warm
+    // instance carried one drain's failure into an unrelated later unfreeze.
+    try {
+      await withCircuitBreaker(() =>
+        redis.set(REDIS_KEYS.FROZEN_LEDGER_INCOMPLETE, "1"),
+      );
+    } catch {
+      // Nothing further to escalate to.
+    }
     result.errors.push(
       `Record frozen channels: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -442,16 +468,25 @@ async function recordFrozenChannels(
  * replace and would delete `organizationId`, `appointmentId` and every other
  * custom field off the channel.
  */
+/**
+ * How the unfreeze set was determined.
+ *
+ * `ledger` is the exact set the freeze confirmed; `derived` is the best-effort
+ * heuristic used when the ledger is missing. Worth reporting, because the two
+ * carry different guarantees — see `resolveChannelsToUnfreeze`.
+ */
+type UnfreezeSource = "ledger" | "derived" | "none";
+
 export async function unfreezeChannelsAfterMaintenance(): Promise<{
   unfrozen: number;
   errors: string[];
   /** How the set was determined. "ledger" is exact; "derived" is best-effort. */
-  source: "ledger" | "derived" | "none";
+  source: UnfreezeSource;
 }> {
   const result = {
     unfrozen: 0,
     errors: [] as string[],
-    source: "none" as "ledger" | "derived" | "none",
+    source: "none" as UnfreezeSource,
   };
 
   try {
@@ -502,6 +537,20 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
     );
   }
 
+  // A clean sweep retires the incompleteness marker. Only on a clean one: while
+  // any channel is still frozen the ledger remains suspect, and the next OFF
+  // transition should keep unioning rather than trusting it.
+  if (result.errors.length === 0) {
+    try {
+      await withCircuitBreaker(() =>
+        redis.del(REDIS_KEYS.FROZEN_LEDGER_INCOMPLETE),
+      );
+    } catch {
+      // Leaving the marker set costs redundant unfreeze calls next time, which
+      // is the safe direction.
+    }
+  }
+
   return result;
 }
 
@@ -516,7 +565,7 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
  */
 async function resolveChannelsToUnfreeze(result: {
   errors: string[];
-  source: "ledger" | "derived" | "none";
+  source: UnfreezeSource;
 }): Promise<string[]> {
   try {
     // Same reasoning as the write: no fallback, because an open breaker read
@@ -525,9 +574,27 @@ async function resolveChannelsToUnfreeze(result: {
     const ledger = await withCircuitBreaker(() =>
       redis.smembers(REDIS_KEYS.FROZEN_CHANNELS),
     );
-    if (ledger.length > 0) {
+
+    // #1302 review — only trust the ledger ALONE when it is known complete.
+    //
+    // An incremental writer means a non-empty ledger can still be missing a
+    // batch whose `sadd` failed after an earlier one succeeded. Taking it as
+    // the whole answer would skip the derived fallback and leave that batch
+    // frozen for good.
+    const incomplete = await ledgerMarkedIncomplete();
+
+    if (ledger.length > 0 && !incomplete) {
       result.source = "ledger";
       return ledger;
+    }
+
+    if (ledger.length > 0) {
+      // Union, not either-or. Unfreezing a channel that was already unfrozen is
+      // an idempotent no-op costing one rate-limited call; missing one leaves a
+      // conversation permanently unwritable. The asymmetry decides it.
+      const derived = await deriveChannelsToUnfreeze();
+      result.source = "derived";
+      return Array.from(new Set([...ledger, ...derived]));
     }
   } catch (err) {
     result.errors.push(
@@ -535,10 +602,35 @@ async function resolveChannelsToUnfreeze(result: {
     );
   }
 
-  // Fallback. Every limitation #1146 documents still applies here — the
-  // six-hour window, the uncapped 200-row take, and the session whose
-  // `call.end()` failed and was therefore never stamped. It is a floor, not the
-  // mechanism.
+  const channelIds = await deriveChannelsToUnfreeze();
+  if (channelIds.length > 0) result.source = "derived";
+  return channelIds;
+}
+
+/** True when a previous drain recorded that its ledger write failed. */
+async function ledgerMarkedIncomplete(): Promise<boolean> {
+  try {
+    return Boolean(
+      await withCircuitBreaker(() =>
+        redis.get<string>(REDIS_KEYS.FROZEN_LEDGER_INCOMPLETE),
+      ),
+    );
+  } catch {
+    // Unreadable is treated as suspect. The cost of being wrong here is a few
+    // redundant unfreeze calls; the cost of the other reading is a channel
+    // nobody can post in.
+    return true;
+  }
+}
+
+/**
+ * The heuristic set, used as a fallback and as the union partner.
+ *
+ * Every limitation #1146 documents still applies — the six-hour window, the
+ * uncapped 200-row take, and the session whose `call.end()` failed and was
+ * therefore never stamped. It is a floor, not the mechanism.
+ */
+async function deriveChannelsToUnfreeze(): Promise<string[]> {
   const drained = await prisma.meetingSession.findMany({
     where: {
       endedReason: "maintenance",
@@ -549,11 +641,9 @@ async function resolveChannelsToUnfreeze(result: {
   });
   if (drained.length === 0) return [];
 
-  const channelIds = await getEventChannelIdsForAppointment(
+  return getEventChannelIdsForAppointment(
     Array.from(new Set(drained.map((s) => s.slotOfAppointment.appointmentId))),
   );
-  if (channelIds.length > 0) result.source = "derived";
-  return channelIds;
 }
 
 /** Drop confirmed-unfrozen ids from the ledger. Best-effort, like the write. */

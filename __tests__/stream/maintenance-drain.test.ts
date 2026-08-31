@@ -26,6 +26,9 @@ const mockSadd = jest.fn();
 const mockSmembers = jest.fn();
 const mockSrem = jest.fn();
 const mockStopRecording = jest.fn();
+const mockRedisGet = jest.fn();
+const mockRedisSet = jest.fn();
+const mockRedisDel = jest.fn();
 
 // Relative paths, not the `@/` alias — the alias resolves to a different module
 // instance here, so the mock silently does not bind.
@@ -49,6 +52,9 @@ jest.mock("../../lib/redis", () => ({
     sadd: (...a: unknown[]) => mockSadd(...a),
     smembers: (...a: unknown[]) => mockSmembers(...a),
     srem: (...a: unknown[]) => mockSrem(...a),
+    get: (...a: unknown[]) => mockRedisGet(...a),
+    set: (...a: unknown[]) => mockRedisSet(...a),
+    del: (...a: unknown[]) => mockRedisDel(...a),
   },
   // Pass-through: the drain's own degradation is what is under test, not the
   // breaker's.
@@ -132,6 +138,9 @@ beforeEach(() => {
   mockSmembers.mockResolvedValue([]);
   mockGetEventChannelIds.mockResolvedValue([]);
   mockFindMany.mockResolvedValue([]);
+  mockRedisGet.mockResolvedValue(null);
+  mockRedisSet.mockResolvedValue("OK");
+  mockRedisDel.mockResolvedValue(1);
 });
 
 describe("drainActiveSessions — one bad row must not take the window with it", () => {
@@ -219,6 +228,92 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
     // Left in the ledger deliberately, so the next OFF transition tries again
     // rather than leaving it frozen for good.
     expect(retired).not.toContain("class-2");
+  });
+
+  it("UNIONS ledger and derived when a ledger write failed mid-drain", async () => {
+    // The batch-boundary hole. Batches are recorded incrementally, so if batch
+    // A records, batch B freezes fine, and B's `sadd` fails, the ledger holds
+    // only A. Treating non-empty as complete would reverse A, skip the derived
+    // path, and leave every channel in B frozen for good — unwritable by every
+    // user AND every admin, with no error text and no visible cause.
+    mockRedisGet.mockResolvedValue("1"); // a previous drain marked it incomplete
+    mockSmembers.mockResolvedValue(["webinar-recorded"]);
+    mockFindMany.mockResolvedValue([
+      { slotOfAppointment: { appointmentId: "appt-b" } },
+    ]);
+    mockGetEventChannelIds.mockResolvedValue(["webinar-unrecorded"]);
+
+    const result = await unfreezeChannelsAfterMaintenance();
+
+    // Both, not either. Unfreezing something already unfrozen is an idempotent
+    // no-op costing one rate-limited call; missing one is permanent.
+    expect(result.unfrozen).toBe(2);
+    expect(result.source).toBe("derived");
+  });
+
+  it("does not union when the ledger is known complete", async () => {
+    // The common path must stay cheap — no extra Prisma query, no redundant
+    // Stream calls — or the union would cost something on every OFF transition.
+    mockRedisGet.mockResolvedValue(null);
+    mockSmembers.mockResolvedValue(["webinar-1"]);
+
+    const result = await unfreezeChannelsAfterMaintenance();
+
+    expect(result.source).toBe("ledger");
+    expect(mockFindMany).not.toHaveBeenCalled();
+  });
+
+  it("treats an unreadable marker as suspect and unions anyway", async () => {
+    // Being wrong here costs a few redundant unfreeze calls. Being wrong the
+    // other way costs a channel nobody can post in.
+    mockRedisGet.mockRejectedValue(new Error("redis down"));
+    mockSmembers.mockResolvedValue(["webinar-1"]);
+    mockFindMany.mockResolvedValue([
+      { slotOfAppointment: { appointmentId: "appt-b" } },
+    ]);
+    mockGetEventChannelIds.mockResolvedValue(["webinar-2"]);
+
+    const result = await unfreezeChannelsAfterMaintenance();
+
+    expect(result.unfrozen).toBe(2);
+  });
+
+  it("records the incompleteness marker when a ledger write fails", async () => {
+    mockFindMany.mockResolvedValue([session("a", "appt-1")]);
+    mockGetEventChannelIds.mockResolvedValue(["webinar-1"]);
+    mockSadd.mockRejectedValue(new Error("redis down"));
+
+    await drainActiveSessions();
+
+    expect(mockRedisSet).toHaveBeenCalledWith(
+      REDIS_KEYS.FROZEN_LEDGER_INCOMPLETE,
+      "1",
+    );
+  });
+
+  it("clears the marker only after a CLEAN unfreeze", async () => {
+    mockRedisGet.mockResolvedValue("1");
+    mockSmembers.mockResolvedValue(["webinar-1"]);
+    mockFindMany.mockResolvedValue([]);
+    mockGetEventChannelIds.mockResolvedValue([]);
+
+    await unfreezeChannelsAfterMaintenance();
+    expect(mockRedisDel).toHaveBeenCalledWith(
+      REDIS_KEYS.FROZEN_LEDGER_INCOMPLETE,
+    );
+
+    // ...and not while anything is still frozen.
+    jest.clearAllMocks();
+    mockRedisGet.mockResolvedValue("1");
+    mockSmembers.mockResolvedValue(["webinar-1", "webinar-2"]);
+    mockFindMany.mockResolvedValue([]);
+    mockGetEventChannelIds.mockResolvedValue([]);
+    mockUpdatePartial
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("stream 500"));
+
+    await unfreezeChannelsAfterMaintenance();
+    expect(mockRedisDel).not.toHaveBeenCalled();
   });
 
   it("falls back to the derived set when the ledger is empty", async () => {
