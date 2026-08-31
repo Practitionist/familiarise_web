@@ -1164,9 +1164,17 @@ export async function provisionAppointmentMeeting(
         data: {
           created_by_id: authorUserId,
           starts_at: startsAt,
-          settings_override: {
-            limits: { max_duration_seconds: maxDurationSeconds },
-          },
+          // Omitted entirely when the run could not be resolved — see
+          // `resolveMaxCallDurationSeconds`. A guessed cap is worse than none:
+          // the call type carries no limit of its own, so leaving it out is
+          // exactly the behaviour before this backstop existed.
+          ...(maxDurationSeconds !== null
+            ? {
+                settings_override: {
+                  limits: { max_duration_seconds: maxDurationSeconds },
+                },
+              }
+            : {}),
           custom: buildCallCustom({
             anchorSlotId: anchorSlot.id,
             appointmentId: anchorSlot.appointmentId,

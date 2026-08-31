@@ -23,10 +23,7 @@
 // alias resolves to a different module instance and the mock silently does not
 // bind.
 import { resolveMaxCallDurationSeconds } from "../../lib/meetings/duration-cap";
-import {
-  CONSULTANT_JOIN_WINDOW_MS,
-  DEFAULT_MEETING_DURATION_MS,
-} from "../../lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "../../lib/appointments/slots";
 
 const MIN = 60;
 const start = new Date("2026-09-01T10:00:00Z");
@@ -40,7 +37,7 @@ describe("resolveMaxCallDurationSeconds", () => {
     const booked = 120;
     const cap = resolveMaxCallDurationSeconds({ endsAt: after(booked) }, start);
 
-    expect(cap * 1000).toBeGreaterThanOrEqual(
+    expect((cap as number) * 1000).toBeGreaterThanOrEqual(
       booked * MIN * 1000 + CONSULTANT_JOIN_WINDOW_MS,
     );
   });
@@ -74,10 +71,17 @@ describe("resolveMaxCallDurationSeconds", () => {
     expect(inverted).toBeGreaterThanOrEqual(2 * 60 * MIN);
   });
 
-  it("falls back to the default booking length with no profile", () => {
-    const cap = resolveMaxCallDurationSeconds(null, start);
-
-    expect(cap * 1000).toBeGreaterThanOrEqual(DEFAULT_MEETING_DURATION_MS);
+  it("returns NULL with no profile, rather than guessing a cap", () => {
+    // The dangerous case, and the one an earlier revision got wrong. Falling
+    // back to a 60-minute default and flooring it at two hours would send a
+    // four-hour webinar a two-hour cap, and the SFU would terminate it two
+    // hours before its booked end — mid-session, for everyone.
+    //
+    // 60 minutes is not a conservative estimate of an unknown booking; it is a
+    // guess that is wrong in the dangerous direction for every booking longer
+    // than it. No answer beats a wrong one: the caller omits the field, which
+    // is the behaviour before this backstop existed.
+    expect(resolveMaxCallDurationSeconds(null, start)).toBeNull();
   });
 
   it("caps an absurd booking rather than disabling the bill bound", () => {
@@ -92,9 +96,19 @@ describe("resolveMaxCallDurationSeconds", () => {
     expect(cap).toBe(12 * 60 * MIN);
   });
 
-  it("returns whole seconds", () => {
+  it("returns whole seconds, rounded UP", () => {
     // Stream's field is `max_duration_seconds`; a fractional value is a 400.
+    // Rounding up rather than down because the whole design of this number is
+    // that it errs long — flooring loses up to a second whenever either `Date`
+    // carries milliseconds.
     const cap = resolveMaxCallDurationSeconds({ endsAt: after(37) }, start);
     expect(Number.isInteger(cap)).toBe(true);
+
+    const withMillis = resolveMaxCallDurationSeconds(
+      { endsAt: new Date(after(200).getTime() + 500) },
+      start,
+    );
+    const exact = resolveMaxCallDurationSeconds({ endsAt: after(200) }, start);
+    expect(withMillis).toBe((exact as number) + 1);
   });
 });

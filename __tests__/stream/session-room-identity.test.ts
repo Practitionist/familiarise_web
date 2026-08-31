@@ -532,6 +532,13 @@ describe("the call describes the session it belongs to", () => {
     expect(custom().sessionEndsAt).toBeUndefined();
     expect(custom().anchorSlotId).toBe("A");
     expect(startedAt(mockCallPayloads[0])).toBe(at("10:00").toISOString());
+
+    // #1305 review — and NO duration cap. The cap counts from first join, so a
+    // value guessed from a default would terminate a four-hour webinar two
+    // hours in. With no resolved run there is no safe number, and omitting the
+    // field is exactly the behaviour before the backstop existed: the call type
+    // carries no limit of its own.
+    expect(mockCallPayloads[0].data?.settings_override).toBeUndefined();
   });
 
   it("creates nothing at all when the slot resolves to no appointment", async () => {

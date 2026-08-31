@@ -295,21 +295,31 @@ export const ChannelInfoAndManageDialog = ({
   const canTruncateChannel = (() => {
     // In 1-on-1 DMs, both users can clear their view
     if (isDirectMessage && !displayInfo.isGroupDM) return true;
-    // In group DMs and channels, only creator or privileged roles.
+    // In group DMs and channels, only the creator or a platform operator.
     //
     // #1280 — the SECOND instance of the dead-role bug in this file, missed
     // when `isEventOwner` was fixed a few lines above. `client.user.role` is the
     // STREAM role, and `mapRoleToStream` (lib/user.ts:82) collapses every
-    // non-staff account to `"user"`, so `userRole === "CONSULTANT"` and
-    // `=== "CONSULTEE"` are false by construction. `isPrivileged` was therefore
-    // permanently false and only the creator could ever clear a group channel —
-    // staff and admins could not, despite the branch claiming they could.
+    // non-staff account to `"user"`, so `userRole === "CONSULTANT"` was false by
+    // construction and `isPrivileged` was permanently false. #1144 asked for a
+    // grep of this pattern; this is what it found.
     //
-    // #1144 asked for a grep of this pattern generally. This is what it found.
+    // CONSULTANT is deliberately NOT in the privileged set, and that is the
+    // correction to the first pass at this fix. `handleClearChat` calls
+    // `channel.truncate()` from the CLIENT, so Stream's permission system
+    // decides, not ours:
+    //
+    //   ADMIN / STAFF   → mapRoleToStream gives them Stream `admin`   → allowed
+    //   creator         → channel-scoped `channel_moderator` at create → allowed
+    //   other consultant→ plain Stream `user`, no moderator grant      → REFUSED
+    //
+    // Granting the app role alone would have shown the button to every
+    // consultant and handed the non-owners a Stream authorization failure —
+    // trading a dead button for one that visibly errors, which is worse. A
+    // consultant qualifies here only by owning the channel.
     const isCreator = creatorId === client?.userID;
-    const isPrivileged =
-      appRole === "CONSULTANT" || appRole === "ADMIN" || appRole === "STAFF";
-    return isCreator || isPrivileged;
+    const isOperator = appRole === "ADMIN" || appRole === "STAFF";
+    return isCreator || isOperator;
   })();
 
   // Report the other user in a 1-on-1 DM (flags in Stream + persists to DB)
