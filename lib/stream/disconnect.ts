@@ -10,6 +10,8 @@ import type { StreamChat } from "stream-chat";
 import type { StreamVideoClient } from "@stream-io/video-react-sdk";
 import { streamLogger } from "@/lib/stream-logger";
 import { clearAllStreamCaches } from "@/lib/stream-cache";
+// Type-only SDK imports there too, so this stays SDK-free — see the note above.
+import { resetStreamConnection } from "@/lib/stream/connection-store";
 
 // Module-level client instances to avoid re-creating on remount.
 // Owned here (not in StreamProvider) so the disconnect helper and the provider
@@ -126,6 +128,22 @@ export async function disconnectStreamClients(): Promise<void> {
   globalVideoClient = null;
   currentUserId = null;
   clearAllStreamCaches();
+
+  // #1280 PR 7 — the connection STORE has to go too, not just the client refs.
+  //
+  // `resetStreamConnection` was written for exactly this and then never called
+  // from anywhere: `grep` returned one hit, its own definition. The gap it left
+  // is real. This function nulls the globals above, but the store — which
+  // `useStreamConnection` reads through `useSyncExternalStore` — kept reporting
+  // `{ chatConnected: true, videoConnected: true, clients: <the objects just
+  // torn down> }`. Anything rendering between sign-out and the provider
+  // unmounting saw a connected snapshot pointing at disconnected clients, and
+  // the next user's session started against the previous user's state until the
+  // provider republished.
+  //
+  // The obvious reading was that the helper was dead code to delete. It was the
+  // opposite: a correct helper nobody had wired up.
+  resetStreamConnection();
 
   // Clear sessionStorage sync flags so a re-login triggers a fresh sync
   if (typeof sessionStorage !== "undefined") {

@@ -139,12 +139,21 @@ export function getDmChannelId(
 export function bookingOrgId(booking: {
   consultationPlan?: { organizationId: string | null } | null;
   subscriptionPlan?: { organizationId: string | null } | null;
+  // #1280 PR 7 — event plans too. The precedence is the same rule (plan first,
+  // then appointment) and the point of this helper is that there is exactly ONE
+  // answer to "which org funded this". A second resolver for webinars and
+  // classes is how the org tag came to disagree between the creator, approval
+  // and the reconciler in the first place.
+  webinarPlan?: { organizationId: string | null } | null;
+  classPlan?: { organizationId: string | null } | null;
   appointment?: { organizationId: string | null } | null;
   appointments?: { organizationId: string | null }[];
 }): string | null {
   return (
     booking.consultationPlan?.organizationId ??
     booking.subscriptionPlan?.organizationId ??
+    booking.webinarPlan?.organizationId ??
+    booking.classPlan?.organizationId ??
     booking.appointment?.organizationId ??
     booking.appointments?.find((a) => a.organizationId)?.organizationId ??
     null
