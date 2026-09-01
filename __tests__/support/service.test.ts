@@ -20,9 +20,16 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: { findUnique: jest.fn() },
-    appointmentSupportThread: { upsert: jest.fn(), update: jest.fn() },
+    appointmentSupportThread: {
+      upsert: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
     supportMessage: { create: jest.fn() },
-    supportTicket: { create: jest.fn() },
+    supportTicket: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    supportTicketCounter: { upsert: jest.fn() },
+    user: { findMany: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -37,9 +44,16 @@ import { runSupportTurn } from "@/lib/support/service";
 
 const mockPrisma = prisma as unknown as {
   appointment: { findUnique: jest.Mock };
-  appointmentSupportThread: { upsert: jest.Mock; update: jest.Mock };
+  appointmentSupportThread: {
+    upsert: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+  };
   supportMessage: { create: jest.Mock };
-  supportTicket: { create: jest.Mock };
+  supportTicket: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+  supportTicketCounter: { upsert: jest.Mock };
+  user: { findMany: jest.Mock };
   $transaction: jest.Mock;
 };
 const mockBuildContext = buildSupportContext as unknown as jest.Mock;
@@ -53,7 +67,10 @@ function ctx(overrides: Partial<SupportContext> = {}): SupportContext {
     appointmentType: "CONSULTATION" as SupportContext["appointmentType"],
     isOrgContext: false,
     isProvider: false,
+    isOrgOperator: false,
+    stage: "UPCOMING",
     startsAt: new Date("2026-09-01T10:00:00Z"),
+    endsAt: new Date("2026-09-01T11:00:00Z"),
     refundPctIfCancelledNow: 100,
     paymentId: "pay1",
     paymentAmountPaise: 200_00,
@@ -81,12 +98,28 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.appointment.findUnique.mockResolvedValue({ organizationId: null });
   mockBuildContext.mockResolvedValue(ctx());
-  // Interactive transaction — run the callback against the same mock surface.
-  mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) =>
-    cb(mockPrisma),
+  // Interactive transaction — run the callback against the same mock surface;
+  // array form (persistHumanTurn) resolves each element.
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
+    Array.isArray(arg)
+      ? Promise.all(arg as Promise<unknown>[])
+      : (arg as (tx: unknown) => unknown)(mockPrisma),
   );
   mockPrisma.supportMessage.create.mockResolvedValue({});
-  mockPrisma.appointmentSupportThread.update.mockResolvedValue({});
+  // #705 — the thread row is also the message-sequence allocator, so every
+  // write path reads `messageSeq` back off this update.
+  mockPrisma.appointmentSupportThread.update.mockResolvedValue({
+    messageSeq: 0,
+  });
+  mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({ count: 1 });
+  mockPrisma.appointmentSupportThread.findUniqueOrThrow.mockResolvedValue({
+    status: "ESCALATED",
+    messageSeq: 0,
+  });
+  mockPrisma.supportTicketCounter.upsert.mockResolvedValue({ nextSeq: 2 });
+  mockPrisma.supportTicket.findUnique.mockResolvedValue(null);
+  mockPrisma.supportTicket.update.mockResolvedValue({});
+  mockPrisma.user.findMany.mockResolvedValue([]);
 });
 
 describe("runSupportTurn", () => {
@@ -156,5 +189,115 @@ describe("runSupportTurn", () => {
     const r = await runSupportTurn("appt1", "user1", { category: "OTHER" });
     expect(r?.escalated).toBe(true);
     expect(mockPrisma.supportTicket.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts at the entry when the persisted cursor no longer exists (flow-version drift)", async () => {
+    // Pre-hub threads carry cursors from older registry revisions; a ghost
+    // cursor used to make every choice mismatch and re-present forever.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "ghost-node" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "cancel" });
+    expect(r?.currentNodeId).toBe("start"); // presented the CURRENT entry…
+    expect(r?.escalated).toBe(false); // …not failed safe to a human
+    expect(mockPrisma.supportMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers instead of going silent when nothing matched, keeping the chips live", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "bogus" });
+    expect(r?.currentNodeId).toBe("start"); // cursor did not move
+    // Exactly one bubble, and it is NOT a verbatim repeat of the prompt: this
+    // used to persist nothing at all, so a user who typed at a prompt watched
+    // their message land and the bot say nothing back.
+    const bodies = mockPrisma.supportMessage.create.mock.calls.map(
+      (c) => c[0].data,
+    );
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].sender).toBe("BOT");
+    expect(bodies[0].body).toMatch(/didn't catch that/i);
+    // The options ride along, or the prompt becomes a dead end — no buttons,
+    // and free text cannot advance it.
+    expect(bodies[0].metadata.options.length).toBeGreaterThan(0);
+    expect(bodies[0].metadata.nodeId).toBe("start");
+  });
+
+  it("records the intent chip as the user's first message", async () => {
+    // The walk can only name an option it matched, and the entry present()
+    // matches nothing — so the transcript opened with a bot prompt and no
+    // record of what the user had actually asked for.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: null }),
+    );
+    await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    const written = mockPrisma.supportMessage.create.mock.calls.map(
+      (c) => c[0].data,
+    );
+    expect(written[0].sender).toBe("USER");
+    expect(written[0].body).toBeTruthy();
+    expect(written[1].sender).toBe("BOT");
+  });
+
+  it("clicking the active intent chip restarts the flow at its entry", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "confirm" }),
+    );
+    const r = await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    expect(r?.currentNodeId).toBe("start");
+    expect(r?.status).toBe("IN_PROGRESS");
+  });
+
+  it("clamps an org party to the org-party intents (defensive, route 403s first)", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "OTHER", currentNodeId: null }),
+    );
+    mockBuildContext.mockResolvedValue(
+      ctx({ isOrgContext: true, isOrgOperator: true, organizationId: "org1" }),
+    );
+
+    // A participant-only intent reaching the service from an org party is
+    // clamped to ORG_ADMIN_DISPUTE — which has a self-serve flow, so the turn
+    // proceeds on THAT flow instead of the smuggled one.
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "CANCEL_REFUND",
+      isOrgParty: true,
+    });
+    expect(r?.escalated).toBe(false);
+    // The clamped flow self-serves — no ticket may be filed for the smuggled
+    // intent.
+    expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled();
+    expect(mockPrisma.appointmentSupportThread.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ category: "ORG_ADMIN_DISPUTE" }),
+      }),
+    );
+  });
+
+  it("attributes the escalated ticket to the thread's organization", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "NO_SHOW", currentNodeId: "start" }),
+    );
+    mockBuildContext.mockResolvedValue(
+      ctx({
+        isOrgContext: true,
+        isOrgOperator: false,
+        organizationId: "org9",
+        stage: "COMPLETED",
+        paymentId: "pay9",
+      }),
+    );
+    mockPrisma.supportTicket.create.mockResolvedValue({ id: "ticket4" });
+
+    await runSupportTurn("appt1", "user1", { chosenOptionId: "expert" });
+    expect(mockPrisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org9",
+          priority: "HIGH", // provider_no_show maps HIGH in the shared policy
+        }),
+      }),
+    );
   });
 });

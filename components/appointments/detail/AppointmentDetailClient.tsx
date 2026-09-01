@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { throwSupportError } from "@/lib/support/error-copy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
@@ -40,7 +41,9 @@ import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
+import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
+import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -121,10 +124,7 @@ export function AppointmentDetailClient({
     queryKey: ["appointment-detail", appointmentId] as const,
     queryFn: async (): Promise<TAppointmentDetail> => {
       const res = await fetch(`/api/appointments/${appointmentId}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to fetch appointment");
-      }
+      if (!res.ok) await throwSupportError(res, "appointment detail load");
       const { data } = await res.json();
       return data;
     },
@@ -296,6 +296,14 @@ export function AppointmentDetailClient({
             />
           </div>
 
+          {/* #support-hub — the live support conversation for THIS appointment:
+              status + latest exchange inline; nothing renders until a thread
+              exists. */}
+          <AppointmentSupportStatusCard
+            appointmentId={appointmentId}
+            isOrgContext={!!orgName}
+          />
+
           {vm.group && vm.group.total > 0 && (
             <div className="mt-4 pt-4 border-t border-border">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
@@ -329,8 +337,14 @@ export function AppointmentDetailClient({
 
         <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-4">
-            {vm.bucket === "past" && (
-              <AppointmentCsatCard appointmentId={appointmentId} />
+            {/* #705 — attendees only. The API authorizes any participant, so
+                this used to offer a consultant a star rating on their own
+                session, which then fed the org quality average. */}
+            {vm.bucket === "past" && role === "consultee" && (
+              <>
+                <AppointmentCsatCard appointmentId={appointmentId} />
+                <SessionReviewCard appointmentId={appointmentId} />
+              </>
             )}
             <Section title="Sessions">
               {hasConfirmedSessions ? (

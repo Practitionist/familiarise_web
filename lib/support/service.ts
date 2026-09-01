@@ -10,16 +10,29 @@
  * is a separate, server-validated seam — a refund never fires from a flow graph.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "@/lib/prisma";
 import type {
   SupportChannel,
   SupportThreadCategory,
+  SupportThreadStatus,
 } from "@prisma/client";
 import { buildSupportContext } from "./context";
 import { flowForCategory } from "./flows";
 import { FlowchartResolver } from "./resolvers/flowchart-resolver";
 import { decideEscalation } from "./escalation";
-import type { SupportAction, SupportContext } from "./types";
+import { issueTypeForReason, priorityForReason } from "./priority";
+import {
+  notifySupportStaff,
+  notifyStaffOfTicketActivity,
+} from "./create-ticket";
+import { allocateMessageSeq } from "./message-seq";
+import { recordFlowOutcome } from "./deflection";
+import { allocateTicketReference } from "./reference";
+import { slaDeadlinesFor, userRepliedPatch } from "./sla";
+import type { SupportAction, SupportContext, SupportTurnResult } from "./types";
 
 export interface RunTurnInput {
   /** Chosen intent — set on the first turn (or to switch intents). */
@@ -28,7 +41,21 @@ export interface RunTurnInput {
   chosenOptionId?: string;
   /** Free text the user typed. */
   userMessage?: string;
+  /**
+   * #support-hub — caller reached this appointment only via the org-operator
+   * party branch. Their conversation is their own, but restricted to the
+   * org-party intents; the route enforces this with a 403, this clamps
+   * defensively so the invariant holds even if a future caller forgets.
+   */
+  isOrgParty?: boolean;
 }
+
+/** The only intents an org party may raise on a member's session. Shared with
+ *  the route layer, which 403s on it — one definition so the two gates can
+ *  never drift. */
+export const ORG_PARTY_CATEGORIES: ReadonlySet<SupportThreadCategory> = new Set(
+  ["ORG_ADMIN_DISPUTE", "SPONSORSHIP_BILLING"],
+);
 
 export interface RunTurnResult {
   threadId: string;
@@ -42,6 +69,8 @@ export interface RunTurnResult {
   escalated: boolean;
   resolved: boolean;
   supportTicketId: string | null;
+  /** Machine-readable escalation reason (terminal node / policy), if any. */
+  reason?: string;
 }
 
 /** Advance a per-appointment support thread by one turn. The caller must have
@@ -77,35 +106,127 @@ export async function runSupportTurn(
   // Switching intent restarts the flow at its entry node.
   let category = thread.category;
   let currentNodeId = thread.currentNodeId;
-  if (input.category && input.category !== category) {
+  // Clicking an intent chip always (re)starts that intent's flow — a same-
+  // category re-click must not resume a stale cursor, or the turn looks
+  // ignored (the pre-#support-hub flows left threads whose option ids no
+  // longer exist in the registry).
+  if (input.category) {
     category = input.category;
+    currentNodeId = null;
+  }
+  // Defensive clamp (route already 403s): an org party stays on org-party
+  // intents no matter what reaches the service.
+  if (input.isOrgParty && !ORG_PARTY_CATEGORIES.has(category)) {
+    category = "ORG_ADMIN_DISPUTE";
     currentNodeId = null;
   }
 
   // Already with a human — persist the user's message and leave it in the queue.
   if (thread.activeChannel === "HUMAN") {
-    return persistHumanTurn(thread.id, thread.supportTicketId, input.userMessage);
+    return persistHumanTurn(thread, input.userMessage);
   }
 
   const flow = flowForCategory(ctx, category);
   // No self-serve flow for this intent (OTHER, not-yet-built categories) → human.
   if (!flow) {
-    return escalate(ctx, thread.id, thread.supportTicketId, category, {
-      messages: [
-        { sender: "SYSTEM", body: "Connecting you with our support team." },
-      ],
-      nextNodeId: null,
-      actions: [],
-      resolved: false,
-      escalate: true,
-    }, input.userMessage, "no_flow");
+    return escalate(
+      ctx,
+      thread.id,
+      thread.supportTicketId,
+      category,
+      {
+        messages: [
+          { sender: "SYSTEM", body: "Connecting you with our support team." },
+        ],
+        nextNodeId: null,
+        actions: [],
+        resolved: false,
+        escalate: true,
+      },
+      input.userMessage,
+      "no_flow",
+    );
+  }
+
+  // Flow-version drift: a persisted cursor from an older registry revision
+  // (renamed/removed node) would make every choice mismatch and re-present
+  // forever. Restart at the entry instead — the walker then presents the
+  // CURRENT flow's first prompt and the thread is self-healing.
+  if (currentNodeId && !flow.nodes[currentNodeId]) {
+    currentNodeId = null;
   }
 
   const resolver = new FlowchartResolver(flow);
-  const turn = await resolver.resolveTurn(ctx, currentNodeId, {
+  const walked = await resolver.resolveTurn(ctx, currentNodeId, {
     chosenOptionId: input.chosenOptionId,
     userMessage: input.userMessage,
   });
+  // Pressing an intent chip IS the user's first answer, but the walk can only
+  // name an option it matched and the entry present() matched nothing — so the
+  // transcript opened with a bot prompt and no record of what was asked for,
+  // both on screen and in the back-office inbox.
+  const turn: SupportTurnResult =
+    input.category && !walked.chosenLabel
+      ? { ...walked, chosenLabel: flow.title }
+      : walked;
+
+  // Server truth for the recording processing window: the flow's within/beyond
+  // 48h branch is client-claimed, so verify it against the slot's actual end.
+  // Claiming "within" after the window has really expired is re-anchored onto
+  // the flow's escalation terminal; the reverse (claiming "beyond" early) is
+  // left alone — wanting a human is never wrong.
+  //
+  // Gated on the RESOLVED NODE, not the category. `within` is the only
+  // resolved terminal that makes an elapsed-time claim. The playback branch's
+  // `fixed` terminal ("Yes, it plays now") is also resolved, and recordings
+  // only exist after processing — so most playback turns happen more than 48h
+  // after the session ended. Gating on the category alone discarded the user's
+  // confirmation that the problem was GONE, told them "our team will chase the
+  // processing", and filed a false recording_missing ticket.
+  const resolvedNodeId = (
+    turn.messages[0]?.metadata as { nodeId?: string } | undefined
+  )?.nodeId;
+  if (
+    category === "RECORDING_ACCESS" &&
+    turn.resolved &&
+    resolvedNodeId === "within" &&
+    ctx.endsAt &&
+    Date.now() - ctx.endsAt.getTime() > 48 * 3_600_000
+  ) {
+    // Target `beyond` by name rather than "the first escalating terminal in
+    // object order" — that happened to pick `beyond` only because it is
+    // declared before `broken`, so reordering the nodes would silently start
+    // filing recording_broken for a missing recording.
+    const beyond = flow.nodes["beyond"];
+    const terminal =
+      beyond?.kind === "TERMINAL" && beyond.escalate ? beyond : undefined;
+    if (terminal) {
+      return escalate(
+        ctx,
+        thread.id,
+        thread.supportTicketId,
+        category,
+        {
+          messages: [
+            {
+              sender: "BOT",
+              body: terminal.body,
+              metadata: { nodeId: terminal.id },
+            },
+          ],
+          nextNodeId: null,
+          actions: [],
+          escalate: true,
+          resolved: false,
+          // The user pressed "Less than 48 hours"; the server overrode the
+          // outcome, but the transcript must still show what they said.
+          chosenLabel: turn.chosenLabel,
+        },
+        input.userMessage,
+        terminal.reason ?? "recording_missing",
+      );
+    }
+  }
 
   const decision = decideEscalation(ctx, turn, input.userMessage);
   if (decision.escalate) {
@@ -121,21 +242,35 @@ export async function runSupportTurn(
   }
 
   // Ordinary self-serve turn — persist + advance the cursor.
+  //
+  // Every emitted message is persisted, including the turn that recognized
+  // nothing: `walkFlow` answers that case with a distinct nudge rather than a
+  // verbatim repeat of the prompt, so there is no duplicate bubble to suppress
+  // and no turn that leaves the user's message hanging without a reply.
   const status = turn.resolved ? "RESOLVED" : "IN_PROGRESS";
+  const wroteMessages = !!input.userMessage || turn.messages.length > 0;
   await prisma.$transaction(async (tx) => {
-    if (input.userMessage) {
+    // The user's side of the conversation FIRST, then the bot's. A chip press
+    // is an answer just as much as typed text is — without it the stored
+    // transcript is a run of bot questions with no record of what produced
+    // them, which is what the back-office inbox shows a staff member.
+    const userSaid = input.userMessage ?? turn.chosenLabel;
+    const outgoing = [
+      ...(userSaid
+        ? [{ sender: "USER" as const, body: userSaid, metadata: undefined }]
+        : []),
+      ...turn.messages.map((m) => ({
+        sender: m.sender,
+        body: m.body,
+        metadata: (m.metadata as object) ?? undefined,
+      })),
+    ];
+    // Both rows share a transaction and therefore a timestamp; `seq` is what
+    // makes the question sort above the answer.
+    let seq = await allocateMessageSeq(tx, thread.id, outgoing.length);
+    for (const m of outgoing) {
       await tx.supportMessage.create({
-        data: { threadId: thread.id, sender: "USER", body: input.userMessage },
-      });
-    }
-    for (const m of turn.messages) {
-      await tx.supportMessage.create({
-        data: {
-          threadId: thread.id,
-          sender: m.sender,
-          body: m.body,
-          metadata: (m.metadata as object) ?? undefined,
-        },
+        data: { threadId: thread.id, seq: ++seq, ...m },
       });
     }
     await tx.appointmentSupportThread.update({
@@ -145,9 +280,27 @@ export async function runSupportTurn(
         currentNodeId: turn.nextNodeId,
         status,
         resolvedAt: turn.resolved ? new Date() : null,
+        // Keep the hub's "latest activity first" clock honest — updatedAt
+        // alone won't move on message inserts.
+        ...(wroteMessages ? { lastMessageAt: new Date() } : {}),
       },
     });
   });
+
+  // #705 — a terminal turn is the unit the deflection rate counts. Recorded
+  // AFTER the transaction and never allowed to throw: a counter must not be
+  // able to roll back the conversation it is counting.
+  if (turn.resolved) {
+    await recordFlowOutcome({
+      scope: "APPOINTMENT",
+      flowKey: category,
+      terminalNodeId: resolvedNodeId ?? null,
+      reason: turn.reason ?? null,
+      outcome: "RESOLVED",
+      userId: ctx.userId,
+      organizationId: ctx.organizationId,
+    });
+  }
 
   return {
     threadId: thread.id,
@@ -159,30 +312,103 @@ export async function runSupportTurn(
     escalated: false,
     resolved: turn.resolved,
     supportTicketId: thread.supportTicketId,
+    reason: turn.reason,
   };
 }
 
 /** Persist a message on a thread already handed to a human. */
 async function persistHumanTurn(
-  threadId: string,
-  supportTicketId: string | null,
+  thread: {
+    id: string;
+    status: SupportThreadStatus;
+    supportTicketId: string | null;
+    organizationId: string | null;
+  },
   userMessage: string | undefined,
 ): Promise<RunTurnResult> {
+  // Report the thread's ACTUAL status. This used to return a hardcoded
+  // "ESCALATED", so once ops resolved the thread the user's own message came
+  // back claiming it was still with the team.
+  let status = thread.status;
+  // Identifies this specific message to the notification dedupe — see
+  // notifyStaffOfTicketActivity.
+  let messageId: string | null = null;
+
   if (userMessage) {
-    await prisma.supportMessage.create({
-      data: { threadId, sender: "USER", body: userMessage },
+    status = await prisma.$transaction(async (tx) => {
+      // CAS on the write, not just the read: a CLOSED thread is one the PATCH
+      // route explicitly refuses to reopen, so a message must not land on it
+      // and silently bump its activity clock either.
+      const moved = await tx.appointmentSupportThread.updateMany({
+        where: { id: thread.id, status: { notIn: ["CLOSED", "RESOLVED"] } },
+        data: { lastMessageAt: new Date() },
+      });
+      if (moved.count === 0) {
+        const current = await tx.appointmentSupportThread.findUniqueOrThrow({
+          where: { id: thread.id },
+          select: { status: true },
+        });
+        return current.status;
+      }
+      const seq = await allocateMessageSeq(tx, thread.id, 1);
+      const written = await tx.supportMessage.create({
+        data: {
+          threadId: thread.id,
+          sender: "USER",
+          body: userMessage,
+          seq: seq + 1,
+        },
+        select: { id: true },
+      });
+      messageId = written.id;
+      if (thread.supportTicketId) {
+        const ticket = await tx.supportTicket.findUnique({
+          where: { id: thread.supportTicketId },
+          select: { awaitingUserSince: true, pausedSeconds: true },
+        });
+        await tx.supportTicket.update({
+          where: { id: thread.supportTicketId },
+          data: {
+            lastMessageAt: new Date(),
+            // The ball is back with us, so the resolution clock restarts.
+            ...(ticket ? userRepliedPatch(ticket) : {}),
+          },
+        });
+      }
+      return thread.status;
     });
+
+    // A user reply into an escalated thread used to page nobody — staff only
+    // learned of it by reopening the inbox. Fire-and-forget after the commit,
+    // for the same reason every other notification here is.
+    if (
+      thread.supportTicketId &&
+      status !== "CLOSED" &&
+      status !== "RESOLVED"
+    ) {
+      await notifyStaffOfTicketActivity(
+        thread.supportTicketId,
+        thread.organizationId,
+        messageId ?? undefined,
+      ).catch((error) => {
+        console.error("support: user-reply notification failed", {
+          threadId: thread.id,
+          error,
+        });
+      });
+    }
   }
+
   return {
-    threadId,
-    status: "ESCALATED",
+    threadId: thread.id,
+    status,
     activeChannel: "HUMAN",
     currentNodeId: null,
     messages: [],
     actions: [],
     escalated: true,
     resolved: false,
-    supportTicketId,
+    supportTicketId: thread.supportTicketId,
   };
 }
 
@@ -194,62 +420,139 @@ async function escalate(
   existingTicketId: string | null,
   category: SupportThreadCategory,
   turn: {
-    messages: { sender: string; body: string; metadata?: Record<string, unknown> }[];
+    messages: {
+      sender: string;
+      body: string;
+      metadata?: Record<string, unknown>;
+    }[];
     nextNodeId: string | null;
     actions: SupportAction[];
     resolved: boolean;
     escalate: boolean;
+    reason?: string;
+    /** Label of the chip that produced this turn, recorded as the USER message. */
+    chosenLabel?: string;
   },
   userMessage: string | undefined,
   reason: string,
 ): Promise<RunTurnResult> {
-  const priority = reason === "high_value_refund" ? "HIGH" : "MEDIUM";
+  // Terminal-node reasons win (they're the specific why); policy reasons
+  // (high_value_refund, no_flow) fill in. Priority comes from the shared map.
+  const effectiveReason = turn.reason ?? reason;
+  const priority = priorityForReason(effectiveReason);
+  const issueType = issueTypeForReason(effectiveReason);
 
-  const ticketId = await prisma.$transaction(async (tx) => {
-    if (userMessage) {
-      await tx.supportMessage.create({
-        data: { threadId, sender: "USER", body: userMessage },
-      });
-    }
-    for (const m of turn.messages) {
-      await tx.supportMessage.create({
-        data: {
-          threadId,
+  // Staff notification must fire only for a ticket that actually committed, so
+  // the transaction reports back whether it minted one and the notify happens
+  // after. (This is also why the create below cannot just call
+  // `createSupportTicket` — that helper is not transaction-aware.)
+  let createdTicket: {
+    id: string;
+    title: string;
+    organizationId: string | null;
+    referenceNumber: string | null;
+  } | null = null;
+
+  const ticketId = await prisma.$transaction(
+    async (tx) => {
+      // Same rule as the self-serve turn: record the chip the user pressed, so
+      // the escalated transcript staff read contains both halves.
+      const userSaid = userMessage ?? turn.chosenLabel;
+      const outgoing = [
+        ...(userSaid
+          ? [{ sender: "USER" as const, body: userSaid, metadata: undefined }]
+          : []),
+        ...turn.messages.map((m) => ({
           sender: m.sender as "BOT" | "SYSTEM" | "USER" | "AGENT",
           body: m.body,
           metadata: (m.metadata as object) ?? undefined,
-        },
-      });
-    }
+        })),
+      ];
+      let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
+      for (const m of outgoing) {
+        await tx.supportMessage.create({
+          data: { threadId, seq: ++seq, ...m },
+        });
+      }
 
-    let linkedTicketId = existingTicketId;
-    if (!linkedTicketId) {
-      const ticket = await tx.supportTicket.create({
-        data: {
-          userId: ctx.userId,
-          title: `Support for appointment ${ctx.appointmentId}`,
-          description: `Escalated from per-appointment support (${category}, reason: ${reason}).`,
+      let linkedTicketId = existingTicketId;
+      if (!linkedTicketId) {
+        // Both inside the ticket's own transaction: a rolled-back escalation must
+        // not leave a live reference behind, and must not start an SLA clock for
+        // a ticket that does not exist.
+        const openedAt = new Date();
+        const referenceNumber = await allocateTicketReference(tx, openedAt);
+        const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
           priority,
-          category,
-          paymentId: ctx.paymentId,
-        },
-        select: { id: true },
-      });
-      linkedTicketId = ticket.id;
-    }
+          openedAt,
+        );
+        const ticket = await tx.supportTicket.create({
+          data: {
+            userId: ctx.userId,
+            title: `Support for appointment ${ctx.appointmentId}`,
+            description: `Escalated from per-appointment support (${category}, reason: ${effectiveReason}).`,
+            priority,
+            referenceNumber,
+            ackDueAt,
+            resolutionDueAt,
+            category,
+            // The machine-readable half of the terminal reason. Without it every
+            // session escalation reached ops as an untyped row and none of the
+            // session-scoped issue types was reachable anywhere in the product.
+            issueType: issueType ?? undefined,
+            paymentId: ctx.paymentId,
+            // Org attribution for the ops queue's org filter (null = B2C).
+            organizationId: ctx.organizationId,
+          },
+          select: {
+            id: true,
+            title: true,
+            organizationId: true,
+            referenceNumber: true,
+          },
+        });
+        linkedTicketId = ticket.id;
+        createdTicket = ticket;
+      }
 
-    await tx.appointmentSupportThread.update({
-      where: { id: threadId },
-      data: {
-        category,
-        currentNodeId: null,
-        status: "ESCALATED",
-        activeChannel: "HUMAN",
-        supportTicketId: linkedTicketId,
-      },
-    });
-    return linkedTicketId;
+      await tx.appointmentSupportThread.update({
+        where: { id: threadId },
+        data: {
+          category,
+          currentNodeId: null,
+          status: "ESCALATED",
+          activeChannel: "HUMAN",
+          supportTicketId: linkedTicketId,
+          lastMessageAt: new Date(),
+        },
+      });
+      return linkedTicketId;
+    },
+    // Allocation budget: this transaction also queues on the reference counter.
+    { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
+  );
+
+  await recordFlowOutcome({
+    scope: "APPOINTMENT",
+    flowKey: category,
+    terminalNodeId: null,
+    reason: effectiveReason,
+    outcome: "ESCALATED",
+    userId: ctx.userId,
+    organizationId: ctx.organizationId,
   });
+
+  // Committed — now it is safe to page the queue. Fire-and-forget for the same
+  // reason the factory does it: a notification failure must not turn a
+  // successful escalation into a 500 and have the user retry into a duplicate.
+  if (createdTicket) {
+    await notifySupportStaff(createdTicket).catch((error) => {
+      console.error("support: staff notification failed for escalation", {
+        ticketId: (createdTicket as { id: string }).id,
+        error,
+      });
+    });
+  }
 
   return {
     threadId,
@@ -261,5 +564,6 @@ async function escalate(
     escalated: true,
     resolved: false,
     supportTicketId: ticketId,
+    reason: effectiveReason,
   };
 }

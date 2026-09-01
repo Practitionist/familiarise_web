@@ -154,6 +154,16 @@ Notification system: Resend (transactional email) + Novu (multi-channel orchestr
 
 ---
 
+### Support & Feedback
+
+The `#support-hub` system: per-appointment support threads, stateless platform
+intake, org triage, and private CSAT feedback.
+
+- [support-hub.md](./support/support-hub.md) - Two-scope architecture, the error envelope + Sentry policy, authz gate, ticket references, the SLA model, the deflection counter, invariants, testing map
+- [engineering-log-2026-08-29.md](./support/engineering-log-2026-08-29.md) - The support-drawer turn loss: eight causes, the schema they required, and two stale audit claims
+
+---
+
 ### Storage
 
 Storage management and document review system.

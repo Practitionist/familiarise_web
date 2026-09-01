@@ -16,8 +16,10 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportClientFailure } from "@/lib/errors/classification/client-failure";
 import { failureToast } from "@/components/ui/failure-toast";
-import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
+import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
+import type { MeetingSlot } from "@/lib/meeting";
 import {
+  CONSULTANT_JOIN_WINDOW_MS,
   getCurrentOrNextSession,
   getJoinableSession,
   getSessionJoinState,
@@ -47,9 +49,6 @@ import {
   Video,
   GraduationCap,
 } from "lucide-react";
-
-/** The planner has always let hosts in 10 minutes early; kept as-is. */
-const PLANNER_JOIN_WINDOW_MS = 10 * 60 * 1000;
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
@@ -89,12 +88,16 @@ export function EventManagementDashboard({
   const { deleteClass } = useClassMutations(consultantId);
   // Create/update moved to the offering editor, which owns its own save; the
   // planner only deletes now.
-  const { deleteConsultationPlan } =
-    useConsultationPlanMutations(consultantId);
-  const { deleteSubscriptionPlan } =
-    useSubscriptionPlanMutations(consultantId);
+  const { deleteConsultationPlan } = useConsultationPlanMutations(consultantId);
+  const { deleteSubscriptionPlan } = useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
+  // #1280 2.7 — `joiningEventId` is state, and it is set AFTER the first await
+  // (`waitForGlobalVideoClient`, which can take a second on a cold provider),
+  // so a second click reads a stale `null` and runs the whole chain again.
+  // A ref is written synchronously and is what actually closes the window;
+  // the state stays because it is what renders the spinner.
+  const guardJoin = useInFlightGuard();
 
   // The join window closes with the clock, not with a re-render. Without a
   // tick the memo below keeps whatever answer it computed when the planner
@@ -106,8 +109,10 @@ export function EventManagementDashboard({
     return () => clearInterval(timer);
   }, []);
 
-  // Compute which webinar/class events are currently joinable (within 10 min
-  // before start to end). #1061 — measured over the run of slot rows the
+  // Compute which webinar/class events are currently joinable (inside the
+  // shared host window before start, through to end). #1270 — the planner
+  // used to declare its own 10-minute constant, so the SAME host got in five
+  // minutes later here than from the appointments list. #1061 — measured over the run of slot rows the
   // session is stored as; the old `slotsOfAppointment[0]` read closed the
   // window 30 minutes into anything longer than half an hour.
   const joinableEventIds = useMemo(() => {
@@ -116,7 +121,7 @@ export function EventManagementDashboard({
     for (const webinar of webinars) {
       const run = getJoinableSession(
         webinar.appointment?.slotsOfAppointment ?? [],
-        { joinWindowMs: PLANNER_JOIN_WINDOW_MS, now },
+        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS, now },
       );
       if (run && webinar.id) ids.add(webinar.id);
     }
@@ -125,7 +130,7 @@ export function EventManagementDashboard({
       // For classes, check the nearest upcoming appointment
       for (const appt of cls.appointments ?? []) {
         const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-          joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
           now,
         });
         if (run && cls.id) ids.add(cls.id);
@@ -138,7 +143,10 @@ export function EventManagementDashboard({
   // Handle joining a meeting from the planner. Reads the connected video
   // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
   // stays off the planner bundle.
-  const handleJoinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
+  const handleJoinWebinarMeeting = (webinar: PlannerWebinarEvent) =>
+    guardJoin(`webinar:${webinar.id}`, () => joinWebinarMeeting(webinar));
+
+  const joinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
     const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
@@ -165,7 +173,7 @@ export function EventManagementDashboard({
     // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
     const slots = webinar.appointment?.slotsOfAppointment ?? [];
     const run =
-      getJoinableSession(slots, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ??
+      getJoinableSession(slots, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ??
       getCurrentOrNextSession(slots);
     const slot = run?.anchor;
     if (!run || !slot || !webinar.appointment) {
@@ -184,7 +192,7 @@ export function EventManagementDashboard({
     // guard this change exists to build. Countdown still gets in, because
     // hosts have always been able to open the room a little early.
     if (
-      getSessionJoinState(run, { joinWindowMs: PLANNER_JOIN_WINDOW_MS }) ===
+      getSessionJoinState(run, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ===
       "ended"
     ) {
       toast({
@@ -203,18 +211,8 @@ export function EventManagementDashboard({
         endsAt: slot.endsAt,
         appointmentId: webinar.appointment.id,
       };
-      const meetingAppointment: MeetingAppointment = {
-        id: webinar.appointment.id,
-        appointmentType: "WEBINAR",
-        slotsOfAppointment: [meetingSlot],
-        webinar: { webinarPlan: { title: webinar.webinarPlan.title } },
-      };
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        streamClient,
-        meetingAppointment,
-        meetingSlot,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(meetingSlot);
       toast({
         title: "Joining meeting",
         description: "Redirecting to the meeting room.",
@@ -236,7 +234,10 @@ export function EventManagementDashboard({
     }
   };
 
-  const handleJoinClassMeeting = async (classEvent: PlannerClassEvent) => {
+  const handleJoinClassMeeting = (classEvent: PlannerClassEvent) =>
+    guardJoin(`class:${classEvent.id}`, () => joinClassMeeting(classEvent));
+
+  const joinClassMeeting = async (classEvent: PlannerClassEvent) => {
     const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
@@ -267,7 +268,7 @@ export function EventManagementDashboard({
 
     for (const appt of classEvent.appointments ?? []) {
       const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-        joinWindowMs: PLANNER_JOIN_WINDOW_MS,
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,
       });
       if (run) {
@@ -294,18 +295,8 @@ export function EventManagementDashboard({
         endsAt: targetSlot.endsAt,
         appointmentId: targetAppt.id,
       };
-      const meetingAppointment: MeetingAppointment = {
-        id: targetAppt.id,
-        appointmentType: "CLASS",
-        slotsOfAppointment: [meetingSlot],
-        class: { classPlan: { title: classEvent.classPlan.title } },
-      };
       const { getOrCreateAppointmentMeeting } = await import("@/lib/meeting");
-      const meetingId = await getOrCreateAppointmentMeeting(
-        streamClient,
-        meetingAppointment,
-        meetingSlot,
-      );
+      const meetingId = await getOrCreateAppointmentMeeting(meetingSlot);
       toast({
         title: "Joining meeting",
         description: "Redirecting to the meeting room.",
@@ -357,7 +348,10 @@ export function EventManagementDashboard({
       );
       setPendingTrialCounts(counts);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error fetching trial counts:", error);
     }
   }, [consultantId]);
@@ -718,7 +712,6 @@ export function EventManagementDashboard({
           </div>
         </motion.section>
       </div>
-
     </div>
   );
 }

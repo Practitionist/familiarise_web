@@ -8,17 +8,17 @@ import { RecordingStatus } from "@prisma/client";
 import type { RecordingRow } from "./recording-types";
 import { streamLogger } from "@/lib/stream-logger";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import supabase, {
+// #1270 — the leaf module, NOT `@/lib/supabase`. That one opens with
+// `import "server-only"`, which throws outside Next's `react-server` resolution
+// condition, so every cron that reaches this service — mark-expired-recordings,
+// cleanup-old-stream-recordings, transfer-expiring-recordings and
+// sweep-stuck-webhook-events — died during module evaluation and none had ever
+// completed a run. Same clients, same helpers, no marker.
+import {
   ensureBucketExists,
-  supabaseAdmin,
   generateStorageFileName,
-} from "@/lib/supabase";
-
-// Recordings bucket name
-const RECORDINGS_BUCKET = "recordings";
-
-// Use admin client for storage operations to bypass RLS
-const storageClient = supabaseAdmin || supabase;
+} from "@/lib/supabase-storage-core";
+import { RECORDINGS_BUCKET, storageClient } from "./recording-storage";
 
 // Maximum file size for direct transfer (500MB)
 // #899 — uploads now stream (no in-memory buffering), but the recordings
@@ -49,7 +49,7 @@ const ALLOWED_VIDEO_TYPES = [
  * Joins through Recording → MeetingSession → SlotOfAppointment → Appointment → Event → Plan.
  */
 function buildStoragePolicyFilter(
-  policyFilter: "SUPABASE_PERMANENT" | "ALL",
+  policyFilter: "PERMANENT" | "ALL",
 ): object {
   if (policyFilter === "ALL") return {};
 
@@ -61,14 +61,14 @@ function buildStoragePolicyFilter(
             {
               webinar: {
                 webinarPlan: {
-                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                  recordingStoragePolicy: "PERMANENT" as const,
                 },
               },
             },
             {
               class: {
                 classPlan: {
-                  recordingStoragePolicy: "SUPABASE_PERMANENT" as const,
+                  recordingStoragePolicy: "PERMANENT" as const,
                 },
               },
             },
@@ -300,8 +300,8 @@ export class RecordingTransferService {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabasePath: storagePath,
-          storageType: "SUPABASE",
+          storagePath: storagePath,
+          storageType: "PLATFORM",
           status: "AVAILABLE" as RecordingStatus,
           transferredAt: new Date(),
           fileSize: fileSize,
@@ -341,13 +341,13 @@ export class RecordingTransferService {
    */
   /**
    * Process expiring recordings that should be transferred to Supabase.
-   * @param policyFilter - "SUPABASE_PERMANENT" to only auto-transfer premium plans,
+   * @param policyFilter - "PERMANENT" to only auto-transfer premium plans,
    *                       "ALL" to transfer everything (manual/legacy mode)
    */
   static async processExpiringRecordings(
     daysBeforeExpiry: number = 5,
     batchSize: number = 10,
-    policyFilter: "SUPABASE_PERMANENT" | "ALL" = "SUPABASE_PERMANENT",
+    policyFilter: "PERMANENT" | "ALL" = "PERMANENT",
   ): Promise<{
     processed: number;
     succeeded: number;
@@ -455,7 +455,7 @@ export class RecordingTransferService {
         storageType: "STREAM_S3",
         status: "READY",
         streamUrlExpiresAt: { lte: threshold, gt: new Date() },
-        ...buildStoragePolicyFilter("SUPABASE_PERMANENT"),
+        ...buildStoragePolicyFilter("PERMANENT"),
       },
     });
   }
@@ -603,19 +603,19 @@ export class RecordingTransferService {
         return { success: false, error: "Recording not found" };
       }
 
-      if (!recording.supabasePath) {
+      if (!recording.storagePath) {
         return { success: false, error: "Recording not stored in Supabase" };
       }
 
       // Delete from Supabase
       const { error: deleteError } = await storageClient.storage
         .from(RECORDINGS_BUCKET)
-        .remove([recording.supabasePath]);
+        .remove([recording.storagePath]);
 
       if (deleteError) {
         streamLogger.error("Failed to delete from Supabase", deleteError, {
           recordingId,
-          path: recording.supabasePath,
+          path: recording.storagePath,
         });
         return { success: false, error: deleteError.message };
       }
@@ -624,8 +624,8 @@ export class RecordingTransferService {
       await prisma.recording.update({
         where: { id: recordingId },
         data: {
-          supabaseUrl: null,
-          supabasePath: null,
+          storageUrl: null,
+          storagePath: null,
           storageType: "STREAM_S3",
           status:
             recording.streamUrlExpiresAt &&
@@ -637,7 +637,7 @@ export class RecordingTransferService {
 
       streamLogger.info("Recording deleted from Supabase", {
         recordingId,
-        path: recording.supabasePath,
+        path: recording.storagePath,
       });
 
       return { success: true };
@@ -651,77 +651,5 @@ export class RecordingTransferService {
       });
       return { success: false, error: errorMessage };
     }
-  }
-
-  /**
-   * Delete ONLY the Supabase storage object — no DB side effects.
-   *
-   * Retention cleanup (#899) uses this instead of deleteRecordingFromSupabase
-   * so the row's status flip to EXPIRED and the OrgAuditLog write land
-   * atomically in the caller's own transaction. Flipping status here would
-   * tombstone the row before the audit write; the cleanup candidate query
-   * filters `status notIn [EXPIRED, FAILED]`, so a failed audit write would
-   * never be retried and the audit trail would be lost permanently.
-   */
-  static async deleteSupabaseObject(
-    supabasePath: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    const { error } = await storageClient.storage
-      .from(RECORDINGS_BUCKET)
-      .remove([supabasePath]);
-    if (error) {
-      streamLogger.error("Failed to delete Supabase object", error, {
-        path: supabasePath,
-      });
-      return { success: false, error: error.message };
-    }
-    return { success: true };
-  }
-
-  /**
-   * Get the best available URL for a recording
-   * Returns Supabase URL if available, otherwise Stream URL
-   * @param recording The recording object
-   */
-  /**
-   * Generate a presigned URL for a Supabase-stored recording.
-   * URLs expire after the specified duration (default: 1 hour).
-   * Requires the recordings bucket to be private (not public).
-   */
-  static async generateSignedUrl(
-    storagePath: string,
-    expiresIn: number = 3600,
-  ): Promise<string | null> {
-    const { data, error } = await storageClient.storage
-      .from(RECORDINGS_BUCKET)
-      .createSignedUrl(storagePath, expiresIn);
-
-    if (error || !data?.signedUrl) {
-      streamLogger.error("Failed to generate signed URL", error, {
-        storagePath,
-      });
-      return null;
-    }
-
-    return data.signedUrl;
-  }
-
-  /**
-   * Get the best available playback URL for a recording.
-   * For Supabase storage: generates a 1-hour presigned URL.
-   * For Stream S3: returns the temporary URL directly.
-   */
-  static async getBestRecordingUrl(
-    recording: RecordingRow,
-  ): Promise<string | null> {
-    if (recording.status === "AVAILABLE" && recording.supabasePath) {
-      return this.generateSignedUrl(recording.supabasePath);
-    }
-
-    if (recording.status === "READY" && recording.recordingUrl) {
-      return recording.recordingUrl;
-    }
-
-    return null;
   }
 }

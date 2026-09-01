@@ -77,6 +77,9 @@ model User {
   appointmentSupportThreads AppointmentSupportThread[]
   appointmentFeedback       AppointmentFeedback[]
   supportResponses          SupportResponse[]
+  supportTicketsAssigned    SupportTicket[]            @relation("SupportTicketAssignee")
+  supportMessagesAuthored   SupportMessage[]           @relation("SupportMessageAuthor")
+  supportFlowOutcomes       SupportFlowOutcome[]
 
   accounts         Account[] // BetterAuth Accounts
   sessions         Session[] // BetterAuth Sessions
@@ -204,6 +207,31 @@ model OnboardingDraft {
   ///   * It never becomes truth. The single writer of real data remains the
   ///     Zod-validated big-bang transaction into fully-normalized tables;
   ///     this row is a convenience cache deleted on completion.
+  ///   * The real tables CANNOT be reused as draft storage. Achievement and
+  ///     SlotOfAvailabilityWeekly both require a consultantProfileId, and no
+  ///     consultant profile exists until processOnboardingData creates one at
+  ///     the very end of the wizard. Drafting into them would mean either
+  ///     creating a half-built profile hours before the user commits to being
+  ///     a consultant, or duplicating each table with a nullable FK — which
+  ///     is the mirror below, not reuse.
+  ///   * A mirror would not buy stronger typing. Every mirrored column has to
+  ///     be nullable, because a draft is by definition incomplete: the user
+  ///     may have typed a job title and no dates. Every enum column becomes a
+  ///     liability for the same reason — a half-picked ScheduleType has no
+  ///     legal value to store. So a ten-table mirror is not typed storage; it
+  ///     is weak typing spread across ten tables, ten sets of FKs to keep
+  ///     consistent, and a migration for every form tweak.
+  ///
+  /// What the blob COSTS, honestly: the database enforces nothing about the
+  /// contents, so every consumer has to defend itself. That defence is real
+  /// code, not a footnote — a structural Zod schema at the write boundary
+  /// (utils/onboarding-draft.ts) that strips unknown keys and proves arrays
+  /// are arrays, a `__v` generation marker so a payload from an older wizard
+  /// is quarantined instead of merged, an application byte gate plus the
+  /// pg_column_size CHECK in prisma/sql/check-constraints.sql, and
+  /// prototype-chain-safe lookups wherever the wizard reads a value back out
+  /// (`Object.hasOwn`, never `in`). The trade is deliberate, but it is a
+  /// trade: the schema flexibility is paid for at every read site.
   ///
   /// Promotion rule: if ops ever needs to filter/report INSIDE payloads,
   /// promote that key to a real column instead of querying the blob.
@@ -245,6 +273,15 @@ model SupportTicket {
   organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   issueType      SupportIssueType?
 
+  // #705 — a speakable handle for email subjects and phone support. A uuid
+  // cannot be read back over a phone line, so the two staff surfaces had each
+  // invented their own truncation (one took the first 8 chars, the other the
+  // last) and users were given nothing at all. Year-scoped so the series leaks
+  // this year's volume rather than the all-time count. Nullable because it is
+  // minted forward-only: a unique index permits unlimited NULLs, so tickets
+  // that predate it keep their uuid and no backfill is owed.
+  referenceNumber String? @unique @db.VarChar(20)
+
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
 
@@ -254,20 +291,56 @@ model SupportTicket {
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
 
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every visible message write. `updatedAt` only moves when THIS row changes,
+  // so replies would leave it stale; the hub and the ops inbox sort by this.
+  lastMessageAt DateTime?
+
   // Entity links for Swiggy-style context (link ticket to booking/payment)
   consultationId String?
   subscriptionId String?
   paymentId      String?
   refundId       String? // If refund was initiated from this ticket
 
-  // Staff assignment
+  // Staff assignment. #705 — was a bare String, so it could name a user who no
+  // longer exists and the ops queue could not render a name without a second
+  // query. SetNull, never Cascade: a staff departure must not delete tickets.
+  assignedTo   User?   @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   assignedToId String?
+
+  // #705 — SLA deadlines, STORED at intake rather than derived at read time so
+  // a later policy change never retroactively re-dates an open ticket's breach
+  // (same rationale as Appointment.cancellationPolicySnapshot). Sized to the
+  // IT Rules 2021 numbers — acknowledge <= 24h, dispose <= 15 days — because
+  // they are tighter than the Consumer Protection (E-Commerce) Rules 2020, so
+  // meeting them satisfies both. No `slaState` column: every state is derivable
+  // from these stamps plus now(), and a stored one would go stale between cron
+  // runs. NULL on tickets that predate this; lib/support/sla.ts falls back to
+  // createdAt + the statutory window, which is why no backfill is owed.
+  ackDueAt          DateTime? @db.Timestamptz
+  acknowledgedAt    DateTime? @db.Timestamptz
+  resolutionDueAt   DateTime? @db.Timestamptz
+  resolvedAt        DateTime? @db.Timestamptz
+  closedAt          DateTime? @db.Timestamptz
+  // First reply from a person. Distinct from acknowledgedAt, which an automated
+  // acknowledgement satisfies; this is the number that actually predicts CSAT.
+  firstAgentReplyAt DateTime? @db.Timestamptz
+  // The resolution clock stops while the ball is in the user's court, or every
+  // slow-replying customer reads as a team breach. Staff's reply sets
+  // `awaitingUserSince`; the user's reply folds the elapsed wait into
+  // `pausedSeconds` and clears it. Effective deadline =
+  // resolutionDueAt + pausedSeconds.
+  //
+  // SECONDS, not milliseconds: an Int of ms overflows at 24.8 days, which a
+  // ticket that sits on the user for a couple of months would reach. Seconds
+  // buy 68 years, and sub-second precision is meaningless against a deadline
+  // measured in days.
+  awaitingUserSince DateTime? @db.Timestamptz
+  pausedSeconds     Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // CR #1245 r2 — org-scoped ticket routing/SLA queries.
-  @@index([organizationId])
   @@index([userId])
   @@index([status])
   @@index([assignedToId])
@@ -275,6 +348,29 @@ model SupportTicket {
   @@index([paymentId])
   @@index([createdAt])
   @@index([assignedToId, status])
+  // #support-hub — org-filtered ops queue views. This also serves the
+  // organizationId-only lookups #1245 r2 added a single-column index for:
+  // Postgres reads a composite's leftmost prefix, so that index was pure
+  // write cost. Removed here rather than left shadowing this one.
+  @@index([organizationId, status])
+  // #705 — breach sweeps: "unacknowledged and past due", "unresolved and past
+  // due". Without these, finding a breach means scanning the whole queue.
+  @@index([acknowledgedAt, ackDueAt])
+  @@index([resolvedAt, resolutionDueAt])
+}
+
+// #705 — per-year counter behind SupportTicket.referenceNumber. Allocation is
+// an INSERT…ON CONFLICT DO UPDATE…RETURNING, so concurrent ticket creation
+// queues on this single row and each caller gets a distinct number instead of
+// two tickets reading the same "next" value. Same shape as OrgInvoiceCounter,
+// but unlike a GST series gaps are fine here: a rolled-back ticket burning a
+// number costs nothing, whereas CGST Rule 46 would not allow it.
+model SupportTicketCounter {
+  year      Int      @id
+  nextSeq   Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@map("support_ticket_counters")
 }
 
 model SupportResponse {
@@ -344,12 +440,25 @@ model AppointmentSupportThread {
   updatedAt  DateTime         @updatedAt
   resolvedAt DateTime?
 
+  // #support-hub — denormalized last-activity clock, bumped transactionally on
+  // every message write (same rationale as SupportTicket.lastMessageAt).
+  lastMessageAt DateTime?
+
+  // #705 — allocator for SupportMessage.seq. Incremented inside the same
+  // transaction that writes the messages, so the row lock it takes IS the
+  // serialization point between a user typing on their phone and an agent
+  // replying on desktop. Free: every message write already updates this row.
+  messageSeq Int @default(0)
+
   // One support conversation per (appointment, user) — reused across intents,
   // like a per-order support chat. Also the concurrency guard for find-or-create.
   @@unique([appointmentId, userId])
   @@index([userId, status])
   @@index([organizationId, status])
   @@index([status, createdAt])
+  // #support-hub — the ops inbox sorts by last activity, usually status-
+  // filtered; without this every page sorts the whole filtered set.
+  @@index([status, lastMessageAt])
 }
 
 model SupportMessage {
@@ -361,9 +470,85 @@ model SupportMessage {
   // Resolver metadata — flow node id, AI model, action refs. Free-form.
   metadata Json?
 
+  // #705 — createdAt alone cannot order this table. The user's turn and the
+  // bot's reply are written in ONE transaction, and Postgres CURRENT_TIMESTAMP
+  // is transaction START time, so they can carry a byte-identical timestamp;
+  // the sort then falls to the planner and the answer renders above the
+  // question. Ordering by [createdAt, id] only makes that deterministic, not
+  // correct — id is a random uuid, so it would put the reply first about half
+  // the time. `seq` is a strict per-thread total order from
+  // AppointmentSupportThread.messageSeq. Rows written before this column keep
+  // 0 and sort first, which is chronologically right: they all predate it.
+  seq Int @default(0)
+
+  // Which staff member wrote an AGENT message. NULL for USER/BOT/SYSTEM (the
+  // thread's own userId identifies the user side) and for AGENT rows written
+  // before this column, which honestly record "no longer known". SetNull, never
+  // Cascade: a staff departure must not delete a customer's support history.
+  authorUser   User?   @relation("SupportMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorUserId String?
+
   createdAt DateTime @default(now())
 
+  @@index([threadId, seq])
   @@index([threadId, createdAt])
+  // Postgres does not index a foreign key for you; the SetNull scans by this.
+  @@index([authorUserId])
+}
+
+// #705 — one row per TERMINAL support turn, in both scopes.
+//
+// "What fraction of conversations the tree resolves without a human" is the
+// number that says whether the tree works — Swiggy call it bot efficacy, Airbnb
+// measured it as "help 15% more people" — and it was unanswerable here, even
+// after the fact: platform-scope resolutions persisted nothing at all, so a
+// user self-served by the payments flow left no trace whatsoever.
+//
+// Deliberately NOT derived from thread status. A thread is reused across
+// intents, so its final status describes the last thing that happened to it,
+// not each flow run; and the platform scope has no thread to read.
+//
+// Carries no message bodies. This is a counter, not a transcript — the same
+// separation Amazon Connect ships by construction, where the contact record
+// holds counts and timings and the transcript lives somewhere else.
+model SupportFlowOutcome {
+  id String @id @default(uuid())
+
+  // "APPOINTMENT" or "PLATFORM". A string rather than an enum: the scope is a
+  // reporting dimension, not a state machine, and a third intake surface should
+  // not need a migration to be counted.
+  scope          String  @db.VarChar(32)
+  // Flow registry key — SupportThreadCategory for appointment scope, the
+  // PlatformFlowId for platform scope.
+  flowKey        String  @db.VarChar(64)
+  terminalNodeId String? @db.VarChar(64)
+  // The terminal's machine-readable `reason` — the same value that types the
+  // escalated ticket. Null when the walk failed safe with no terminal.
+  reason         String? @db.VarChar(64)
+
+  outcome SupportFlowOutcomeKind
+
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // The deflection rate itself, and the per-flow breakdown behind it.
+  @@index([createdAt, outcome])
+  @@index([flowKey, outcome])
+  // Re-contact: deflection alone scores a user who gave up as a success, so the
+  // honest reading needs "did this person come back within a few days".
+  @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+enum SupportFlowOutcomeKind {
+  /// The tree answered and the user did not need a person.
+  RESOLVED
+  /// The turn handed off to a human.
+  ESCALATED
 }
 
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
@@ -380,10 +565,26 @@ model AppointmentFeedback {
   rating         Int           @db.SmallInt
   comment        String?       @db.Text
 
+  // #705 — who is rating whom. The POST authorizes any participant, so without
+  // this a consultant's rating of their OWN session is indistinguishable from
+  // an attendee's and lands in the org quality average. Nullable and never
+  // backfilled: rows written before this column cannot be attributed, and
+  // asserting CONSULTEE over them would re-admit the very self-ratings being
+  // excluded. Aggregates filter on CONSULTEE, so unknown provenance fails
+  // closed.
+  raterRole AppointmentFeedbackRole?
+
   createdAt DateTime @default(now())
 
   @@unique([appointmentId, userId])
-  @@index([organizationId, createdAt])
+  // The org aggregate filters raterRole before the date range, so
+  // (organizationId, createdAt) is no longer a usable prefix for it.
+  @@index([organizationId, raterRole, createdAt])
+}
+
+enum AppointmentFeedbackRole {
+  CONSULTEE
+  PROVIDER
 }
 
 enum SupportThreadStatus {
@@ -416,6 +617,10 @@ enum SupportThreadCategory {
   RESCHEDULE
   NO_SHOW
   TECHNICAL
+  // #support-hub review — session materials (handouts, pre-reads). DOCUMENT_ISSUE
+  // was session-scoped (so refused on the platform form) with no appointment
+  // flow to send anyone to; this is that flow's category.
+  DOCUMENTS
   PAYMENT_STATUS
   RECORDING_ACCESS
   QUALITY_COMPLAINT
@@ -840,6 +1045,26 @@ model Organization {
   /// (most large enterprises require ≥90d for grievance / audit).
   streamRecordingRetentionDays Int @default(90)
 
+  /// How long a CHAT channel survives after its conversation goes dormant.
+  ///
+  /// A separate dial from `streamRecordingRetentionDays`, which this used to
+  /// borrow. The two are not the same question: a recording is a stored asset
+  /// with a storage bill attached, while a chat channel is the written record
+  /// of a professional consultation, and an org may reasonably want to keep the
+  /// second far longer than the first.
+  ///
+  /// Default 365 rather than 90 because chat is the cheaper of the two to keep
+  /// and the more expensive to have thrown away. Deliberately NOT clamped to a
+  /// floor: DPDP Rule 8(3) is a narrow preservation-for-State-access duty that
+  /// does not commence until 13 May 2027 (see PR #1266), so a hard minimum here
+  /// would over-state what binds us and rule out a shorter-retention tier.
+  ///
+  /// Any value is honoured. `jobs/stream/expire-event-channels.ts` derives its
+  /// scan window from the LARGEST value configured across all organizations
+  /// rather than from its own constant, so setting this above the 365-day
+  /// default widens the scan instead of silently falling outside it.
+  chatRetentionDays Int @default(365)
+
   // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
   webhookEndpoints   WebhookEndpoint[]
   scimTokens         ScimToken[]
@@ -860,16 +1085,18 @@ model Organization {
   // threads + CSAT (denormalized org tag; org admins triage / see quality).
   appointmentSupportThreads AppointmentSupportThread[]
   appointmentFeedback       AppointmentFeedback[]
+  // #support-hub — tickets attributed to this org (operator intake + escalated
+  // org-appointment threads). Powers the org-filtered ops queue.
+  supportTickets            SupportTicket[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
   // to the IRP. Flag frozen now; enforcement deferred.
   aatoAboveEinvoiceThreshold Boolean @default(false)
 
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  // #1021 — org-scoped support ticket routing.
-  supportTickets SupportTicket[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  supportFlowOutcomes SupportFlowOutcome[]
 
   @@index([status])
   @@index([canSponsor, canHost])
@@ -2478,6 +2705,31 @@ model ConsultantProfile {
   experience  Float?
   rating      Float     @default(0)
 
+  // #705 — `rating` above stays the RAW mean over rating units and remains the
+  // internal/staff number. It is NOT the public one, because a 5.0 from a
+  // single session must not outrank a 4.8 from two hundred in explore's
+  // `{ rating: "desc" }` sort.
+  //
+  // NULL = suppressed: fewer than MIN_RATED_UNITS_FOR_PUBLIC_SCORE
+  // (lib/reviews.ts) distinct sessions have been rated, so one review cannot
+  // define a new consultant and there is nothing to gain by gaming the first.
+  // Public reads, the minRating filter and the rating sort read THIS column
+  // with `nulls: "last"`. NULL is also the safe default, which is why the
+  // column needs no backfill to be CORRECT on day one — only to stop being
+  // conservative.
+  publishedRating    Float?
+  // Denominator behind `rating`: rating UNITS, not review rows. This is what
+  // the minimum-N gate tests, so one 200-seat webinar cannot buy a published
+  // score off a single data point.
+  ratingUnitCount    Int       @default(0)
+  // Display only ("based on N reviews"). Also retires the trending sort's
+  // `{ reviews: { _count: "desc" } }`, which counts soft-deleted rows because
+  // Prisma cannot filter a relation _count inside orderBy.
+  reviewCount        Int       @default(0)
+  // Drift audit: finds profiles whose aggregates predate their newest review
+  // without recomputing every profile to find out.
+  ratingAggregatedAt DateTime? @db.Timestamptz
+
   // New fields for enhanced consultant profile
   headline                    String?                      @db.VarChar(120) // Professional headline, max 120 chars
   websiteUrl                  String?
@@ -2584,6 +2836,8 @@ model ConsultantProfile {
   @@index([domainId])
   @@index([isVerified])
   @@index([verificationStatus])
+  // #705 — explore sorts and filters on the published score, not the raw mean.
+  @@index([publishedRating])
 }
 
 model Domain {
@@ -2638,6 +2892,35 @@ model ConsultantReview {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
+  // #705 — the session that earned the review. This is what makes "verified
+  // booking" a fact rather than a claim, and it is what lets a repeat client
+  // review each session instead of being locked out forever by the old
+  // per-pair unique. SetNull, not Cascade: tombstoning an appointment must not
+  // silently delete published consumer reviews. Nullable only for rows written
+  // before the column existed — the API requires it, so NULL means legacy.
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  appointmentId String?
+
+  // #705 — the unit that contributes exactly ONE data point to
+  // ConsultantProfile.rating, so a 200-seat webinar cannot dominate a
+  // consultant whose 1:1 work is the real offering, and one bad event cannot
+  // tank them. Denormalized at write time because Prisma `groupBy` can only
+  // group on this model's own scalars.
+  // Format: "appointment:<id>" for 1:1, "webinar:<id>", "class:<id>".
+  // A plain sessionType enum cannot do this job: a WEBINAR shares one
+  // Appointment across every attendee, but a CLASS mints one per enrolment, so
+  // grouping by type alone would collapse every class the consultant ever ran
+  // into a single point — worse than the problem being fixed.
+  ratingUnitId String?
+
+  // #705 — the consultant's right of reply. One reply per review, so columns
+  // rather than a table: every read of a review already loads this row.
+  // replyDeletedAt is separate from the review's own deletedAt so staff can
+  // remove an abusive reply without erasing the consumer review beneath it.
+  replyBody      String?   @db.Text
+  repliedAt      DateTime? @db.Timestamptz
+  replyDeletedAt DateTime? @db.Timestamptz
+
   // Moderation CONTENT_REMOVED soft-delete (#693); public reads filter on
   // null, staff moderation surfaces keep seeing the row.
   deletedAt DateTime? @db.Timestamptz
@@ -2645,8 +2928,18 @@ model ConsultantReview {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // One review per consultee per consultant — POST maps P2002 here to 409.
-  @@unique([consultantProfileId, consulteeProfileId])
+  // #705 — one review per attendee per SESSION, replacing the per-pair unique.
+  // A webinar's attendees share one appointmentId with distinct consultees, so
+  // this still caps each attendee at one review of that event. Deliberately
+  // not partial on deletedAt: a moderation-removed review must not free the
+  // slot for the same person to re-post it. POST maps P2002 here to 409.
+  // Legacy rows carry a NULL appointmentId, and Postgres treats a NULL key as
+  // distinct, so they coexist — prisma/sql/check-constraints.sql keeps the old
+  // per-pair rule alive for exactly that band.
+  @@unique([appointmentId, consulteeProfileId])
+  // Serves recomputeConsultantRating's groupBy — the only hot aggregate.
+  @@index([consultantProfileId, deletedAt, ratingUnitId])
+  @@index([appointmentId])
   // #696 — explore "trending" sort orders ConsultantProfile by
   // reviews._count; without this the per-profile aggregate seq-scans the
   // whole review table. Also serves the FK join + rating>=4 social-proof reads.
@@ -3010,6 +3303,18 @@ model Consultation {
   cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
 
+  /// Freeze ledger for this pair's DIRECT MESSAGE channel, not for a channel of
+  /// this booking's own — see `Webinar.chatFrozenAt` for the group-chat twin.
+  ///
+  /// DM channel ids are keyed on the PAIR (`dm-<a>-<b>`), never on the
+  /// appointment, and `DM_ELIGIBLE_STATUSES` deliberately includes `COMPLETED`
+  /// so a finished booking keeps the conversation open. So the thing that goes
+  /// dormant is the relationship, not the row — and the ledger is read as
+  /// MAX(chatFrozenAt) across every booking the pair shares, and cleared across
+  /// all of them when they book again. Stamping one row would let a second
+  /// booking in the pair look unfrozen while the channel was not.
+  chatFrozenAt DateTime? @db.Timestamptz
+
   appointment Appointment?
 
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -3126,6 +3431,10 @@ model Subscription {
   cancellationNotes  String?             @db.Text
   cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
+
+  /// Freeze ledger for this pair's DM channel. See `Consultation.chatFrozenAt`
+  /// for why it is read as a MAX across the pair rather than per row.
+  chatFrozenAt DateTime? @db.Timestamptz
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
@@ -3675,11 +3984,14 @@ model Appointment {
 
   trialSession TrialSession?
 
-  payment         Payment[]
-  documents       AppointmentDocument[]
+  payment           Payment[]
+  documents         AppointmentDocument[]
   // #appt-support — per-appointment support conversations + private CSAT.
-  supportThreads  AppointmentSupportThread[]
-  supportFeedback AppointmentFeedback[]
+  supportThreads    AppointmentSupportThread[]
+  supportFeedback   AppointmentFeedback[]
+  // #705 — the public reviews this session earned. Distinct from
+  // supportFeedback: that is private CSAT, this is a consumer review.
+  consultantReviews ConsultantReview[]
 
   rescheduleRequests RescheduleRequest[]
 
@@ -4197,15 +4509,15 @@ model MeetingAttendance {
 // Recording storage types
 
 enum RecordingStorageType {
-  STREAM_S3 // Default: expires in 2 weeks
-  SUPABASE // Permanent storage
+  STREAM_S3 // Stream's own bucket — Stream deletes it after 14 days
+  PLATFORM // Our bucket, whichever vendor backs it — no expiry
 }
 
 // Recording storage policy for plans (determines where recordings are stored)
 
 enum RecordingStoragePolicy {
   STREAM_ONLY // 2-week temporary storage (free tier)
-  SUPABASE_PERMANENT // Permanent storage (premium tier)
+  PERMANENT // Kept in our own bucket indefinitely (premium tier)
 }
 
 // Recording status lifecycle
@@ -4287,9 +4599,11 @@ model Recording {
   storageType RecordingStorageType @default(STREAM_S3)
   status      RecordingStatus      @default(READY)
 
-  // Supabase permanent storage
-  supabaseUrl  String?
-  supabasePath String?
+  // #1280 — vendor-neutral: Stream can write straight into our bucket via
+  // recording_external_storage, and the bucket behind it is a deployment
+  // choice, so neither the column nor the enum names one.
+  storageUrl  String?
+  storagePath String?
 
   // Media metadata
   thumbnailUrl String?
@@ -4314,8 +4628,8 @@ model Recording {
   transferFailureAlertedAt DateTime? @db.Timestamptz
 
   // #366 curated marketplace listing — opt-in per recording. Publishing is
-  // only valid for status=AVAILABLE && storageType=SUPABASE (Stream URLs die
-  // in ≤14d, so a STREAM_ONLY recording must never be sold) on webinar/class
+  // only valid once the recording is durably ours (Stream URLs die in ≤14d,
+  // so a STREAM_ONLY recording must never be sold) on webinar/class
   // plans, with consultant redistribution-consent attestation (audit-logged).
   listingStatus      RecordingListingStatus @default(DRAFT)
   listPricePaise     BigInt?
@@ -5542,6 +5856,11 @@ enum ModerationActionType {
   USER_BANNED
   PROFILE_UNVERIFIED
   NO_ACTION
+  // #1270 — the inverse of USER_BANNED. A permanent ban deactivates the target
+  // on Stream, and nothing ever undid that, so a reversed ban left an account
+  // that could sign in but never chat again. Recording the reversal here keeps
+  // the whole enforcement history on one report.
+  USER_REINSTATED
 }
 
 enum ProfileVerificationStatus {
@@ -5584,6 +5903,14 @@ model ModerationReport {
   // Optional entity references
   reviewId String? // If reporting a ConsultantReview
 
+  // #1270 — a MESSAGE report carried no pointer to the message it was about.
+  // CONTENT_REMOVED therefore had nothing to delete (it fell through to the
+  // review soft-delete, which no-ops on a null reviewId), and dedup collapsed
+  // every message report against a user onto one row. Both are the message
+  // identity Stream's server-side deleteMessage needs.
+  streamMessageId  String?
+  streamChannelCid String? // "messaging:<id>" — for the staff link back to the thread
+
   // Staff assignment
   assignedToId String?
 
@@ -5602,6 +5929,8 @@ model ModerationReport {
   @@index([targetUserId])
   @@index([assignedToId])
   @@index([createdAt])
+  // #1270 — the per-message dedup lookup in POST /api/report.
+  @@index([streamMessageId])
 }
 
 model ModerationAction {

@@ -10,8 +10,8 @@ import { getSession } from "@/lib/auth-server";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
-  hasCompletedBookingWith,
   recomputeConsultantRating,
+  resolveReviewableSession,
 } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -114,8 +114,7 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    // Reviews are always authored as the session user's own consultee
-    // profile — the body's consulteeProfileId is only accepted if it matches.
+    // Reviews are always authored as the session user's own consultee profile.
     const sessionConsulteeProfileId = session.user.consulteeProfileId;
     if (!sessionConsulteeProfileId) {
       return NextResponse.json(
@@ -123,23 +122,20 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
-    if (validatedData.consulteeProfileId !== sessionConsulteeProfileId) {
-      return NextResponse.json(
-        { error: "You can only post reviews as yourself" },
-        { status: 403 },
-      );
-    }
 
-    // Only consultees with a completed booking may review the consultant.
-    const eligible = await hasCompletedBookingWith(
+    // #705 — eligibility is now per SESSION, and it is what tells us who is
+    // being reviewed. One message for "not yours", "not held" and "not paid":
+    // distinguishing them would leak whether an appointment exists.
+    const reviewable = await resolveReviewableSession(
       sessionConsulteeProfileId,
-      validatedData.consultantProfileId,
+      session.user.id,
+      validatedData.appointmentId,
     );
-    if (!eligible) {
+    if (!reviewable) {
       return NextResponse.json(
         {
           error:
-            "You can only review consultants after a completed session with them",
+            "You can only review a session you attended and paid for, once it has taken place",
         },
         { status: 403 },
       );
@@ -155,8 +151,13 @@ export async function POST(req: NextRequest) {
         data: {
           rating: validatedData.rating,
           reviewDescription: validatedData.reviewDescription,
-          consultantProfileId: validatedData.consultantProfileId,
+          consultantProfileId: reviewable.consultantProfileId,
           consulteeProfileId: sessionConsulteeProfileId,
+          appointmentId: reviewable.appointmentId,
+          // Denormalized at write time: `groupBy` can only group on this
+          // model's own scalars, and this is what makes a 200-seat webinar one
+          // data point instead of two hundred.
+          ratingUnitId: reviewable.ratingUnitId,
         },
         include: {
           // #946 allowlist — the response goes back to the consultee who wrote
@@ -194,8 +195,11 @@ export async function POST(req: NextRequest) {
       reviewerName: newReview.consulteeProfile?.user?.name || "User",
       rating: newReview.rating,
       comment: newReview.reviewDescription || undefined,
-      planTitle: undefined,
-      dashboardUrl: "/dashboard/consultant/reviews",
+      planTitle: reviewable.title,
+      // `/dashboard/consultant/reviews` never existed — the link 404'd for
+      // every review ever notified. The capability router picks the viewer's
+      // tree from a bare /dashboard.
+      dashboardUrl: "/dashboard",
     });
 
     // Reviews are the landing page's testimonials and they move the expert's
@@ -205,13 +209,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
-    // @@unique([consultantProfileId, consulteeProfileId]) — one review per pair.
+    // @@unique([appointmentId, consulteeProfileId]) — one review per session.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "You have already reviewed this consultant" },
+        { error: "You have already reviewed this session" },
         { status: 409 },
       );
     }

@@ -287,7 +287,7 @@ export async function getConsultantAppointments(
         include: {
           user: { select: listUserSelect },
           meetingSession: {
-            select: { id: true, endedAt: true },
+            select: { id: true, endedAt: true, endedReason: true },
           },
         },
       },

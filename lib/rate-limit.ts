@@ -15,6 +15,7 @@
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
  * - availabilityLimiter:    30/min per IP    — GET /api/slots/availability/[consultantId]
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
+ * - streamRecordingSyncLimiter: 3/5min per user — POST /api/stream/recordings/sync (Stream fan-out)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -111,6 +112,27 @@ export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
  */
 export const streamJoinLimiter = makeLimiter(20, "1 m", "rl:stream-join");
 export const streamApiLimiter = makeLimiter(60, "1 m", "rl:stream-api");
+
+/**
+ * 3 per 5 minutes per user — POST /api/stream/recordings/sync (#1270).
+ *
+ * The edge `stream: api` rule already covers this path, but at 60/min keyed by
+ * IP, which is sized for ordinary reads. This one call walks every session the
+ * caller owns or is enrolled in and issues a `listRecordings` request to Stream
+ * for each, so a single authenticated user can force an unbounded, billable
+ * fan-out — and the middleware bucket is shared with everyone behind the same
+ * NAT, so it is the wrong shape to defend it.
+ *
+ * Sized on what the feature is for: a user clicks "Sync" because a replay is
+ * missing, and the answer does not change on the second press. Three attempts
+ * in five minutes covers an impatient human and a retry after a transient
+ * error; it does not cover a loop.
+ */
+export const streamRecordingSyncLimiter = makeLimiter(
+  3,
+  "5 m",
+  "rl:stream-recording-sync",
+);
 
 /** 3 per 24 hours — POST /api/trials (prevents flooding consultant inboxes) */
 export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");

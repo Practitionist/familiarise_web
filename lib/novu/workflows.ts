@@ -261,7 +261,7 @@ export type RefundPayload = NotificationScope & {
   dashboardUrl: string;
 };
 
-export type SupportTicketPayload = {
+export type SupportTicketPayload = NotificationScope & {
   ticketId: string;
   ticketTitle: string;
   status?: string;
