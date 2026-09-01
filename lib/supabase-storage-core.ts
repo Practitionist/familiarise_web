@@ -164,7 +164,15 @@ async function reconcileBucketOptions(
     Number(bucket.file_size_limit ?? 0) !== options.fileSizeLimit;
   const wantsPublic =
     options.public !== undefined && bucket.public !== options.public;
-  if (!wantsSize && !wantsPublic) return;
+  // A MIME-only drift is the one that actually bites: Stream's storage probe
+  // uploads `text/plain`, and a bucket still carrying a video-only allow-list
+  // rejects it with a 415 that reads like a credentials failure.
+  const currentMime = [...(bucket.allowed_mime_types ?? [])].sort();
+  const wantsMime =
+    options.allowedMimeTypes !== undefined &&
+    JSON.stringify([...options.allowedMimeTypes].sort()) !==
+      JSON.stringify(currentMime);
+  if (!wantsSize && !wantsPublic && !wantsMime) return;
 
   // `public` is required by updateBucket, so carry the bucket's own value
   // through rather than flipping visibility as a side effect of a size change.
@@ -196,7 +204,11 @@ export const ensureBucketExists = async (
   bucketName: string,
   options?: BucketOptions,
 ): Promise<boolean> => {
+  // Memoization skips the existence probe, not the settings. A later caller
+  // passing options to a bucket already seen without them would otherwise be
+  // silently ignored for the rest of the process.
   if (knownBuckets.has(bucketName)) {
+    if (options) await reconcileBucketOptions(bucketName, options);
     return true;
   }
   try {

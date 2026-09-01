@@ -39,6 +39,7 @@
 
 import "dotenv/config";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
+import { RECORDING_MAX_OBJECT_BYTES } from "@/lib/stream/recording-storage";
 
 /** Where Stream writes inside the bucket. Keeps recordings out of the root. */
 const PATH_PREFIX = "recordings/";
@@ -218,7 +219,8 @@ async function runCheck(
     console.error(
       `❌ CHECK FAILED — ${(error as Error).message}` +
         `\n   Stream cannot write here. Recordings would have to keep going through` +
-        `\n   the transfer pipeline, which today rejects anything over 500MB.\n`,
+        `\n   the transfer pipeline, capped at ` +
+        `${Math.round(RECORDING_MAX_OBJECT_BYTES / 1024 / 1024)}MB.\n`,
     );
     return 1;
   }

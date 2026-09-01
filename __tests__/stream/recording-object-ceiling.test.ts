@@ -46,6 +46,24 @@ describe("recording object ceiling", () => {
     expect(RECORDING_MAX_OBJECT_BYTES).toBe(2 * 1024 * 1024 * 1024);
   });
 
+  it.each([
+    ["empty string", ""],
+    ["whitespace", "   "],
+    ["non-numeric", "abc"],
+    ["zero", "0"],
+    ["negative", "-1"],
+    ["Infinity", "Infinity"],
+  ])("falls back to the default for %s", async (_label, raw) => {
+    jest.resetModules();
+    process.env.RECORDING_MAX_OBJECT_BYTES = raw;
+    const { RECORDING_MAX_OBJECT_BYTES } = await import(
+      "@/lib/stream/recording-storage"
+    );
+    // `??` does not catch "", and .env.sample ships this key blank — a ceiling
+    // of 0 would reject every recording with a positive Content-Length.
+    expect(RECORDING_MAX_OBJECT_BYTES).toBe(5 * 1024 * 1024 * 1024);
+  });
+
   it("is not duplicated back into the transfer service", () => {
     const src = readFileSync(TRANSFER_SERVICE, "utf8");
     expect(src).not.toContain("MAX_TRANSFER_SIZE");

@@ -38,8 +38,24 @@ export const RECORDINGS_BUCKET = "recordings";
  * globally regardless of the bucket setting (#1314). Raising this is necessary
  * but not sufficient — the plan has to move, or the bucket has to.
  */
-export const RECORDING_MAX_OBJECT_BYTES = Number(
-  process.env.RECORDING_MAX_OBJECT_BYTES ?? 5 * 1024 * 1024 * 1024,
+const DEFAULT_MAX_OBJECT_BYTES = 5 * 1024 * 1024 * 1024;
+
+/**
+ * `??` does not catch an empty string, and `.env.sample` ships this key blank —
+ * so copying the sample would have made `Number("")` a ceiling of 0 and every
+ * recording with a positive Content-Length would be rejected before upload.
+ * Anything that is not a positive finite number means "unset".
+ */
+function parseMaxObjectBytes(raw: string | undefined): number {
+  const parsed = Number(raw?.trim());
+  if (!raw?.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MAX_OBJECT_BYTES;
+  }
+  return parsed;
+}
+
+export const RECORDING_MAX_OBJECT_BYTES = parseMaxObjectBytes(
+  process.env.RECORDING_MAX_OBJECT_BYTES,
 );
 
 /** Content types Stream is expected to hand us, and the bucket will accept. */
