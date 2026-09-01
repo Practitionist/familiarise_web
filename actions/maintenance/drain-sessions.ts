@@ -487,6 +487,14 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
     unfrozen: 0,
     errors: [] as string[],
     source: "none" as UnfreezeSource,
+    // #1302 review — provenance and ledger-retirement are different questions.
+    // The union path reports "derived" (the set is only best-effort complete)
+    // while still CONTAINING ledger entries, so gating retirement on `source`
+    // left those entries in `FROZEN_CHANNELS` forever. Not merely untidy: the
+    // set is re-unfrozen on every later OFF transition, spending the 300/min
+    // budget on it and reopening channels that a different subsystem — the
+    // #1303 dormancy sweep — froze deliberately in the meantime.
+    usedLedger: false,
   };
 
   try {
@@ -527,7 +535,7 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
       // the ledger deliberately, so the next OFF transition tries it again
       // instead of leaving it silently frozen forever — which is the failure
       // this whole ledger exists to make impossible.
-      if (result.source === "ledger") {
+      if (result.usedLedger) {
         await retireFrozenChannels(unfrozenInBatch, result);
       }
     }
@@ -566,6 +574,7 @@ export async function unfreezeChannelsAfterMaintenance(): Promise<{
 async function resolveChannelsToUnfreeze(result: {
   errors: string[];
   source: UnfreezeSource;
+  usedLedger: boolean;
 }): Promise<string[]> {
   try {
     // Same reasoning as the write: no fallback, because an open breaker read
@@ -585,6 +594,7 @@ async function resolveChannelsToUnfreeze(result: {
 
     if (ledger.length > 0 && !incomplete) {
       result.source = "ledger";
+      result.usedLedger = true;
       return ledger;
     }
 
@@ -594,6 +604,10 @@ async function resolveChannelsToUnfreeze(result: {
       // conversation permanently unwritable. The asymmetry decides it.
       const derived = await deriveChannelsToUnfreeze();
       result.source = "derived";
+      // Ledger ids are in the returned set, so they are still retirable — and
+      // `srem` on an id the set never held is a no-op, so passing the derived
+      // ids through with them costs nothing.
+      result.usedLedger = true;
       return Array.from(new Set([...ledger, ...derived]));
     }
   } catch (err) {

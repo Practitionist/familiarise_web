@@ -249,6 +249,14 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
     // no-op costing one rate-limited call; missing one is permanent.
     expect(result.unfrozen).toBe(2);
     expect(result.source).toBe("derived");
+
+    // #1302 review — the union path still RETIRES what the ledger held. Gating
+    // retirement on `source` (now "derived") stranded those ids forever: the
+    // set never shrank, so every later OFF transition re-unfroze them, burning
+    // the 300/min budget and reopening channels the #1303 dormancy sweep had
+    // since frozen on purpose.
+    const retired = mockSrem.mock.calls.flatMap((c) => c.slice(1));
+    expect(retired).toContain("webinar-recorded");
   });
 
   it("does not union when the ledger is known complete", async () => {
