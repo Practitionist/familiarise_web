@@ -130,6 +130,52 @@ describe("sidecar SQL splitter", () => {
       expect(isOnlyComments(input)).toBe(legacyIsOnlyComments(input));
     });
 
+    // #1307 review, round 2 — line terminators.
+    //
+    // CodeRabbit flagged CRLF as a divergence from the old regex. It is one,
+    // but in our favour and it was never a defect: `"-- a\r"` still starts with
+    // `--`, so the shipped predicate already answered CRLF correctly. The old
+    // regex was the wrong one there — `.` matches neither `\r` nor `\u2028`, so
+    // it called an all-comment chunk "not all comments" and the caller handed a
+    // bare comment to `$executeRawUnsafe`.
+    it.each([
+      ["CRLF", "-- a\r\n"],
+      ["several CRLF comment lines", "-- a\r\n-- b\r\n"],
+    ])("drops %s comment-only chunks that the old regex would have run", (_n, i) => {
+      expect(legacyIsOnlyComments(i)).toBe(false);
+      expect(isOnlyComments(i)).toBe(true);
+    });
+
+    // The actual defect, and the reason this is worth a change rather than just
+    // a comment: splitting on "\n" alone, a terminator that is NOT "\n" leaves
+    // the statement glued to the comment above it on one "line" that starts
+    // with `--`. The whole chunk then reads as comment-only and is silently
+    // dropped — losing a trigger or CHECK constraint on a fresh database.
+    // Remote (lone-CR SQL is essentially extinct) but silent and money-path.
+    it.each([
+      ["a lone CR", "-- why\rCREATE TRIGGER x"],
+      ["U+2028", "-- why\u2028CREATE TRIGGER x"],
+      ["U+2029", "-- why\u2029CREATE TRIGGER x"],
+    ])("never drops a real statement separated by %s", (_n, stmt) => {
+      expect(isOnlyComments(stmt)).toBe(false);
+      expect(splitSqlStatements(stmt)).toEqual([stmt]);
+    });
+
+    it("keeps a real statement under CRLF, as it always did", () => {
+      const stmt = "-- why this exists\r\nCREATE TRIGGER x";
+      expect(legacyIsOnlyComments(stmt)).toBe(false);
+      expect(isOnlyComments(stmt)).toBe(false);
+      expect(splitSqlStatements(stmt)).toEqual([stmt]);
+    });
+
+    it("splits a CRLF sidecar file into the same statements as its LF form", () => {
+      // End-to-end: a Windows checkout must apply the same triggers.
+      const lf = readSidecar("payment-legs-triggers.sql");
+      const crlf = lf.replace(/\n/g, "\r\n");
+      const norm = (xs: string[]) => xs.map((x) => x.replace(/\r\n/g, "\n"));
+      expect(norm(splitSqlStatements(crlf))).toEqual(splitSqlStatements(lf));
+    });
+
     it("stays linear on large input", () => {
       // A regression guard, not a ReDoS proof: it fails if someone swaps the
       // line scan back for a quantified-group regex that IS catastrophic.
