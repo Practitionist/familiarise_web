@@ -28,6 +28,25 @@ export interface ChannelDisplayInfo {
  * member — a webinar channel is created with its host before anyone registers —
  * so applying this to events would hide real, working channels.
  */
+/**
+ * Does the viewer own this channel?
+ *
+ * Both sides must exist. `ownerId === viewerId` is `true` when BOTH are
+ * `undefined`, and both are reachable: `created_by` is absent on a channel
+ * whose creator metadata did not come back from the query, and `client.userID`
+ * is absent for the moment before the client connects. Together they granted
+ * ownership to whoever happened to be looking — which in
+ * `ChannelInfoAndManageDialog` gated the remove-member control, and that one
+ * mutates.
+ *
+ * Lives here rather than inline because the same comparison had already been
+ * written twice in that file and got this wrong both times.
+ */
+export const viewerOwnsChannel = (
+  ownerId: string | undefined | null,
+  viewerId: string | undefined | null,
+): boolean => Boolean(ownerId) && Boolean(viewerId) && ownerId === viewerId;
+
 export const isUsableDmChannel = (channel: Channel): boolean => {
   if (channel.type !== "messaging") return true;
   return Object.keys(channel.state?.members ?? {}).length >= 2;
