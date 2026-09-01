@@ -30,18 +30,23 @@
  * invariants on a fresh database, so the splitter should be one nobody has to
  * squint at.
  *
- * Semantics are preserved exactly, not merely approximately: the old regex
- * required the chunk to be comment lines all the way to the end, which is what
- * `every` checks. The only divergence is on chunks with trailing blank lines,
- * and `.trim()` in `splitSqlStatements` makes those unreachable. Pinned by
- * `__tests__/db/sidecar-sql-splitter.test.ts`, which asserts agreement with the
- * regex it replaced across every chunk of all three real files.
+ * Semantics are preserved exactly, not merely approximately — including the
+ * two edge cases a first pass got wrong (#1307 review): `""` is true, because
+ * the old regex's `*` permitted zero iterations, and a trailing
+ * whitespace-only line is false, because a space is not `--`. Neither is
+ * reachable through `splitSqlStatements`, which trims and drops empties first,
+ * but the predicate is exported and should not need that caveat to be correct.
+ * Pinned by `__tests__/db/sidecar-sql-splitter.test.ts`, which keeps the old
+ * regex as an oracle and asserts agreement across every chunk of all three
+ * real files plus the adversarial and degenerate inputs.
  */
 export function isOnlyComments(chunk: string): boolean {
-  return chunk
-    .trimEnd()
-    .split("\n")
-    .every((line) => line.startsWith("--"));
+  const lines = chunk.split("\n");
+  // The legacy regex's trailing `\n?` allowed exactly one final newline, which
+  // `split` renders as one empty last element. Everything else — a blank line,
+  // a whitespace-only line — was NOT a comment line and made it return false.
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines.every((line) => line.startsWith("--"));
 }
 
 /** Chunk a sidecar SQL file into individually executable statements. */

@@ -90,6 +90,22 @@ describe("sidecar SQL splitter", () => {
       );
     });
 
+    // #1307 review — the first pass used `trimEnd()`, which quietly disagreed
+    // with the oracle here. Unreachable via splitSqlStatements, but the
+    // predicate is exported, so the contract is the oracle's, not the
+    // pipeline's.
+    it.each([
+      ["the empty string", ""],
+      ["a trailing whitespace-only line", "-- a\n \n"],
+      ["a whitespace-only line in the middle", "-- a\n \n-- b"],
+      ["one trailing newline", "-- a\n"],
+      ["two trailing newlines", "-- a\n\n"],
+      ["a lone newline", "\n"],
+      ["a single space", " "],
+    ])("matches the old regex on %s", (_name, input) => {
+      expect(isOnlyComments(input)).toBe(legacyIsOnlyComments(input));
+    });
+
     it("treats a blank line between comments as not-all-comments, as the regex did", () => {
       // Matching the old behaviour exactly rather than improving on it: this is
       // a ReDoS fix, not a semantics change. Unreachable in practice — the
