@@ -16,6 +16,7 @@ import {
   isFreeCreditIntent,
   isInternalFundedIntent,
   refundBookingPayment,
+  type FundingRail,
 } from "./booking-refund";
 import {
   computeRefundPct,
@@ -269,7 +270,17 @@ export async function refundRemovedAttendeeSeat(args: {
    * self-leave so notice-window tiers apply.
    */
   initiatedBy?: "organiser" | "attendee";
-}): Promise<{ amountRefundedPaise: number; refundPct: number } | null> {
+}): Promise<{
+  amountRefundedPaise: number;
+  refundPct: number;
+  /**
+   * Which rail returned the seat fee, or null when nothing moved. The
+   * organiser's toast has to say where the money went, and only the gateway
+   * rail reaches the attendee — an org-funded seat returns to the sponsor's
+   * wallet, accrual or licence, which the attendee never held.
+   */
+  rail: FundingRail | null;
+} | null> {
   const eventFilter =
     args.kind === "webinar"
       ? { webinarId: args.eventId }
@@ -341,7 +352,7 @@ export async function refundRemovedAttendeeSeat(args: {
       Math.floor((Number(payment.amount) * refundPct) / 100),
       refundableBalancePaise(Number(payment.amount), payment),
     );
-    if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct };
+    if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct, rail: null };
 
     const actorLabel = isOrganiserInitiated ? "organiser" : "attendee";
     const result = await refundBookingPayment({
@@ -367,7 +378,11 @@ export async function refundRemovedAttendeeSeat(args: {
       }).catch(() => {});
     }
 
-    return { amountRefundedPaise: result.amountRefundedPaise, refundPct };
+    return {
+      amountRefundedPaise: result.amountRefundedPaise,
+      refundPct,
+      rail: result.rail,
+    };
   } catch (err) {
     // Benign idempotent re-drives — a seat already refunded, or a payment that
     // never captured. Paging ops for these turns every repeat click into an
@@ -380,7 +395,7 @@ export async function refundRemovedAttendeeSeat(args: {
       (err.code === "ALREADY_FULLY_REFUNDED" ||
         err.code === "PAYMENT_NOT_SUCCEEDED" ||
         err.code === "AMOUNT_EXCEEDS_REFUNDABLE");
-    if (benign) return { amountRefundedPaise: 0, refundPct: 0 };
+    if (benign) return { amountRefundedPaise: 0, refundPct: 0, rail: null };
 
     reportSentryError(err, {
       subsystem: "payments",
@@ -394,6 +409,6 @@ export async function refundRemovedAttendeeSeat(args: {
       err,
       context: { ...args },
     }).catch(() => {});
-    return { amountRefundedPaise: 0, refundPct: 0 };
+    return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
 }

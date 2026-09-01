@@ -25,7 +25,11 @@ interface CancelRefundPreview {
    */
   hoursUntilNextSession: number | null;
   prorated: boolean;
-  creditFunded: boolean;
+  /**
+   * Which rail the money comes back on. Null on the whole-event rail, where a
+   * roster funds through several at once and no single sentence is true.
+   */
+  fundingRail: "GATEWAY" | "INTERNAL" | "CREDITS" | null;
   /**
    * Cancelling a class or webinar refunds the entire roster in full, not the
    * viewer's own seat — `estimatedRefundPaise` is then the sum across
@@ -162,7 +166,7 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
-    if (preview.creditFunded) {
+    if (preview.fundingRail === "CREDITS") {
       // #1161 — credit restoration is all-or-nothing. Only a full-refund window
       // restores automatically; inside a partial window the cancellation still
       // stands but the credits are escalated for a human, not returned. The
@@ -185,9 +189,13 @@ export function CancelConfirmationDialog({
       );
     }
     if (preview.estimatedRefundPaise > 0) {
+      // The learner never paid on an org-funded booking — the wallet, invoice
+      // accrual or licence did — so "your original payment method" names a card
+      // that was never charged and promises a settlement that will never arrive.
+      const isInternal = preview.fundingRail === "INTERNAL";
       return (
         <p className="text-muted-foreground text-sm">
-          You&apos;ll be refunded{" "}
+          {isInternal ? "Your organisation is credited " : "You'll be refunded "}
           <strong className="text-foreground">
             ~
             {formatCurrencyAmount(
@@ -196,8 +204,10 @@ export function CancelConfirmationDialog({
             )}
           </strong>{" "}
           ({preview.refundPct}%
-          {preview.prorated ? ", prorated for sessions already held" : ""}).
-          Refunds reach your original payment method in 5–7 working days.
+          {preview.prorated ? ", prorated for sessions already held" : ""}).{" "}
+          {isInternal
+            ? "Your organisation's balance is restored; nothing was charged to you."
+            : "Refunds reach your original payment method in 5–7 working days."}
         </p>
       );
     }
