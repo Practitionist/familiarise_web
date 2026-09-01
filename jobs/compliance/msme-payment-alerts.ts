@@ -29,6 +29,7 @@ import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const ALERT_WINDOW_DAYS = 5;
 const MAX_ROWS_IN_EMAIL = 20;
@@ -186,6 +187,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
 // unit tests without triggering the cron body.
 if (require.main === module) {
   runJob("msme-payment-alerts", async () => {
+    await abortIfMaintenance("msme-payment-alerts");
     try {
       const r = await runMsmePaymentAlerts();
       console.log(

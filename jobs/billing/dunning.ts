@@ -32,6 +32,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
@@ -317,6 +318,7 @@ export async function runDunning(): Promise<DunningStats> {
 }
 
 async function main() {
+  await abortIfMaintenance("dunning");
   console.log(`[dunning] Starting at ${new Date().toISOString()}`);
   Sentry.logger.info("job:dunning started");
   const stats = await withCronLock(

@@ -33,6 +33,7 @@ import prisma from "@/lib/prisma";
 import { generateIrn } from "@/lib/compliance/irp";
 import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { isValidGstin } from "@/lib/compliance/gst";
@@ -285,6 +286,7 @@ async function runIrpUploaderUnlocked(): Promise<{
 // jobs/contracts/expire-contracts.ts.
 if (require.main === module) {
   runJob("irp-uploader", async () => {
+    await abortIfMaintenance("irp-uploader");
     await runIrpUploader().finally(() => prisma.$disconnect());
   });
 }

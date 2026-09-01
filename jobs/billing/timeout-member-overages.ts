@@ -27,6 +27,7 @@ import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-car
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 
@@ -124,6 +125,7 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
 }
 
 async function main() {
+  await abortIfMaintenance("timeout-member-overages");
   console.log(
     `[timeout-member-overages] Starting at ${new Date().toISOString()}`,
   );

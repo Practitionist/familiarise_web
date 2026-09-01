@@ -39,6 +39,15 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "sync-payment-earnings",
   "generate-subscription-invoices",
   "settle-invoice-accruals",
+  // Added by the wave-5 sweep: each of these either moves money directly or
+  // mutates the org contract/program state the checkout sponsorship resolver
+  // reads, so a partial deployment can bill against a half-written entitlement.
+  "release-pending-trust-earnings",
+  "auto-renew-contracts",
+  "dunning",
+  "timeout-member-overages",
+  "advance-program-cycles",
+  "expire-contracts",
 ]);
 
 /**

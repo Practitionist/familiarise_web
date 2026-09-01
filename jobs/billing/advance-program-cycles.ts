@@ -39,6 +39,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -269,6 +270,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
 }
 
 async function main() {
+  await abortIfMaintenance("advance-program-cycles");
   console.log(
     `[advance-program-cycles] Starting at ${new Date().toISOString()}`,
   );

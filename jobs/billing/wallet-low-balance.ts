@@ -26,6 +26,7 @@ import prisma from "@/lib/prisma";
 import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -98,6 +99,7 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
 }
 
 async function main() {
+  await abortIfMaintenance("wallet-low-balance");
   console.log(`[wallet-low-balance] Starting at ${new Date().toISOString()}`);
   Sentry.logger.info("job:wallet-low-balance started");
   const stats = await withCronLock(

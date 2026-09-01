@@ -40,6 +40,7 @@ import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
 const REPORTING_DEADLINE_HOURS = 72;
 const WARN_HOURS_BEFORE_DEADLINE = 12; // surface breaches when ≤12h remain
@@ -175,6 +176,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
 // Self-execute when invoked directly via `npx tsx`.
 if (require.main === module) {
   runJob("databreach-deadline-alerts", async () => {
+    await abortIfMaintenance("databreach-deadline-alerts");
     try {
       const r = await runDataBreachDeadlineAlerts();
       console.log(

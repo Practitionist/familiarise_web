@@ -32,6 +32,7 @@ import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -196,11 +197,14 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
 }
 
 async function main() {
+  await abortIfMaintenance("auto-renew-contracts");
   Sentry.logger.info("job:auto-renew-contracts started");
   console.log(`[auto-renew-contracts] Starting at ${new Date().toISOString()}`);
+  // fail-closed since #1169 lists it as financial: renewal mints the next
+  // contract period the checkout sponsorship resolver reads.
   const stats = await withCronLock(
     "auto-renew-contracts",
-    { failMode: "open" },
+    { failMode: "closed" },
     () => runAutoRenewContracts(),
   );
   console.log(
