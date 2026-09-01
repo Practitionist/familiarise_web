@@ -34,7 +34,7 @@
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply
- *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --join-route-is-deployed
+ *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join
  */
 import "dotenv/config";
@@ -114,8 +114,8 @@ const RECORDING_PERMISSIONS = ["start-recording", "stop-recording"];
  * So the revocation is safe the moment that bundle is serving traffic — and
  * unsafe before it, in exactly the same way and for exactly the same reason as
  * the `join-call` move above: hosts still on the old bundle would lose End Call
- * with nothing to replace it. `--join-route-is-deployed` gates both, because
- * both routes ship in the same deploy.
+ * with nothing to replace it. `--routes-are-deployed` gates both, because both
+ * ship in the same deploy — and the flag is plural for a reason, see parseArgs.
  */
 const END_CALL = "end-call";
 
@@ -139,7 +139,20 @@ function parseArgs(argv: string[]): Options {
   return {
     apply: argv.includes("--apply"),
     restore: argv.includes("--restore-user-join"),
-    deployConfirmed: argv.includes("--join-route-is-deployed"),
+    // #1301 follow-up — the flag is what an operator types from memory; the
+    // refusal message is what they read only AFTER being refused. Naming it
+    // after the join route alone was a trap: verified on 2026-09-01, the join
+    // route IS on prod and the END route is NOT, so an operator asserting
+    // truthfully about the join route would have stripped `end-call` and taken
+    // End Call away from every host — prod's `EndCallButton` still calls
+    // `call.endCall()` client-side.
+    //
+    // The old spelling stays a working alias so any runbook, shell history or
+    // pasted command keeps functioning. Being refused because you typed the
+    // documented flag would be its own small outage.
+    deployConfirmed:
+      argv.includes("--routes-are-deployed") ||
+      argv.includes("--join-route-is-deployed"),
   };
 }
 
@@ -180,7 +193,7 @@ function requireDeployConfirmation(opts: Options): boolean {
       "   the replacement is POST /api/meetings/[meetingId]/end.\n" +
       "\nBoth ship in the same deploy, so one flag asserts both.\n" +
       "\nDeploy first. Confirm the route is live. Then re-run with:\n" +
-      "  npx tsx scripts/stream/ensure-call-type-grants.ts --apply --join-route-is-deployed\n" +
+      "  npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed\n" +
       "\nIf you get it wrong, the rollback is:\n" +
       "  npx tsx scripts/stream/ensure-call-type-grants.ts --apply --restore-user-join\n",
   );
