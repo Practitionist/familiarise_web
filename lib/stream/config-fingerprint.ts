@@ -33,19 +33,56 @@ export function byCodeUnit(
 }
 
 /**
+ * Server-managed metadata that Stream re-stamps on any write to the document
+ * that contains it, whether or not the field itself was touched.
+ *
+ * `updateApp` bumps `event_hooks[].updated_at` even for a write that names only
+ * `moderation_enabled`, so fingerprinting it reports the webhook subscription as
+ * destroyed on every single run. `created_at` is stable and stays in — a change
+ * there really would mean the object was replaced.
+ */
+const SERVER_STAMPED_KEYS = new Set(["updated_at"]);
+
+/**
+ * Order-insensitive, metadata-free view of a config document.
+ *
+ * Arrays are sorted by their own serialised form because Stream returns
+ * `geofences` in a different order on consecutive reads of an unchanged app.
+ * Nothing in these documents is positional — grants, event types and geofences
+ * are all sets — so ordering carries no meaning to lose. If a positional array
+ * is ever fingerprinted, this masks a reordering and needs revisiting.
+ */
+function normalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .map(normalize)
+      .toSorted((a, b) =>
+        byCodeUnit([JSON.stringify(a), null], [JSON.stringify(b), null]),
+      );
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !SERVER_STAMPED_KEYS.has(key))
+      .map(([key, val]) => [key, normalize(val)] as [string, unknown])
+      .toSorted(byCodeUnit),
+  );
+}
+
+/**
  * Stable stringify, so two independent reads of an UNCHANGED document compare
  * equal.
  *
  * Plain `JSON.stringify` preserves key insertion order, and the two snapshots
  * come from two separate HTTP responses. Nothing guarantees those arrive in the
  * same order, so without this a false positive is a matter of luck.
+ *
+ * The false positive is not hypothetical: it fired on the 2026-09-01 rollout and
+ * told the operator the webhook pipeline was down when the hook was untouched.
+ * A drift check that cries wolf every run is a drift check nobody reads.
  */
 export function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, val) => {
-    if (!val || typeof val !== "object" || Array.isArray(val)) return val;
-    const entries = Object.entries(val as Record<string, unknown>);
-    return Object.fromEntries(entries.toSorted(byCodeUnit));
-  });
+  return JSON.stringify(normalize(value));
 }
 
 /**
