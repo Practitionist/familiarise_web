@@ -136,6 +136,58 @@ export interface BucketOptions {
 const knownBuckets = new Set<string>();
 
 /**
+ * Bring an EXISTING bucket's settings up to the ones the caller asked for.
+ *
+ * `createBucket` only runs the first time, so before this the options argument
+ * was silently ignored for every bucket that already existed — a bucket kept
+ * whatever limits it was born with, and raising a caller's `fileSizeLimit` did
+ * nothing at all. The recordings bucket sat at 500MB that way while the code
+ * around it was changed to expect more (#1314).
+ *
+ * Best-effort on purpose: a bucket whose settings cannot be widened is still a
+ * usable bucket, and failing the caller here would turn a config nicety into an
+ * outage. Notably the Supabase FREE plan clamps every object to 50MB no matter
+ * what the bucket says, so this call can legitimately succeed and change
+ * nothing.
+ */
+async function reconcileBucketOptions(
+  bucketName: string,
+  options?: BucketOptions,
+): Promise<void> {
+  if (!options || !supabaseAdmin) return;
+
+  const { data: bucket } = await supabaseAdmin.storage.getBucket(bucketName);
+  if (!bucket) return;
+
+  const wantsSize =
+    options.fileSizeLimit !== undefined &&
+    Number(bucket.file_size_limit ?? 0) !== options.fileSizeLimit;
+  const wantsPublic =
+    options.public !== undefined && bucket.public !== options.public;
+  if (!wantsSize && !wantsPublic) return;
+
+  // `public` is required by updateBucket, so carry the bucket's own value
+  // through rather than flipping visibility as a side effect of a size change.
+  const { error } = await supabaseAdmin.storage.updateBucket(bucketName, {
+    public: options.public ?? bucket.public,
+    ...(options.fileSizeLimit !== undefined
+      ? { fileSizeLimit: options.fileSizeLimit }
+      : {}),
+    ...(options.allowedMimeTypes
+      ? { allowedMimeTypes: options.allowedMimeTypes }
+      : {}),
+  });
+
+  if (error) {
+    console.warn(
+      `Could not update bucket ${bucketName} settings: ${error.message}`,
+    );
+    return;
+  }
+  console.log(`Updated bucket ${bucketName} settings to match caller options`);
+}
+
+/**
  * Ensure a storage bucket exists, create it if it doesn't.
  * Pass options to customize bucket settings per use case.
  * Memoized per process: a bucket confirmed once is never re-probed.
@@ -155,6 +207,7 @@ export const ensureBucketExists = async (
 
     // If no error, bucket exists
     if (!listError) {
+      await reconcileBucketOptions(bucketName, options);
       knownBuckets.add(bucketName);
       return true;
     }
