@@ -12,6 +12,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,6 +28,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized lost dispute handler attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("handle-lost-disputes");
 
     console.log("🔄 Starting lost dispute handler via API...");
     Sentry.logger.info("cron:handle-lost-disputes started");
@@ -56,8 +63,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error in lost dispute handler:", error);
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "handle-lost-disputes" } });
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "handle-lost-disputes" },
+    });
     return NextResponse.json(
       {
         error: "Failed to handle lost disputes",

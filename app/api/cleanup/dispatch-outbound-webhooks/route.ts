@@ -8,6 +8,10 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 import { NextResponse, type NextRequest } from "next/server";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import {
@@ -17,8 +21,7 @@ import {
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const authHeader = req.headers.get("authorization");
-  const cronSecret =
-    process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json(
@@ -31,6 +34,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("dispatch-outbound-webhooks");
     Sentry.logger.info("cron:dispatch-outbound-webhooks started");
     const result = await dispatchOutboundWebhooks();
     Sentry.logger.info("cron:dispatch-outbound-webhooks finished", {
@@ -45,6 +51,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // skips with a 409 instead of double-running.
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
     }
     Sentry.captureException(error, {
       tags: { subsystem: "cron", job: "dispatch-outbound-webhooks" },

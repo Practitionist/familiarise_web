@@ -11,6 +11,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,6 +27,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized slot reconciliation attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("reconcile-slot-availability");
 
     console.log("🔄 Starting slot availability reconciliation via API...");
     Sentry.logger.info("cron:reconcile-slot-availability started");
@@ -50,8 +57,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error in slot reconciliation:", error);
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-slot-availability" } });
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "reconcile-slot-availability" },
+    });
     return NextResponse.json(
       {
         error: "Failed to reconcile slot availability",

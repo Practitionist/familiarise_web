@@ -10,6 +10,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPayoutBatch } from "@/lib/payments/payouts";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,6 +26,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized payout batch creation attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("create-payout-batch");
 
     Sentry.logger.info("cron:create-payout-batch started");
     console.log("🔄 Starting payout batch creation via API...");
@@ -33,7 +40,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ success: true, batchId });
   } catch (error) {
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "create-payout-batch" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "create-payout-batch" },
+    });
     console.error("Error in payout batch creation:", error);
     return NextResponse.json(
       {

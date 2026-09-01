@@ -7,6 +7,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { sweepAbandonedOverageCharges } from "@/scripts/cleanup/sweep-abandoned-overage-charges";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -17,6 +21,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized abandoned overage-charge sweep attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("sweep-abandoned-overage-charges");
 
     Sentry.logger.info("cron:sweep-abandoned-overage-charges started");
     const result = await sweepAbandonedOverageCharges();
@@ -35,7 +42,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sweep-abandoned-overage-charges" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "sweep-abandoned-overage-charges" },
+    });
     console.error("Error in abandoned overage-charge sweep:", error);
     return NextResponse.json(
       {

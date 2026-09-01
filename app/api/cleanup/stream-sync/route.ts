@@ -10,6 +10,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { performStreamUserSync } from "@/scripts/stream/stream-sync";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -22,6 +26,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized stream sync attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("stream-sync");
 
     // Check for dry-run query param
     const dryRun = req.nextUrl.searchParams.get("dry-run") === "true";
@@ -49,7 +56,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });
   } catch (error) {
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "stream-sync" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "stream-sync" },
+    });
     console.error("Error in stream sync:", error);
     return NextResponse.json(
       {

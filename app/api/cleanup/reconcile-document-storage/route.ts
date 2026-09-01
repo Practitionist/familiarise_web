@@ -11,6 +11,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -23,6 +27,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized document storage reconciliation attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("reconcile-document-storage");
 
     console.log("📂 Starting document storage reconciliation via API...");
     Sentry.logger.info("cron:reconcile-document-storage started");
@@ -51,7 +58,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-document-storage" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "reconcile-document-storage" },
+    });
     console.error("Error in document storage reconciliation:", error);
     return NextResponse.json(
       {

@@ -62,7 +62,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }),
     );
 
-    Sentry.logger.info("cron:auto-complete-trials finished", { trialsCompleted: result.count });
+    Sentry.logger.info("cron:auto-complete-trials finished", {
+      trialsCompleted: result.count,
+    });
 
     return NextResponse.json({
       success: true,
@@ -74,7 +76,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "auto-complete-trials" } });
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "auto-complete-trials" },
+    });
     console.error("Error in auto-complete-trials cleanup:", error);
     return NextResponse.json(
       { success: false, error: "Failed to auto-complete trial sessions" },

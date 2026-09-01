@@ -180,7 +180,9 @@ export async function GET(req: NextRequest) {
         });
       } catch (error) {
         console.error(`Error processing payment ${payment.id}:`, error);
-        Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
+        Sentry.captureException(error, {
+          tags: { subsystem: "cron", job: "expire-approval-payments" },
+        });
         // Continue with next payment
       }
     }
@@ -212,7 +214,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("Error in approval payment expiration job:", error);
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "expire-approval-payments" } });
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "expire-approval-payments" },
+    });
     return NextResponse.json(
       {
         error: "Failed to process payment expirations",

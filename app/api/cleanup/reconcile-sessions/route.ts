@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "reconcile-sessions" } });
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "reconcile-sessions" },
+    });
     console.error("Reconcile sessions API route failed:", error);
     return NextResponse.json(
       {

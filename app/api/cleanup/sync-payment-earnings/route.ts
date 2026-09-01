@@ -12,6 +12,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -24,6 +28,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       console.warn("Unauthorized payment-earning sync attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("sync-payment-earnings");
 
     Sentry.logger.info("cron:sync-payment-earnings started");
     console.log("🔄 Starting payment-earning sync via API...");
@@ -50,7 +57,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "sync-payment-earnings" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "sync-payment-earnings" },
+    });
     console.error("Error in payment-earning sync:", error);
     return NextResponse.json(
       {
