@@ -135,6 +135,13 @@ export interface BucketOptions {
 // Buckets proven to exist this process — skip the existence round-trip once seen.
 const knownBuckets = new Set<string>();
 
+/** Set equality for a small allow-list, without sorting. */
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const seen = new Set(b);
+  return a.every((item) => seen.has(item));
+}
+
 /**
  * Bring an EXISTING bucket's settings up to the ones the caller asked for.
  *
@@ -167,11 +174,14 @@ async function reconcileBucketOptions(
   // A MIME-only drift is the one that actually bites: Stream's storage probe
   // uploads `text/plain`, and a bucket still carrying a video-only allow-list
   // rejects it with a 415 that reads like a credentials failure.
-  const currentMime = [...(bucket.allowed_mime_types ?? [])].sort();
+  //
+  // Compared as sets rather than sorted lists. Order carries no meaning in an
+  // allow-list, and sorting would invite Sonar's S2871 fix of `localeCompare` —
+  // ICU collation is locale-dependent, so that can answer differently on CI
+  // than on a laptop, which is exactly the bug class this repo bans it for.
   const wantsMime =
     options.allowedMimeTypes !== undefined &&
-    JSON.stringify([...options.allowedMimeTypes].sort()) !==
-      JSON.stringify(currentMime);
+    !sameMembers(options.allowedMimeTypes, bucket.allowed_mime_types ?? []);
   if (!wantsSize && !wantsPublic && !wantsMime) return;
 
   // `public` is required by updateBucket, so carry the bucket's own value
