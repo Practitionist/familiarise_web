@@ -21,13 +21,14 @@ import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatc
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-
+import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
 
 /**
  * The terminal marker written when a deferred event ages past the give-up cap.
  *
- * Kept in sync with the `NOT: { error: { startsWith: "gave up:" } }` selector
- * above — the prefix is load-bearing, the suffix is for whoever reads the row.
+ * The prefix comes from TERMINAL_ERROR_PREFIXES so the writer and the selector
+ * below cannot drift. They used to be two string literals kept in sync by a
+ * comment asking the next editor to remember.
  */
 function giveUpReason(provider: string): string {
   return provider === "stream"
@@ -144,8 +145,12 @@ async function sweepStuckWebhookEventsUnlocked(
         {
           error: { not: null },
           receivedAt: { gte: giveUpOlderThan },
-          // Never re-drive our own terminal marker.
-          NOT: { error: { startsWith: "gave up:" } },
+          // Never re-drive a terminal marker: our own give-up cap, or a
+          // permanent failure stamped at dispatch (a payload that does not
+          // match its schema will not match it in six days either).
+          AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
+            NOT: { error: { startsWith: prefix } },
+          })),
         },
       ],
     },

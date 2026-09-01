@@ -644,10 +644,19 @@ export const ChatSidebar = () => {
         }
       };
 
-      client.on("*.**", handleEvent); // Listen to all events
+      // #1280 2.6 — the SINGLE-argument form is the "every event" listener.
+      //
+      // `client.on("*.**", handler)` registers under the LITERAL key `"*.**"`;
+      // there is no wildcard matching in the SDK's dispatcher, which only ever
+      // looks up `listeners.all` and `listeners[event.type]`. No Stream event
+      // has the type `"*.**"`, so this entire live channel-list updater never
+      // fired once — the list only ever changed on an explicit refetch, while
+      // the unread badge pointing at it updated correctly because
+      // `useChatUnreadCount` already uses the right form.
+      client.on(handleEvent);
 
       return () => {
-        client.off("*.**", handleEvent);
+        client.off(handleEvent);
       };
     }
     // #248: deps intentionally exclude `fetchChannels` and `activeChannelId` so

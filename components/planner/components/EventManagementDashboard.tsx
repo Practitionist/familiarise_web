@@ -16,6 +16,7 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportClientFailure } from "@/lib/errors/classification/client-failure";
 import { failureToast } from "@/components/ui/failure-toast";
+import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import type { MeetingSlot } from "@/lib/meeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
@@ -87,12 +88,16 @@ export function EventManagementDashboard({
   const { deleteClass } = useClassMutations(consultantId);
   // Create/update moved to the offering editor, which owns its own save; the
   // planner only deletes now.
-  const { deleteConsultationPlan } =
-    useConsultationPlanMutations(consultantId);
-  const { deleteSubscriptionPlan } =
-    useSubscriptionPlanMutations(consultantId);
+  const { deleteConsultationPlan } = useConsultationPlanMutations(consultantId);
+  const { deleteSubscriptionPlan } = useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
+  // #1280 2.7 — `joiningEventId` is state, and it is set AFTER the first await
+  // (`waitForGlobalVideoClient`, which can take a second on a cold provider),
+  // so a second click reads a stale `null` and runs the whole chain again.
+  // A ref is written synchronously and is what actually closes the window;
+  // the state stays because it is what renders the spinner.
+  const guardJoin = useInFlightGuard();
 
   // The join window closes with the clock, not with a re-render. Without a
   // tick the memo below keeps whatever answer it computed when the planner
@@ -138,7 +143,10 @@ export function EventManagementDashboard({
   // Handle joining a meeting from the planner. Reads the connected video
   // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
   // stays off the planner bundle.
-  const handleJoinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
+  const handleJoinWebinarMeeting = (webinar: PlannerWebinarEvent) =>
+    guardJoin(`webinar:${webinar.id}`, () => joinWebinarMeeting(webinar));
+
+  const joinWebinarMeeting = async (webinar: PlannerWebinarEvent) => {
     const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
@@ -226,7 +234,10 @@ export function EventManagementDashboard({
     }
   };
 
-  const handleJoinClassMeeting = async (classEvent: PlannerClassEvent) => {
+  const handleJoinClassMeeting = (classEvent: PlannerClassEvent) =>
+    guardJoin(`class:${classEvent.id}`, () => joinClassMeeting(classEvent));
+
+  const joinClassMeeting = async (classEvent: PlannerClassEvent) => {
     const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
@@ -337,7 +348,10 @@ export function EventManagementDashboard({
       );
       setPendingTrialCounts(counts);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error fetching trial counts:", error);
     }
   }, [consultantId]);
@@ -698,7 +712,6 @@ export function EventManagementDashboard({
           </div>
         </motion.section>
       </div>
-
     </div>
   );
 }
