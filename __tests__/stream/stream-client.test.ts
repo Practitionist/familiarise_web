@@ -513,7 +513,12 @@ describe("Stream Client Module", () => {
     it("throws StreamUnavailableError (and reports it) when the breaker is OPEN with no fallback", async () => {
       mockWithCircuitBreaker = jest.fn(() =>
         Promise.reject(
-          new Error("Redis circuit breaker is OPEN - service unavailable"),
+          // #1302 review — the exact string `createCircuitBreaker("stream")`
+          // throws (lib/redis.ts). The old fixture said "Redis", which passed
+          // only because the guard matches the substring "circuit breaker is
+          // OPEN" — so it was asserting against a message this path cannot
+          // produce.
+          new Error("stream circuit breaker is OPEN - service unavailable"),
         ),
       );
 
@@ -532,7 +537,12 @@ describe("Stream Client Module", () => {
     it("runs the fallback (no throw, no Sentry) when the breaker is OPEN", async () => {
       mockWithCircuitBreaker = jest.fn(() =>
         Promise.reject(
-          new Error("Redis circuit breaker is OPEN - service unavailable"),
+          // #1302 review — the exact string `createCircuitBreaker("stream")`
+          // throws (lib/redis.ts). The old fixture said "Redis", which passed
+          // only because the guard matches the substring "circuit breaker is
+          // OPEN" — so it was asserting against a message this path cannot
+          // produce.
+          new Error("stream circuit breaker is OPEN - service unavailable"),
         ),
       );
 
