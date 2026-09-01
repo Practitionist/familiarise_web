@@ -1045,6 +1045,26 @@ model Organization {
   /// (most large enterprises require ≥90d for grievance / audit).
   streamRecordingRetentionDays Int @default(90)
 
+  /// How long a CHAT channel survives after its conversation goes dormant.
+  ///
+  /// A separate dial from `streamRecordingRetentionDays`, which this used to
+  /// borrow. The two are not the same question: a recording is a stored asset
+  /// with a storage bill attached, while a chat channel is the written record
+  /// of a professional consultation, and an org may reasonably want to keep the
+  /// second far longer than the first.
+  ///
+  /// Default 365 rather than 90 because chat is the cheaper of the two to keep
+  /// and the more expensive to have thrown away. Deliberately NOT clamped to a
+  /// floor: DPDP Rule 8(3) is a narrow preservation-for-State-access duty that
+  /// does not commence until 13 May 2027 (see PR #1266), so a hard minimum here
+  /// would over-state what binds us and rule out a shorter-retention tier.
+  ///
+  /// Any value is honoured. `jobs/stream/expire-event-channels.ts` derives its
+  /// scan window from the LARGEST value configured across all organizations
+  /// rather than from its own constant, so setting this above the 365-day
+  /// default widens the scan instead of silently falling outside it.
+  chatRetentionDays Int @default(365)
+
   // Outbound integration surfaces (Batch 3 + 4 + 5 of PR #655 lockdown).
   webhookEndpoints   WebhookEndpoint[]
   scimTokens         ScimToken[]
@@ -3283,6 +3303,18 @@ model Consultation {
   cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
 
+  /// Freeze ledger for this pair's DIRECT MESSAGE channel, not for a channel of
+  /// this booking's own — see `Webinar.chatFrozenAt` for the group-chat twin.
+  ///
+  /// DM channel ids are keyed on the PAIR (`dm-<a>-<b>`), never on the
+  /// appointment, and `DM_ELIGIBLE_STATUSES` deliberately includes `COMPLETED`
+  /// so a finished booking keeps the conversation open. So the thing that goes
+  /// dormant is the relationship, not the row — and the ledger is read as
+  /// MAX(chatFrozenAt) across every booking the pair shares, and cleared across
+  /// all of them when they book again. Stamping one row would let a second
+  /// booking in the pair look unfrozen while the channel was not.
+  chatFrozenAt DateTime? @db.Timestamptz
+
   appointment Appointment?
 
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -3399,6 +3431,10 @@ model Subscription {
   cancellationNotes  String?             @db.Text
   cancelledAt        DateTime?           @db.Timestamptz
   cancelledBy        String? // userId who cancelled
+
+  /// Freeze ledger for this pair's DM channel. See `Consultation.chatFrozenAt`
+  /// for why it is read as a MAX across the pair rather than per row.
+  chatFrozenAt DateTime? @db.Timestamptz
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
