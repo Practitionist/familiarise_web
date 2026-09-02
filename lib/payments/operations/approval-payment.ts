@@ -428,23 +428,26 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
  * Build metadata for webhook processing
  * This metadata will be passed to handlePaymentSuccess() when payment completes
  */
-function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
-  appointmentId: string;
-  appointmentType: string;
-  [key: string]: string;
-} {
+function buildApprovalMetadata(
+  params: CreateApprovalPaymentParams,
+): Record<string, string> {
   const metadata: Record<string, string> = {
-    // Same shape as direct checkout (buildPaymentMetadata): the real anchor
-    // lives on the Payment row, which is what the capture handler branches
-    // on; the sentinel here only feeds the legacy-create path when there is
-    // genuinely no appointment yet.
-    appointmentId: params.appointmentId ?? "pending",
     appointmentType: params.appointmentType,
     userId: params.userId,
     planId: params.planId,
     notes: params.notes || "",
     isApprovalFlow: "true", // Flag to indicate this is from approval flow
   };
+
+  // #1181 — absent, never the string "pending". The real anchor lives on the
+  // Payment row, which is what the capture handler branches on, so the
+  // sentinel bought nothing and cost the one thing a metadata key is for: a
+  // reader can no longer tell "no appointment yet" from an appointment that
+  // happens to be called pending. The sibling Payment column already writes
+  // null here; gateway notes are string-valued, so absence is that null.
+  if (params.appointmentId) {
+    metadata.appointmentId = params.appointmentId;
+  }
 
   // Add consultation-specific fields
   if (params.consultationId) {
@@ -479,11 +482,7 @@ function buildApprovalMetadata(params: CreateApprovalPaymentParams): {
     metadata.schedulingPeriodEndsAt = params.schedulingPeriodEndsAt;
   }
 
-  return metadata as {
-    appointmentId: string;
-    appointmentType: string;
-    [key: string]: string;
-  };
+  return metadata;
 }
 
 /**
