@@ -46,13 +46,11 @@ const recordBookingUtilization = jest.fn().mockResolvedValue({
   consumedPaiseAfter: 0,
   creditBudgetPaise: null,
 });
-const reverseBookingUtilization = jest
-  .fn()
-  .mockResolvedValue({
-    reversed: true,
-    engagementsReversed: 1,
-    fullyReversed: false,
-  });
+const reverseBookingUtilization = jest.fn().mockResolvedValue({
+  reversed: true,
+  engagementsReversed: 1,
+  fullyReversed: false,
+});
 jest.mock("../../lib/api/organizations/program-helpers", () => ({
   __esModule: true,
   recordBookingUtilization: (...args: unknown[]) =>
@@ -189,6 +187,7 @@ beforeEach(() => {
       args?.where?.status === "ACTIVE" ? null : ROLLED_ASSIGNMENT,
   );
   recordBookingUtilization.mockClear();
+  reverseBookingUtilization.mockClear();
 
   mockValidateFn.mockReset();
   mockValidateFn.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
@@ -244,6 +243,131 @@ describe("#1132 — a dead assignment cannot be debited at allocation time", () 
         paymentId: "pay-1",
         appointmentIds: ["apt-new-1"],
       }),
+    );
+  });
+});
+
+describe("removed subscription sessions return the engagement", () => {
+  /**
+   * Three sessions were metered; this allocation replaces them with one. The
+   * substitution below cancels exactly one of them out — the other two were
+   * removed and never re-created, and used to stay debited forever.
+   */
+  function trackedThreeSessions() {
+    mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
+    mockTx.bookingUtilization.findUnique.mockResolvedValue({
+      id: "util-1",
+      appointmentIds: ["apt-old-1", "apt-old-2", "apt-old-3"],
+    });
+  }
+
+  it("reverses the net removal when 3 sessions become 1", async () => {
+    trackedThreeSessions();
+    // Post-delete/post-create state: only the placeholder and the new session
+    // are still live, so all three tracked ids are stale.
+    mockTx.subscription.findUnique.mockResolvedValue({
+      ...subscriptionFixture(),
+      appointments: [
+        {
+          id: "placeholder-apt",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [ORG_PAYMENT],
+        },
+        {
+          id: "apt-new-1",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [],
+        },
+      ],
+    });
+
+    const result = await allocateOneSession();
+
+    expect(result.error).toBeUndefined();
+    expect(reverseBookingUtilization).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({
+        paymentId: "pay-1",
+        engagementsToReverse: 2,
+      }),
+    );
+    // One stale id was substituted by the new session, so nothing new is
+    // debited on top of the reversal.
+    expect(recordBookingUtilization).not.toHaveBeenCalled();
+  });
+
+  it("reverses nothing on a like-for-like reschedule", async () => {
+    mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
+    mockTx.bookingUtilization.findUnique.mockResolvedValue({
+      id: "util-1",
+      appointmentIds: ["apt-old-1"],
+    });
+    mockTx.subscription.findUnique.mockResolvedValue({
+      ...subscriptionFixture(),
+      appointments: [
+        {
+          id: "placeholder-apt",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [ORG_PAYMENT],
+        },
+        {
+          id: "apt-new-1",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [],
+        },
+      ],
+    });
+
+    const result = await allocateOneSession();
+
+    expect(result.error).toBeUndefined();
+    // One out, one in: the substitution absorbs it entirely.
+    expect(reverseBookingUtilization).not.toHaveBeenCalled();
+    expect(recordBookingUtilization).not.toHaveBeenCalled();
+  });
+
+  it("reverses nothing when no tracked session went away", async () => {
+    mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
+    mockTx.bookingUtilization.findUnique.mockResolvedValue({
+      id: "util-1",
+      appointmentIds: ["apt-old-1"],
+    });
+    mockTx.subscription.findUnique.mockResolvedValue({
+      ...subscriptionFixture(),
+      appointments: [
+        {
+          id: "placeholder-apt",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [ORG_PAYMENT],
+        },
+        {
+          id: "apt-old-1",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [],
+        },
+        {
+          id: "apt-new-1",
+          organizationId: "org-1",
+          slotsOfAppointment: [],
+          payment: [],
+        },
+      ],
+    });
+
+    const result = await allocateOneSession();
+
+    expect(result.error).toBeUndefined();
+    expect(reverseBookingUtilization).not.toHaveBeenCalled();
+    // The new session is genuinely additional, so it IS debited.
+    expect(recordBookingUtilization).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({ appointmentIds: ["apt-new-1"] }),
     );
   });
 });

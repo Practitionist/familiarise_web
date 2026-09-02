@@ -81,6 +81,7 @@ import {
 } from "./errors";
 import {
   recordBookingUtilization,
+  reverseBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
 import {
@@ -3386,6 +3387,24 @@ export class SlotAllocationService {
           where: { id: existingUtil.id },
           data: { appointmentIds: [...trackedLive, ...substituted] },
         });
+
+        // The substitution above only cancels out the sessions that were
+        // REPLACED. Sessions removed and not re-created in this allocation
+        // (a partial reschedule that drops 3 and re-places 1, an in-progress
+        // reallocation that shrinks the remaining plan) were left debited
+        // forever: the org kept paying for engagements the consultee will
+        // never take, and the seat never came back. Give the difference back
+        // through the ledger-derived reversal, which is idempotent and clamps
+        // itself to what is still reversible.
+        const netRemoved = staleCount - substituted.length;
+        if (netRemoved > 0) {
+          await reverseBookingUtilization(tx, {
+            paymentId: orgPayment.id,
+            engagementsToReverse: netRemoved,
+            reason: "Subscription sessions removed during re-allocation",
+          });
+        }
+
         if (idsToDebit.length === 0) return;
       }
     }
