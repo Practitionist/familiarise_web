@@ -393,6 +393,9 @@ export const ChatSidebar = () => {
 
       if (!hasMore) return;
 
+      // The scope this page belongs to, captured before the request goes out.
+      const pageKey = computeFetchKey();
+
       setIsLoadingMore(true);
 
       try {
@@ -420,6 +423,17 @@ export const ChatSidebar = () => {
         };
 
         const response = await client.queryChannels(filter, sort, options);
+
+        // Staleness guard, the same one `fetchChannels` applies to its own late
+        // response: switching org mid-pagination let Acme's page two land on
+        // Zeta's list, cross-tenanting the inbox the scope filter exists to
+        // keep apart — and corrupting the offset the next page reads. Stale
+        // when a newer scope has already loaded, or when one is in flight.
+        const supersededByLoaded = fetchedKeyRef.current !== pageKey;
+        const supersededByInFlight =
+          inFlightFetchKeyRef.current !== null &&
+          inFlightFetchKeyRef.current !== pageKey;
+        if (supersededByLoaded || supersededByInFlight) return;
 
         fetchedCountRef.current[type] += response.length;
 
@@ -449,6 +463,7 @@ export const ChatSidebar = () => {
       hasMoreDMChannels,
       isLoadingMore,
       scope,
+      computeFetchKey,
     ],
   );
 

@@ -44,7 +44,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     trialSession: {
       findUnique: jest.fn(),
-      delete: jest.fn(),
+      deleteMany: jest.fn(),
       create: jest.fn(),
     },
     subscriptionPlan: { findUnique: jest.fn() },
@@ -64,6 +64,7 @@ const PLAN = "plan-1";
 const mockedSession = getSession as jest.Mock;
 const mockedFindUnique = prisma.trialSession.findUnique as jest.Mock;
 const mockedCreate = prisma.trialSession.create as jest.Mock;
+const mockedDeleteMany = prisma.trialSession.deleteMany as jest.Mock;
 
 function uniqueViolation() {
   return new Prisma.PrismaClientKnownRequestError(
@@ -100,6 +101,7 @@ beforeEach(() => {
   });
   // No prior trial for the pair — the read-side gate passes.
   mockedFindUnique.mockResolvedValue(null);
+  mockedDeleteMany.mockResolvedValue({ count: 1 });
   (prisma.subscriptionPlan.findUnique as jest.Mock).mockResolvedValue({
     id: PLAN,
     title: "Career Clarity",
@@ -153,6 +155,25 @@ describe("duplicate trial requests (defect 7)", () => {
 
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBeUndefined();
+  });
+
+  it("answers 409, not 500, when the rival clears the freed row first", async () => {
+    // A declined trial frees the pair, so both requests read it and both go to
+    // clear it. `delete` would raise P2025 on the loser and fall into the
+    // generic catch as a 500 — one statement earlier than the unique violation
+    // this route already answers calmly. `deleteMany` reports a count of zero
+    // instead, and the insert stays the arbiter.
+    mockedFindUnique.mockResolvedValue({
+      id: "trial-freed",
+      status: TrialSessionStatus.REJECTED,
+    });
+    mockedDeleteMany.mockResolvedValue({ count: 0 });
+    mockedCreate.mockRejectedValue(uniqueViolation());
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("TRIAL_ALREADY_REQUESTED");
   });
 
   it("creates normally when nothing collides", async () => {

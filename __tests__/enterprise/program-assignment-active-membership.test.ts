@@ -24,11 +24,13 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     program: { findFirst: (...a: unknown[]) => mockProgramFindFirst(...a) },
-    membership: {
-      findFirst: (...a: unknown[]) => mockMembershipFindFirst(...a),
-    },
+    // The membership read lives INSIDE the transaction now, so it is reached
+    // through `tx`, not the top-level client.
     $transaction: (fn: unknown) =>
       (fn as (tx: unknown) => Promise<unknown>)({
+        membership: {
+          findFirst: (...a: unknown[]) => mockMembershipFindFirst(...a),
+        },
         program: { updateMany: jest.fn() },
         orgAuditLog: { create: (...a: unknown[]) => mockAuditCreate(...a) },
       }),
@@ -128,5 +130,26 @@ describe("program assignment requires an ACTIVE membership (B2B gap 10)", () => 
 
     expect(res.status).toBe(400);
     expect(mockAdjustActiveSeatCount).not.toHaveBeenCalled();
+  });
+
+  it("reads the membership inside the serializable transaction", async () => {
+    // Checking outside and claiming inside is a check-then-act: a suspension
+    // landing in the gap still took a billed seat. The read has to share the
+    // claim's conflict boundary, which means it has to run on `tx`.
+    mockMembershipFindFirst.mockResolvedValue({
+      id: MEMBERSHIP,
+      status: "ACTIVE",
+    });
+
+    await POST(request(), params());
+
+    // The route's only membership read is the one the tx mock serves; a
+    // top-level `prisma.membership` would throw on an undefined delegate.
+    expect(mockMembershipFindFirst).toHaveBeenCalledTimes(1);
+    expect(mockMembershipFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: MEMBERSHIP, organizationId: ORG },
+      }),
+    );
   });
 });

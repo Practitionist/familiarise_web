@@ -222,7 +222,18 @@ export async function DELETE(
           }
           return userSlots.length;
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          // The disconnect loop is one round trip per seat and a months-long
+          // class carries every past session on the roster, so the default 5s
+          // budget is reachable. A P2028 timeout is not a serialization abort:
+          // withSerializableRetry rethrows it, the handler answers 500, and the
+          // rollback leaves the seat held and the fee unrefunded. House budget
+          // (see lib/payments/operations/*), shared with the webinar handler so
+          // the two removals keep one concurrency contract.
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
       ),
     );
 

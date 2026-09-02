@@ -172,6 +172,13 @@ describe("refundRemovedAttendeeSeat", () => {
       expect.objectContaining({ paymentId: "pay-seat" }),
     );
     expect(result?.amountRefundedPaise).toBe(50_000);
+    // The rail rides out to the organiser's toast, which must not claim a
+    // gateway refund for a seat the sponsor paid for.
+    expect(result?.rail).toBe("INTERNAL");
+    // And the attendee is told nothing: the value went back to the org's
+    // wallet/accrual/licence, which they never held. Notifying on every rail
+    // promises this person money that is never coming.
+    expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
   });
 
   it("mints nothing for a free seat", async () => {

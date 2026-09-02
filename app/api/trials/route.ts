@@ -300,7 +300,13 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      await prisma.trialSession.delete({ where: { id: existingTrial.id } });
+      // deleteMany, not delete: two requests can both read the same freed row
+      // and both try to clear it, and the loser of that race gets P2025 — which
+      // escapes to the generic catch as a 500, before the create-side unique
+      // violation below can turn it into the calm 409 this pair already has an
+      // answer for. A count of 0 means somebody else freed it; either way the
+      // slot is clear and the insert decides who gets it.
+      await prisma.trialSession.deleteMany({ where: { id: existingTrial.id } });
     }
 
     // Verify the subscription plan exists and has trials enabled

@@ -136,7 +136,14 @@ beforeEach(() => {
   mockClassFindFirst.mockResolvedValue({ id: "class-1" });
   mockFindLiveEventSlot.mockResolvedValue(null);
   mockSlotUpdate.mockResolvedValue({});
-  mockRefundRemovedAttendeeSeat.mockResolvedValue({ refunded: true });
+  // The real contract of refundRemovedAttendeeSeat — the roster client reads
+  // all three fields to build the organiser's toast, so a stub of some invented
+  // shape would freeze a response body the producer never returns.
+  mockRefundRemovedAttendeeSeat.mockResolvedValue({
+    amountRefundedPaise: 50_000,
+    refundPct: 100,
+    rail: "GATEWAY",
+  });
   mockRemoveUserFromEventChannel.mockResolvedValue({ success: true });
   mockTransaction.mockImplementation((fn: unknown) =>
     runInteractiveTransaction(fn),
@@ -174,8 +181,13 @@ describe.each(CASES)(
       await handler(request(), { params: params() });
 
       expect(mockTransaction).toHaveBeenCalledTimes(1);
+      // Budgets, not just the isolation level: the per-seat disconnect loop can
+      // outrun Prisma's default 5s, and a P2028 timeout is rethrown rather than
+      // retried — 500, seat still held, fee not returned.
       expect(mockTransaction.mock.calls[0][1]).toEqual({
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
       });
     });
 
@@ -187,7 +199,11 @@ describe.each(CASES)(
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         removed: true,
-        refund: { refunded: true },
+        refund: {
+          amountRefundedPaise: 50_000,
+          refundPct: 100,
+          rail: "GATEWAY",
+        },
       });
       expect(mockSlotUpdate).toHaveBeenCalledTimes(2);
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledTimes(1);
