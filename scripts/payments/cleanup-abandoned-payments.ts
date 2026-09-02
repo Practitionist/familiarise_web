@@ -40,6 +40,8 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 export interface CleanupResult {
   success: boolean;
   cleanedCount: number;
+  /** Rows whose status moved since the cohort read; left alone, not failures. */
+  skippedCount: number;
   errorCount: number;
   totalProcessed: number;
   errors: string[];
@@ -107,6 +109,7 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
   const result: CleanupResult = {
     success: false,
     cleanedCount: 0,
+    skippedCount: 0,
     errorCount: 0,
     totalProcessed: 0,
     errors: [],
@@ -169,7 +172,7 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
     // Process each abandoned appointment
     for (const appointment of abandonedAppointments) {
       try {
-        await prisma.$transaction(async (tx) => {
+        const outcome = await prisma.$transaction(async (tx) => {
           // FIX Issue #10: Re-check payment status before cleanup
           // Prevents race condition where payment webhook fires during cleanup
           let shouldSkip = false;
@@ -194,7 +197,7 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
           }
 
           if (shouldSkip) {
-            return;
+            return "skipped" as const;
           }
 
           // Cancel payment intents
@@ -312,7 +315,7 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
                 console.log(
                   `⏭️ Skipped appointment ${appointment.id} — status changed since the sweep read`,
                 );
-                return;
+                return "skipped" as const;
               }
               await transitionSlotCompletion(tx, {
                 where: { appointmentId: appointment.id, deletedAt: null },
@@ -345,12 +348,17 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
               );
             }
           }
+          return "cleaned" as const;
         });
 
-        result.cleanedCount++;
-        console.log(
-          `✅ Successfully cleaned up appointment: ${appointment.id}`,
-        );
+        if (outcome === "skipped") {
+          result.skippedCount++;
+        } else {
+          result.cleanedCount++;
+          console.log(
+            `✅ Successfully cleaned up appointment: ${appointment.id}`,
+          );
+        }
       } catch (error) {
         result.errorCount++;
         const errorMessage =
@@ -372,6 +380,9 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
     console.log(`\n📈 Cleanup Summary:`);
     console.log(
       `   ✅ Successfully cleaned: ${result.cleanedCount} appointments`,
+    );
+    console.log(
+      `   ⏭️ Skipped (status moved since the read): ${result.skippedCount} appointments`,
     );
     console.log(`   ❌ Failed to clean: ${result.errorCount} appointments`);
     console.log(`   📊 Total processed: ${result.totalProcessed} appointments`);
@@ -429,6 +440,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
   const result: CleanupResult = {
     success: false,
     cleanedCount: 0,
+    skippedCount: 0,
     errorCount: 0,
     totalProcessed: 0,
     errors: [],
@@ -470,7 +482,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
     // Process each expired consultation
     for (const consultation of expiredConsultations) {
       try {
-        await prisma.$transaction(async (tx) => {
+        const outcome = await prisma.$transaction(async (tx) => {
           // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
           // REJECTED reads as "the consultant declined" on every surface, and
           // the CAS keeps a capture that raced this sweep from being clobbered.
@@ -485,7 +497,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
             console.log(
               `⏭️ Skipped consultation ${consultation.id} — status changed since the sweep read`,
             );
-            return;
+            return "skipped" as const;
           }
 
           // Release the tentative hold by status; the rows stay for support.
@@ -516,11 +528,16 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
           }
 
           console.log(
-            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to REJECTED`,
+            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
           );
+          return "cleaned" as const;
         });
 
-        result.cleanedCount++;
+        if (outcome === "skipped") {
+          result.skippedCount++;
+        } else {
+          result.cleanedCount++;
+        }
       } catch (error) {
         result.errorCount++;
         const errorMessage =
@@ -541,6 +558,9 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
     console.log(`\n📈 Expired Consultation Cleanup Summary:`);
     console.log(
       `   ✅ Successfully cleaned: ${result.cleanedCount} consultations`,
+    );
+    console.log(
+      `   ⏭️ Skipped (status moved since the read): ${result.skippedCount} consultations`,
     );
     console.log(`   ❌ Failed to clean: ${result.errorCount} consultations`);
     console.log(

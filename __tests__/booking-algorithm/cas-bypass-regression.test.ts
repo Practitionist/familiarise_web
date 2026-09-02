@@ -42,24 +42,30 @@ describe("group-event status writes go through the CAS helpers", () => {
 });
 
 describe("sweeps cancel only from a cancellable state", () => {
-  it("cleanup-invalid-appointments carries CANCELLABLE_FROM in every WHERE", () => {
+  it("cleanup-invalid-appointments CASes each request before releasing its slots, in one tx", () => {
     const src = read("scripts/appointments/cleanup-invalid-appointments.ts");
-    const bare = src.match(
-      /where: \{ id: \{ in: \w+ \} \},\s*data: \{ status/g,
-    );
-    expect(bare).toBeNull();
+    // Four sweeps, one helper: the request CAS (CANCELLABLE_FROM) commits
+    // first and the slot release is scoped to that request, inside one tx.
     expect(
-      (src.match(/status: \{ in: CANCELLABLE_FROM \}/g) ?? []).length,
+      (
+        src.match(
+          /cancelRequestsAndReleaseSlots\(\s*"(consultation|subscription)"/g,
+        ) ?? []
+      ).length,
     ).toBe(4);
+    expect((src.match(/fromIn: CANCELLABLE_FROM/g) ?? []).length).toBe(2);
+    expect(src).not.toMatch(/transitionSlotCompletion\(prisma,/);
   });
 
-  it("cleanup-stale-pending-consultations uses the helper with a PENDING-only from-set", () => {
+  it("cleanup-stale-pending-consultations' from-set is its own cohort (APPROVED*)", () => {
     const src = read(
       "scripts/appointments/cleanup-stale-pending-consultations.ts",
     );
-    expect(src).not.toMatch(/tx\.consultation\.update\(/);
-    expect(src).toContain("transitionConsultationRequest(");
-    expect(src).toContain("fromIn: [AppointmentStatus.PENDING]");
+    expect(src).toContain("transitionConsultationRequest(tx, {");
+    expect(src).toMatch(
+      /fromIn: \[\s*AppointmentStatus\.APPROVED,\s*AppointmentStatus\.APPROVED_PENDING_PAYMENT,?\s*\]/,
+    );
+    expect(src).not.toContain("fromIn: [AppointmentStatus.PENDING]");
   });
 });
 

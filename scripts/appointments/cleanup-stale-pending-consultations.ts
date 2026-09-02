@@ -138,12 +138,16 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
       try {
         // Cancel the consultation and release tentative slots
         const released = await prisma.$transaction(async (tx) => {
-          // CAS (#1319): the cohort is PENDING-only; a request approved since
-          // the read matches zero rows and is skipped, never cancelled.
+          // CAS (#1319): the cohort is APPROVED / APPROVED_PENDING_PAYMENT; a
+          // request that was paid or scheduled since the read matches zero
+          // rows and is skipped, never cancelled.
           await transitionConsultationRequest(tx, {
             where: { id: consultation.id },
             to: AppointmentStatus.CANCELLED,
-            fromIn: [AppointmentStatus.PENDING],
+            fromIn: [
+              AppointmentStatus.APPROVED,
+              AppointmentStatus.APPROVED_PENDING_PAYMENT,
+            ],
             data: {
               cancellationNotes: `Auto-cancelled: No payment activity for ${STALE_THRESHOLD_DAYS} days`,
               cancelledAt: new Date(),

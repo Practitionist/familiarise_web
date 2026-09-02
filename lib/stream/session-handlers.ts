@@ -144,6 +144,8 @@ export async function handleSessionEnded(
       const moved = await transitionSlotCompletion(tx, {
         where: { id: meetingSession.slotOfAppointmentId },
         to: "COMPLETED",
+        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
+        fromIn: ["SCHEDULED"],
         data: { completedAt: endedAt },
         allowZero: true,
       });
@@ -261,6 +263,8 @@ export async function handleCallEnded(
       const moved = await transitionSlotCompletion(tx, {
         where: { id: meetingSession.slotOfAppointmentId },
         to: "COMPLETED",
+        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
+        fromIn: ["SCHEDULED"],
         data: { completedAt: endedAt },
         allowZero: true,
       });

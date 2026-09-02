@@ -202,7 +202,11 @@ export const SLOT_COMPLETION_ALLOWED_FROM: Record<
 > = {
   SCHEDULED: ["RESCHEDULED"],
   COMPLETED: ["SCHEDULED", "UNVERIFIED"],
-  UNVERIFIED: ["SCHEDULED"],
+  // COMPLETED → UNVERIFIED is the maintenance drain pulling a session it cut
+  // short back for human review when the call-ended webhook landed first.
+  // Automated completion (Stream webhooks) passes fromIn: ["SCHEDULED"] so it
+  // never lifts a held-for-review slot; only a human does that.
+  UNVERIFIED: ["SCHEDULED", "COMPLETED"],
   CANCELLED: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"],
   RESCHEDULED: ["SCHEDULED", "RESCHEDULED"],
 };

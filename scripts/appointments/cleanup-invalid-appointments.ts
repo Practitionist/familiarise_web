@@ -22,10 +22,63 @@
 import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
 import {
   CANCELLABLE_FROM,
+  IllegalTransitionError,
+  transitionConsultationRequest,
   transitionSlotCompletion,
+  transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+
+/**
+ * #1319 — per request, in one transaction: CAS the request to CANCELLED
+ * first, then soft-cancel its slots. Cancelling every candidate's slots on the
+ * raw client before the CAS decided left a booking that had moved to a
+ * non-cancellable state with its status intact and its slots gone.
+ */
+async function cancelRequestsAndReleaseSlots(
+  kind: "consultation" | "subscription",
+  ids: string[],
+): Promise<{ cancelled: number; skipped: number; slotsCancelled: number }> {
+  const outcome = { cancelled: 0, skipped: 0, slotsCancelled: 0 };
+  for (const id of ids) {
+    await prisma.$transaction(async (tx) => {
+      try {
+        if (kind === "consultation") {
+          await transitionConsultationRequest(tx, {
+            where: { id },
+            to: AppointmentStatus.CANCELLED,
+            fromIn: CANCELLABLE_FROM,
+          });
+        } else {
+          await transitionSubscriptionRequest(tx, {
+            where: { id },
+            to: AppointmentStatus.CANCELLED,
+            fromIn: CANCELLABLE_FROM,
+          });
+        }
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        outcome.skipped++;
+        return;
+      }
+      outcome.cancelled++;
+      outcome.slotsCancelled += await transitionSlotCompletion(tx, {
+        where: {
+          appointment:
+            kind === "consultation"
+              ? { consultation: { id } }
+              : { subscription: { id } },
+          deletedAt: null,
+        },
+        to: SlotCompletionStatus.CANCELLED,
+        data: { deletedAt: new Date() },
+        allowZero: true,
+      });
+    });
+  }
+  return outcome;
+}
 
 /**
  * Result structure for cleanup operations
@@ -166,33 +219,17 @@ export async function cleanupDuplicateConsultations(): Promise<{
         `[AUDIT] About to cancel ${duplicateIds.length} duplicate consultations: ${duplicateIds.join(", ")}`,
       );
 
-      // First, release slots associated with these consultations
-      // #1319 — soft-cancel the slots (rule 2): a hard delete here took
-      // confirmed rows and any Payment-bearing history with them.
-      const slotsCancelled = await transitionSlotCompletion(prisma, {
-        where: {
-          appointment: { consultation: { id: { in: duplicateIds } } },
-          deletedAt: null,
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        allowZero: true,
-      });
-      console.log(
-        `🔓 Cancelled ${slotsCancelled} slots from duplicate consultations`,
+      const outcome = await cancelRequestsAndReleaseSlots(
+        "consultation",
+        duplicateIds,
       );
-
-      // Then cancel the consultations
-      // CAS: only rows still in a cancellable state move; anything that
-      // became SCHEDULED/COMPLETED since the read is reported, not clobbered.
-      const result = await prisma.consultation.updateMany({
-        where: { id: { in: duplicateIds }, status: { in: CANCELLABLE_FROM } },
-        data: { status: AppointmentStatus.CANCELLED },
-      });
-      cancelledCount = result.count;
-      if (result.count < duplicateIds.length) {
+      cancelledCount = outcome.cancelled;
+      console.log(
+        `🔓 Cancelled ${outcome.slotsCancelled} slots from duplicate consultations`,
+      );
+      if (outcome.skipped > 0) {
         console.log(
-          `⏭️ ${duplicateIds.length - result.count} skipped — moved out of a cancellable state since the sweep read`,
+          `⏭️ ${outcome.skipped} skipped — moved out of a cancellable state since the sweep read`,
         );
       }
       console.log(`✅ Cancelled ${cancelledCount} duplicate consultations`);
@@ -291,33 +328,17 @@ export async function cleanupDuplicateSubscriptions(): Promise<{
     if (duplicatesToCancel.size > 0) {
       const duplicateIds = Array.from(duplicatesToCancel);
 
-      // First, release slots associated with these subscriptions
-      // #1319 — soft-cancel the slots (rule 2): a hard delete here took
-      // confirmed rows and any Payment-bearing history with them.
-      const slotsCancelled = await transitionSlotCompletion(prisma, {
-        where: {
-          appointment: { subscription: { id: { in: duplicateIds } } },
-          deletedAt: null,
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        allowZero: true,
-      });
-      console.log(
-        `🔓 Cancelled ${slotsCancelled} slots from duplicate subscriptions`,
+      const outcome = await cancelRequestsAndReleaseSlots(
+        "subscription",
+        duplicateIds,
       );
-
-      // Then cancel the subscriptions
-      // CAS: only rows still in a cancellable state move; anything that
-      // became SCHEDULED/COMPLETED since the read is reported, not clobbered.
-      const result = await prisma.subscription.updateMany({
-        where: { id: { in: duplicateIds }, status: { in: CANCELLABLE_FROM } },
-        data: { status: AppointmentStatus.CANCELLED },
-      });
-      cancelledCount = result.count;
-      if (result.count < duplicateIds.length) {
+      cancelledCount = outcome.cancelled;
+      console.log(
+        `🔓 Cancelled ${outcome.slotsCancelled} slots from duplicate subscriptions`,
+      );
+      if (outcome.skipped > 0) {
         console.log(
-          `⏭️ ${duplicateIds.length - result.count} skipped — moved out of a cancellable state since the sweep read`,
+          `⏭️ ${outcome.skipped} skipped — moved out of a cancellable state since the sweep read`,
         );
       }
       console.log(`✅ Cancelled ${cancelledCount} duplicate subscriptions`);
@@ -392,33 +413,17 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
 
     // Batch cancel invalid consultations and release their slots
     if (invalidIds.length > 0) {
-      // First, release slots associated with these consultations
-      // #1319 — soft-cancel the slots (rule 2): a hard delete here took
-      // confirmed rows and any Payment-bearing history with them.
-      const slotsCancelled = await transitionSlotCompletion(prisma, {
-        where: {
-          appointment: { consultation: { id: { in: invalidIds } } },
-          deletedAt: null,
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        allowZero: true,
-      });
-      console.log(
-        `🔓 Cancelled ${slotsCancelled} slots from invalid duration consultations`,
+      const outcome = await cancelRequestsAndReleaseSlots(
+        "consultation",
+        invalidIds,
       );
-
-      // Then cancel the consultations
-      // CAS: only rows still in a cancellable state move; anything that
-      // became SCHEDULED/COMPLETED since the read is reported, not clobbered.
-      const result = await prisma.consultation.updateMany({
-        where: { id: { in: invalidIds }, status: { in: CANCELLABLE_FROM } },
-        data: { status: AppointmentStatus.CANCELLED },
-      });
-      cancelledCount = result.count;
-      if (result.count < invalidIds.length) {
+      cancelledCount = outcome.cancelled;
+      console.log(
+        `🔓 Cancelled ${outcome.slotsCancelled} slots from invalid duration consultations`,
+      );
+      if (outcome.skipped > 0) {
         console.log(
-          `⏭️ ${invalidIds.length - result.count} skipped — moved out of a cancellable state since the sweep read`,
+          `⏭️ ${outcome.skipped} skipped — moved out of a cancellable state since the sweep read`,
         );
       }
       console.log(
@@ -487,33 +492,17 @@ export async function cleanupInvalidDurationSubscriptions(): Promise<{
 
     // Batch cancel invalid subscriptions and release their slots
     if (invalidIds.length > 0) {
-      // First, release slots associated with these subscriptions
-      // #1319 — soft-cancel the slots (rule 2): a hard delete here took
-      // confirmed rows and any Payment-bearing history with them.
-      const slotsCancelled = await transitionSlotCompletion(prisma, {
-        where: {
-          appointment: { subscription: { id: { in: invalidIds } } },
-          deletedAt: null,
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        allowZero: true,
-      });
-      console.log(
-        `🔓 Cancelled ${slotsCancelled} slots from invalid duration subscriptions`,
+      const outcome = await cancelRequestsAndReleaseSlots(
+        "subscription",
+        invalidIds,
       );
-
-      // Then cancel the subscriptions
-      // CAS: only rows still in a cancellable state move; anything that
-      // became SCHEDULED/COMPLETED since the read is reported, not clobbered.
-      const result = await prisma.subscription.updateMany({
-        where: { id: { in: invalidIds }, status: { in: CANCELLABLE_FROM } },
-        data: { status: AppointmentStatus.CANCELLED },
-      });
-      cancelledCount = result.count;
-      if (result.count < invalidIds.length) {
+      cancelledCount = outcome.cancelled;
+      console.log(
+        `🔓 Cancelled ${outcome.slotsCancelled} slots from invalid duration subscriptions`,
+      );
+      if (outcome.skipped > 0) {
         console.log(
-          `⏭️ ${invalidIds.length - result.count} skipped — moved out of a cancellable state since the sweep read`,
+          `⏭️ ${outcome.skipped} skipped — moved out of a cancellable state since the sweep read`,
         );
       }
       console.log(

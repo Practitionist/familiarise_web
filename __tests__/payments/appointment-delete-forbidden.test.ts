@@ -32,6 +32,9 @@ const FORBIDDEN = [
   /\bappointment\.deleteMany\(/,
   /\bconsultation\.deleteMany\(/,
   /\bsubscription\.deleteMany\(/,
+  // A Payment row is the money record this whole file exists to keep.
+  /\bpayment\.delete\(/,
+  /\bpayment\.deleteMany\(/,
 ];
 
 describe("no sweep hard-deletes a booking row (#1319)", () => {
@@ -45,13 +48,15 @@ describe("no sweep hard-deletes a booking row (#1319)", () => {
     });
   }
 
-  it("the two sweeps that used to delete slots now soft-cancel them", () => {
+  it("the three sweeps that used to delete slots now soft-cancel them", () => {
     for (const file of [
       "scripts/payments/cleanup-abandoned-payments.ts",
       "scripts/appointments/cleanup-invalid-appointments.ts",
       "scripts/appointments/cleanup-stale-pending-consultations.ts",
     ]) {
       const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+      // Single-row deletes in a loop are the #1074 shape; forbid both forms.
+      expect(source).not.toMatch(/slotOfAppointment\.delete\(/);
       expect(source).not.toMatch(/slotOfAppointment\.deleteMany\(/);
       expect(source).toContain("transitionSlotCompletion(");
     }

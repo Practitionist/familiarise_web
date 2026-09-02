@@ -251,8 +251,10 @@ export async function drainActiveSessions(): Promise<DrainResult> {
           where: { id: session.id },
           data: { endedAt, endedReason: "maintenance" },
         });
-        // CAS (#1319): only a SCHEDULED slot becomes UNVERIFIED; a slot the
-        // customer already cancelled keeps its history.
+        // CAS (#1319): SCHEDULED or COMPLETED becomes UNVERIFIED — COMPLETED
+        // because call.end() above fires the call-ended webhook, which can
+        // land before this write; a slot the customer already cancelled keeps
+        // its history.
         await transitionSlotCompletion(tx, {
           where: { id: session.slotOfAppointmentId },
           to: "UNVERIFIED",

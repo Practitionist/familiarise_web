@@ -255,6 +255,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     const updateData: Prisma.TrialSessionUpdateInput = {};
 
+    // #1319 — status-dependent activity logs and notifications run only after
+
+    // the CAS commits; a raced cancel or webhook must not leave a record of a
+
+    // transition that never happened.
+
+    const afterCommit: Array<() => unknown> = [];
+
     // #1009 — set when this PATCH cancels or rejects the trial. The appointment
     // retirement and the refund both run after the status write commits.
     let deferredCancellation: {
@@ -623,31 +631,35 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         updateData.completedAt = new Date();
 
         // Log activity
-        await logTrialCompleted(
-          existingTrial.consultantProfileId,
-          trialId,
-          {
-            id: existingTrial.consulteeProfile.user.id,
-            name: existingTrial.consulteeProfile.user.name,
-            image: existingTrial.consulteeProfile.user.image,
-          },
-          existingTrial.subscriptionPlan.title,
+        afterCommit.push(() =>
+          logTrialCompleted(
+            existingTrial.consultantProfileId,
+            trialId,
+            {
+              id: existingTrial.consulteeProfile.user.id,
+              name: existingTrial.consulteeProfile.user.name,
+              image: existingTrial.consulteeProfile.user.image,
+            },
+            existingTrial.subscriptionPlan.title,
+          ),
         );
 
         // Notify both parties that the trial is completed
-        void notifyTrialSessionCompleted(
-          [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ],
-          {
-            consultantName:
-              existingTrial.consultantProfile.user.name || "Consultant",
-            consulteeName: existingTrial.consulteeProfile.user.name || "User",
-            planTitle: existingTrial.subscriptionPlan.title,
-            status: TrialSessionStatus.COMPLETED,
-            dashboardUrl: "/dashboard",
-          },
+        afterCommit.push(() =>
+          notifyTrialSessionCompleted(
+            [
+              existingTrial.consultantProfile.user.id,
+              existingTrial.consulteeProfile.user.id,
+            ],
+            {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              status: TrialSessionStatus.COMPLETED,
+              dashboardUrl: "/dashboard",
+            },
+          ),
         );
       }
 
@@ -656,19 +668,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         status === TrialSessionStatus.CANCELLED ||
         status === TrialSessionStatus.REJECTED
       ) {
-        void notifyTrialSessionCancelled(
-          [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ],
-          {
-            consultantName:
-              existingTrial.consultantProfile.user.name || "Consultant",
-            consulteeName: existingTrial.consulteeProfile.user.name || "User",
-            planTitle: existingTrial.subscriptionPlan.title,
-            status,
-            dashboardUrl: "/dashboard",
-          },
+        afterCommit.push(() =>
+          notifyTrialSessionCancelled(
+            [
+              existingTrial.consultantProfile.user.id,
+              existingTrial.consulteeProfile.user.id,
+            ],
+            {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              status,
+              dashboardUrl: "/dashboard",
+            },
+          ),
         );
 
         // #1009 — soft-cancel, never delete. This used to hard-delete the
@@ -748,16 +762,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         };
 
         // Log the conversion activity
-        void logTrialConverted(
-          existingTrial.consultantProfileId,
-          trialId,
-          subscriptionId,
-          {
-            id: existingTrial.consulteeProfile.user.id,
-            name: existingTrial.consulteeProfile.user.name || "User",
-            image: existingTrial.consulteeProfile.user.image,
-          },
-          existingTrial.subscriptionPlan.title,
+        afterCommit.push(() =>
+          logTrialConverted(
+            existingTrial.consultantProfileId,
+            trialId,
+            subscriptionId,
+            {
+              id: existingTrial.consulteeProfile.user.id,
+              name: existingTrial.consulteeProfile.user.name || "User",
+              image: existingTrial.consulteeProfile.user.image,
+            },
+            existingTrial.subscriptionPlan.title,
+          ),
         );
       }
     }
@@ -818,6 +834,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         },
       });
     });
+    for (const effect of afterCommit) {
+      void Promise.resolve()
+        .then(effect)
+        .catch((err) =>
+          console.error("[trial] post-commit effect failed", trialId, err),
+        );
+    }
 
     // #1009 — the trial has left SCHEDULED/AWAITING_PAYMENT, so its slot is
     // already free. Retire the appointment and settle the money.
