@@ -31,10 +31,26 @@ const mockMembershipFindUnique = jest.fn();
 let txCommitted = false;
 
 const txStub = {
-  consultation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  subscription: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  webinar: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  class: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  consultation: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  subscription: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  webinar: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  class: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  appointmentParticipant: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   slotOfAppointment: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
   rescheduleRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
 };

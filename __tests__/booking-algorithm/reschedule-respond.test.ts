@@ -28,7 +28,11 @@ const mockHasActiveDispute = jest.fn();
 const mockMembershipFindUnique = jest.fn();
 
 const txStub = {
-  rescheduleRequest: { updateMany: jest.fn() },
+  rescheduleRequest: {
+    updateMany: jest.fn(),
+    findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // Present so a decline that wrote slots would be caught rather than silently
   // passing: "the released slots stay released" is the contract.
   slotOfAppointment: { updateMany: jest.fn() },

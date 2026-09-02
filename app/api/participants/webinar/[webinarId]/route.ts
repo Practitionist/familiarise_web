@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
@@ -126,11 +127,16 @@ export async function DELETE(
     const { webinarId } = await params;
 
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
+    const parsedUserId = z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .safeParse(searchParams.get("userId"));
+    if (!parsedUserId.success) {
       return new NextResponse("User ID is required", { status: 400 });
     }
+    const userId = parsedUserId.data;
 
     // #1005 — consultees may remove themselves (self-leave). Organisers and
     // privileged roles may remove anyone on their event.
@@ -219,6 +225,16 @@ export async function DELETE(
               },
             });
           }
+
+          // #1319 A9 — the seat is released; the participant row stays
+          // as history. Same transaction as the disconnects, and only on
+          // the seat-was-present path, so a `removed: false` answer never
+          // flips a row this request did not release.
+          await tx.appointmentParticipant.updateMany({
+            where: { appointment: { webinarId }, userId },
+            data: { status: "CANCELLED" },
+          });
+
           return userSlots.length;
         },
         {

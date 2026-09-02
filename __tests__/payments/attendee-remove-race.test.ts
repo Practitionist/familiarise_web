@@ -29,6 +29,7 @@ const mockWebinarFindFirst = jest.fn();
 const mockClassFindFirst = jest.fn();
 const mockSlotFindMany = jest.fn();
 const mockSlotUpdate = jest.fn();
+const mockParticipantUpdateMany = jest.fn();
 const mockTransaction = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
@@ -90,6 +91,9 @@ function runInteractiveTransaction(fn: unknown) {
       findMany: (...a: unknown[]) => mockSlotFindMany(...a),
       update: (...a: unknown[]) => mockSlotUpdate(...a),
     },
+    appointmentParticipant: {
+      updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
+    },
   });
 }
 
@@ -115,6 +119,7 @@ const CASES = [
     label: "webinar",
     handler: deleteWebinarParticipant as unknown as ParticipantDelete,
     eventId: "webinar-1",
+    participantScope: { webinarId: "webinar-1" },
     params: (): Promise<Record<string, string>> =>
       Promise.resolve({ webinarId: "webinar-1" }),
     findFirst: mockWebinarFindFirst,
@@ -123,6 +128,7 @@ const CASES = [
     label: "class",
     handler: deleteClassParticipant as unknown as ParticipantDelete,
     eventId: "class-1",
+    participantScope: { classId: "class-1" },
     params: (): Promise<Record<string, string>> =>
       Promise.resolve({ classId: "class-1" }),
     findFirst: mockClassFindFirst,
@@ -136,6 +142,7 @@ beforeEach(() => {
   mockClassFindFirst.mockResolvedValue({ id: "class-1" });
   mockFindLiveEventSlot.mockResolvedValue(null);
   mockSlotUpdate.mockResolvedValue({});
+  mockParticipantUpdateMany.mockResolvedValue({ count: 1 });
   // The real contract of refundRemovedAttendeeSeat — the roster client reads
   // all three fields to build the organiser's toast, so a stub of some invented
   // shape would freeze a response body the producer never returns.
@@ -152,7 +159,7 @@ beforeEach(() => {
 
 describe.each(CASES)(
   "$label participant removal is single-writer (defect 8)",
-  ({ handler, eventId, params, findFirst }) => {
+  ({ handler, eventId, participantScope, params, findFirst }) => {
     function request() {
       return new Request(
         `http://localhost/api/participants?userId=${ATTENDEE_ID}`,
@@ -170,6 +177,9 @@ describe.each(CASES)(
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ removed: false, refund: null });
       expect(mockSlotUpdate).not.toHaveBeenCalled();
+      // #1319 A9 — the participant row is history, not a seat: a request that
+      // released nothing must not stamp it CANCELLED either.
+      expect(mockParticipantUpdateMany).not.toHaveBeenCalled();
       expect(mockRefundRemovedAttendeeSeat).not.toHaveBeenCalled();
       // Never mind the chat: nothing was released, so nothing is revoked.
       expect(mockRemoveUserFromEventChannel).not.toHaveBeenCalled();
@@ -206,6 +216,13 @@ describe.each(CASES)(
         },
       });
       expect(mockSlotUpdate).toHaveBeenCalledTimes(2);
+      // #1319 A9 — same transaction as the disconnects, so the seat and its
+      // history commit together or not at all.
+      expect(mockParticipantUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockParticipantUpdateMany).toHaveBeenCalledWith({
+        where: { appointment: participantScope, userId: ATTENDEE_ID },
+        data: { status: "CANCELLED" },
+      });
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledTimes(1);
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledWith(
         expect.objectContaining({
