@@ -1,13 +1,15 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import {
-  faqCreateNested,
-  faqReplaceNested,
-} from "@/lib/api/plans/content";
+import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { Prisma, WebinarStatus } from "@prisma/client";
+import {
+  EVENT_PUBLISHABLE_FROM,
+  transitionWebinarEvent,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
@@ -742,9 +744,20 @@ export async function PATCH(request: NextRequest) {
         if (updatedWebinar) {
           const webinarUpdateData: Prisma.WebinarUpdateInput = {};
 
-          // Only update status if it was present in validatedData
-          if (status !== undefined) {
-            webinarUpdateData.status = status;
+          // #1319 — status rides the CAS helper, never a bare update: a stale
+          // tab could flip a CANCELLED (already refunded) event back to
+          // SCHEDULED. Publishing is the one edge that leaves DRAFT, and it
+          // is not in EVENT_ALLOWED_FROM.SCHEDULED by design (#1060).
+          let statusChanged = false;
+          if (status !== undefined && status !== updatedWebinar.status) {
+            const publishing =
+              status === "SCHEDULED" && updatedWebinar.status === "DRAFT";
+            await transitionWebinarEvent(tx, {
+              where: { id: updatedWebinar.id },
+              to: status,
+              fromIn: publishing ? EVENT_PUBLISHABLE_FROM : undefined,
+            });
+            statusChanged = true;
           }
 
           // #628 — shrinking below the people already in the room would
@@ -778,6 +791,28 @@ export async function PATCH(request: NextRequest) {
             updatedWebinar = await tx.webinar.update({
               where: { id: updatedWebinar.id },
               data: webinarUpdateData,
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: true,
+                    topics: true,
+                  },
+                },
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+          } else if (statusChanged) {
+            // Only the status moved; re-read so the response reflects it.
+            updatedWebinar = await tx.webinar.findUniqueOrThrow({
+              where: { id: updatedWebinar.id },
               include: {
                 webinarPlan: {
                   include: {
@@ -943,6 +978,13 @@ export async function PATCH(request: NextRequest) {
       error.message.includes("Invalid duration")
     ) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    // #1319 — an illegal status move (stale tab, cancelled event) is a 409.
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
     }
     // AE-2 — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {

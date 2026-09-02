@@ -4,6 +4,24 @@
 
 The wave-5 train (#1319) reconciles the original booking and maintenance audit briefs against everything that shipped in waves 1–4 and closes the residuals that survived. Each PR appends its own bullets here.
 
+### PR 1 — CAS and delete sweep (`fix/booking-cas-and-delete-sweep`)
+
+- The abandoned-payment sweep no longer deletes a consultation or subscription whose hold lapsed. Deleting the request cascaded the Appointment and every Payment row under it, which was the #1074 class in a second location. The request now moves to EXPIRED through the CAS helper, the slots are cancelled and tombstoned by status, and the money rows stay readable for support.
+- A request that was approved but never paid is now EXPIRED, not REJECTED. REJECTED reads as the consultant declining on every dashboard. The unscheduled `app/api/cleanup/approval-payments` route, which reverted the same cohort to PENDING and was never wired to any scheduler on this deployment, is removed so there is one outcome.
+- `lib/booking/transitions.ts` gains `transitionSlotCompletion` and `transitionTrialSession`. The slot completion lifecycle and the trial lifecycle were the two with no CAS helper: Stream session webhooks, the orphan reconciler, the maintenance drain, auto-complete, trial accept, cancel and conversion all wrote the status column bare, so a late webhook could stamp a cancelled slot COMPLETED. Every one of those writers now carries its allowed-from set in the WHERE clause.
+- The webinar and class `crud-with-plan` routes no longer write a client-supplied status with a bare update. A stale tab could flip a cancelled, already refunded event back to SCHEDULED; the move now goes through `transitionWebinarEvent` and `transitionClassEvent`, with publishing as the one edge that leaves DRAFT.
+- `auto-complete-appointments` marks webinars and classes COMPLETED only from the allowed set, and completes trials through the new helper, so a cancelled event is never resurrected into a state that releases earnings.
+- The invalid-appointments and stale-pending sweeps cancel only rows that are still cancellable and report the ones that moved on instead of clobbering them. Their slot deletes are soft-cancels now.
+- The admin single-payment refund goes through `refundBookingPayment`, so an org-funded intent reverses in-ledger instead of dying on an unknown gateway.
+
+### PR 2 — schema finalization (`fix/booking-schema-finalization`)
+
+- `AppointmentParticipant` is added as the first-class participant edge (ADR A9). Every writer that connects a user to a slot (all four checkout handlers, the allocator, trial scheduling, attendee removal, the capture webhook, cancel and refund) now records the participant row in the same transaction, and the seed suite writes it too. Nothing in production reads the table yet; `reconcile-slot-availability` logs any divergence from the slot-to-user join.
+- `BookingStatusHistory` is appended inside every CAS transition helper (ADR A12), giving reschedule and cancel disputes the audit trail they lacked. The from-status is read just before the compare-and-set and the imprecision that allows is documented in the ADR.
+- Ten booking models gain `deletedAt`, nine naive timestamp columns become `Timestamptz` (every column on `TrialSession` among them), seven redundant prefix indexes are dropped, `Appointment` gains an index on `(organizationId, deletedAt, createdAt)` for the org-scoped reads, and `cancelledBy` becomes a real foreign key on consultations and subscriptions.
+- The two phantom columns that exist only in the database are captured by a one-off script before the reset push drops them, and the STAGED sidecar block now sits at the true bottom of `check-constraints.sql` with a reset runbook in `docs/prisma/pre-mvp-reset-runbook.md`.
+- `npm run db:push` is push, then sidecars, then `db:assert-sidecars`; the assertion and the CI guard share one quote-aware parser that covers all three sidecar files, constraints, indexes and triggers alike.
+
 ### PR 3b — availability windows are merged, and validated as a union (`fix/availability-window-merge`, #1320)
 
 - A production bug: a consultant whose Monday availability was stored as two adjacent one-hour rows saw the expert-page grid draw one two-hour block, the one-hour dialog offer both hours, and the two-hour dialog say "No available slots". The grid merged rows for display while the booking generator refused to merge across rows, because checkout validated the whole booking window against the single row the client named.

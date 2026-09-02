@@ -8,6 +8,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { transitionSlotCompletion } from "@/lib/booking/transitions";
 import { RecordingService } from "@/lib/stream/recording-service";
 import {
   getStreamChatClient,
@@ -245,16 +246,22 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     // `reconcile-orphaned-sessions` is built to repair exactly that.
     const endedAt = new Date();
     try {
-      await prisma.$transaction([
-        prisma.meetingSession.update({
+      await prisma.$transaction(async (tx) => {
+        await tx.meetingSession.update({
           where: { id: session.id },
           data: { endedAt, endedReason: "maintenance" },
-        }),
-        prisma.slotOfAppointment.update({
+        });
+        // CAS (#1319): SCHEDULED or COMPLETED becomes UNVERIFIED — COMPLETED
+        // because call.end() above fires the call-ended webhook, which can
+        // land before this write; a slot the customer already cancelled keeps
+        // its history.
+        await transitionSlotCompletion(tx, {
           where: { id: session.slotOfAppointmentId },
-          data: { completionStatus: "UNVERIFIED", completedAt: endedAt },
-        }),
-      ]);
+          to: "UNVERIFIED",
+          data: { completedAt: endedAt },
+          allowZero: true,
+        });
+      });
       result.drained++;
     } catch (err) {
       result.errors.push(
