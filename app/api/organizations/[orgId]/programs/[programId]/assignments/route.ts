@@ -130,12 +130,27 @@ export async function POST(
 
   const membership = await prisma.membership.findFirst({
     where: { id: body.membershipId, organizationId: orgId },
-    select: { id: true, role: true },
+    select: { id: true, status: true },
   });
   if (!membership) {
     return NextResponse.json(
       { error: "Membership does not belong to this organization" },
       { status: 400 },
+    );
+  }
+  // B2B gap 10 — belonging to the org is not the same as being IN it. A PENDING
+  // member has not accepted the invite yet and a SUSPENDED/REMOVED/ERASED one
+  // is gone, so assigning either seats a program against somebody who cannot
+  // consume it: activeSeatCount goes up, the seat is billed, and nobody can use
+  // it. 409 rather than 400 — the request is well formed, the membership is in
+  // the wrong state for it.
+  if (membership.status !== "ACTIVE") {
+    return NextResponse.json(
+      {
+        error: `Cannot assign a ${membership.status} membership to a program`,
+        code: "MEMBERSHIP_NOT_ACTIVE",
+      },
+      { status: 409 },
     );
   }
 
