@@ -8,6 +8,11 @@ import {
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { ClassStatus, Prisma } from "@prisma/client";
+import {
+  EVENT_PUBLISHABLE_FROM,
+  transitionClassEvent,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
@@ -702,9 +707,18 @@ export async function PATCH(request: NextRequest) {
               maxParticipants?: number;
             } = {};
 
-            // Only include status if it's provided in the validated data
-            if (status !== undefined) {
-              classUpdateData.status = status;
+            // #1319 — status rides the CAS helper (see the webinar twin): a
+            // stale tab must not resurrect a CANCELLED class after refunds.
+            // The else-branch below re-reads the row when no other field
+            // changed, so a status-only PATCH still returns the moved status.
+            if (status !== undefined && status !== updatedClass.status) {
+              const publishing =
+                status === "SCHEDULED" && updatedClass.status === "DRAFT";
+              await transitionClassEvent(tx, {
+                where: { id: updatedClass.id },
+                to: status,
+                fromIn: publishing ? EVENT_PUBLISHABLE_FROM : undefined,
+              });
             }
 
             // #628 — shrinking below the students already enrolled would strand
@@ -799,7 +813,8 @@ export async function PATCH(request: NextRequest) {
                 },
               });
             } else {
-              // If we have a class instance but no updates, fetch it with all its relations
+              // No field updates (or only the status moved above): fetch it with
+              // all its relations so the response reflects the current row.
               updatedClass = await tx.class.findUnique({
                 where: { id: updatedClass.id },
                 include: {
@@ -893,6 +908,13 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    // #1319 — an illegal status move (stale tab, cancelled class) is a 409.
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },

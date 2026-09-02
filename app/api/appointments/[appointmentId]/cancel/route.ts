@@ -5,6 +5,7 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
+import { setParticipantStatus } from "@/lib/booking/participants";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -382,6 +383,16 @@ export async function POST(
               data: { completionStatus: "CANCELLED" },
             });
           }
+          // #1319 A9 — every participant of the cancelled engagement.
+          await setParticipantStatus(
+            tx,
+            appointment.subscription
+              ? { appointment: { subscriptionId: appointment.subscription.id } }
+              : appointment.class
+                ? { appointment: { classId: appointment.class.id } }
+                : { appointmentId },
+            "CANCELLED",
+          );
 
           // Close any live reschedule proposal on this booking. Leaving one open
           // would keep openForAppointmentId reserved forever and let the expiry

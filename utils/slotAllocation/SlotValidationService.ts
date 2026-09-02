@@ -527,10 +527,14 @@ export class SlotValidationService {
         );
       }
     } else {
-      // Custom schedule - validate using OVERLAP detection (same logic as calendar display)
-      // FIX: Previously only checked START times, which failed when consultant created
-      // larger slots (e.g., 1-hour slot from 16:30-17:30) that the calendar breaks down
-      // into multiple 30-minute display intervals (16:30-17:00 and 17:00-17:30)
+      // Custom schedule — CONTAINMENT, the same rule the weekly arm above
+      // applies via isMinuteWithinWeeklySlot. #1320: this used to test overlap
+      // (`slot < availableEnd && availableStart < slotEnd`), so a 30-minute
+      // atom hanging half outside a custom row passed manual allocation and
+      // was then rejected by checkout, which has always required the whole
+      // window to sit inside published availability. Containment still accepts
+      // the case the overlap test was introduced for — an atom the calendar
+      // broke out of a larger row — because such an atom is inside the row.
 
       let hasInvalidSlots = false;
       const invalidSlotsList: string[] = [];
@@ -538,17 +542,16 @@ export class SlotValidationService {
         // Calculate the end time of the requested slot (30-minute slots)
         const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
 
-        // Check if this slot overlaps with ANY available custom slot
-        // Uses same overlap logic as calendar: intervalStart < slotEnd && slotStart < intervalEnd
-        const hasOverlap = consultant.slotsOfAvailabilityCustom.some(
+        // Check if this slot sits wholly inside ANY available custom slot
+        const isContained = consultant.slotsOfAvailabilityCustom.some(
           (availableSlot) => {
             const availableStart = new Date(availableSlot.startsAt);
             const availableEnd = new Date(availableSlot.endsAt);
-            return slot < availableEnd && availableStart < slotEnd;
+            return slot >= availableStart && slotEnd <= availableEnd;
           },
         );
 
-        if (!hasOverlap) {
+        if (!isContained) {
           hasInvalidSlots = true;
           invalidSlotsList.push(slot.toISOString());
         }
@@ -568,7 +571,7 @@ export class SlotValidationService {
           return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
             const availableStart = new Date(availableSlot.startsAt);
             const availableEnd = new Date(availableSlot.endsAt);
-            return slot < availableEnd && availableStart < slotEnd;
+            return slot >= availableStart && slotEnd <= availableEnd;
           });
         }).length;
         const isConsecutiveIssue =

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import { recordParticipants } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
@@ -29,6 +30,8 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { transitionTrialSession } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
   notifyTrialSessionScheduled,
   notifyTrialSessionCompleted,
@@ -40,6 +43,11 @@ import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/slotAllocation/occupancyPolicy";
+import {
+  findUncoveredAtom,
+  loadPublishedCoverage,
+  windowAtoms,
+} from "@/utils/slotAllocation/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -162,6 +170,17 @@ class TrialStateChangedError extends Error {
   }
 }
 
+// R7 (#1319) — a trial obeys the calendar like every other booking. The
+// schedule arm only ever checked conflicts, so a trial could be pinned at
+// 03:00 on a day the consultant publishes nothing. Distinct from the 409
+// above: the slot is not taken, it was never on offer, which is a 400.
+class OutsideAvailabilityWindowError extends Error {
+  constructor() {
+    super("The selected time is outside the expert's published availability");
+    this.name = "OutsideAvailabilityWindowError";
+  }
+}
+
 /**
  * Validates that a time slot is still available for BOTH participants.
  * Runs on the scheduling transaction's client — never the global one — so the
@@ -278,6 +297,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const updateData: Prisma.TrialSessionUpdateInput = {};
+
+    // #1319 — status-dependent activity logs and notifications run only after
+
+    // the CAS commits; a raced cancel or webhook must not leave a record of a
+
+    // transition that never happened.
+
+    const afterCommit: Array<() => unknown> = [];
 
     // #1009 — set when this PATCH cancels or rejects the trial. The appointment
     // retirement and the refund both run after the status write commits.
@@ -439,6 +466,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // check previously ran on the global client before the transaction
           // opened, a classic check-then-act window (#1093 §1).
           const result = await prisma.$transaction(async (tx) => {
+            // The published window first — the same union coverage rule
+            // checkout applies, on this transaction's client. Enforced even
+            // when the consultant is the one scheduling: a trial is a booking.
+            const { weeklyRows, customRows } = await loadPublishedCoverage(
+              tx,
+              existingTrial.consultantProfileId,
+              startTime,
+              endTime,
+            );
+            const uncovered = findUncoveredAtom(
+              windowAtoms(startTime, endTime),
+              weeklyRows,
+              customRows,
+            );
+            if (uncovered) {
+              throw new OutsideAvailabilityWindowError();
+            }
+
             const isAvailable = await validateSlotAvailability(
               tx,
               existingTrial.consultantProfileId,
@@ -448,22 +493,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             );
             if (!isAvailable) {
               throw new TrialSlotUnavailableError();
-            }
-
-            // Claim the status this request read, before creating anything
-            // against it — the WHERE clause is the state machine, so a
-            // concurrent accept that already moved the trial matches zero rows
-            // and rolls the whole attempt back (see TrialStateChangedError).
-            const claimed = await tx.trialSession.updateMany({
-              where: { id: trialId, status: existingTrial.status },
-              data: {
-                status: requiresPayment
-                  ? TrialSessionStatus.AWAITING_PAYMENT
-                  : TrialSessionStatus.SCHEDULED,
-              },
-            });
-            if (claimed.count === 0) {
-              throw new TrialStateChangedError();
             }
 
             // Create an appointment for the trial
@@ -493,20 +522,60 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 slotsOfAppointment: true,
               },
             });
+            // #1319 A9 — a paid trial holds its seat until capture confirms it.
+            await recordParticipants(
+              tx,
+              appointment.id,
+              [
+                {
+                  userId: existingTrial.consulteeProfile.user.id,
+                  role: "CONSULTEE",
+                },
+                {
+                  userId: existingTrial.consultantProfile.user.id,
+                  role: "CONSULTANT",
+                },
+              ],
+              {
+                organizationId: existingTrial.organizationId ?? null,
+                status: requiresPayment ? "HELD" : "CONFIRMED",
+              },
+            );
 
             // Update trial with appointment link and the resulting status —
             // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
-            const updatedTrial = await tx.trialSession.update({
-              where: { id: trialId },
-              data: {
-                status: requiresPayment
+            // CAS (#1319): fromIn narrows the allowed-from map to the exact
+            // status this request read outside the transaction. Two accepts
+            // that both saw PENDING pick DIFFERENT slots, so neither trips the
+            // availability check above; without this the loser overwrote
+            // TrialSession.appointmentId and stranded the winner's slot hold.
+            // Zero rows rolls the whole attempt back, appointment included.
+            // Never wider than TRIAL_ALLOWED_FROM: the validTransitions gate
+            // above only lets PENDING/AWAITING_PAYMENT reach this arm.
+            try {
+              await transitionTrialSession(tx, {
+                where: { id: trialId },
+                to: requiresPayment
                   ? TrialSessionStatus.AWAITING_PAYMENT
                   : TrialSessionStatus.SCHEDULED,
-                appointmentId: appointment.id,
-                paymentDueAt: requiresPayment
-                  ? computeTrialPaymentDueAt(new Date(), startTime)
-                  : null,
-              },
+                fromIn: [existingTrial.status],
+                data: {
+                  appointmentId: appointment.id,
+                  paymentDueAt: requiresPayment
+                    ? computeTrialPaymentDueAt(new Date(), startTime)
+                    : null,
+                },
+              });
+            } catch (error) {
+              // Narrowed from-state means a zero-row CAS is specifically "the
+              // status moved under us", not "this edge is illegal".
+              if (error instanceof IllegalTransitionError) {
+                throw new TrialStateChangedError();
+              }
+              throw error;
+            }
+            const updatedTrial = await tx.trialSession.findUniqueOrThrow({
+              where: { id: trialId },
               include: {
                 consulteeProfile: {
                   include: {
@@ -620,9 +689,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
           return NextResponse.json({ data: result });
         } catch (error) {
+          // R7 (#1319) — the time was never published, so it is a bad request
+          // rather than a lost race.
+          if (error instanceof OutsideAvailabilityWindowError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+          }
           // In-transaction availability failure, or the #440 exclusion
           // constraint rejecting a concurrent overlap now that trial slots
           // carry consultantProfileId — both are "slot taken", a 409.
+          if (error instanceof IllegalTransitionError) {
+            return NextResponse.json(
+              { error: error.message, code: error.code },
+              { status: error.httpStatus },
+            );
+          }
           if (
             error instanceof TrialSlotUnavailableError ||
             isExclusionViolation(error)
@@ -657,31 +737,35 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         updateData.completedAt = new Date();
 
         // Log activity
-        await logTrialCompleted(
-          existingTrial.consultantProfileId,
-          trialId,
-          {
-            id: existingTrial.consulteeProfile.user.id,
-            name: existingTrial.consulteeProfile.user.name,
-            image: existingTrial.consulteeProfile.user.image,
-          },
-          existingTrial.subscriptionPlan.title,
+        afterCommit.push(() =>
+          logTrialCompleted(
+            existingTrial.consultantProfileId,
+            trialId,
+            {
+              id: existingTrial.consulteeProfile.user.id,
+              name: existingTrial.consulteeProfile.user.name,
+              image: existingTrial.consulteeProfile.user.image,
+            },
+            existingTrial.subscriptionPlan.title,
+          ),
         );
 
         // Notify both parties that the trial is completed
-        void notifyTrialSessionCompleted(
-          [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ],
-          {
-            consultantName:
-              existingTrial.consultantProfile.user.name || "Consultant",
-            consulteeName: existingTrial.consulteeProfile.user.name || "User",
-            planTitle: existingTrial.subscriptionPlan.title,
-            status: TrialSessionStatus.COMPLETED,
-            dashboardUrl: "/dashboard",
-          },
+        afterCommit.push(() =>
+          notifyTrialSessionCompleted(
+            [
+              existingTrial.consultantProfile.user.id,
+              existingTrial.consulteeProfile.user.id,
+            ],
+            {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              status: TrialSessionStatus.COMPLETED,
+              dashboardUrl: "/dashboard",
+            },
+          ),
         );
       }
 
@@ -690,19 +774,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         status === TrialSessionStatus.CANCELLED ||
         status === TrialSessionStatus.REJECTED
       ) {
-        void notifyTrialSessionCancelled(
-          [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ],
-          {
-            consultantName:
-              existingTrial.consultantProfile.user.name || "Consultant",
-            consulteeName: existingTrial.consulteeProfile.user.name || "User",
-            planTitle: existingTrial.subscriptionPlan.title,
-            status,
-            dashboardUrl: "/dashboard",
-          },
+        afterCommit.push(() =>
+          notifyTrialSessionCancelled(
+            [
+              existingTrial.consultantProfile.user.id,
+              existingTrial.consulteeProfile.user.id,
+            ],
+            {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              status,
+              dashboardUrl: "/dashboard",
+            },
+          ),
         );
 
         // #1009 — soft-cancel, never delete. This used to hard-delete the
@@ -782,63 +868,85 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         };
 
         // Log the conversion activity
-        void logTrialConverted(
-          existingTrial.consultantProfileId,
-          trialId,
-          subscriptionId,
-          {
-            id: existingTrial.consulteeProfile.user.id,
-            name: existingTrial.consulteeProfile.user.name || "User",
-            image: existingTrial.consulteeProfile.user.image,
-          },
-          existingTrial.subscriptionPlan.title,
+        afterCommit.push(() =>
+          logTrialConverted(
+            existingTrial.consultantProfileId,
+            trialId,
+            subscriptionId,
+            {
+              id: existingTrial.consulteeProfile.user.id,
+              name: existingTrial.consulteeProfile.user.name || "User",
+              image: existingTrial.consulteeProfile.user.image,
+            },
+            existingTrial.subscriptionPlan.title,
+          ),
         );
       }
     }
 
     // Update the trial session (status + any other fields)
-    const updatedTrial = await prisma.trialSession.update({
-      where: { id: trialId },
-      data: updateData,
-      include: {
-        consulteeProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+    // #1319 — the status moves through the CAS helper inside the same tx as
+    // the other fields, so a raced webhook/sweep matches zero rows and the
+    // whole PATCH rolls back instead of clobbering it. The app-level
+    // validTransitions check above is only the friendly error text.
+    const { status: nextStatus, ...restUpdate } = updateData;
+    const updatedTrial = await prisma.$transaction(async (tx) => {
+      if (nextStatus !== undefined) {
+        await transitionTrialSession(tx, {
+          where: { id: trialId },
+          to: nextStatus as TrialSessionStatus,
+        });
+      }
+      return tx.trialSession.update({
+        where: { id: trialId },
+        data: restUpdate,
+        include: {
+          consulteeProfile: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
             },
           },
-        },
-        consultantProfile: {
-          select: {
-            ...consultantPublicScalars,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+          consultantProfile: {
+            select: {
+              ...consultantPublicScalars,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
             },
           },
-        },
-        subscriptionPlan: true,
-        appointment: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                meetingSession: true,
+          subscriptionPlan: true,
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  meetingSession: true,
+                },
               },
             },
           },
+          convertedToSubscription: true,
         },
-        convertedToSubscription: true,
-      },
+      });
     });
+    for (const effect of afterCommit) {
+      void Promise.resolve()
+        .then(effect)
+        .catch((err) =>
+          console.error("[trial] post-commit effect failed", trialId, err),
+        );
+    }
 
     // #1009 — the trial has left SCHEDULED/AWAITING_PAYMENT, so its slot is
     // already free. Retire the appointment and settle the money.
@@ -861,6 +969,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ...(refund ? { refund } : {}),
     });
   } catch (error) {
+    // #1319 — the DB CAS refused the move (stale tab, raced webhook/sweep).
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error updating trial session:", error);
     // The refund above runs after the trial writes commit, so a failure here
     // can leave a cancelled-but-unrefunded trial — alert on it (#1125).
@@ -944,9 +1059,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // #1009 — same soft-cancel as the PATCH path. CANCELLED drops the trial out
     // of the occupancy filter, which is what frees the slot; the appointment is
     // tombstoned rather than deleted so the payment it carries survives.
-    const updatedTrial = await prisma.trialSession.update({
+    await transitionTrialSession(prisma, {
       where: { id: trialId },
-      data: { status: TrialSessionStatus.CANCELLED },
+      to: TrialSessionStatus.CANCELLED,
+      fromIn: cancellableStatuses,
+    });
+    const updatedTrial = await prisma.trialSession.findUniqueOrThrow({
+      where: { id: trialId },
     });
 
     if (existingTrial.appointmentId) {
@@ -985,6 +1104,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       ...(refund ? { refund } : {}),
     });
   } catch (error) {
+    // #1319 — the DB CAS refused the move (stale tab, raced webhook/sweep).
+    if (error instanceof IllegalTransitionError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error cancelling trial session:", error);
     // Same money-alert gap as PATCH: the refund runs after the trial writes
     // commit, so a failure here can leave a cancelled-but-unrefunded trial (#1125).

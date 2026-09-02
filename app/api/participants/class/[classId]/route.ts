@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
   requireApiAuth,
@@ -129,11 +130,16 @@ export async function DELETE(
     const { classId } = await params;
 
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
+    const parsedUserId = z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .safeParse(searchParams.get("userId"));
+    if (!parsedUserId.success) {
       return new NextResponse("User ID is required", { status: 400 });
     }
+    const userId = parsedUserId.data;
 
     // #1005 — consultees may remove themselves (self-leave). Organisers and
     // privileged roles may remove anyone on their event.
@@ -141,7 +147,9 @@ export async function DELETE(
     const isOrganiser =
       isPrivileged(session.user.role) || !!session.user.consultantProfileId;
     if (!isSelfLeave && !isOrganiser) {
-      return forbiddenResponse("Only consultants can remove other participants");
+      return forbiddenResponse(
+        "Only consultants can remove other participants",
+      );
     }
 
     // Ownership check for organiser removals; self-leave only needs the event
@@ -207,8 +215,8 @@ export async function DELETE(
 
     // One atomic batch — sequential awaits paid a DB round trip per slot
     // and could partially remove a participant on mid-loop failure.
-    await prisma.$transaction(
-      userSlots.map((slot) =>
+    await prisma.$transaction([
+      ...userSlots.map((slot) =>
         prisma.slotOfAppointment.update({
           where: { id: slot.id },
           data: {
@@ -218,7 +226,12 @@ export async function DELETE(
           },
         }),
       ),
-    );
+      // #1319 A9 — the seat is released; the row stays as history.
+      prisma.appointmentParticipant.updateMany({
+        where: { appointment: { classId }, userId },
+        data: { status: "CANCELLED" },
+      }),
+    ]);
 
     // #1003 — seat was paid; refund after roster commit (non-throwing).
     // #1005 — pass initiatedBy so self-leave does not get organiser-fault 100%.

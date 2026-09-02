@@ -155,11 +155,11 @@ describe("lock budgets and names (source pins)", () => {
   // with different slots neither trips the availability check — without the
   // claim the second created a second appointment and repointed the trial at
   // it, stranding the first slot hold (CodeRabbit round 2).
+  // #1321 routes every trial status write through transitionTrialSession, so
+  // the claim rides its fromIn rather than a bare updateMany.
   it("the trial scheduling transition claims the status it read", () => {
     const src = read("app/api/trials/[trialId]/route.ts");
-    expect(src).toMatch(
-      /tx\.trialSession\.updateMany\(\{\s*where: \{ id: trialId, status: existingTrial\.status \},/,
-    );
+    expect(src).toMatch(/fromIn: \[existingTrial\.status\],/);
     expect(src).toMatch(/throw new TrialStateChangedError\(\)/);
   });
 });

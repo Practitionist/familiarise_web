@@ -48,8 +48,8 @@ models what actually matters — concurrent load on the Supabase pool.
 runtime anywhere in the file with a comment:
 
 ```yaml
-    - cron: "32 * * * *"
-    # cron-runtime-minutes: 8
+- cron: "32 * * * *"
+# cron-runtime-minutes: 8
 ```
 
 The value covers the job's database-active window (the `tsx` step), not the
@@ -103,6 +103,8 @@ real numbers whenever a heavy one wants in.
 | TrialSession | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
 
 **Safety**: Per-record `try/catch`. A failure on one record does not prevent processing of others. All errors are collected into a result array and returned. The activity log write for trial sessions has its own nested `try/catch` so a logging failure does not block the completion update.
+
+**Trial sessions have no separate job.** A second endpoint, `/api/cleanup/auto-complete-trials`, used to complete trials on its own. It had no `jobs/` wrapper, no GitHub Actions workflow and no Netlify schedule, so nothing ever invoked it, and it completed a trial as soon as any one of its slot rows had ended, with no buffer. It was a redundant twin of the TrialSession row in the table above and was deleted in #1278. Trials are completed here, by the hourly job, which requires the full one-hour buffer and an `every` clause over the appointment's slots, so a multi-slot trial only closes once all of its slots have ended.
 
 ---
 
@@ -194,11 +196,11 @@ real numbers whenever a heavy one wants in.
 
 **Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers three distinct scenarios:
 
-| Scenario                           | Source Status              | Threshold                                                                        | Target Status |
-| ---------------------------------- | -------------------------- | ------------------------------------------------------------------------------- | ------------- |
-| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`)      | `EXPIRED`     |
-| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                     | `EXPIRED`     |
-| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)                 | `EXPIRED`     |
+| Scenario                           | Source Status              | Threshold                                                                   | Target Status |
+| ---------------------------------- | -------------------------- | --------------------------------------------------------------------------- | ------------- |
+| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`) | `EXPIRED`     |
+| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                | `EXPIRED`     |
+| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)            | `EXPIRED`     |
 
 **Action**:
 
@@ -241,13 +243,13 @@ real numbers whenever a heavy one wants in.
 
 ### g. Detect Consultant No-Shows
 
-| Field              | Value                                                 |
-| ------------------ | ----------------------------------------------------- |
-| **Schedule**       | `17 * * * *` -- every hour, at :17                    |
-| **Source**         | `scripts/appointments/detect-consultant-no-shows.ts`  |
-| **API**            | N/A -- runs via GitHub Actions only                   |
-| **GitHub Actions** | `.github/workflows/detect-consultant-no-shows.yml`    |
-| **HTTP Methods**   | N/A                                                   |
+| Field              | Value                                                |
+| ------------------ | ---------------------------------------------------- |
+| **Schedule**       | `17 * * * *` -- every hour, at :17                   |
+| **Source**         | `scripts/appointments/detect-consultant-no-shows.ts` |
+| **API**            | N/A -- runs via GitHub Actions only                  |
+| **GitHub Actions** | `.github/workflows/detect-consultant-no-shows.yml`   |
+| **HTTP Methods**   | N/A                                                  |
 
 **Purpose**: Closes the loop on the platform's promise of a full refund when the consultant fails to attend a paid session. The job scans confirmed `CONSULTATION` bookings whose session ended at least the grace window ago, uses the per-attendee `MeetingAttendance` records (stamped by the Stream session handlers) to identify the ones the consultant never joined, and for each such no-show it auto-refunds the consultee via `refundPayment`, marks the booking cancelled, and notifies both parties.
 
