@@ -8,6 +8,7 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   REFUNDABLE_BALANCE_SELECT,
@@ -265,7 +266,12 @@ async function quoteIndividualBooking(
     // Keyed on the same two numbers the base is: any session that is no
     // longer live has already shrunk the quote, whether or not it COMPLETED.
     prorated: quote.prorated,
-    creditFunded: bookingPayment?.paymentIntent.startsWith("free_") ?? false,
+    // Which rail the money comes back on, which is the sentence the dialog
+    // actually needs. `free_` alone was not enough: a wallet-, invoice- or
+    // licence-funded learner was told their card would be credited in 5–7
+    // working days for a card that was never charged, and the org whose
+    // balance was actually restored was not mentioned at all.
+    fundingRail: fundingRailForIntent(bookingPayment?.paymentIntent),
     wholeEvent: false,
     attendeeCount: null,
   };
@@ -355,9 +361,10 @@ export async function GET(
         hoursUntilNextSession: null,
         prorated: false,
         // Seats fund through several rails at once (card, org wallet, credits),
-        // so no single funding sentence is true of the aggregate. The
-        // whole-event copy stands on its own.
-        creditFunded: false,
+        // so no single funding sentence is true of the aggregate. Null rather
+        // than a rail: the whole-event copy stands on its own and naming one
+        // rail here would be a claim about seats it does not cover.
+        fundingRail: null,
         wholeEvent: true,
         attendeeCount: quote.attendeeCount,
       });

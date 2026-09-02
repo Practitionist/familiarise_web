@@ -38,10 +38,30 @@ const mockGetSession = jest.fn();
 let txCommitted = false;
 
 const txStub = {
-  consultation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  subscription: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  webinar: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  class: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  // The CAS helpers read the from-status just before the compare-and-set, so
+  // every booking model answers a findUnique as well as the updateMany.
+  consultation: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  subscription: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  webinar: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  class: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  // #1322 — the participant edge is terminalised and the status history
+  // appended inside the same cancel transaction.
+  appointmentParticipant: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   slotOfAppointment: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
   rescheduleRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
 };
@@ -72,6 +92,10 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  // Only the charge is stubbed. `fundingRailForIntent` stays real, because the
+  // rail the preview names is part of what this suite is comparing and a
+  // stubbed derivation would only ever agree with itself.
+  ...jest.requireActual("../../lib/payments/operations/booking-refund"),
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
 }));
 
