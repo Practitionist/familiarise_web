@@ -24,10 +24,7 @@ import {
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
-import {
-  computeRefundPct,
-  parsePolicySnapshot,
-} from "@/lib/payments/operations/cancellation-policy";
+import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -448,55 +445,24 @@ export async function POST(
         const isFreeCreditFunded =
           paidPayment.amountPaise === 0 &&
           paidPayment.paymentIntent.startsWith("free_");
-        // A booking with no session ever scheduled has INFINITE notice, not
-        // negative notice. Mapping "never allocated" onto the same -1 as
-        // "already started" made cancelling earlier score worse than
-        // cancelling later, which no tier table can mean.
-        //
-        // Keyed on slotsTotal, deliberately: "no slot has ever existed" is the
-        // claim. Deriving it from the absence of live and completed slots would
-        // also match a booking whose slots are all CANCELLED, and would quietly
-        // hand a full refund to any caller that resolved this context after the
-        // cancel transaction had already terminalised them.
-        const neverScheduled = bookingCtx.slotsTotal === 0;
-        const refundPct = computeRefundPct(
-          parsePolicySnapshot(bookingCtx.policySnapshot),
-          neverScheduled
-            ? Number.POSITIVE_INFINITY
-            : (bookingCtx.hoursUntilNextSession ?? -1),
+        // #1319 — the notice tier, the #1006 per-session proration and the
+        // clamp to the remaining refundable balance all live in
+        // `quoteBookingRefund`, which the cancel preview calls too. The two
+        // used to compute the same four steps inline in two files; the preview
+        // exists to tell the buyer what this click pays, so they must be one
+        // function or the quote eventually stops matching the charge.
+        const quote = quoteBookingRefund({
+          policySnapshot: bookingCtx.policySnapshot,
+          hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
+          slotsTotal: bookingCtx.slotsTotal,
+          sessionsRemaining: bookingCtx.sessionsRemaining,
+          isSubscription: !!appointment.subscription,
           isConsultantInitiated,
-        );
-        // Tier the REMAINING refundable balance, not the gross. Against a
-        // payment with an earlier partial refund the gross overshoots, the
-        // operation throws AMOUNT_EXCEEDS_REFUNDABLE, and the catch below turns
-        // that into "refunded 0" — the buyer loses the remainder they were owed.
-        // #1006 — linear per-session proration. The refundable base is the
-        // undelivered share of the plan price; the policy tier then applies to
-        // that base. A fully-undelivered subscription reduces to the old
-        // whole-price behavior.
-        // The denominator is every session the plan ever held time for, which
-        // is `slotsTotal` — NOT completed+live. Summing only those two drops
-        // every terminal-but-not-completed session out of the plan, and the
-        // undelivered share is then measured against a plan that has shrunk:
-        // three UNVERIFIED past sessions (held offline, no MeetingSession row)
-        // and seven live ones scored 7/7 and refunded the whole price for a
-        // plan that was 30% consumed.
-        //
-        // `slotsTotal === 0` keeps the full gross deliberately: that is the
-        // never-scheduled plan, which `neverScheduled` above already tiers at
-        // 100%. Zeroing the base there would refund nothing for a plan the
-        // buyer paid for and never received a minute of.
-        const proratedBasePaise =
-          appointment.subscription && bookingCtx.slotsTotal > 0
-            ? Math.floor(
-                (paidPayment.amountPaise * bookingCtx.sessionsRemaining) /
-                  bookingCtx.slotsTotal,
-              )
-            : paidPayment.amountPaise;
-        const refundAmount = Math.min(
-          Math.floor((proratedBasePaise * refundPct) / 100),
-          paidPayment.refundablePaise,
-        );
+          grossPaise: paidPayment.amountPaise,
+          refundablePaise: paidPayment.refundablePaise,
+        });
+        const refundPct = quote.refundPct;
+        const refundAmount = quote.refundPaise;
 
         // Credit-funded first: its refund is a credit restoration, which is
         // all-or-nothing, so the tiered amount above does not apply to it.
