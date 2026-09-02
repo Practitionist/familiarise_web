@@ -3320,12 +3320,17 @@ export class SlotAllocationService {
 
     // Re-resolve the active ProgramAssignment at allocation time.
     // Mirrors the resolver in lib/payments/operations/checkout.ts so the
-    // same coverage filters apply (program ACTIVE, contract ACTIVE,
-    // covers SUBSCRIPTION).
+    // same coverage filters apply (assignment ACTIVE, program ACTIVE,
+    // contract ACTIVE, covers SUBSCRIPTION).
     const now = new Date();
     const assignment = await tx.programAssignment.findFirst({
       where: {
         membershipId: membership.id,
+        // #1132 follow-up — checkout filters on status too; without it the
+        // period window alone matched ROLLED / CLOSED / CANCELLED rows, so a
+        // dead assignment inside its old window could still be debited by a
+        // lazily-allocated subscription session.
+        status: "ACTIVE",
         periodStart: { lte: now },
         periodEnd: { gte: now },
         program: {
