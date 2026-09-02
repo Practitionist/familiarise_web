@@ -20,10 +20,17 @@ import {
   PaymentStatus,
   PaymentGateway,
   AppointmentStatus,
+  SlotCompletionStatus,
 } from "@prisma/client";
 import Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import {
+  transitionConsultationRequest,
+  transitionSlotCompletion,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -219,9 +226,9 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
             }
           }
 
-          // Restore referral credits consumed by these payments BEFORE cascade-deleting
-          // Without this, deleting Appointment cascades to Payment → ReferralCreditUsage,
-          // leaving ReferralCredit.usedAmount/remainingAmount permanently corrupted
+          // Restore referral credits consumed by these payments. The rows now
+          // survive (soft-cancel below), so this is the whole point rather
+          // than an ordering trick against a cascade.
           for (const payment of appointment.payment) {
             try {
               const restored = await reverseCreditsForPayment(payment.id, tx);
@@ -280,37 +287,61 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
               },
             });
 
+            const now = new Date();
             if (confirmedSlots === 0) {
-              // Safe to delete the entire appointment and its relationships
-              await tx.slotOfAppointment.deleteMany({
-                where: { appointmentId: appointment.id },
+              // #1074 / #1319 — never delete an Appointment a Payment row
+              // points at. Deleting the request cascaded the Appointment and
+              // with it every Payment (EXPIRED intents, credit usage, a late
+              // capture's target). The slot is freed by status, not absence.
+              try {
+                if (appointment.consultation) {
+                  await transitionConsultationRequest(tx, {
+                    where: { id: appointment.consultation.id },
+                    to: AppointmentStatus.EXPIRED,
+                  });
+                } else if (appointment.subscription) {
+                  await transitionSubscriptionRequest(tx, {
+                    where: { id: appointment.subscription.id },
+                    to: AppointmentStatus.EXPIRED,
+                  });
+                }
+              } catch (error) {
+                // Raced a capture or an approval: the row moved out of the
+                // expirable set since the cohort read. Leave it alone.
+                if (!(error instanceof IllegalTransitionError)) throw error;
+                console.log(
+                  `⏭️ Skipped appointment ${appointment.id} — status changed since the sweep read`,
+                );
+                return;
+              }
+              await transitionSlotCompletion(tx, {
+                where: { appointmentId: appointment.id, deletedAt: null },
+                to: SlotCompletionStatus.CANCELLED,
+                data: { deletedAt: now },
+                allowZero: true,
+              });
+              await tx.appointment.updateMany({
+                where: { id: appointment.id, deletedAt: null },
+                data: { deletedAt: now },
               });
 
-              if (appointment.consultation) {
-                await tx.consultation.delete({
-                  where: { id: appointment.consultation.id },
-                });
-                // Appointment is cascade-deleted when Consultation is deleted (onDelete: Cascade)
-              } else if (appointment.subscription) {
-                await tx.subscription.delete({
-                  where: { id: appointment.subscription.id },
-                });
-                // Appointment is cascade-deleted when Subscription is deleted (onDelete: Cascade)
-              }
-
               console.log(
-                `🗑️ Deleted entire abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Expired abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment (soft): ${appointment.id}`,
               );
             } else {
-              // Only remove tentative slots
-              await tx.slotOfAppointment.deleteMany({
+              // Only release the tentative slots; confirmed history stays.
+              const released = await transitionSlotCompletion(tx, {
                 where: {
                   appointmentId: appointment.id,
                   isTentative: true,
+                  deletedAt: null,
                 },
+                to: SlotCompletionStatus.CANCELLED,
+                data: { deletedAt: now },
+                allowZero: true,
               });
               console.log(
-                `🗑️ Cleaned up tentative slots for ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Released ${released} tentative slot(s) for ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
               );
             }
           }
@@ -440,24 +471,37 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
     for (const consultation of expiredConsultations) {
       try {
         await prisma.$transaction(async (tx) => {
-          // Update consultation status to REJECTED
-          await tx.consultation.update({
-            where: { id: consultation.id },
-            data: { status: AppointmentStatus.REJECTED },
-          });
+          // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
+          // REJECTED reads as "the consultant declined" on every surface, and
+          // the CAS keeps a capture that raced this sweep from being clobbered.
+          try {
+            await transitionConsultationRequest(tx, {
+              where: { id: consultation.id },
+              to: AppointmentStatus.EXPIRED,
+              fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+            });
+          } catch (error) {
+            if (!(error instanceof IllegalTransitionError)) throw error;
+            console.log(
+              `⏭️ Skipped consultation ${consultation.id} — status changed since the sweep read`,
+            );
+            return;
+          }
 
-          // Delete tentative slots if appointment exists
-          if (consultation.appointment?.slotsOfAppointment) {
-            const deletedSlots = await tx.slotOfAppointment.deleteMany({
+          // Release the tentative hold by status; the rows stay for support.
+          if (consultation.appointment) {
+            const released = await transitionSlotCompletion(tx, {
               where: {
-                AND: [
-                  { appointmentId: consultation.appointment.id },
-                  { isTentative: true },
-                ],
+                appointmentId: consultation.appointment.id,
+                isTentative: true,
+                deletedAt: null,
               },
+              to: SlotCompletionStatus.CANCELLED,
+              data: { deletedAt: new Date() },
+              allowZero: true,
             });
             console.log(
-              `🗑️ Deleted ${deletedSlots.count} tentative slots for consultation ${consultation.id}`,
+              `🗑️ Released ${released} tentative slot(s) for consultation ${consultation.id}`,
             );
           }
 

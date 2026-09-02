@@ -1,5 +1,7 @@
 # Cron Schedules & Cleanup Jobs
 
+> **Removed in wave 5 (#1319).** The `GET /api/cleanup/approval-payments` route described below was shaped for Vercel Cron and was never scheduled on this deployment (GitHub Actions runs the `jobs/**` wrappers only). Its cohort, requests approved but never paid, is handled by `scripts/payments/cleanup-abandoned-payments.ts` (`cleanupExpiredApprovalPendingPayments`, every 15 minutes), which now moves the request to EXPIRED through the CAS helper and soft-cancels the tentative slots. The sections below are kept as history until the docs refresh PR rewrites this file.
+
 ## Overview
 
 The payment approval workflow includes automated cleanup jobs to handle expired payment links and maintain data integrity. These jobs run on scheduled intervals using **Vercel Cron** or manual API triggers.
