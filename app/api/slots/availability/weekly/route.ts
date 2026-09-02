@@ -2,7 +2,8 @@ import * as Sentry from "@sentry/nextjs";
 import { coalesceAndResolve } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { DayOfWeek } from "@prisma/client";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { DayOfWeek, Prisma } from "@prisma/client";
 import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
@@ -160,66 +161,78 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
-    // Cross-midnight-aware overlap check
-    const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: buildWeeklyOverlapWhere(
-        consultantProfileId,
-        startDay,
-        endDay,
-        startTimeUtc,
-        endTimeUtc,
-      ),
-    });
+    // Overlap check, write and coalescing share one Serializable transaction:
+    // coalescing rewrites the consultant's whole weekly set as
+    // delete-then-recreate, so a half-applied rewrite on the bare client would
+    // leave them with no availability at all (#1320).
+    return await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Cross-midnight-aware overlap check
+          const overlappingSlot = await tx.slotOfAvailabilityWeekly.findFirst({
+            where: buildWeeklyOverlapWhere(
+              consultantProfileId,
+              startDay,
+              endDay,
+              startTimeUtc,
+              endTimeUtc,
+            ),
+          });
 
-    if (overlappingSlot) {
-      return NextResponse.json(
-        {
-          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
-        },
-        { status: 409 },
-      );
-    }
+          if (overlappingSlot) {
+            return NextResponse.json(
+              {
+                error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
+              },
+              { status: 409 },
+            );
+          }
 
-    const utcOffsetMinutes = consultantProfile.user?.timezone
-      ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
-      : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
-    // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
-    // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
+          const utcOffsetMinutes = consultantProfile.user?.timezone
+            ? getTimezoneOffsetMinutes(consultantProfile.user.timezone)
+            : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
+          // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
+          // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
 
-    const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
-      data: {
-        consultantProfileId,
-        startDay,
-        endDay,
-        startTimeUtc,
-        endTimeUtc,
-        utcOffsetMinutes,
-      },
-      include: {
-        consultantProfile: {
-          select: {
-            id: true,
-            user: {
-              select: {
-                name: true,
-                email: true,
+          const newWeeklySlot = await tx.slotOfAvailabilityWeekly.create({
+            data: {
+              consultantProfileId,
+              startDay,
+              endDay,
+              startTimeUtc,
+              endTimeUtc,
+              utcOffsetMinutes,
+            },
+            include: {
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      name: true,
+                      email: true,
+                    },
+                  },
+                },
               },
             },
-          },
-        },
-      },
-    });
+          });
 
-    // #1320 — an entry that touches an existing row becomes one row; answer
-    // with the row that now covers what was asked for.
-    const covering = await coalesceAndResolve(prisma, consultantProfileId, {
-      startDay,
-      startTimeUtc,
-      endTimeUtc,
-    });
-    return NextResponse.json(
-      { data: covering ?? newWeeklySlot },
-      { status: 201 },
+          // #1320 — an entry that touches an existing row becomes one row; answer
+          // with the row that now covers what was asked for.
+          const covering = await coalesceAndResolve(tx, consultantProfileId, {
+            startDay,
+            endDay,
+            startTimeUtc,
+            endTimeUtc,
+          });
+          return NextResponse.json(
+            { data: covering ?? newWeeklySlot },
+            { status: 201 },
+          );
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
     );
   } catch (error) {
     console.error("Error creating weekly slot:", error);

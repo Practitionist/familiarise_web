@@ -646,9 +646,13 @@ export function mergeConsecutiveSlots(
     const currentMergedEnd = new Date(currentMerged.endsAt).getTime();
     const nextSlotStart = new Date(currentSlot.startsAt).getTime();
 
-    // Check if slots are consecutive (end time equals start time) and both are available
-    // Allow a small tolerance of 1 minute for edge cases
-    const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
+    // Consecutive means EXACTLY adjacent — the merged end is the next start.
+    // The old ±60s tolerance was harmless while a merge could only fuse
+    // sub-windows of one row, but #1320 merges across rows: rows ending 10:30
+    // and starting 10:31 would be offered as one window whose 10:30 atom no
+    // row publishes, and checkout's union coverage then rejects the booking
+    // the grid promised.
+    const isConsecutive = currentMergedEnd === nextSlotStart;
     const bothAvailable =
       !currentMerged.isAllocated && !currentSlot.isAllocated;
     // #1320 — merge ACROSS availability rows. #788 forbade this because
@@ -658,12 +662,17 @@ export function mergeConsecutiveSlots(
     // bookable exactly as the expert-page grid draws it. The first row's id
     // stays on the slot for compatibility; every covering id rides along.
     if (isConsecutive && bothAvailable) {
-      const ids = new Set(
-        currentMerged.slotOfAvailabilityIds ?? [
+      // Both sides can already carry a set — the input type permits a
+      // pre-merged slot — so unioning only `currentSlot`'s single id would
+      // drop every row it had already absorbed.
+      const ids = new Set([
+        ...(currentMerged.slotOfAvailabilityIds ?? [
           currentMerged.slotOfAvailabilityId,
-        ],
-      );
-      ids.add(currentSlot.slotOfAvailabilityId);
+        ]),
+        ...(currentSlot.slotOfAvailabilityIds ?? [
+          currentSlot.slotOfAvailabilityId,
+        ]),
+      ]);
       currentMerged = {
         ...currentMerged,
         endsAt: currentSlot.endsAt,

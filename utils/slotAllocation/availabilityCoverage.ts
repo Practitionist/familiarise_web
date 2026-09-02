@@ -96,9 +96,16 @@ export async function loadPublishedCoverage(
 ): Promise<PublishedCoverage> {
   const profile = await db.consultantProfile.findUnique({
     where: { id: consultantProfileId },
-    select: { scheduleType: true },
+    select: { scheduleType: true, deletedAt: true },
   });
-  const scheduleType = profile?.scheduleType ?? null;
+  // A soft-deleted expert publishes nothing, whatever rows survived the
+  // deletion. Fail closed here rather than at each caller: checkout reaches
+  // this loader through a fallback that never saw the named row, and trial
+  // scheduling reaches it directly.
+  if (!profile || profile.deletedAt) {
+    return { scheduleType: null, weeklyRows: [], customRows: [] };
+  }
+  const scheduleType = profile.scheduleType;
   const weeklyRows =
     scheduleType === "WEEKLY"
       ? await db.slotOfAvailabilityWeekly.findMany({

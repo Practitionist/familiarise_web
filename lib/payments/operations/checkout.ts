@@ -939,7 +939,9 @@ export async function validateSlotAvailability(
       (consultantUserId
         ? (
             await tx.consultantProfile.findFirst({
-              where: { userId: consultantUserId },
+              // The named row got its deletedAt check above; this fallback
+              // runs when there is no named row, so it carries its own.
+              where: { userId: consultantUserId, deletedAt: null },
               select: { id: true },
             })
           )?.id

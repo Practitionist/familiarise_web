@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { coalesceAndResolveCustom } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
@@ -10,52 +11,66 @@ import { getSession } from "@/lib/auth-server";
  * write, then fold the rows the edit made adjacent and answer with the row
  * that now covers it (#1320). PUT and PATCH differ only in how they arrive at
  * the two instants.
+ *
+ * One Serializable transaction, for the reason the weekly twin gives:
+ * coalescing deletes the folded rows and extends the survivor, so a failure
+ * between those two writes destroys availability rather than merging it.
  */
 async function applyCustomSlotEdit(
   id: string,
   consultantProfileId: string,
   next: { startsAt: Date; endsAt: Date },
 ) {
-  const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
-    where: {
-      id: { not: id },
-      consultantProfileId,
-      OR: [
-        {
-          startsAt: { lte: next.startsAt },
-          endsAt: { gt: next.startsAt },
-        },
-        {
-          startsAt: { lt: next.endsAt },
-          endsAt: { gte: next.endsAt },
-        },
-        {
-          startsAt: { gte: next.startsAt },
-          endsAt: { lte: next.endsAt },
-        },
-      ],
-    },
-  });
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const overlappingSlot = await tx.slotOfAvailabilityCustom.findFirst({
+          where: {
+            id: { not: id },
+            consultantProfileId,
+            OR: [
+              {
+                startsAt: { lte: next.startsAt },
+                endsAt: { gt: next.startsAt },
+              },
+              {
+                startsAt: { lt: next.endsAt },
+                endsAt: { gte: next.endsAt },
+              },
+              {
+                startsAt: { gte: next.startsAt },
+                endsAt: { lte: next.endsAt },
+              },
+            ],
+          },
+        });
 
-  if (overlappingSlot) {
-    return NextResponse.json(
-      { error: "This slot overlaps with an existing slot" },
-      { status: 409 },
-    );
-  }
+        if (overlappingSlot) {
+          return NextResponse.json(
+            { error: "This slot overlaps with an existing slot" },
+            { status: 409 },
+          );
+        }
 
-  const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
-    where: { id },
-    data: { startsAt: next.startsAt, endsAt: next.endsAt },
-    include: { consultantProfile: true },
-  });
+        const updatedSlot = await tx.slotOfAvailabilityCustom.update({
+          where: { id },
+          data: { startsAt: next.startsAt, endsAt: next.endsAt },
+          include: { consultantProfile: true },
+        });
 
-  const covering = await coalesceAndResolveCustom(
-    prisma,
-    updatedSlot.consultantProfileId,
-    { startsAt: updatedSlot.startsAt, endsAt: updatedSlot.endsAt },
+        const covering = await coalesceAndResolveCustom(
+          tx,
+          updatedSlot.consultantProfileId,
+          { startsAt: updatedSlot.startsAt, endsAt: updatedSlot.endsAt },
+        );
+        return NextResponse.json(
+          { data: covering ?? updatedSlot },
+          { status: 200 },
+        );
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
-  return NextResponse.json({ data: covering ?? updatedSlot }, { status: 200 });
 }
 
 export async function GET(

@@ -11,13 +11,16 @@
 import fs from "fs";
 import path from "path";
 import {
+  coalesceAndResolve,
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
 } from "../../utils/slotAllocation/mergeAdjacentWeeklyRows";
 import {
   findUncoveredAtom,
+  loadPublishedCoverage,
   windowAtoms,
 } from "../../utils/slotAllocation/availabilityCoverage";
+import type { Tx } from "../../lib/prisma";
 import {
   breakDownSlotsPreservingStatus,
   mergeConsecutiveSlots,
@@ -173,6 +176,33 @@ describe("mergeConsecutiveSlots (#1320)", () => {
     ).toHaveLength(3);
     expect(mergeConsecutiveSlots([ATOMS[0], ATOMS[3]])).toHaveLength(2);
   });
+
+  // Adjacency is exact. A sub-minute tolerance would offer a window whose
+  // uncovered seconds no row publishes, and checkout's union rule then
+  // rejects the booking the grid promised.
+  it.each([1_000, 60_000])("does not merge across a %dms gap", (gapMs) => {
+    const shifted = {
+      ...ATOMS[2],
+      startsAt: new Date(
+        new Date(ATOMS[2].startsAt).getTime() + gapMs,
+      ).toISOString(),
+    };
+    expect(mergeConsecutiveSlots([ATOMS[0], ATOMS[1], shifted])).toHaveLength(
+      2,
+    );
+  });
+
+  it("keeps every id an already-merged slot carries", () => {
+    const earlier = atom(9, 1, "rowZ"); // 09:30–10:00, ends where rowA starts
+    const alreadyMerged = {
+      ...ATOMS[0],
+      endsAt: ATOMS[3].endsAt,
+      slotOfAvailabilityIds: ["rowA", "rowB"],
+    };
+    const merged = mergeConsecutiveSlots([earlier, alreadyMerged]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].slotOfAvailabilityIds).toEqual(["rowZ", "rowA", "rowB"]);
+  });
 });
 
 describe("breakDownSlotsPreservingStatus (#1320)", () => {
@@ -236,17 +266,155 @@ describe("checkout coverage rule (#1320)", () => {
       "utils/onboarding-server.ts",
       "app/api/user/consultants/[id]/route.ts",
     ]) {
-      expect(fs.readFileSync(path.join(process.cwd(), f), "utf8")).toContain(
-        "mergeAdjacentWeeklyRows(",
-      );
+      const src = fs.readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src).toContain("mergeAdjacentWeeklyRows(");
+      expect(src).toContain("mergeAdjacentCustomRows(");
     }
-    for (const f of [
-      "app/api/slots/availability/weekly/route.ts",
-      "app/api/slots/availability/weekly/[id]/route.ts",
+    for (const [f, helper] of [
+      ["app/api/slots/availability/weekly/route.ts", "coalesceAndResolve("],
+      [
+        "app/api/slots/availability/weekly/[id]/route.ts",
+        "coalesceAndResolve(",
+      ],
+      [
+        "app/api/slots/availability/custom/route.ts",
+        "coalesceAndResolveCustom(",
+      ],
+      [
+        "app/api/slots/availability/custom/[id]/route.ts",
+        "coalesceAndResolveCustom(",
+      ],
     ]) {
       expect(fs.readFileSync(path.join(process.cwd(), f), "utf8")).toContain(
-        "coalesceAndResolve(",
+        helper,
       );
     }
+  });
+});
+
+/**
+ * The covering-row lookup is a containment test WITHIN one day pair. Without
+ * `endDay` an overnight row (endTimeUtc < startTimeUtc) matches any same-day
+ * row that starts earlier, so an edit is answered with someone else's window.
+ */
+describe("coalesceAndResolve resolves the edited row (#1320)", () => {
+  interface StoredRow {
+    id: string;
+    startDay: string;
+    endDay: string;
+    startTimeUtc: number;
+    endTimeUtc: number;
+    utcOffsetMinutes: number;
+  }
+  const SAME_DAY: StoredRow = {
+    id: "same-day",
+    startDay: "MONDAY",
+    endDay: "MONDAY",
+    startTimeUtc: 540,
+    endTimeUtc: 1080,
+    utcOffsetMinutes: 0,
+  };
+  const OVERNIGHT: StoredRow = {
+    id: "overnight",
+    startDay: "MONDAY",
+    endDay: "TUESDAY",
+    startTimeUtc: 1320,
+    endTimeUtc: 120,
+    utcOffsetMinutes: 0,
+  };
+
+  function weeklyDb(rows: StoredRow[]) {
+    return {
+      slotOfAvailabilityWeekly: {
+        findMany: async () => rows,
+        deleteMany: async () => ({ count: 0 }),
+        createMany: async () => ({ count: 0 }),
+        findFirst: async ({
+          where,
+        }: {
+          where: {
+            startDay: string;
+            endDay: string;
+            startTimeUtc: { lte: number };
+            endTimeUtc: { gte: number };
+          };
+        }) =>
+          // Absent filters are absent, as Prisma treats them — so dropping
+          // the endDay term makes the same-day row match this window again.
+          rows.find(
+            (r) =>
+              r.startDay === where.startDay &&
+              (where.endDay === undefined || r.endDay === where.endDay) &&
+              r.startTimeUtc <= where.startTimeUtc.lte &&
+              r.endTimeUtc >= where.endTimeUtc.gte,
+          ) ?? null,
+      },
+    } as unknown as Pick<Tx, "slotOfAvailabilityWeekly">;
+  }
+
+  it("answers an overnight edit with the overnight row, not a same-day one", async () => {
+    const covering = await coalesceAndResolve(
+      weeklyDb([SAME_DAY, OVERNIGHT]),
+      "cp-1",
+      {
+        startDay: OVERNIGHT.startDay as "MONDAY",
+        endDay: OVERNIGHT.endDay as "TUESDAY",
+        startTimeUtc: OVERNIGHT.startTimeUtc,
+        endTimeUtc: OVERNIGHT.endTimeUtc,
+      },
+    );
+    expect(covering?.id).toBe("overnight");
+  });
+});
+
+describe("loadPublishedCoverage (#1320)", () => {
+  function coverageDb(deletedAt: Date | null) {
+    return {
+      consultantProfile: {
+        findUnique: async () => ({ scheduleType: "WEEKLY", deletedAt }),
+      },
+      slotOfAvailabilityWeekly: { findMany: async () => [ROW_A, ROW_B] },
+      slotOfAvailabilityCustom: { findMany: async () => [] },
+    } as unknown as Pick<
+      Tx,
+      | "consultantProfile"
+      | "slotOfAvailabilityWeekly"
+      | "slotOfAvailabilityCustom"
+    >;
+  }
+  const start = new Date(Date.UTC(2026, 8, 7, 10, 0));
+  const end = new Date(Date.UTC(2026, 8, 7, 12, 0));
+
+  it("publishes the active arm for a live profile", async () => {
+    const coverage = await loadPublishedCoverage(
+      coverageDb(null),
+      "cp-1",
+      start,
+      end,
+    );
+    expect(coverage.weeklyRows).toHaveLength(2);
+    expect(
+      findUncoveredAtom(windowAtoms(start, end), coverage.weeklyRows, []),
+    ).toBeNull();
+  });
+
+  // Rows outlive a soft-deleted profile, and checkout can reach this loader
+  // without ever seeing the named row. Publishing them would sell a session
+  // with an expert who no longer takes bookings.
+  it("publishes nothing for a soft-deleted profile", async () => {
+    const coverage = await loadPublishedCoverage(
+      coverageDb(new Date()),
+      "cp-1",
+      start,
+      end,
+    );
+    expect(coverage).toEqual({
+      scheduleType: null,
+      weeklyRows: [],
+      customRows: [],
+    });
+    expect(
+      findUncoveredAtom(windowAtoms(start, end), coverage.weeklyRows, []),
+    ).not.toBeNull();
   });
 });

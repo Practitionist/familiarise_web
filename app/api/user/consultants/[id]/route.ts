@@ -463,14 +463,17 @@ export async function PUT(
           }
         }
 
-        // Delete existing then create new
-        await prisma.slotOfAvailabilityWeekly.deleteMany({
-          where: { consultantProfileId: id },
-        });
+        // Delete existing then create new, atomically — a failure between the
+        // two halves would leave the consultant with no availability at all.
         // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
-        await prisma.slotOfAvailabilityWeekly.createMany({
-          data: mergeAdjacentWeeklyRows(weeklySlotData),
-        });
+        await prisma.$transaction([
+          prisma.slotOfAvailabilityWeekly.deleteMany({
+            where: { consultantProfileId: id },
+          }),
+          prisma.slotOfAvailabilityWeekly.createMany({
+            data: mergeAdjacentWeeklyRows(weeklySlotData),
+          }),
+        ]);
       } else {
         // No weekly slots submitted — clear existing
         await prisma.slotOfAvailabilityWeekly.deleteMany({
@@ -523,14 +526,16 @@ export async function PUT(
           }
         }
 
-        // Delete existing then create new
-        await prisma.slotOfAvailabilityCustom.deleteMany({
-          where: { consultantProfileId: id },
-        });
+        // Delete existing then create new, atomically — see the weekly arm.
         // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
-        await prisma.slotOfAvailabilityCustom.createMany({
-          data: mergeAdjacentCustomRows(customSlotData),
-        });
+        await prisma.$transaction([
+          prisma.slotOfAvailabilityCustom.deleteMany({
+            where: { consultantProfileId: id },
+          }),
+          prisma.slotOfAvailabilityCustom.createMany({
+            data: mergeAdjacentCustomRows(customSlotData),
+          }),
+        ]);
       } else {
         // No custom slots submitted — clear existing
         await prisma.slotOfAvailabilityCustom.deleteMany({

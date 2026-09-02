@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { coalesceAndResolve } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma, DayOfWeek } from "@prisma/client";
 import {
   minutesToTimeString,
@@ -16,6 +17,13 @@ import * as Sentry from "@sentry/nextjs";
  * consultant's current UTC offset, write, then fold adjacent rows and answer
  * with the row that now covers the edit (#1320). PUT and PATCH differ only in
  * how they arrive at the four values, so only that part stays in the handler.
+ *
+ * All of it runs in ONE Serializable transaction. Coalescing rewrites the
+ * consultant's whole weekly set as delete-then-recreate, so on the bare client
+ * a failure between the two halves leaves the consultant with no availability
+ * at all, and a concurrent save reads a set the other writer is mid-way
+ * through replacing. Serializable also closes the check-then-act window the
+ * overlap read used to leave open.
  */
 async function applyWeeklySlotEdit(
   id: string,
@@ -30,47 +38,61 @@ async function applyWeeklySlotEdit(
     endTimeUtc: number;
   },
 ) {
-  // Cross-midnight-aware overlap check against the authoritative consultant.
-  const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-    where: buildWeeklyOverlapWhere(
-      currentSlot.consultantProfileId,
-      next.startDay,
-      next.endDay,
-      next.startTimeUtc,
-      next.endTimeUtc,
-      id,
-    ),
-  });
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        // Cross-midnight-aware overlap check against the authoritative
+        // consultant.
+        const overlappingSlot = await tx.slotOfAvailabilityWeekly.findFirst({
+          where: buildWeeklyOverlapWhere(
+            currentSlot.consultantProfileId,
+            next.startDay,
+            next.endDay,
+            next.startTimeUtc,
+            next.endTimeUtc,
+            id,
+          ),
+        });
 
-  if (overlappingSlot) {
-    return NextResponse.json(
-      {
-        error: `This slot (${minutesToTimeString(next.startTimeUtc)}-${minutesToTimeString(next.endTimeUtc)}) overlaps with an existing slot`,
+        if (overlappingSlot) {
+          return NextResponse.json(
+            {
+              error: `This slot (${minutesToTimeString(next.startTimeUtc)}-${minutesToTimeString(next.endTimeUtc)}) overlaps with an existing slot`,
+            },
+            { status: 409 },
+          );
+        }
+
+        const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
+          ? getTimezoneOffsetMinutes(
+              currentSlot.consultantProfile.user.timezone,
+            )
+          : 0;
+
+        const updatedSlot = await tx.slotOfAvailabilityWeekly.update({
+          where: { id },
+          data: { ...next, utcOffsetMinutes },
+          include: { consultantProfile: true },
+        });
+
+        const covering = await coalesceAndResolve(
+          tx,
+          updatedSlot.consultantProfileId,
+          {
+            startDay: updatedSlot.startDay,
+            endDay: updatedSlot.endDay,
+            startTimeUtc: updatedSlot.startTimeUtc,
+            endTimeUtc: updatedSlot.endTimeUtc,
+          },
+        );
+        return NextResponse.json(
+          { data: covering ?? updatedSlot },
+          { status: 200 },
+        );
       },
-      { status: 409 },
-    );
-  }
-
-  const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
-    ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
-    : 0;
-
-  const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
-    where: { id },
-    data: { ...next, utcOffsetMinutes },
-    include: { consultantProfile: true },
-  });
-
-  const covering = await coalesceAndResolve(
-    prisma,
-    updatedSlot.consultantProfileId,
-    {
-      startDay: updatedSlot.startDay,
-      startTimeUtc: updatedSlot.startTimeUtc,
-      endTimeUtc: updatedSlot.endTimeUtc,
-    },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
-  return NextResponse.json({ data: covering ?? updatedSlot }, { status: 200 });
 }
 
 /**

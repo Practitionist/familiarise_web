@@ -159,7 +159,7 @@ Always use `SlotCalculationService.countWeeks()`.
 | ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------- |
 | Consultation | `Math.ceil(durationInHours / 0.5)`                                            | 1.5h = 3 slots                                      |
 | Webinar      | `Math.ceil(durationInHours / 0.5)`                                            | 2h = 4 slots                                        |
-| Subscription | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | 5 weeks, 2/week, 1h sessions = 5 _ 2 _ 2 = 20 slots |
+| Subscription | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | 5 weeks, 2/week, 1h sessions = 5 × 2 × 2 = 20 slots |
 | Class        | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula                                        |
 
 ## Consecutive Slot Validation

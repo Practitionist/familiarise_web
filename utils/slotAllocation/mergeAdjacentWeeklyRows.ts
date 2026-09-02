@@ -116,22 +116,35 @@ export async function coalesceConsultantWeeklyRows(
 /**
  * After a single-row create/update: fold adjacent rows and return the row that
  * now covers the written window (its id changes when it was merged).
+ *
+ * `endDay` is part of the window because the minute comparison below is only a
+ * containment test WITHIN one day pair: an overnight row stores
+ * endTimeUtc < startTimeUtc, so a same-day row would otherwise satisfy
+ * `startTimeUtc <= 1320 AND endTimeUtc >= 120` and answer for an edit that was
+ * never its own. The ordering makes the answer deterministic either way.
  */
 export async function coalesceAndResolve<
   Db extends Pick<Tx, "slotOfAvailabilityWeekly">,
 >(
   db: Db,
   consultantProfileId: string,
-  window: { startDay: DayOfWeek; startTimeUtc: number; endTimeUtc: number },
+  window: {
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+  },
 ) {
   await coalesceConsultantWeeklyRows(db, consultantProfileId);
   return db.slotOfAvailabilityWeekly.findFirst({
     where: {
       consultantProfileId,
       startDay: window.startDay,
+      endDay: window.endDay,
       startTimeUtc: { lte: window.startTimeUtc },
       endTimeUtc: { gte: window.endTimeUtc },
     },
+    orderBy: [{ startTimeUtc: "asc" }, { id: "asc" }],
     include: {
       consultantProfile: {
         select: { id: true, user: { select: { name: true, email: true } } },
@@ -227,6 +240,7 @@ export async function coalesceAndResolveCustom<
       startsAt: { lte: window.startsAt },
       endsAt: { gte: window.endsAt },
     },
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     include: {
       consultantProfile: {
         select: { id: true, user: { select: { name: true, email: true } } },
