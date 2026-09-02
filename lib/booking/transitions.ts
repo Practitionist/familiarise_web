@@ -14,6 +14,7 @@ import type { Tx } from "@/lib/prisma";
  * the row may currently be in. Dependency-light (Prisma types only).
  */
 import type {
+  BookingHistoryEntity,
   ClassStatus,
   Prisma,
   AppointmentStatus,
@@ -24,6 +25,40 @@ import type {
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
+// #1319 A12 — every guarded transition appends one BookingStatusHistory row in
+// the same tx. The from-status is read before the CAS because updateMany
+// cannot return the pre-image; a lost race between the read and the write logs
+// a stale from-status on an append-only audit row, never a wrong state change.
+type HistoryTx = Pick<Tx, "bookingStatusHistory">;
+interface HistoryMeta {
+  /** Audit attribution. Optional so no existing caller changes. */
+  actorUserId?: string | null;
+  reason?: string | null;
+  organizationId?: string | null;
+  appointmentId?: string | null;
+}
+async function appendHistory(
+  tx: HistoryTx,
+  entity: BookingHistoryEntity,
+  entityId: string,
+  fromStatus: string | null | undefined,
+  toStatus: string,
+  meta: HistoryMeta,
+): Promise<void> {
+  await tx.bookingStatusHistory.create({
+    data: {
+      entity,
+      entityId,
+      fromStatus: fromStatus ?? "UNKNOWN",
+      toStatus,
+      actorUserId: meta.actorUserId ?? null,
+      reason: meta.reason ?? null,
+      organizationId: meta.organizationId ?? null,
+      appointmentId: meta.appointmentId ?? null,
+    },
+  });
+}
+
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
 
 // PENDING is the entry state; its only legal re-entry is the payment-link
@@ -31,7 +66,10 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 // from the wider RESCHEDULABLE_FROM set below — that flow owns its own edge
 // because rescheduling a SCHEDULED booking back to PENDING is policy-gated
 // (24h window), not a generic transition.
-export const REQUEST_ALLOWED_FROM: Record<AppointmentStatus, AppointmentStatus[]> = {
+export const REQUEST_ALLOWED_FROM: Record<
+  AppointmentStatus,
+  AppointmentStatus[]
+> = {
   PENDING: ["APPROVED_PENDING_PAYMENT"],
   APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
@@ -69,8 +107,8 @@ export const ALLOCATION_APPROVABLE_FROM: AppointmentStatus[] = [
 ];
 
 export async function transitionConsultationRequest(
-  tx: Pick<Tx, "consultation">,
-  args: {
+  tx: Pick<Tx, "consultation" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.ConsultationUncheckedUpdateManyInput, "status">;
@@ -78,6 +116,10 @@ export async function transitionConsultationRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  const before = await tx.consultation.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.consultation.updateMany({
     where: {
       ...args.where,
@@ -85,12 +127,21 @@ export async function transitionConsultationRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Consultation", args.to);
+  if (res.count === 0)
+    throw new IllegalTransitionError("Consultation", args.to);
+  await appendHistory(
+    tx,
+    "CONSULTATION",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 export async function transitionSubscriptionRequest(
-  tx: Pick<Tx, "subscription">,
-  args: {
+  tx: Pick<Tx, "subscription" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.SubscriptionUncheckedUpdateManyInput, "status">;
@@ -98,6 +149,10 @@ export async function transitionSubscriptionRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  const before = await tx.subscription.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
@@ -105,7 +160,16 @@ export async function transitionSubscriptionRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Subscription", args.to);
+  if (res.count === 0)
+    throw new IllegalTransitionError("Subscription", args.to);
+  await appendHistory(
+    tx,
+    "SUBSCRIPTION",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
@@ -137,14 +201,18 @@ export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
 export const EVENT_PUBLISHABLE_FROM: WebinarStatus[] = ["DRAFT"];
 
 export async function transitionWebinarEvent(
-  tx: Pick<Tx, "webinar">,
-  args: {
+  tx: Pick<Tx, "webinar" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: WebinarStatus;
     data?: Omit<Prisma.WebinarUncheckedUpdateManyInput, "status">;
     fromIn?: WebinarStatus[];
   },
 ): Promise<void> {
+  const before = await tx.webinar.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.webinar.updateMany({
     where: {
       ...args.where,
@@ -153,17 +221,29 @@ export async function transitionWebinarEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Webinar", args.to);
+  await appendHistory(
+    tx,
+    "WEBINAR",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 export async function transitionClassEvent(
-  tx: Pick<Tx, "class">,
-  args: {
+  tx: Pick<Tx, "class" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: ClassStatus;
     data?: Omit<Prisma.ClassUncheckedUpdateManyInput, "status">;
     fromIn?: ClassStatus[];
   },
 ): Promise<void> {
+  const before = await tx.class.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.class.updateMany({
     where: {
       ...args.where,
@@ -172,6 +252,14 @@ export async function transitionClassEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
+  await appendHistory(
+    tx,
+    "CLASS",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 //////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
@@ -221,8 +309,8 @@ export const RESCHEDULE_TERMINAL_STATUSES: RescheduleRequestStatus[] = [
 ];
 
 export async function transitionRescheduleRequest(
-  tx: Pick<Tx, "rescheduleRequest">,
-  args: {
+  tx: Pick<Tx, "rescheduleRequest" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: RescheduleRequestStatus;
     data?: Omit<Prisma.RescheduleRequestUncheckedUpdateManyInput, "status">;
@@ -234,6 +322,10 @@ export async function transitionRescheduleRequest(
   // nullable-unique stops reserving the appointment and a fresh reschedule can
   // open. Callers must not have to remember this.
   const releasesLock = RESCHEDULE_TERMINAL_STATUSES.includes(args.to);
+  const before = await tx.rescheduleRequest.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.rescheduleRequest.updateMany({
     where: {
       ...args.where,
@@ -250,4 +342,12 @@ export async function transitionRescheduleRequest(
   if (res.count === 0) {
     throw new IllegalTransitionError("RescheduleRequest", args.to);
   }
+  await appendHistory(
+    tx,
+    "RESCHEDULE_REQUEST",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
