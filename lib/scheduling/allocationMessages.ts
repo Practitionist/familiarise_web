@@ -269,11 +269,17 @@ export const autoScheduled = (): AllocationToast => ({
 export const partiallyScheduled = (
   placed: number,
   required: number,
-): AllocationToast => ({
-  variant: "default",
-  title: "Some sessions scheduled",
-  description: `${placed} of ${required} session${plural(required)} now have times. The remaining ${required - placed} stay unscheduled until more availability opens.`,
-});
+): AllocationToast => {
+  // The remainder needs its own noun and its own agreement: a shortfall of one
+  // is the common near-complete case, and "The remaining 1 stay unscheduled"
+  // is what the consultant read there.
+  const remaining = Math.max(0, required - placed);
+  return {
+    variant: "default",
+    title: "Some sessions scheduled",
+    description: `${placed} of ${required} session${plural(required)} now have times. The remaining ${remaining} session${plural(remaining)} ${remaining === 1 ? "stays" : "stay"} unscheduled until more availability opens.`,
+  };
+};
 
 export const allocationFailed = (reason: string): AllocationToast => ({
   variant: "destructive",

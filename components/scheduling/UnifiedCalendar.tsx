@@ -558,6 +558,14 @@ export function UnifiedCalendar({
     onConflict: onAllocationConflict,
   });
 
+  // Radix keeps AlertDialogContent mounted for its exit animation, and both
+  // answers clear `partialOffer` before that finishes — so reading the counts
+  // straight off it blanked the title to "Only of sessions fit" on the way out.
+  // Hold the last offer for the render; `open` still tracks the live value.
+  const lastPartialOffer = useRef(partialOffer);
+  if (partialOffer) lastPartialOffer.current = partialOffer;
+  const offer = partialOffer ?? lastPartialOffer.current;
+
   // PERFORMANCE: Pre-compute a Set of event slot timestamps (rounded to seconds)
   // for O(1) lookups. Replaces O(n) .some() scan that ran 336× per render.
   const eventSlotsSet = useMemo(
@@ -1623,16 +1631,15 @@ export function UnifiedCalendar({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Only {partialOffer?.placeableSessions} of{" "}
-              {partialOffer?.requiredSessions} sessions fit
+              Only {offer?.placeableSessions} of {offer?.requiredSessions}{" "}
+              sessions fit
             </AlertDialogTitle>
             <AlertDialogDescription>
               Your published availability in this scheduling period can hold{" "}
-              {partialOffer?.placeableSessions} session
-              {partialOffer?.placeableSessions === 1 ? "" : "s"}. Schedule those
-              now and leave the remaining{" "}
-              {(partialOffer?.requiredSessions ?? 0) -
-                (partialOffer?.placeableSessions ?? 0)}{" "}
+              {offer?.placeableSessions} session
+              {offer?.placeableSessions === 1 ? "" : "s"}. Schedule those now
+              and leave the remaining{" "}
+              {(offer?.requiredSessions ?? 0) - (offer?.placeableSessions ?? 0)}{" "}
               pending? The consultee is told how many are booked, and you can
               allocate the rest once you open up more time.
             </AlertDialogDescription>
@@ -1650,7 +1657,7 @@ export function UnifiedCalendar({
                 void autoAllocate(availableSlots, { allowPartial: true });
               }}
             >
-              Schedule {partialOffer?.placeableSessions} now
+              Schedule {offer?.placeableSessions} now
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

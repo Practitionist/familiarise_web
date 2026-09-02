@@ -123,6 +123,13 @@ interface AllocationWalkContext {
   eventType: EventType;
   eventId?: string;
   consultantProfileId?: string;
+  /**
+   * Rows already reported as truncated on THIS allocation. The walk re-visits
+   * a row once per day, and again after every placement, so without this one
+   * long row emits hundreds of identical warnings and evicts every other
+   * breadcrumb on the Sentry scope — losing the context the report exists for.
+   */
+  reportedTruncations?: Set<string>;
 }
 
 /**
@@ -884,7 +891,58 @@ export class SlotAllocationService {
       } as Prisma.AppointmentWhereInput,
       include: { slotsOfAppointment: true },
     });
-    return { success: true, appointments };
+    return {
+      success: true,
+      appointments,
+      ...(await this.replayPartialCounts(eventType, eventId, appointments)),
+    };
+  }
+
+  /**
+   * #1206 — a replay must not tell the consultee the plan is complete.
+   *
+   * `allocate()` derives the notification and the consultant's toast from
+   * `partial`, so returning the stored batch bare made every double-submit of a
+   * partial run read as "all sessions have been automatically scheduled". The
+   * counts are re-derived from what is stored — one Appointment per session,
+   * against the plan's `totalSessions` — so nothing about the shortfall is
+   * persisted here either. Only recurring events can be partial; anything else
+   * (and any event whose plan is unreadable) omits the fields and keeps the
+   * pre-existing "complete" reading, which is correct for a single session.
+   */
+  private static async replayPartialCounts(
+    eventType: EventType,
+    eventId: string,
+    appointments: { deletedAt?: Date | null }[],
+  ): Promise<Partial<AllocationResult>> {
+    if (!isRecurringEventType(eventType)) return {};
+
+    const requiredSessions =
+      eventType === "subscription"
+        ? (
+            await prisma.subscription.findUnique({
+              where: { id: eventId },
+              select: { subscriptionPlan: { select: { totalSessions: true } } },
+            })
+          )?.subscriptionPlan?.totalSessions
+        : (
+            await prisma.class.findUnique({
+              where: { id: eventId },
+              select: { classPlan: { select: { totalSessions: true } } },
+            })
+          )?.classPlan?.totalSessions;
+
+    if (!requiredSessions || requiredSessions <= 0) return {};
+
+    // Tombstoned rows are not placed sessions; the returned batch is left as
+    // it was so the replay still hands back exactly what the first call did.
+    const placedSessions = appointments.filter((a) => !a.deletedAt).length;
+    return {
+      partial: placedSessions < requiredSessions,
+      placedSessions,
+      requiredSessions,
+      unplacedSessions: Math.max(0, requiredSessions - placedSessions),
+    };
   }
 
   /**
@@ -2285,6 +2343,13 @@ export class SlotAllocationService {
     consultant: ConsultantAllocationData,
     walk?: AllocationWalkContext,
   ): void {
+    // One report per row per allocation. A walk with no context (a direct unit
+    // call) has no set and still reports, which is what its callers assert on.
+    const rowKey = `${rowStart.getTime()}-${rowEndMs}`;
+    if (walk?.reportedTruncations) {
+      if (walk.reportedTruncations.has(rowKey)) return;
+      walk.reportedTruncations.add(rowKey);
+    }
     const detail = {
       rowStart: rowStart.toISOString(),
       rowEnd: new Date(rowEndMs).toISOString(),
@@ -2566,6 +2631,7 @@ export class SlotAllocationService {
       eventType,
       eventId,
       consultantProfileId,
+      reportedTruncations: new Set(),
     };
     // Only FUTURE occupancy can collide with a candidate: buildConsecutiveBlock
     // rejects any candidate start before `now`, so a slot that has already
