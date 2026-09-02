@@ -7,7 +7,7 @@ import { notifyTrialSessionRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -98,12 +98,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const whereClause: Prisma.TrialSessionWhereInput =
-      scopeResolution.scope.kind === "personal"
-        ? { organizationId: null }
-        : scopeResolution.scope.kind === "org"
-          ? { organizationId: scopeResolution.scope.orgId }
-          : {};
+    // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active
+    // member below `operations.read` resolves to. Testing `kind === "org"`
+    // alone dropped them into the unfiltered arm, so asking for one org's
+    // trials returned every org's plus the personal ones. scopeToWhereOrgId is
+    // the single place that knows which kinds pin.
+    const whereClause: Prisma.TrialSessionWhereInput = scopeToWhereOrgId(
+      scopeResolution.scope,
+    );
 
     if (applyOwnershipOr) {
       // #org-appts — dual-identity union; AND-nested so it composes with the

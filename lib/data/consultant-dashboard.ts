@@ -19,6 +19,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
@@ -50,16 +51,21 @@ const HOME_APPOINTMENTS_TAKE = 20;
 const HOME_PENDING_TAKE = 20;
 
 /**
+ * #1166 ORG-1 — personal Home is B2C only (ADR 19), matching the sibling
+ * Appointments page's personal filter; org delivery lives on that org's own
+ * dashboard. #674 defect 13 — the pin is taken from the shared projector
+ * rather than written out as a literal at each of the four sites below, so
+ * "what personal means" has exactly one definition on the platform.
+ */
+const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
+
+/**
  * Every appointment this consultant owns or collaborates on. Shared by the
  * Home display read and the active-clients count so the two can never drift.
- *
- * #1166 ORG-1 — pinned to `organizationId: null`: personal Home is B2C only
- * (ADR 19), matching the sibling Appointments page's personal filter. Org
- * delivery lives on that org's dashboard.
  */
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
-    organizationId: null,
+    ...PERSONAL_ORG_PIN,
     OR: [
       {
         consultation: {
@@ -518,7 +524,7 @@ export async function getConsultantDashboard(
         consultantProfileId,
         status: { not: "REFUNDED" },
         createdAt: { gte: startOfMonth },
-        payment: { organizationId: null },
+        payment: { ...PERSONAL_ORG_PIN },
       },
     }),
     // 1b. Earnings last month
@@ -528,7 +534,7 @@ export async function getConsultantDashboard(
         consultantProfileId,
         status: { not: "REFUNDED" },
         createdAt: { gte: startOfLastMonth, lt: startOfMonth },
-        payment: { organizationId: null },
+        payment: { ...PERSONAL_ORG_PIN },
       },
     }),
     // 2. Average rating
@@ -548,7 +554,7 @@ export async function getConsultantDashboard(
           // consultantAppointmentScope (different status rules), so the
           // personal pin has to be repeated or Home's completion rate counts
           // org sessions the rest of the page excludes.
-          organizationId: null,
+          ...PERSONAL_ORG_PIN,
           OR: [
             { consultation: { consultationPlan: { consultantProfileId } } },
             { subscription: { subscriptionPlan: { consultantProfileId } } },
