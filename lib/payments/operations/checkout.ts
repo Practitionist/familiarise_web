@@ -32,6 +32,8 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { buildContiguousSlotAtomsForWindow } from "@/lib/appointments/contiguous-slot-run";
+import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
@@ -1791,23 +1793,20 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // Create appointment with 30-min slot chunks (consistent with SlotAllocationService).
-  // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
-  // Both consultant and consultee are connected so the user-scoped conflict filter works.
-  const SLOT_MS = 30 * 60 * 1000;
-  const startTime = new Date(data.startsAt!);
-  const endTime = new Date(data.endsAt!);
-  const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
-  let cur = new Date(startTime);
-  while (cur < endTime) {
-    slotChunks.push({
-      startsAt: new Date(cur),
-      endsAt: new Date(cur.getTime() + SLOT_MS),
-    });
-    cur = new Date(cur.getTime() + SLOT_MS);
-  }
-  if (slotChunks.length === 0)
-    throw new Error("Invalid slot: start must be before end");
+  // N x 30-minute atoms, both parties on every one (#1071 / ADR B1). Half-hour
+  // rows are what conflict detection compares against, and the consultant has
+  // to be connected or the user-scoped filter in validateNoConflicts
+  // (`user.some.id === consultantUserId`) cannot see the booking at all.
+  // #1319 — shared with the webhook capture fallback, which had drifted to one
+  // oversized row carrying only the buyer.
+  const slotAtoms = buildContiguousSlotAtomsForWindow({
+    startsAt: new Date(data.startsAt!),
+    endsAt: new Date(data.endsAt!),
+    // #440 — denormalized for the DB-level overlap guard.
+    consultantProfileId: plan.consultantProfileId,
+    isTentative: !skipPayment,
+    userIds: [consultantUserId, consulteeUserId],
+  });
 
   const appointment = await tx.appointment.create({
     data: {
@@ -1818,22 +1817,7 @@ export async function handleConsultationCheckout(
       cancellationPolicySnapshot: JSON.parse(
         JSON.stringify(resolveCancellationPolicySnapshot()),
       ),
-      slotsOfAppointment: {
-        create: slotChunks.map((chunk) => ({
-          startsAt: chunk.startsAt,
-          endsAt: chunk.endsAt,
-          isTentative: !skipPayment,
-          // #440 — denormalized for the DB-level overlap guard.
-          consultantProfileId: plan.consultantProfileId,
-          // Connect BOTH consultant and consultee so the user-scoped conflict
-          // filter in validateNoConflicts (user.some.id === consultantUserId)
-          // can see this slot. dev branch only connected the consultee, which
-          // left the slot invisible to auto/manual allocation conflict checks.
-          user: {
-            connect: [{ id: consultantUserId }, { id: consulteeUserId }],
-          },
-        })),
-      },
+      slotsOfAppointment: { create: slotAtoms },
     },
   });
 
@@ -2082,15 +2066,11 @@ export async function handleWebinarCheckout(
   // Add user to webinar by linking them to ALL existing slots.
   // Webinar participants attend the entire session, so they must be
   // connected to every SlotOfAppointment (not given a new duplicate slot).
-  if (appointment && appointment.slotsOfAppointment.length > 0) {
-    for (const slot of appointment.slotsOfAppointment) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          user: { connect: { id: userId } },
-        },
-      });
-    }
+  if (appointment) {
+    await connectAttendeeToEventSlots(tx, {
+      appointments: [appointment],
+      userId,
+    });
   }
 
   return { appointment, plan, amount: plan.price };
@@ -2172,18 +2152,10 @@ export async function handleClassCheckout(
   // Link user to ALL existing slots of ALL class appointments (sessions).
   // Class participants attend every session, so they must be connected to
   // every existing SlotOfAppointment (not given duplicate slots).
-  let linkedSlotCount = 0;
-  for (const appointment of classInstance.appointments) {
-    for (const slot of appointment.slotsOfAppointment) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          user: { connect: { id: userId } },
-        },
-      });
-      linkedSlotCount++;
-    }
-  }
+  const linkedSlotCount = await connectAttendeeToEventSlots(tx, {
+    appointments: classInstance.appointments,
+    userId,
+  });
 
   // Return the first appointment for compatibility
   const firstAppointment = classInstance.appointments[0];

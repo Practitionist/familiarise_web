@@ -26,6 +26,11 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import {
+  assertSingleContiguousLiveRun,
+  buildContiguousSlotAtomsForWindow,
+} from "@/lib/appointments/contiguous-slot-run";
+import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import {
@@ -1353,7 +1358,9 @@ async function createAppointmentFromWebhook(
 
 async function createConsultation(tx: Tx, data: ConsultationData) {
   // #440 — the include rides the create so the overlap-guard column comes
-  // back without a second query inside the webhook transaction.
+  // back without a second query inside the webhook transaction. #1319 adds
+  // the consultant's user id: the conflict filter this row has to be visible
+  // to matches on `user.some.id`, not on the profile.
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -1363,29 +1370,57 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       bookingSource: "DIRECT_CHECKOUT",
     },
     include: {
-      consultationPlan: { select: { consultantProfileId: true } },
+      consultationPlan: {
+        select: {
+          consultantProfileId: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
     },
   });
 
-  return await tx.appointment.create({
+  const consultantUserId =
+    consultation.consultationPlan.consultantProfile?.userId;
+  if (!consultantUserId) {
+    // Without it the row is invisible to the consultant-scoped conflict filter
+    // and the allocator will happily double-book on top of it. A capture that
+    // cannot produce a correct booking must fail loudly, not quietly commit a
+    // half-connected one — the caller's CRITICAL alert exists for this.
+    throw new Error(
+      "Consultation plan has no consultant user; cannot create booking",
+    );
+  }
+
+  // #1071 / ADR B1 — the identical call handleConsultationCheckout makes.
+  // This path used to mint ONE row spanning the whole session with only the
+  // buyer attached: not an atom run, and unseen by conflict detection.
+  const slotAtoms = buildContiguousSlotAtomsForWindow({
+    startsAt: new Date(data.startsAt),
+    endsAt: new Date(data.endsAt),
+    consultantProfileId: consultation.consultationPlan.consultantProfileId,
+    // Checkout births `!skipPayment` and the capture webhook flips it false.
+    // This creator only runs AFTER capture, so confirmed is the same end state
+    // by a shorter road — confirmExistingAppointment re-flips it either way.
+    isTentative: false,
+    userIds: [consultantUserId, data.userId],
+  });
+
+  const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.startsAt),
-          endsAt: new Date(data.endsAt),
-          isTentative: false,
-          consultantProfileId:
-            consultation.consultationPlan.consultantProfileId,
-          user: { connect: { id: data.userId } },
-        },
-      },
+      slotsOfAppointment: { create: slotAtoms },
     },
     include: {
       slotsOfAppointment: true,
     },
   });
+
+  // #1071 — assert before the transaction commits, not after a reader trips
+  // over it. Free: the rows are already in hand from the create's include.
+  assertSingleContiguousLiveRun(appointment.slotsOfAppointment);
+
+  return appointment;
 }
 
 async function createSubscription(tx: Tx, data: SubscriptionData) {
