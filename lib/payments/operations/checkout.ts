@@ -896,27 +896,26 @@ export async function validateSlotAvailability(
   // some published row. The named id, when present, still proves ownership
   // and catches a soft-deleted profile (B13); it is no longer the boundary.
   if (data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId) {
-    const namedWeekly = data.slotOfAvailabilityWeeklyId
-      ? await tx.slotOfAvailabilityWeekly.findUnique({
-          where: { id: data.slotOfAvailabilityWeeklyId },
-          include: {
-            consultantProfile: {
-              select: { id: true, userId: true, deletedAt: true },
-            },
-          },
-        })
-      : null;
-    const namedCustom = data.slotOfAvailabilityCustomId
-      ? await tx.slotOfAvailabilityCustom.findUnique({
-          where: { id: data.slotOfAvailabilityCustomId },
-          include: {
-            consultantProfile: {
-              select: { id: true, userId: true, deletedAt: true },
-            },
-          },
-        })
-      : null;
-    const named = namedWeekly ?? namedCustom;
+    // Both row kinds are read for the same three facts, so they share one
+    // include; a checkout names at most one of them.
+    const namedRowInclude = {
+      consultantProfile: {
+        select: { id: true, userId: true, deletedAt: true },
+      },
+    } as const;
+    const named =
+      (data.slotOfAvailabilityWeeklyId
+        ? await tx.slotOfAvailabilityWeekly.findUnique({
+            where: { id: data.slotOfAvailabilityWeeklyId },
+            include: namedRowInclude,
+          })
+        : null) ??
+      (data.slotOfAvailabilityCustomId
+        ? await tx.slotOfAvailabilityCustom.findUnique({
+            where: { id: data.slotOfAvailabilityCustomId },
+            include: namedRowInclude,
+          })
+        : null);
     // A named row can legitimately vanish mid-checkout: a save on the
     // consultant's side coalesces adjacent rows into one and re-ids it. The
     // union check below is the authority, so a missing row is not fatal

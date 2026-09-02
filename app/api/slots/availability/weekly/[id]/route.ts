@@ -11,6 +11,98 @@ import {
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 
+/**
+ * The tail every weekly-slot edit shares: reject an overlap, stamp the
+ * consultant's current UTC offset, write, then fold adjacent rows and answer
+ * with the row that now covers the edit (#1320). PUT and PATCH differ only in
+ * how they arrive at the four values, so only that part stays in the handler.
+ */
+async function applyWeeklySlotEdit(
+  id: string,
+  currentSlot: {
+    consultantProfileId: string;
+    consultantProfile: { user: { timezone: string | null } | null };
+  },
+  next: {
+    startDay: DayOfWeek;
+    endDay: DayOfWeek;
+    startTimeUtc: number;
+    endTimeUtc: number;
+  },
+) {
+  // Cross-midnight-aware overlap check against the authoritative consultant.
+  const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
+    where: buildWeeklyOverlapWhere(
+      currentSlot.consultantProfileId,
+      next.startDay,
+      next.endDay,
+      next.startTimeUtc,
+      next.endTimeUtc,
+      id,
+    ),
+  });
+
+  if (overlappingSlot) {
+    return NextResponse.json(
+      {
+        error: `This slot (${minutesToTimeString(next.startTimeUtc)}-${minutesToTimeString(next.endTimeUtc)}) overlaps with an existing slot`,
+      },
+      { status: 409 },
+    );
+  }
+
+  const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
+    ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
+    : 0;
+
+  const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
+    where: { id },
+    data: { ...next, utcOffsetMinutes },
+    include: { consultantProfile: true },
+  });
+
+  const covering = await coalesceAndResolve(
+    prisma,
+    updatedSlot.consultantProfileId,
+    {
+      startDay: updatedSlot.startDay,
+      startTimeUtc: updatedSlot.startTimeUtc,
+      endTimeUtc: updatedSlot.endTimeUtc,
+    },
+  );
+  return NextResponse.json({ data: covering ?? updatedSlot }, { status: 200 });
+}
+
+/**
+ * The catch every write handler shares. `logAction` is what the server log
+ * says; `failAction` is what the client is told, and PATCH deliberately logs
+ * "partially updating" while answering with the same copy PUT does.
+ */
+function weeklySlotErrorResponse(
+  error: unknown,
+  logAction: string,
+  failAction: string,
+) {
+  console.error(`Error ${logAction} weekly slot:`, error);
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    { tags: { subsystem: "scheduling" } },
+  );
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2025"
+  ) {
+    return NextResponse.json(
+      { error: "Weekly slot not found" },
+      { status: 404 },
+    );
+  }
+  return NextResponse.json(
+    { error: `An error occurred while ${failAction} the weekly slot` },
+    { status: 500 },
+  );
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -159,77 +251,18 @@ export async function PUT(
       );
     }
 
-    // Cross-midnight-aware overlap check
-    const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: buildWeeklyOverlapWhere(
-        effectiveConsultantProfileId,
-        body.startDay,
-        body.endDay,
-        startTimeUtc,
-        endTimeUtc,
-        id,
-      ),
-    });
-
-    if (overlappingSlot) {
-      return NextResponse.json(
-        {
-          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
-        },
-        { status: 409 },
-      );
-    }
-
-    const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
-      ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
-      : 0;
-
-    const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
-      where: { id: id },
-      data: {
+    return await applyWeeklySlotEdit(
+      id,
+      { ...currentSlot, consultantProfileId: effectiveConsultantProfileId },
+      {
         startDay: body.startDay,
         endDay: body.endDay,
         startTimeUtc,
         endTimeUtc,
-        utcOffsetMinutes,
       },
-      include: {
-        consultantProfile: true,
-      },
-    });
-
-    // #1320 — fold adjacent rows after the edit and answer with the covering row.
-    const covering = await coalesceAndResolve(
-      prisma,
-      updatedSlot.consultantProfileId,
-      {
-        startDay: updatedSlot.startDay,
-        startTimeUtc: updatedSlot.startTimeUtc,
-        endTimeUtc: updatedSlot.endTimeUtc,
-      },
-    );
-    return NextResponse.json(
-      { data: covering ?? updatedSlot },
-      { status: 200 },
     );
   } catch (error) {
-    console.error("Error updating weekly slot:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "scheduling" } },
-    );
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2025") {
-        return NextResponse.json(
-          { error: "Weekly slot not found" },
-          { status: 404 },
-        );
-      }
-    }
-    return NextResponse.json(
-      { error: "An error occurred while updating the weekly slot" },
-      { status: 500 },
-    );
+    return weeklySlotErrorResponse(error, "updating", "updating");
   }
 }
 
@@ -338,77 +371,16 @@ export async function PATCH(
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
-    // Cross-midnight-aware overlap check using authoritative consultantProfileId
-    const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
-      where: buildWeeklyOverlapWhere(
-        currentSlot.consultantProfileId,
-        effectiveStartDay,
-        effectiveEndDay,
-        startTimeUtc,
-        endTimeUtc,
-        id,
-      ),
+    // PATCH omits what it does not change, so the effective day pair is what
+    // both the overlap check and the write use.
+    return await applyWeeklySlotEdit(id, currentSlot, {
+      startDay: effectiveStartDay,
+      endDay: effectiveEndDay,
+      startTimeUtc,
+      endTimeUtc,
     });
-
-    if (overlappingSlot) {
-      return NextResponse.json(
-        {
-          error: `This slot (${minutesToTimeString(startTimeUtc)}-${minutesToTimeString(endTimeUtc)}) overlaps with an existing slot`,
-        },
-        { status: 409 },
-      );
-    }
-
-    const utcOffsetMinutes = currentSlot.consultantProfile.user?.timezone
-      ? getTimezoneOffsetMinutes(currentSlot.consultantProfile.user.timezone)
-      : 0;
-
-    const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
-      where: { id: id },
-      data: {
-        startDay: body.startDay,
-        endDay: body.endDay,
-        startTimeUtc,
-        endTimeUtc,
-        utcOffsetMinutes,
-      },
-      include: {
-        consultantProfile: true,
-      },
-    });
-
-    // #1320 — fold adjacent rows after the edit and answer with the covering row.
-    const covering = await coalesceAndResolve(
-      prisma,
-      updatedSlot.consultantProfileId,
-      {
-        startDay: updatedSlot.startDay,
-        startTimeUtc: updatedSlot.startTimeUtc,
-        endTimeUtc: updatedSlot.endTimeUtc,
-      },
-    );
-    return NextResponse.json(
-      { data: covering ?? updatedSlot },
-      { status: 200 },
-    );
   } catch (error) {
-    console.error("Error partially updating weekly slot:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "scheduling" } },
-    );
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2025") {
-        return NextResponse.json(
-          { error: "Weekly slot not found" },
-          { status: 404 },
-        );
-      }
-    }
-    return NextResponse.json(
-      { error: "An error occurred while updating the weekly slot" },
-      { status: 500 },
-    );
+    return weeklySlotErrorResponse(error, "partially updating", "updating");
   }
 }
 
@@ -460,22 +432,6 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
-    console.error("Error deleting weekly slot:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "scheduling" } },
-    );
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === "P2025") {
-        return NextResponse.json(
-          { error: "Weekly slot not found" },
-          { status: 404 },
-        );
-      }
-    }
-    return NextResponse.json(
-      { error: "An error occurred while deleting the weekly slot" },
-      { status: 500 },
-    );
+    return weeklySlotErrorResponse(error, "deleting", "deleting");
   }
 }
