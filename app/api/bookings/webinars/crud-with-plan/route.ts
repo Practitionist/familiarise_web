@@ -24,6 +24,10 @@ import {
 } from "@/lib/collaborators/availability";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
+  ScheduleLockedError,
+  WEBINAR_TIME_LOCKED_MESSAGE,
+} from "@/lib/events/schedule-lock";
+import {
   buildContiguousSlotAtoms,
   replaceContiguousSlotRun,
 } from "@/lib/appointments/contiguous-slot-run";
@@ -613,45 +617,6 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    // FIX #626/#628: Guard against unsafe edits on webinars with confirmed bookings.
-    // TODO: These guards run outside the transaction — a booking could theoretically
-    // land between the check and the transaction commit. The window is milliseconds
-    // and the risk is low, but moving inside the transaction would be more robust.
-    if (webinarToUpdate?.appointment) {
-      const activePayments = await prisma.payment.count({
-        where: {
-          appointmentId: webinarToUpdate.appointment.id,
-          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
-        },
-      });
-
-      // FIX #626: Block time changes when bookings exist.
-      // Only block when the time ACTUALLY differs from the current slot
-      // (the planner client may always send scheduledAt even for non-time edits).
-      if (activePayments > 0 && (startTime || endTime)) {
-        const existingSlots = (
-          webinarToUpdate.appointment?.slotsOfAppointment ?? []
-        ).filter((s) => !isDeadSlot(s));
-        const runStart = existingSlots[0]?.startsAt;
-        const runEnd = existingSlots[existingSlots.length - 1]?.endsAt;
-        const timeChanged =
-          !runStart ||
-          !runEnd ||
-          (startTime && runStart.getTime() !== startTime.getTime()) ||
-          (endTime && runEnd.getTime() !== endTime.getTime());
-
-        if (timeChanged) {
-          return NextResponse.json(
-            {
-              error:
-                "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.",
-            },
-            { status: 400 },
-          );
-        }
-      }
-    }
-
     const effectiveDurationForSlots =
       durationInHours ?? existingPlan.durationInHours;
 
@@ -848,6 +813,40 @@ export async function PATCH(request: NextRequest) {
             if (startTime && endTime) {
               const appointment = updatedWebinar.appointment;
 
+              // #626 — a webinar with paying registrants may not be re-timed
+              // here; the reschedule workflow is the front door. Read INSIDE the
+              // txn: the pre-txn version counted payments and then committed the
+              // move, so a checkout landing in between moved the time under a
+              // registrant who had just paid for the old one.
+              if (appointment) {
+                const activePayments = await tx.payment.count({
+                  where: {
+                    appointmentId: appointment.id,
+                    paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+                  },
+                });
+                if (activePayments > 0) {
+                  const liveSlots = (
+                    await tx.slotOfAppointment.findMany({
+                      where: { appointmentId: appointment.id },
+                      orderBy: { startsAt: "asc" },
+                    })
+                  ).filter((slot) => !isDeadSlot(slot));
+                  const runStart = liveSlots[0]?.startsAt;
+                  const runEnd = liveSlots[liveSlots.length - 1]?.endsAt;
+                  // Only a REAL move is blocked — the planner client re-sends
+                  // scheduledAt even for a title-only edit.
+                  if (
+                    !runStart ||
+                    !runEnd ||
+                    runStart.getTime() !== startTime.getTime() ||
+                    runEnd.getTime() !== endTime.getTime()
+                  ) {
+                    throw new ScheduleLockedError(WEBINAR_TIME_LOCKED_MESSAGE);
+                  }
+                }
+              }
+
               // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
               // is already committed to; co-hosts aren't slot participants, so no
               // other guard catches their double-booking. Throws → 409 below.
@@ -989,6 +988,10 @@ export async function PATCH(request: NextRequest) {
       error instanceof TypeError &&
       error.message.includes("Invalid duration")
     ) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    // #626 — frozen times on a booked webinar is a user error, not a 500.
+    if (error instanceof ScheduleLockedError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     // #1319 — an illegal status move (stale tab, cancelled event) is a 409.

@@ -49,24 +49,59 @@ function commitmentClauses(
   ];
 }
 
+/** One time range a co-host would have to be free for. */
+export interface CollaboratorWindow {
+  startsAt: Date;
+  endsAt: Date;
+}
+
+/**
+ * Collapse overlapping/touching windows so the overlap query carries one OR
+ * term per distinct busy range rather than one per session. A class allocation
+ * hands this dozens of sessions (#784 / #1206); the webinar path hands it one,
+ * for which this is the identity.
+ */
+function mergeWindows(windows: CollaboratorWindow[]): CollaboratorWindow[] {
+  const sorted = [...windows].sort(
+    (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
+  );
+  const merged: CollaboratorWindow[] = [];
+  for (const w of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && w.startsAt.getTime() <= last.endsAt.getTime()) {
+      if (w.endsAt.getTime() > last.endsAt.getTime()) last.endsAt = w.endsAt;
+      continue;
+    }
+    merged.push({ startsAt: w.startsAt, endsAt: w.endsAt });
+  }
+  return merged;
+}
+
 /**
  * Throws CollaboratorUnavailableError if any ACCEPTED co-host on the plan has a
- * confirmed commitment overlapping [startsAt, endsAt). No-op when the plan has
- * no accepted collaborators. Run inside the scheduling transaction so the read
- * is consistent with the slot write that follows.
+ * confirmed commitment overlapping ANY of `windows`. No-op when the plan has no
+ * accepted collaborators. Run inside the scheduling transaction so the read is
+ * consistent with the slot write that follows.
+ *
+ * The multi-window form exists for CLASS, whose "time commit" is N sessions at
+ * once; checking them one call at a time would be N round-trips on the common
+ * no-conflict path.
  */
-export async function assertCollaboratorsAvailable(
+export async function assertCollaboratorsAvailableForWindows(
   db: Tx | typeof prisma,
   params: {
     planType: "WEBINAR" | "CLASS";
     planId: string;
-    startsAt: Date;
-    endsAt: Date;
-    /** The event's own appointment, excluded so its slots don't self-conflict. */
-    excludeAppointmentId?: string | null;
+    windows: CollaboratorWindow[];
+    /** The event's own appointments, excluded so its slots don't self-conflict. */
+    excludeAppointmentIds?: string[];
   },
 ): Promise<void> {
-  const { planType, planId, startsAt, endsAt, excludeAppointmentId } = params;
+  const { planType, planId, excludeAppointmentIds } = params;
+  const windows = mergeWindows(
+    params.windows.filter((w) => w.endsAt.getTime() > w.startsAt.getTime()),
+  );
+  if (windows.length === 0) return;
 
   const collaborators = await db.collaborator.findMany({
     where: {
@@ -82,6 +117,8 @@ export async function assertCollaboratorsAvailable(
   });
   if (collaborators.length === 0) return;
 
+  const excluded = (excludeAppointmentIds ?? []).filter(Boolean);
+
   // A confirmed, non-soft-deleted slot overlapping the window. deletedAt:null on
   // both the slot and its appointment keeps cancelled/soft-deleted bookings from
   // surfacing as phantom clashes.
@@ -89,13 +126,13 @@ export async function assertCollaboratorsAvailable(
     appointment: Prisma.AppointmentWhereInput,
   ): Prisma.SlotOfAppointmentWhereInput => ({
     // Half-open overlap: existing.start < new.end AND existing.end > new.start.
-    startsAt: { lt: endsAt },
-    endsAt: { gt: startsAt },
+    OR: windows.map((w) => ({
+      startsAt: { lt: w.endsAt },
+      endsAt: { gt: w.startsAt },
+    })),
     isTentative: false,
     deletedAt: null,
-    ...(excludeAppointmentId
-      ? { appointmentId: { not: excludeAppointmentId } }
-      : {}),
+    ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
     appointment: { deletedAt: null, ...appointment },
   });
 
@@ -127,4 +164,26 @@ export async function assertCollaboratorsAvailable(
   if (clashing.length > 0) {
     throw new CollaboratorUnavailableError(clashing);
   }
+}
+
+/** Single-window form — the webinar (1 session) shape. */
+export async function assertCollaboratorsAvailable(
+  db: Tx | typeof prisma,
+  params: {
+    planType: "WEBINAR" | "CLASS";
+    planId: string;
+    startsAt: Date;
+    endsAt: Date;
+    /** The event's own appointment, excluded so its slots don't self-conflict. */
+    excludeAppointmentId?: string | null;
+  },
+): Promise<void> {
+  return assertCollaboratorsAvailableForWindows(db, {
+    planType: params.planType,
+    planId: params.planId,
+    windows: [{ startsAt: params.startsAt, endsAt: params.endsAt }],
+    excludeAppointmentIds: params.excludeAppointmentId
+      ? [params.excludeAppointmentId]
+      : [],
+  });
 }
