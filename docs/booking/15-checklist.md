@@ -1,67 +1,220 @@
 # Booking Algorithm Change Checklist
 
-> Run through this checklist after any change to the booking system. Each section lists an invariant that must hold before merging.
+> Run through this checklist after ANY change to the booking system.
+> Each section lists invariants that MUST hold. If you break one, fix it before merging.
 >
-> Last updated: 2026-09-02 (wave 5, PR 11, `docs/booking-wave-5`).
+> Last updated: 2026-09-03 (wave 5, `docs/booking-wave-5`)
 
 ---
 
-## 1. Status writes go through the CAS helpers
+## 1. Auth & Authorization
 
-Every write to `Appointment`/`Consultation`/`Subscription`/`Webinar`/`Class`/`TrialSession`/`RescheduleRequest` status goes through the guarded transition helpers in `lib/booking/transitions.ts` (`transitionConsultationRequest`, `transitionSubscriptionRequest`, `transitionWebinarEvent`, `transitionClassEvent`, `transitionSlotCompletion`, `transitionTrialSession`, `transitionRescheduleRequest`). Each helper bakes the allowed-from set into the `updateMany`'s WHERE clause, so a write against a row that already left that set matches zero rows and throws `IllegalTransitionError` instead of silently corrupting state. A raw `update`/`updateMany` on any of these status columns is a defect, not a shortcut. `SlotOfAppointment.completionStatus` has the same guard, via `transitionSlotCompletion`.
+- [ ] All write endpoints (POST/PUT/PATCH/DELETE) require `getSession()` authentication
+- [ ] Ownership verified: `consultantProfile.userId === session.user.id` on mutations
+- [ ] Bulk consultant settings route (`/api/user/consultants/[id]`) enforces ownership on PUT and DELETE
+- [ ] Checkout validates availability slot belongs to plan's consultant (not cross-consultant)
+- [ ] Consultant-only operations (webinar/class reschedule) reject consultee callers
+- [ ] Admin/Staff override paths explicitly check privileged roles
+- [ ] GET endpoints that return PII (email, phone) are scoped or redacted
+- [ ] Org lists stay metadata-only: no drill-in from an org appointments table into session content (ADR 20, `docs/enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md`)
 
-## 2. Nothing is deleted
+## 2. Data Validation
 
-Cancellation is a status write, never a row deletion. The appointment stays in place with its terminal status; its slots move to `completionStatus: CANCELLED` via `transitionSlotCompletion`, and are never `delete`d — a `SlotOfAppointment` row can carry Stream `MeetingSession`/`Recording` foreign keys, and a `Payment` row can point at the appointment itself. Reschedule follows the same rule: replaced slots move to `RESCHEDULED` in place rather than being removed. A slot is freed for rebooking by its status leaving the occupied set (`utils/slotAllocation/occupancyPolicy.ts`), never by the row disappearing.
+- [ ] `validateWeeklySlotTimeOrder()` called on all weekly slot creation/update paths (including bulk save + onboarding)
+- [ ] Bulk save route checks intra-set overlap via `slotsOverlap()` before writing
+- [ ] Bulk save route rejects overlapping custom slot submissions, not only weekly
+- [ ] Onboarding persistence (`onboarding-server.ts`) enforces the same weekly/custom validation as the availability CRUD routes
+- [ ] Same-day: `startTimeUtc < endTimeUtc` enforced
+- [ ] Overnight: `endDay` is the next day after `startDay`, and `startTimeUtc > endTimeUtc`
+- [ ] Minutes range validated: 0-1439 (inclusive), `Number.isInteger()` check
+- [ ] `typeof` check before `Number.isInteger()` on PATCH paths (partial updates)
+- [ ] Custom slot date ordering: `startsAt < endsAt`
+- [ ] `Date.parse()` validation on ISO string inputs (reject malformed dates with 400)
+- [ ] Duration validation: reject zero, negative, or unreasonably large values
+- [ ] Scheduling period validation checks the full slot interval (`slot + 30min <= endDate`), not just the start
+- [ ] A booking window is checked against the UNION of a consultant's weekly and custom availability rows, not the first row matched (`utils/slotAllocation/availabilityCoverage.ts`, `findUncoveredAtom`) — see Section 7
 
-## 3. Locking: one namespace per atom, bounded retry budgets
+## 3. Overnight / Cross-Midnight Handling
 
-Every lock key is minted in `utils/appointmentlock.ts`. A slot atom is 30 minutes of one consultant's calendar; `lockSlotInterval` keys each atom the booking window covers as `slot-booking:<consultantProfileId>:<atomISO>`, with the start floored to the half-hour grid (`slotAtomStarts`) so an unaligned booking still collides with the aligned atoms it overlaps. `lockSlotBooking` is `lockSlotInterval` under another name and is the lock every direct slot writer takes, trials included — trials hold no lock namespace of their own. The other namespaces are `consultee-booking:<userId>`, `event-checkout:<type>:<eventOrPlanId>`, `auto-allocate:<consultantProfileId>[:scope]`, and `appointment-lock:<appointmentId>` for cancel/reschedule lifecycle mutations. Lock order is a total order — event/consultant → consultee → slot — so it cannot deadlock.
+- [ ] Weekly slot creation allows overnight (`startDay !== endDay`)
+- [ ] `buildWeeklyOverlapWhere()` same-day branch covers 3 shapes:
+  - Same-day time overlap
+  - Previous-day overnight carry-over into our day
+  - Overnight slots starting on our day
+- [ ] `buildWeeklyOverlapWhere()` overnight branch covers 5 shapes:
+  - Same-day slots on startDay after our start
+  - Same-day slots on endDay before our end
+  - Other overnight slots starting on the same day
+  - Other overnight slots ending on the same endDay
+  - Existing overnight carry-over into our startDay
+- [ ] `isMinuteWithinWeeklySlot()` handles: same-day, start-day with midnight overflow, next-day
+- [ ] Checkout uses `isMinuteWithinWeeklySlot()` (not a same-day-only guard)
+- [ ] `SlotAllocationService.isWithinAvailability()` delegates to `isMinuteWithinWeeklySlot()`
+- [ ] `SlotValidationService.validateMatchesSchedule()` handles overnight in both directions
+- [ ] Unallocated weekly routes roll `slotEnd` to the next UTC day for overnight slots
+- [ ] IST is the pinned timezone for launch (ADR 17); no live code path adjusts for DST — see `docs/booking/19-dst-and-timezone-posture.md`
 
-Retry budgets are bounded on every request path: `REQUEST_PATH_RETRY_CONFIG`, `INTERVAL_RETRY_CONFIG`, and `CHECKOUT_WAIT_RETRY_CONFIG` each cap at 5 retries, roughly 7 seconds worst case, well inside the platform's function ceiling. `DEFAULT_RETRY_CONFIG` (10 retries, up to ~205 seconds) exists only for callers that genuinely run outside a request; a request-path caller that reaches for it will time out as a 504 instead of returning a 409. TTLs are sized per lock kind, not a single constant — `APPOINTMENT_LOCK_TTL_MS` is 75s, `CHECKOUT_LOCK_TTL_MS` ranges from 60s (consultation) to 600s (class, sized for the serverless-freeze worst case), and interval locks re-arm to a fresh shared deadline once every atom in the run is held so an early atom's TTL cannot erode across a multi-atom acquisition.
+## 4. Overlap & Conflict Detection
 
-## 4. Hold expiry is a predicate, not a cron-only fact
+- [ ] Weekly overlap query (`buildWeeklyOverlapWhere`) uses all clauses per Section 3
+- [ ] Custom overlap uses the proper range predicate (`startsAt < end AND endsAt > start`)
+- [ ] Conflict detection (`validateNoConflicts`) is scoped to the consultant via the M2M `user.some.id`
+- [ ] `removeBookedSlots()` is scoped to the consultant's `userId` (not a global query)
+- [ ] Checkout validates against the correct consultant's booked slots
+- [ ] An expired `APPROVED_PENDING_PAYMENT` or a dead-payment `DIRECT_CHECKOUT` `PENDING` hold is treated as available, never as a blocker — see Section 7's hold-expiry rule
+- [ ] Tentative slots (`isTentative: true`, `completionStatus: "RESCHEDULED"`) are excluded from conflict checks during a reschedule, but still occupy the calendar for everyone else until the reschedule resolves
 
-A slot held by an `APPROVED_PENDING_PAYMENT` request, or a `PENDING` `DIRECT_CHECKOUT` request, only counts as occupied while at least one of its payments is still alive. `isOccupiedByLiveAppointment` (`utils/slotAllocation/SlotValidationService.ts`) is the JS predicate used wherever an appointment object is already in hand; `buildDeadHoldFilter` (`utils/slotAllocation/occupancyPolicy.ts`) is its SQL twin for callers that select slots directly, such as checkout's first pass and the trial route. A payment is dead when it is `EXPIRED`, `FAILED`, or still `PENDING` past its `expiresAt` — never by the clock alone against a `SUCCEEDED` row. Both predicates must agree; `hold-expiry-predicate.test.ts` asserts it.
+## 5. Slot Allocation
 
-## 5. Availability coalescing and union validation
+- [ ] Auto-allocate sorts weekly slots by calendar occurrence (`getNextOccurrenceWeekly()`), not raw `startTimeUtc`
+- [ ] `getNextOccurrenceWeekly()` advances to next week if the target time has already passed today
+- [ ] Consecutive block detection works for multi-slot sessions (30min x N)
+- [ ] Week counting uses `SlotCalculationService.countWeeks()` (single source of truth)
+- [ ] `slotsPerCall` computed correctly from `sessionDurationInHours`
+- [ ] Subscription: max `sessionsPerWeek` per week, distributed across the scheduling period
+- [ ] Class: respects scheduling period boundaries, max sessions/day
+- [ ] Webinar: finds a single consecutive block within the search window
+- [ ] Consultation: same-day consecutive block
+- [ ] There is no client-side auto-allocation engine to keep in sync — the client only pre-validates and submits `isAuto: true`; the server (`SlotAllocationService`) always picks the slots (see `docs/booking/README.md`)
 
-A consultant's published availability can span several stored rows for what is, to the consultant, one contiguous window. `mergeAdjacentWeeklyRows` (`utils/slotAllocation/mergeAdjacentWeeklyRows.ts`) merges exactly-adjacent same-day, same-offset rows on every weekly-availability write (and once, idempotently, for existing rows); overnight rows and rows with different UTC offsets are left as-is. Checkout and the trial route validate a booking window against the union of a consultant's rows, not any single row: `loadPublishedCoverage` loads the weekly or custom rows for the active `scheduleType`, `windowAtoms` splits the requested window into 30-minute atoms, and `findUncoveredAtom` (all in `utils/slotAllocation/availabilityCoverage.ts`) returns the first atom no row covers, or `null` when the union covers the whole window.
+## 6. Locking & Concurrency
 
-## 6. Overnight / cross-midnight handling
+Every direct slot writer (checkout, request-for-approval, trial scheduling) locks the SAME atom keys, minted only in `utils/appointmentlock.ts`. There is one namespace per physical resource — never mint a second key shape for an atom that already has one.
 
-- Weekly slot creation allows `startDay !== endDay`, validated by `validateWeeklySlotTimeOrder` (`utils/slotAllocation/slotTimeUtils.ts`).
-- `buildWeeklyOverlapWhere` covers the overnight and same-day overlap shapes for weekly rows; `slotsOverlap` covers custom rows.
-- `isMinuteWithinWeeklySlot` is the one predicate every caller uses to test a minute against a weekly row, overnight included — `SlotValidationService` and checkout both delegate to it rather than re-implementing the boundary math.
+- [ ] A booking interval takes one `slot-booking:<consultantProfileId>:<atomStartISO>` lock per 30-minute atom it covers (`lockSlotInterval` / `slotAtomStarts`), with starts floored to the half-hour grid so an unaligned booking still collides with the aligned ones it overlaps
+- [ ] Locks for one booking are acquired in ascending atom order (a total order, so two overlapping intervals can never deadlock against each other)
+- [ ] Trials take the shared `slot-booking:` atom keys through `lockSlotBooking`, not a namespace of their own — the retired `trial-slot-booking:` prefix must never reappear (`__tests__/booking-algorithm/trial-slot-integrity.test.ts` asserts this)
+- [ ] Consultee-side dedupe locks under `consultee-booking:<userId>` (`lockConsulteeBooking`)
+- [ ] Event checkout (webinar/class) locks a single mutex per event under `event-checkout:<type>:<eventOrPlanId>` (`lockEventCheckout`) — this is a mutex, not a counting semaphore; capacity is re-checked inside the write transaction, not by the lock
+- [ ] `SlotAllocationService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `slot_no_confirmed_overlap` exclusion constraint
+- [ ] Cancel and reschedule take `lockAppointment` (`APPOINTMENT_LOCK_TTL_MS`) so a stale tab and a live cancel serialize instead of racing the CAS write
+- [ ] Global lock order is respected end-to-end: event/consultant -> consultee -> slot
+- [ ] Checkout lock TTLs match `CHECKOUT_LOCK_TTL_MS` by type (CONSULTATION 60s, SUBSCRIPTION/WEBINAR 120s, CLASS 600s) — sized per checkout shape, not one universal TTL
+- [ ] Request-path lock acquisitions (approvals, allocation, consultee, appointment, event-checkout) use the bounded `REQUEST_PATH_RETRY_CONFIG` (~7s worst case), not the unbounded `DEFAULT_RETRY_CONFIG` (~204s) — a request-path caller that waits on `DEFAULT` will 504 before Redis ever returns a 409
+- [ ] Checkout's interval locks use `CHECKOUT_WAIT_RETRY_CONFIG`: contention losers fail fast to a structured 409 rather than queueing, since the winner's checkout (revalidation + gateway call + tx) rarely finishes fast enough for a wait to help
+- [ ] A lock acquisition failure is surfaced as a typed error (`SlotLockError`, `EventCheckoutBusyError`, `ConsulteeBookingBusyError`, `AppointmentBusyError`) mapped to 409/423, never swallowed into a generic 500
+- [ ] Redis unreachability fails CLOSED on every lock path (`BookingLockUnavailableError`, `EventCheckoutLockUnavailableError`) — no booking write proceeds unlocked
 
-## 7. Checkout and payment
+## 7. Checkout & Payment
 
-- `lib/payments/operations/checkout.ts` re-validates availability inside the transaction, against the union coverage described in §5, after the lock in §3 is held.
-- Every checkout path has a counterpart on the refund side in `lib/payments/operations/booking-refund.ts` (one booking) or `lib/payments/operations/event-refunds.ts` (a whole webinar/class) — see `docs/payments/checkout-flow/`.
-- A `free_` intent (`Payment.amount === 0`) never enters the hold-expiry predicate as a payment that can go dead in a way that frees the slot early; it has no gateway leg to expire.
+- [ ] Availability slot ownership verified (`consultantProfile.userId === consultantUserId`)
+- [ ] Weekly guard uses `isMinuteWithinWeeklySlot()` (overnight-aware)
+- [ ] Custom guard checks `slotStart >= startsAt && slotEnd <= endsAt`
+- [ ] A booking window is validated against the UNION of every published weekly or custom availability row, not the first row that happens to match — `utils/slotAllocation/availabilityCoverage.ts`'s `findUncoveredAtom()` walks every 30-minute atom of the window and only fails if some atom is covered by no row at all, so two adjacent availability rows correctly cover a window that spans both
+- [ ] Slot timing validation: not in the past, minimum lead time (`validateSlotTiming`)
+- [ ] Plan existence verified inside the transaction
+- [ ] Webinar/Class capacity checked (`maxParticipants` vs current participants)
+- [ ] Both consultant AND consultee connected to `SlotOfAppointment` via the M2M
+- [ ] Payment webhook handling is idempotent (check the existing status before updating)
+- [ ] A slot occupied by an `APPROVED_PENDING_PAYMENT` request, or a `PENDING` `DIRECT_CHECKOUT` request, is treated as free once every one of its payment rows is dead (`EXPIRED`, `FAILED`, or `PENDING` past `expiresAt`) — never by the clock alone, since a `SUCCEEDED` row keeps its `expiresAt` and must stay blocking. The JS predicate (`isOccupiedByLiveAppointment`, `utils/slotAllocation/SlotValidationService.ts`) and its SQL twin (`buildDeadHoldFilter`, `utils/slotAllocation/occupancyPolicy.ts`) must agree — `__tests__/booking-algorithm/hold-expiry-predicate.test.ts` asserts this
+- [ ] A trial's slot stays occupied through `AWAITING_PAYMENT`, not only `SCHEDULED` — releasing it only on `SCHEDULED` would let a second buyer book the same slot while the first trial's payment window is still open
 
-## What to check before merging a booking change
+## 8. Frontend
 
-1. Every new status write is a call into `lib/booking/transitions.ts`, not a raw `update`/`updateMany`.
-2. Every new slot-occupying write takes a lock from `utils/appointmentlock.ts` under its existing namespace — never a new key shape for an atom that already has one.
-3. Any lock acquired on a request path uses a bounded retry config (§3), not `DEFAULT_RETRY_CONFIG`.
-4. Cancellation and reschedule code paths never call `delete`/`deleteMany` on `Appointment` or `SlotOfAppointment`.
-5. Anything that decides "is this slot occupied" reads from `utils/slotAllocation/occupancyPolicy.ts` or the hold-expiry predicates in §4, not a hand-rolled status list.
-6. Anything that validates a booking window against a consultant's published availability goes through `loadPublishedCoverage` + `findUncoveredAtom`, not a single-row check.
-7. `IllegalTransitionError` is mapped to a 4xx response and never swallowed.
+- [ ] Unscheduled events filtered: both webinars AND classes use `.filter(e => !e.appointment)`
+- [ ] `useSlotAllocation` (`hooks/scheduling/useSlotAllocation.ts`) hook: correct `requiredSlots` for SUBSCRIPTION and CLASS types
+- [ ] Calendar renders overnight slots correctly (split across two days if needed)
+- [ ] Main UI save paths (onboarding + settings) create single overnight weekly records (not split at midnight)
+- [ ] Frontend validator (`isValidTimeRange`, `validateTimeSlot` in `lib/scheduling/slotSelectionValidation.ts`) accepts overnight slots
+- [ ] Timezone handling uses `minuteUtcToDate()` for weekly slot display
+- [ ] Slot selection UI prevents selecting past slots
+- [ ] The availability grid polls every 60 seconds while its tab is visible (`lib/scheduling/availabilityPolling.ts`) so a slot someone else just booked stops reading as free; the post-allocation refetch requests `cache: "no-store"` so the consultant sees the slots they just booked
+- [ ] Loading states shown during slot fetch operations
+
+## 9. API Routes
+
+- [ ] All mutation routes authenticated (session check before processing)
+- [ ] Rate limiting on checkout (tentative booking count) and requests (per-user)
+- [ ] Pagination on list endpoints (avoid unbounded queries)
+- [ ] Error responses use correct HTTP status codes:
+  - 400: validation errors, bad input
+  - 401: unauthenticated
+  - 403: unauthorized (wrong role)
+  - 409: conflict (lock contention, illegal transition, slot already booked)
+  - 500: unexpected server errors only
+- [ ] Stream channel cleanup: paginated + restricted to managed namespace prefixes
+- [ ] Maintenance-mode writes are guarded: cron/job entry points call `abortIfMaintenance` (money-adjacent jobs also join `FINANCIAL_JOB_NAMES`), and every `app/api/cleanup/*` HTTP twin calls the throwing `assertNotInMaintenance` (a 503), since the exit-based job guard cannot run inside a route
+
+## 10. Status Transitions
+
+- [ ] Every status write on a Consultation, Subscription, Webinar, Class, TrialSession, SlotOfAppointment, or RescheduleRequest goes through the matching helper in `lib/booking/transitions.ts` (`transitionConsultationRequest`, `transitionSubscriptionRequest`, `transitionWebinarEvent`, `transitionClassEvent`, `transitionSlotCompletion`, `transitionTrialSession`, `transitionRescheduleRequest`) — never a raw `update`/`updateMany` on a status column
+- [ ] The allowed-from set for the target status lives in the transition's `*_ALLOWED_FROM` map (keyed by TARGET state); a caller with a flow-specific edge passes `fromIn` rather than hand-rolling the WHERE clause
+- [ ] A transition that matches zero rows throws `IllegalTransitionError`, mapped to a 4xx — it must never be swallowed or retried as if it were a transient failure
+- [ ] Cancellation soft-cancels: `Appointment`/`SlotOfAppointment` rows are never deleted for a booking a `Payment` row points at. Slots move to `completionStatus: "CANCELLED"`; the slot is freed by status alone
+- [ ] Reschedule marks the slots it is replacing `isTentative: true` with `completionStatus: "RESCHEDULED"` (guarded by `SLOT_RESCHEDULABLE_FROM`, so a COMPLETED or CANCELLED slot can never be resurrected), then re-confirms them in place — it does not delete and recreate `SlotOfAppointment` rows for a swap
+- [ ] `SlotAllocationService` may `deleteMany` a slot or an empty appointment shell only when it is provably TENTATIVE and unpaid — the delete's own WHERE clause re-checks `payment: { none: {} }` at write time, because a checkout's `Payment` row can commit between an earlier read and the delete
+- [ ] The 24-hour reschedule restriction (`MINIMUM_HOURS_BEFORE_RESCHEDULE`) is enforced against every slot being rescheduled, not just the first
+- [ ] Cron jobs transition state through the same helpers as the request-path code: auto-complete of past appointments, expiry of stale pending requests, and trial completion (trials auto-complete via the hourly `auto-complete-appointments` job, not a dedicated trial-completion route)
+
+## 11. Database Integrity
+
+- [ ] M2M `_SlotOfAppointmentToUser` connects BOTH consultant AND consultee
+- [ ] Cascading deletes: `ConsultantProfile` -> `SlotOfAvailabilityWeekly/Custom`
+- [ ] No orphaned slots after cancellation (cleanup or cascade)
+- [ ] The correctness backstops that are NOT in `schema.prisma` — the `slot_no_confirmed_overlap` GiST exclusion constraint, CHECK constraints, ledger triggers — are applied via `npm run db:sidecars` after every schema push; never assume they exist on a database that only saw a bare `prisma db push`
+- [ ] Migration safety: no destructive migrations without a data migration plan on prod
+- [ ] Seed data includes `_SlotOfAppointmentToUser` rows for test appointments
+
+## 12. Cron Jobs & Background Tasks
+
+- [ ] Stale pending request cleanup runs on schedule
+- [ ] Tentative slot cleanup removes expired tentative bookings
+- [ ] Request expiry transitions old PENDING requests
+- [ ] Auto-complete marks past appointments as COMPLETED, and completes eligible trials in the same pass
+- [ ] Cron jobs are idempotent (safe to re-run without side effects)
+- [ ] No cron job modifies data outside its documented scope
+- [ ] A new `jobs/**` entry point that can write during a maintenance freeze calls `abortIfMaintenance` (and joins `FINANCIAL_JOB_NAMES` if it touches money); a new `app/api/cleanup/*` route calls `assertNotInMaintenance`
+
+---
+
+## What to Check Before Merging a Booking Change
+
+1. Does every status write go through `lib/booking/transitions.ts`? A raw `update`/`updateMany` on a status column is a defect, not a shortcut.
+2. Does anything `delete`/`deleteMany` an `Appointment` or `SlotOfAppointment`? If so, is it provably unpaid and TENTATIVE, with the payment guard inside the same WHERE clause as the delete? If you cannot answer yes, soft-cancel instead.
+3. Does the change touch a lock? Confirm it reuses an existing namespace from `utils/appointmentlock.ts` rather than minting a new key shape for an atom that already has one, and that a request-path caller uses a bounded retry budget (`REQUEST_PATH_RETRY_CONFIG` / `CHECKOUT_WAIT_RETRY_CONFIG`), not `DEFAULT_RETRY_CONFIG`.
+4. Does the change touch availability or occupancy? Confirm it reads the UNION of weekly/custom rows (`availabilityCoverage.ts`) and applies the hold-expiry rule (`isOccupiedByLiveAppointment` / `buildDeadHoldFilter`) rather than a bespoke first-match check.
+5. Is the org scoping explicit on every new list (`lib/api/scope/parse.ts`), including the org-funded arm (`payment: { some: { organizationId } }`) for sessions an org funded into another host's event?
+6. Have the sidecar SQL constraints (`npm run db:sidecars`) been applied to whatever database this was verified against?
+7. Was this verified against a running dev server with mock-payment checkouts, not just unit tests and not a `prisma db push` against the shared dev database?
+
+## Quick Smoke Test After Changes
+
+1. **Overnight slot creation:** Create Mon 22:00->Tue 02:00 availability, book at Tue 01:00
+2. **Cross-consultant rejection:** Use consultant A's plan with consultant B's avail ID -> expect error
+3. **Auto-allocate ordering:** With Mon 09:00 and Tue 08:00 slots, auto-allocate picks Monday first
+4. **Unscheduled classes:** Dashboard shows only unscheduled classes in "Set Schedule" section
+5. **Overnight overlap:** Create Mon 22:00->Tue 02:00, then try Tue 01:00->Wed 03:00 -> overlap rejected
+6. **Auth on writes:** Unauthenticated POST to `/api/slots/availability/weekly` -> 401
+7. **Lock contention:** Two concurrent auto-allocations for same consultant -> one gets 409
+8. **Unallocated overnight:** Mon 22:00->Tue 02:00 with Tue 01:00 booking is excluded from both `/api/slots/unallocated/weekly` and `/api/slots/unallocated/[consultantId]`
+9. **Midnight boundary:** 22:00→00:00 weekly availability saves with `endTimeUtc=0` on the next day (not `1439` on the same day); 23:30→00:00 slot is bookable
+10. **Scheduling period boundary:** A 1-hour session ending after `schedulingPeriodEndsAt` is rejected even if its last slot starts exactly at the end time
+11. **Illegal transition:** Attempt to approve an already-cancelled request -> `IllegalTransitionError` -> 409, not a silent no-op
+12. **Dead hold released:** An `APPROVED_PENDING_PAYMENT` consultation whose payment has expired no longer blocks the slot it held
 
 ---
 
 ## Key File Paths
 
-| Area                                       | Files                                                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| Status transitions                         | `lib/booking/transitions.ts`                                                                                       |
-| Locking                                    | `utils/appointmentlock.ts`                                                                                         |
-| Occupancy / hold expiry                    | `utils/slotAllocation/occupancyPolicy.ts`, `utils/slotAllocation/SlotValidationService.ts`                         |
-| Availability coalescing + union validation | `utils/slotAllocation/mergeAdjacentWeeklyRows.ts`, `utils/slotAllocation/availabilityCoverage.ts`                  |
-| Slot time math                             | `utils/slotAllocation/slotTimeUtils.ts`                                                                            |
-| Allocation engine                          | `utils/slotAllocation/SlotAllocationService.ts`                                                                    |
-| Checkout                                   | `lib/payments/operations/checkout.ts`                                                                              |
-| Cancel / reschedule                        | `app/api/appointments/[appointmentId]/cancel/route.ts`, `app/api/appointments/[appointmentId]/reschedule/route.ts` |
-| Tests                                      | `__tests__/booking-algorithm/`, `__tests__/payments/`                                                              |
+| Area                          | Files                                                                                                                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Availability CRUD             | `app/api/slots/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                       |
+| Public availability           | `app/api/slots/availability/[consultantId]/route.ts`, `availability-with-allocation/[consultantId]/route.ts`                                                          |
+| Checkout                      | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                                                                          |
+| Status transitions (CAS)      | `lib/booking/transitions.ts`                                                                                                                                          |
+| Availability union check      | `utils/slotAllocation/availabilityCoverage.ts`                                                                                                                        |
+| Occupancy / hold-expiry       | `utils/slotAllocation/occupancyPolicy.ts`, `utils/slotAllocation/SlotValidationService.ts` (`isOccupiedByLiveAppointment`)                                            |
+| Slot utils                    | `utils/slotAllocation/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                                                                                |
+| Allocation engine (server)    | `utils/slotAllocation/SlotAllocationService.ts`                                                                                                                       |
+| Validation engine             | `utils/slotAllocation/SlotValidationService.ts`                                                                                                                       |
+| Calculation                   | `utils/slotAllocation/SlotCalculationService.ts`                                                                                                                      |
+| Locking                       | `utils/appointmentlock.ts`                                                                                                                                            |
+| Cancel/Reschedule             | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts`                                                                                         |
+| Request flow                  | `app/api/slots/request-for-approval/route.ts`                                                                                                                         |
+| Frontend hooks                | `hooks/scheduling/useSlotAllocation.ts`, `hooks/scheduling/useCalendarData.ts`                                                                                        |
+| Frontend selection/validation | `lib/scheduling/slotSelectionValidation.ts`, `lib/scheduling/allocationAlgorithms.ts` (manual/requested pre-submission only), `lib/scheduling/availabilityPolling.ts` |
+| Stream cleanup                | `actions/stream/chat/event-channel.action.ts`                                                                                                                         |
+| Appointments page             | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx`                                                                                            |
+| Onboarding                    | `app/form/onboarding/components/ConsultantPreferredScheduleForm.tsx`                                                                                                  |
+
+See `docs/booking/README.md` for the full source map and `docs/booking/00-architecture-decisions.md` / `docs/booking/05-troubleshooting-and-changelog.md` for the history behind these rules.
