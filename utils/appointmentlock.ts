@@ -105,6 +105,17 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
   driftFactor: 0.01,
 };
 
+// #1319 — DEFAULT_RETRY_CONFIG waits up to 204.6 s (11 exponential attempts),
+// eight times the 26 s function ceiling. Every REQUEST-path acquisition
+// (approvals, allocation, consultee, appointment) therefore surfaced
+// contention as a 504, never as the structured 409 the client can retry.
+// Request paths use this bounded budget (~7 s); DEFAULT stays only for
+// callers that genuinely run outside a request.
+const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 5,
+};
+
 // FIX Issue #2: Increased default TTLs from 15-30s to 60s
 // This prevents lock expiration during slow database operations
 const DEFAULT_LOCK_TTL = 60000; // 60 seconds
@@ -256,7 +267,7 @@ async function acquireGuarded(
   key: string,
   ttl: number,
   context: string,
-  config: LockRetryConfig = DEFAULT_RETRY_CONFIG,
+  config: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   if (!(await checkRedisHealth())) {
     throw new BookingLockUnavailableError(context);
@@ -439,6 +450,12 @@ export async function lockConsultationApproval(
 }
 
 /**
+ * #1319 — the approval routes open a 30 s Serializable transaction; a 30 s
+ * grant could lapse mid-transaction. TTL must exceed the tx timeout + slack.
+ */
+export const APPROVAL_LOCK_TTL_MS = 45_000;
+
+/**
  * Lock a subscription approval to prevent concurrent approval attempts
  * @param subscriptionId - The subscription ID to lock
  * @param ttl - Time to live in milliseconds (default 60 seconds)
@@ -455,6 +472,27 @@ export async function lockSubscriptionApproval(
     if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
       "Lock contention: Another approval is in progress for this subscription. Please try again.",
+    );
+  }
+}
+
+/**
+ * #1319 — minting a trial pay-link is its own atom (not a slot write), and it
+ * used to lock under a private `lock:approval_payment:` name in
+ * approval-payment.ts — a second name for the approve-this-request atom.
+ * One namespace per atom: the trial approval lock lives here with its siblings.
+ */
+export async function lockTrialApproval(
+  trialId: string,
+  ttl: number = DEFAULT_LOCK_TTL,
+): Promise<ApprovalLock> {
+  const key = `trial-approval:${trialId}`;
+  try {
+    return await acquireGuarded(key, ttl, "trial-approval");
+  } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
+    throw new Error(
+      "Lock contention: Another approval is in progress for this trial. Please try again.",
     );
   }
 }
@@ -695,8 +733,9 @@ export async function lockEventCheckout(
   eventOrPlanId: string,
   ttl: number = DEFAULT_LOCK_TTL,
   // B4 — bounded waiter budget for checkout callers (CHECKOUT_WAIT_RETRY_CONFIG).
-  // Undefined keeps the historical queue-forever behavior for other callers.
-  retryConfig: LockRetryConfig = DEFAULT_RETRY_CONFIG,
+  // #1319 — no caller may queue for minutes inside a request; the default is
+  // the bounded request-path budget now.
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `event-checkout:${appointmentType}:${eventOrPlanId}`;
 
@@ -758,43 +797,59 @@ export async function unlockEventCheckout(lock: ApprovalLock): Promise<void> {
 }
 
 // ============================================================================
-// Legacy Functions - Appointment Locks
+// Public API - Appointment Locks (cancel / reschedule)
+// #1319 — this used to be the last raw acquisition in the module (no health
+// probe, no breaker: it failed OPEN on a Redis outage) and had no callers.
+// Cancel and reschedule now take it, through the same guarded front door as
+// every other booking lock, so a stale tab and a live cancel serialize
+// instead of racing the CAS.
 // ============================================================================
 
-/**
- * Lock an appointment
- * @param appointmentId - The appointment ID to lock
- * @param ttl - Time to live in milliseconds (default 5 minutes)
- * @returns Lock instance (must be released with unlockAppointment)
- */
-export async function lockAppointment(
-  appointmentId: string,
-  ttl: number = 300000,
-): Promise<ApprovalLock> {
-  const key = `appointment-lock:${appointmentId}`;
-  return await acquireLockWithRetry(key, ttl);
+/** Cancel/reschedule hold a 25 s transaction; the grant must outlive it. */
+export const APPOINTMENT_LOCK_TTL_MS = 30_000;
+
+export class AppointmentBusyError extends Error {
+  readonly httpStatus = 423 as const;
+  readonly code = "APPOINTMENT_BUSY" as const;
+  constructor(readonly appointmentId: string) {
+    super("This appointment is being updated. Please try again in a moment.");
+    this.name = "AppointmentBusyError";
+  }
 }
 
 /**
- * Release an appointment lock
- * @param lock - The lock instance to release
+ * Lock one appointment for a lifecycle mutation. Order: this is the coarsest
+ * key and is taken FIRST (event/consultant → consultee → slot).
  */
+export async function lockAppointment(
+  appointmentId: string,
+  ttl: number = APPOINTMENT_LOCK_TTL_MS,
+): Promise<ApprovalLock> {
+  const key = `appointment-lock:${appointmentId}`;
+  try {
+    return await acquireGuarded(key, ttl, "appointment");
+  } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
+    throw new AppointmentBusyError(appointmentId);
+  }
+}
+
+/** Release an appointment lock (never throws — safe in finally). */
 export async function unlockAppointment(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }
 
-/**
- * Check if an appointment is locked
- * @param appointmentId - The appointment ID to check
- * @returns True if locked, false otherwise
- */
-export async function isAppointmentLocked(
+/** Run one lifecycle mutation under the appointment lock; always releases. */
+export async function withAppointmentLock<T>(
   appointmentId: string,
-): Promise<boolean> {
-  const client = redisClient as Redis;
-  const key = `appointment-lock:${appointmentId}`;
-  const exists = await client.exists(key);
-  return exists === 1;
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lock = await lockAppointment(appointmentId);
+  try {
+    return await fn();
+  } finally {
+    await unlockAppointment(lock);
+  }
 }
 
 // ============================================================================
@@ -887,9 +942,9 @@ export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
 export async function lockConsulteeBooking(
   consulteeUserId: string,
   ttl: number = 150000,
-  // B8c — bounded waiter budget for checkout callers; undefined keeps the
-  // long queue for allocation/approval callers that genuinely want to wait.
-  retryConfig: LockRetryConfig = DEFAULT_RETRY_CONFIG,
+  // B8c / #1319 — bounded for every caller: an allocation or approval that
+  // waits three minutes for this key dies at the function ceiling anyway.
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `consultee-booking:${consulteeUserId}`;
   try {

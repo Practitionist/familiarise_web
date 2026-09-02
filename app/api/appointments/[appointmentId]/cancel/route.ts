@@ -1,4 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
@@ -42,6 +48,9 @@ export async function POST(
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // #1319 — this route triggers refunds/reallocation and had no limiter.
+    const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (limited) return limited;
 
     const { appointmentId } = await params;
 
@@ -279,125 +288,129 @@ export async function POST(
     // The set lives in lib/booking/transitions.ts so the map is canonical (#836).
 
     // Transaction for critical database operations only (with increased timeout)
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // Update appointment status based on type — CAS-guarded.
-        let moved = 0;
-        if (appointment.consultation) {
-          moved = (
-            await tx.consultation.updateMany({
-              where: {
-                id: appointment.consultation.id,
-                status: { in: [...CANCELLABLE_FROM] },
-              },
-              data: cancellationData,
-            })
-          ).count;
-        } else if (appointment.subscription) {
-          moved = (
-            await tx.subscription.updateMany({
-              where: {
-                id: appointment.subscription.id,
-                status: { in: [...CANCELLABLE_FROM] },
-              },
-              data: cancellationData,
-            })
-          ).count;
-        } else if (appointment.webinar) {
-          // Explicit allowed-from (was notIn) — robust against future enum
-          // additions (#837).
-          moved = (
-            await tx.webinar.updateMany({
-              where: {
-                id: appointment.webinar.id,
-                status: { in: EVENT_ALLOWED_FROM.CANCELLED },
-              },
-              data: { status: "CANCELLED" },
-            })
-          ).count;
-        } else if (appointment.class) {
-          moved = (
-            await tx.class.updateMany({
-              where: {
-                id: appointment.class.id,
-                status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
-              },
-              data: { status: "CANCELLED" },
-            })
-          ).count;
-        }
-        if (moved === 0) {
-          throw Object.assign(
-            new Error(
-              "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
-            ),
-            { httpStatus: 409, code: "NOT_CANCELLABLE" },
-          );
-        }
+    // #1319 — serialize lifecycle mutations per appointment (lock order:
+    // appointment first, before any consultee/slot key a future change adds).
+    const result = await withAppointmentLock(appointmentId, () =>
+      prisma.$transaction(
+        async (tx) => {
+          // Update appointment status based on type — CAS-guarded.
+          let moved = 0;
+          if (appointment.consultation) {
+            moved = (
+              await tx.consultation.updateMany({
+                where: {
+                  id: appointment.consultation.id,
+                  status: { in: [...CANCELLABLE_FROM] },
+                },
+                data: cancellationData,
+              })
+            ).count;
+          } else if (appointment.subscription) {
+            moved = (
+              await tx.subscription.updateMany({
+                where: {
+                  id: appointment.subscription.id,
+                  status: { in: [...CANCELLABLE_FROM] },
+                },
+                data: cancellationData,
+              })
+            ).count;
+          } else if (appointment.webinar) {
+            // Explicit allowed-from (was notIn) — robust against future enum
+            // additions (#837).
+            moved = (
+              await tx.webinar.updateMany({
+                where: {
+                  id: appointment.webinar.id,
+                  status: { in: EVENT_ALLOWED_FROM.CANCELLED },
+                },
+                data: { status: "CANCELLED" },
+              })
+            ).count;
+          } else if (appointment.class) {
+            moved = (
+              await tx.class.updateMany({
+                where: {
+                  id: appointment.class.id,
+                  status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
+                },
+                data: { status: "CANCELLED" },
+              })
+            ).count;
+          }
+          if (moved === 0) {
+            throw Object.assign(
+              new Error(
+                "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
+              ),
+              { httpStatus: 409, code: "NOT_CANCELLABLE" },
+            );
+          }
 
-        // Soft-cancel: mark slots as CANCELLED instead of deleting.
-        // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
-        // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
-        //
-        // RESCHEDULED counts too. A slot released by a pending reschedule is not
-        // SCHEDULED, so filtering on SCHEDULED alone left those rows in a
-        // non-terminal state on a booking that no longer exists — and proposals
-        // hang off exactly those rows.
-        const cancellableSlotStatuses = SLOT_RESCHEDULABLE_FROM;
-        if (appointment.subscription) {
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointment: { subscriptionId: appointment.subscription.id },
-              completionStatus: { in: cancellableSlotStatuses },
-            },
-            data: { completionStatus: "CANCELLED" },
-          });
-        } else if (appointment.class) {
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointment: { classId: appointment.class.id },
-              completionStatus: { in: cancellableSlotStatuses },
-            },
-            data: { completionStatus: "CANCELLED" },
-          });
-        } else {
-          // Consultation/webinar/trial — single appointment
-          await tx.slotOfAppointment.updateMany({
+          // Soft-cancel: mark slots as CANCELLED instead of deleting.
+          // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
+          // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
+          //
+          // RESCHEDULED counts too. A slot released by a pending reschedule is not
+          // SCHEDULED, so filtering on SCHEDULED alone left those rows in a
+          // non-terminal state on a booking that no longer exists — and proposals
+          // hang off exactly those rows.
+          const cancellableSlotStatuses = SLOT_RESCHEDULABLE_FROM;
+          if (appointment.subscription) {
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointment: { subscriptionId: appointment.subscription.id },
+                completionStatus: { in: cancellableSlotStatuses },
+              },
+              data: { completionStatus: "CANCELLED" },
+            });
+          } else if (appointment.class) {
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointment: { classId: appointment.class.id },
+                completionStatus: { in: cancellableSlotStatuses },
+              },
+              data: { completionStatus: "CANCELLED" },
+            });
+          } else {
+            // Consultation/webinar/trial — single appointment
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointmentId,
+                completionStatus: { in: cancellableSlotStatuses },
+              },
+              data: { completionStatus: "CANCELLED" },
+            });
+          }
+
+          // Close any live reschedule proposal on this booking. Leaving one open
+          // would keep openForAppointmentId reserved forever and let the expiry
+          // cron act on a cancelled booking.
+          await tx.rescheduleRequest.updateMany({
             where: {
               appointmentId,
-              completionStatus: { in: cancellableSlotStatuses },
+              status: { in: RESCHEDULE_OPEN_STATUSES },
             },
-            data: { completionStatus: "CANCELLED" },
+            data: {
+              status: "DECLINED",
+              openForAppointmentId: null,
+              resolvedAt: new Date(),
+            },
           });
-        }
 
-        // Close any live reschedule proposal on this booking. Leaving one open
-        // would keep openForAppointmentId reserved forever and let the expiry
-        // cron act on a cancelled booking.
-        await tx.rescheduleRequest.updateMany({
-          where: {
-            appointmentId,
-            status: { in: RESCHEDULE_OPEN_STATUSES },
-          },
-          data: {
-            status: "DECLINED",
-            openForAppointmentId: null,
-            resolvedAt: new Date(),
-          },
-        });
-
-        return {
-          success: true,
-          cancellationReason: validatedData.reason,
-          cancelledAt: cancellationData.cancelledAt,
-          webinarId: appointment.webinar?.id,
-          classId: appointment.class?.id,
-        };
-      },
-      {
-        maxWait: 10000, // Max time to wait for connection
-        timeout: 30000, // 30 second transaction timeout (was 5s default)
-      },
+          return {
+            success: true,
+            cancellationReason: validatedData.reason,
+            cancelledAt: cancellationData.cancelledAt,
+            webinarId: appointment.webinar?.id,
+            classId: appointment.class?.id,
+          };
+        },
+        {
+          maxWait: 10000, // Max time to wait for connection
+          timeout: 30000, // 30 second transaction timeout (was 5s default)
+        },
+      ),
     );
 
     // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
@@ -743,6 +756,19 @@ export async function POST(
 
     return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
+    // #1319 — lock outcomes are structured, never a 500.
+    if (error instanceof BookingLockUnavailableError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
+    if (error instanceof AppointmentBusyError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof Error && "httpStatus" in error) {
       const status =
         typeof (error as { httpStatus?: number }).httpStatus === "number"

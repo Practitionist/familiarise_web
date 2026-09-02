@@ -16,7 +16,13 @@ import prisma from "@/lib/prisma";
 import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards";
 import { Currency, PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
-import { acquireLock, releaseLock } from "@/lib/redis";
+import {
+  lockConsultationApproval,
+  lockSubscriptionApproval,
+  lockTrialApproval,
+  unlockApproval,
+  type ApprovalLock,
+} from "@/utils/appointmentlock";
 
 // ============================================================================
 // Type Definitions
@@ -100,17 +106,23 @@ export async function createApprovalPaymentIntent(
     throw new Error("trialId required for TRIAL appointment type");
   }
 
-  // H3 FIX: Acquire distributed lock keyed on the resource
-  const resourceId =
-    params.consultationId || params.subscriptionId || params.trialId;
-  const lockKey = `lock:approval_payment:${resourceId}`;
-  const lockToken = await acquireLock(lockKey, APPROVAL_PAYMENT_LOCK_TTL);
-
-  if (!lockToken) {
-    throw new Error(
-      "Payment link generation is already in progress for this request. Please wait.",
-    );
-  }
+  // H3 FIX / #1319: one namespace per atom. The approve-this-request atom
+  // already had a name (`consultation-approval:` / `subscription-approval:`);
+  // minting the pay-link under a private `lock:approval_payment:` key meant
+  // two names for one atom, i.e. no lock at all between the two. Trials get
+  // their own sibling name. These acquisitions are guarded (health probe +
+  // breaker, bounded retries) rather than the single unguarded SET NX before.
+  const lock: ApprovalLock = params.consultationId
+    ? await lockConsultationApproval(
+        params.consultationId,
+        APPROVAL_PAYMENT_LOCK_TTL,
+      )
+    : params.subscriptionId
+      ? await lockSubscriptionApproval(
+          params.subscriptionId,
+          APPROVAL_PAYMENT_LOCK_TTL,
+        )
+      : await lockTrialApproval(params.trialId!, APPROVAL_PAYMENT_LOCK_TTL);
 
   try {
     // FIX Issue #7 / #1181 — duplicate-payment guard, now live for every
@@ -217,7 +229,7 @@ export async function createApprovalPaymentIntent(
       currency,
     };
   } finally {
-    await releaseLock(lockKey, lockToken);
+    await unlockApproval(lock);
   }
 }
 
