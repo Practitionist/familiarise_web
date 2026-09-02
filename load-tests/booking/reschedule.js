@@ -41,7 +41,8 @@ import {
   rescheduleDuration,
 } from "./lib/metrics.js";
 import { establishSessions, pick } from "./lib/session.js";
-import { ALL_THRESHOLDS, summarize } from "./lib/thresholds.js";
+import { summaryOutputs } from "./lib/report.js";
+import { ALL_THRESHOLDS } from "./lib/thresholds.js";
 
 export const options = {
   stages: [
@@ -61,7 +62,7 @@ export function setup() {
   return establishSessions();
 }
 
-export function runReschedule(data, appointmentId) {
+export function runReschedule(data, appointmentId, tags) {
   const cookie = pick(data.buyers, __VU + __ITER);
   const target =
     appointmentId || rotate(RESCHEDULE_APPOINTMENT_IDS, __VU * 13 + __ITER);
@@ -73,7 +74,7 @@ export function runReschedule(data, appointmentId) {
     { cookie, tag: "reschedule" },
   );
   rescheduleDuration.add(res.timings.duration, { path: "reschedule" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "reschedule resolved without a platform timeout": () =>
       verdict !== "timeout",
@@ -83,7 +84,7 @@ export function runReschedule(data, appointmentId) {
   return { verdict, res, body: json(res), appointmentId: target };
 }
 
-export function runRespond(data, appointmentId, action) {
+export function runRespond(data, appointmentId, action, tags) {
   const cookie = pick(data.buyers, __VU + __ITER + 1);
   const target =
     appointmentId || rotate(RESCHEDULE_APPOINTMENT_IDS, __VU * 13 + __ITER);
@@ -93,7 +94,7 @@ export function runRespond(data, appointmentId, action) {
     { cookie, tag: "reschedule_respond" },
   );
   respondDuration.add(res.timings.duration, { path: "reschedule_respond" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "respond resolved without a platform timeout": () => verdict !== "timeout",
     "respond answered or refused cleanly": () =>
@@ -113,8 +114,5 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return {
-    stdout: JSON.stringify(summarize(data), null, 2),
-    "load-gate-summary.json": JSON.stringify(summarize(data), null, 2),
-  };
+  return summaryOutputs(data);
 }

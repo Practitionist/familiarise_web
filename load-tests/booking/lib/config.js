@@ -156,5 +156,69 @@ export const HOT_SLOT_BUYERS = int("HOT_SLOT_BUYERS", 50);
 export const HOT_EVENT_BUYERS = int("HOT_EVENT_BUYERS", 200);
 export const ORG_ADMIN_RACERS = int("ORG_ADMIN_RACERS", 10);
 
+/**
+ * A privileged session — the consultant who owns the fixtures, or an ADMIN /
+ * STAFF account. `verify-integrity.js` and `cleanup.js` need it because the two
+ * routes that can answer "is this consultant-minute double-booked" are both
+ * self-scoped: `GET /api/slots/appointments` answers 403 unless the caller
+ * filters by their own profile, and `GET /api/participants/webinar/[id]` is
+ * owner/collaborator/privileged only.
+ */
+export const VERIFY_COOKIE = optional("VERIFY_COOKIE", "");
+
+/** consultantProfile ids the integrity check sweeps for double-booked minutes. */
+export const CONSULTANT_PROFILE_IDS = list("CONSULTANT_PROFILE_IDS");
+
+/**
+ * The event's effective seat count — `Webinar.maxParticipants` when the
+ * instance overrides, otherwise the plan's. There is no capacity endpoint (see
+ * the runbook's "what the API cannot tell you" section), so the ceiling is
+ * supplied rather than discovered, and `verify-integrity.js` re-derives the
+ * registered count by de-duplicating participant ids.
+ */
+export const EVENT_CAPACITY = int("EVENT_CAPACITY", 20);
+
+/**
+ * Every consultation this run books lands inside one marked window, so cleanup
+ * can find its own rows without a database query: an appointment whose slots
+ * start inside the window belongs to the run. Defaults to 04:00 UTC tomorrow
+ * (09:30 IST), which is inside a typical seeded workday.
+ */
+export const WINDOW_START = optional("WINDOW_START", "");
+export const WINDOW_ATOMS = int("WINDOW_ATOMS", 48);
+
+/**
+ * Requests per minute for the browse reads. The availability limiter is 30 per
+ * minute PER IP and does not skip localhost, and a k6 run is one IP, so a
+ * browse mix that ramps with the VUs measures the limiter instead of the app.
+ * The reads therefore run on their own arrival-rate executor, capped below the
+ * limiter by default. Raising this is only meaningful if the limiter is raised
+ * with it or the run is distributed across several egress addresses.
+ */
+export const BROWSE_RPM = int("BROWSE_RPM", 25);
+export const SEARCH_RPM = int("SEARCH_RPM", 50);
+
+/**
+ * User ids to discount from an event's registered count. The participants route
+ * de-duplicates by user id but does NOT exclude the host, while the server's own
+ * capacity arithmetic does, so the host would otherwise read as one seat of
+ * over-booking. Put the consultant's user id here.
+ */
+export const EVENT_EXCLUDE_USER_IDS = list("EVENT_EXCLUDE_USER_IDS");
+
+/**
+ * consulteeProfile ids paired positionally with the buyer credentials. Only
+ * needed for cleanup's optional third pass, which cancels PENDING gateway
+ * payments through `DELETE /api/checkout/pending/[paymentId]`. That pass is
+ * relevant only to a run against a production build, where `isMockPayment` is
+ * ignored and checkout leaves a real pending hold; a mock purchase commits as
+ * SUCCEEDED and that route answers 409 for it forever. Leaving it unset is
+ * safe — the abandoned-payment sweep expires those holds after thirty minutes.
+ */
+export const CONSULTEE_PROFILE_IDS = list("CONSULTEE_PROFILE_IDS");
+
+/** Ceiling on cancels per credential, so cleanup cannot run forever. */
+export const CLEANUP_MAX_PER_USER = int("CLEANUP_MAX_PER_USER", 40);
+
 /** Where the run writes its machine-readable summary. */
 export const SUMMARY_PATH = optional("SUMMARY_PATH", "load-gate-summary.json");

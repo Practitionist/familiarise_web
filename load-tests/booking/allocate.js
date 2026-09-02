@@ -26,7 +26,8 @@ import {
 import { idempotencyKey, json, patch, rotate } from "./lib/http.js";
 import { allocateDuration, isAcceptableLoss, record } from "./lib/metrics.js";
 import { establishSessions, pick } from "./lib/session.js";
-import { ALL_THRESHOLDS, summarize } from "./lib/thresholds.js";
+import { summaryOutputs } from "./lib/report.js";
+import { ALL_THRESHOLDS } from "./lib/thresholds.js";
 
 export const options = {
   stages: [
@@ -49,8 +50,10 @@ export function setup() {
  * @param eventId   pin every racer to one event (14c) or leave undefined to
  *                  spread across the pool
  * @param useOrgAdmins  drive the call as an org admin rather than a buyer
+ * @param tags          attached to every counter, so a storm can be thresholded
+ *                      on its own sub-metric
  */
-export function runAllocate(data, eventId, useOrgAdmins) {
+export function runAllocate(data, eventId, useOrgAdmins, tags) {
   const pool =
     useOrgAdmins && data.orgAdmins && data.orgAdmins.length > 0
       ? data.orgAdmins
@@ -64,7 +67,7 @@ export function runAllocate(data, eventId, useOrgAdmins) {
     { cookie, tag: "allocate", key },
   );
   allocateDuration.add(res.timings.duration, { path: "allocate" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "allocate resolved without a platform timeout": () => verdict !== "timeout",
     "allocate allocated or refused cleanly": () =>
@@ -79,8 +82,5 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return {
-    stdout: JSON.stringify(summarize(data), null, 2),
-    "load-gate-summary.json": JSON.stringify(summarize(data), null, 2),
-  };
+  return summaryOutputs(data);
 }

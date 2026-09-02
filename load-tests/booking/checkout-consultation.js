@@ -25,9 +25,11 @@ import {
   SLOT_AVAILABILITY_WEEKLY_ID,
 } from "./lib/config.js";
 import { idempotencyKey, json, post, rotate } from "./lib/http.js";
+import { atomAt } from "./lib/window.js";
 import { checkoutDuration, isAcceptableLoss, record } from "./lib/metrics.js";
 import { establishSessions, pick } from "./lib/session.js";
-import { ALL_THRESHOLDS, summarize } from "./lib/thresholds.js";
+import { summaryOutputs } from "./lib/report.js";
+import { ALL_THRESHOLDS } from "./lib/thresholds.js";
 
 export const options = {
   stages: [
@@ -40,20 +42,6 @@ export const options = {
 
 export function setup() {
   return establishSessions();
-}
-
-/** One slot start per (VU, iteration) so the mix spreads over the calendar. */
-function slotWindow(offset) {
-  // Start on tomorrow's hour boundary and walk forward in 30-minute atoms,
-  // which is the calendar's unit (ADR B1). A booking window must be an exact
-  // multiple of it or the allocator reads a 60-minute row as one 30-minute
-  // slot.
-  const base = new Date();
-  base.setUTCDate(base.getUTCDate() + 1);
-  base.setUTCHours(4, 0, 0, 0); // 09:30 IST — inside a typical seeded workday
-  const startsAt = new Date(base.getTime() + offset * 30 * 60 * 1000);
-  const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
-  return { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() };
 }
 
 /**
@@ -80,14 +68,14 @@ export function consultationBody({ planId, startsAt, endsAt, key }) {
 }
 
 /** The unit of work, exported so scenarios.js can compose it. */
-export function runCheckoutConsultation(data, offsetSeed) {
+export function runCheckoutConsultation(data, offsetSeed, tags) {
   const offset = offsetSeed === undefined ? __VU * 97 + __ITER : offsetSeed;
   const cookie = pick(data.buyers, __VU + __ITER);
   const planId = rotate(PLAN_IDS, offset);
   if (!planId) {
     throw new Error("PLAN_IDS is required for the consultation checkout path");
   }
-  const window = slotWindow(offset);
+  const window = atomAt(offset);
   const key = idempotencyKey("cco");
   const res = post(
     "/api/checkout",
@@ -95,7 +83,7 @@ export function runCheckoutConsultation(data, offsetSeed) {
     { cookie, tag: "checkout_consultation", key },
   );
   checkoutDuration.add(res.timings.duration, { path: "checkout_consultation" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "consultation checkout resolved without a platform timeout": () =>
       verdict !== "timeout",
@@ -114,10 +102,7 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return {
-    stdout: JSON.stringify(summarize(data), null, 2),
-    "load-gate-summary.json": JSON.stringify(summarize(data), null, 2),
-  };
+  return summaryOutputs(data);
 }
 
 /** Documented so a reader of CONSULTANT_IDS knows why it exists here. */

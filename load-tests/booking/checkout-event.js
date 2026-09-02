@@ -23,7 +23,8 @@ import {
 import { idempotencyKey, json, post } from "./lib/http.js";
 import { checkoutDuration, isAcceptableLoss, record } from "./lib/metrics.js";
 import { establishSessions, pick } from "./lib/session.js";
-import { ALL_THRESHOLDS, summarize } from "./lib/thresholds.js";
+import { summaryOutputs } from "./lib/report.js";
+import { ALL_THRESHOLDS } from "./lib/thresholds.js";
 
 export const options = {
   stages: [
@@ -52,7 +53,7 @@ export function eventBody(key) {
   };
 }
 
-export function runCheckoutEvent(data) {
+export function runCheckoutEvent(data, tags) {
   const cookie = pick(data.buyers, __VU + __ITER);
   const key = idempotencyKey("cev");
   const res = post("/api/checkout", eventBody(key), {
@@ -61,7 +62,7 @@ export function runCheckoutEvent(data) {
     key,
   });
   checkoutDuration.add(res.timings.duration, { path: "checkout_event" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "event checkout resolved without a platform timeout": () =>
       verdict !== "timeout",
@@ -77,8 +78,5 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return {
-    stdout: JSON.stringify(summarize(data), null, 2),
-    "load-gate-summary.json": JSON.stringify(summarize(data), null, 2),
-  };
+  return summaryOutputs(data);
 }

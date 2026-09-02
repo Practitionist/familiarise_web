@@ -62,65 +62,70 @@ function errorTypeOf(res) {
 /**
  * Classify one response and feed every counter it belongs to.
  *
+ * `tags` is attached to every counter it feeds, so a threshold can be written
+ * against one storm in isolation — `booking_winners{path:hot_slot}: count<=1`
+ * is the over-booking assertion, encoded rather than eyeballed.
+ *
  * Returns the verdict string so callers can `check()` on it without re-parsing.
  */
-export function record(res) {
+export function record(res, tags) {
   const status = res.status;
   const code = errorTypeOf(res);
+  const t = tags || {};
 
   // k6 reports a client-side timeout or a refused connection as status 0.
   // Treat it exactly like a 504: from the buyer's seat it is the same event.
   const timedOut = status === 0 || status === 502 || status === 504;
-  timeoutRate.add(timedOut);
+  timeoutRate.add(timedOut, t);
   // 503 is deliberately excluded: both lock rails fail CLOSED with a typed 503
   // when Redis is unreachable, which is the designed answer rather than a
   // crash. It gets its own counter and its own threshold so a Redis blip is
   // reported as a Redis blip instead of contaminating the 5xx rate.
-  serverErrorRate.add(status >= 500 && status < 600 && status !== 503);
+  serverErrorRate.add(status >= 500 && status < 600 && status !== 503, t);
 
   if (timedOut) {
-    gatewayTimeouts.add(1);
+    gatewayTimeouts.add(1, t);
     return "timeout";
   }
   if (status >= 200 && status < 300) {
-    winners.add(1);
+    winners.add(1, t);
     return "win";
   }
   if (status === 429) {
-    rateLimited.add(1);
-    clientErrors.add(1);
+    rateLimited.add(1, t);
+    clientErrors.add(1, t);
     return "rate_limited";
   }
   if (status === 503) {
     // Both lock rails fail CLOSED on a Redis outage with a typed 503. It is a
     // correct answer, not a crash, but it means Redis was unreachable.
-    lockUnavailable.add(1);
+    lockUnavailable.add(1, t);
     return "lock_unavailable";
   }
   if (status === 409) {
-    conflicts.add(1);
-    clientErrors.add(1);
+    conflicts.add(1, t);
+    clientErrors.add(1, t);
     if (code === "SERIALIZATION_CONFLICT") {
-      serializationConflicts.add(1);
+      serializationConflicts.add(1, t);
       return "p2034";
     }
     if (BUSY_CODES.indexOf(code) !== -1) {
-      busyRetryable.add(1);
+      busyRetryable.add(1, t);
       return "busy";
     }
     return "conflict";
   }
   if (status >= 400 && status < 500) {
-    clientErrors.add(1);
+    clientErrors.add(1, t);
     if (SOLD_OUT_CODES.indexOf(code) !== -1) {
-      soldOut.add(1);
+      soldOut.add(1, t);
       return "sold_out";
     }
     // A losing consultation racer is refused by the slot validator with a 400
     // ("Time slot is already booked"), which is a legitimate loss, not a bug.
     return "rejected";
   }
-  serverErrors.add(1);
+  serverErrors.add(1, t);
   return "server_error";
 }
 

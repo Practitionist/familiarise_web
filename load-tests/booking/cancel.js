@@ -26,7 +26,8 @@ import { CANCEL_APPOINTMENT_IDS, DURATION, PEAK_VUS } from "./lib/config.js";
 import { json, post, rotate } from "./lib/http.js";
 import { cancelDuration, isAcceptableLoss, record } from "./lib/metrics.js";
 import { establishSessions, pick } from "./lib/session.js";
-import { ALL_THRESHOLDS, summarize } from "./lib/thresholds.js";
+import { summaryOutputs } from "./lib/report.js";
+import { ALL_THRESHOLDS } from "./lib/thresholds.js";
 
 export const options = {
   stages: [
@@ -44,7 +45,7 @@ export function setup() {
   return establishSessions();
 }
 
-export function runCancel(data, appointmentId) {
+export function runCancel(data, appointmentId, tags) {
   const cookie = pick(data.buyers, __VU + __ITER);
   const target =
     appointmentId || rotate(CANCEL_APPOINTMENT_IDS, __VU * 17 + __ITER);
@@ -54,7 +55,7 @@ export function runCancel(data, appointmentId) {
     { cookie, tag: "cancel" },
   );
   cancelDuration.add(res.timings.duration, { path: "cancel" });
-  const verdict = record(res);
+  const verdict = record(res, tags);
   check(res, {
     "cancel resolved without a platform timeout": () => verdict !== "timeout",
     "cancel succeeded or refused cleanly": () =>
@@ -69,8 +70,5 @@ export default function (data) {
 }
 
 export function handleSummary(data) {
-  return {
-    stdout: JSON.stringify(summarize(data), null, 2),
-    "load-gate-summary.json": JSON.stringify(summarize(data), null, 2),
-  };
+  return summaryOutputs(data);
 }
