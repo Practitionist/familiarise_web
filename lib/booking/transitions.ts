@@ -19,6 +19,7 @@ import type {
   AppointmentStatus,
   RescheduleRequestStatus,
   SlotCompletionStatus,
+  TrialSessionStatus,
   WebinarStatus,
 } from "@prisma/client";
 
@@ -31,7 +32,10 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 // from the wider RESCHEDULABLE_FROM set below — that flow owns its own edge
 // because rescheduling a SCHEDULED booking back to PENDING is policy-gated
 // (24h window), not a generic transition.
-export const REQUEST_ALLOWED_FROM: Record<AppointmentStatus, AppointmentStatus[]> = {
+export const REQUEST_ALLOWED_FROM: Record<
+  AppointmentStatus,
+  AppointmentStatus[]
+> = {
   PENDING: ["APPROVED_PENDING_PAYMENT"],
   APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
@@ -71,7 +75,13 @@ export const ALLOCATION_APPROVABLE_FROM: AppointmentStatus[] = [
 export async function transitionConsultationRequest(
   tx: Pick<Tx, "consultation">,
   args: {
-    where: { id: string };
+    /**
+     * Always one row, by id. Extra predicates are the doctrine's own idiom: a
+     * condition that must still hold at write time belongs in this WHERE, not
+     * in a read-then-write ahead of it (the stale-consultation sweep excludes
+     * a request whose payment succeeded after the cohort read this way).
+     */
+    where: Prisma.ConsultationWhereInput & { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.ConsultationUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */
@@ -85,13 +95,16 @@ export async function transitionConsultationRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Consultation", args.to);
+  if (res.count === 0)
+    throw new IllegalTransitionError("Consultation", args.to);
 }
 
 export async function transitionSubscriptionRequest(
   tx: Pick<Tx, "subscription">,
   args: {
-    where: { id: string };
+    /** Same idiom as the consultation helper: extra predicates that must still
+     * hold at write time belong in this WHERE, not in a read ahead of it. */
+    where: Prisma.SubscriptionWhereInput & { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.SubscriptionUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */
@@ -105,7 +118,8 @@ export async function transitionSubscriptionRequest(
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0) throw new IllegalTransitionError("Subscription", args.to);
+  if (res.count === 0)
+    throw new IllegalTransitionError("Subscription", args.to);
 }
 
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
@@ -184,6 +198,100 @@ export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
   "SCHEDULED",
   "RESCHEDULED",
 ];
+
+// #1319 — the completion lifecycle had no CAS at all: Stream webhooks, the
+// orphan reconciler and the maintenance drain wrote it with a bare
+// `where: { id }`, so a webhook landing after a cancel resurrected a CANCELLED
+// slot as COMPLETED (the #837 shape, on the column that gates earnings).
+// Keyed by TARGET like REQUEST_ALLOWED_FROM.
+export const SLOT_COMPLETION_ALLOWED_FROM: Record<
+  SlotCompletionStatus,
+  SlotCompletionStatus[]
+> = {
+  SCHEDULED: ["RESCHEDULED"],
+  COMPLETED: ["SCHEDULED", "UNVERIFIED"],
+  // COMPLETED → UNVERIFIED is the maintenance drain pulling a session it cut
+  // short back for human review when the call-ended webhook landed first.
+  // Automated completion (Stream webhooks) passes fromIn: ["SCHEDULED"] so it
+  // never lifts a held-for-review slot; only a human does that.
+  UNVERIFIED: ["SCHEDULED", "COMPLETED"],
+  CANCELLED: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"],
+  RESCHEDULED: ["SCHEDULED", "RESCHEDULED"],
+};
+
+/**
+ * Two deliberate departures from the five request/event helpers above, both
+ * load-bearing: `where` is a full WhereInput because every caller sweeps by
+ * appointmentId or a user relation rather than by slot id, and `allowZero`
+ * exists because cancel/reschedule sweeps legitimately match zero live rows
+ * and must not 409. Returns the matched count so sweeps can report honestly.
+ */
+export async function transitionSlotCompletion(
+  tx: Pick<Tx, "slotOfAppointment">,
+  args: {
+    where: Prisma.SlotOfAppointmentWhereInput;
+    to: SlotCompletionStatus;
+    data?: Omit<
+      Prisma.SlotOfAppointmentUncheckedUpdateManyInput,
+      "completionStatus"
+    >;
+    fromIn?: SlotCompletionStatus[];
+    allowZero?: boolean;
+  },
+): Promise<number> {
+  const res = await tx.slotOfAppointment.updateMany({
+    where: {
+      ...args.where,
+      completionStatus: {
+        in: args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to],
+      },
+    },
+    data: { completionStatus: args.to, ...args.data },
+  });
+  if (res.count === 0 && !args.allowZero) {
+    throw new IllegalTransitionError("SlotOfAppointment", args.to);
+  }
+  return res.count;
+}
+
+//////////////////////////////////////////////// TrialSession ////////////////////////////////////////////////
+
+// #1319 — trials were the one lifecycle with no helper: accept, reject, cancel,
+// auto-complete and convert all wrote `status` bare. The capture webhook and
+// the unpaid-expiry sweep already narrowed their updateMany by status; this
+// makes the rest match. PENDING is entry-only. Keyed by TARGET.
+export const TRIAL_ALLOWED_FROM: Record<
+  TrialSessionStatus,
+  TrialSessionStatus[]
+> = {
+  PENDING: [],
+  AWAITING_PAYMENT: ["PENDING"],
+  SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
+  COMPLETED: ["SCHEDULED"],
+  CONVERTED: ["COMPLETED"],
+  CANCELLED: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"],
+  REJECTED: ["PENDING"],
+};
+
+export async function transitionTrialSession(
+  tx: Pick<Tx, "trialSession">,
+  args: {
+    where: { id: string };
+    to: TrialSessionStatus;
+    data?: Omit<Prisma.TrialSessionUncheckedUpdateManyInput, "status">;
+    fromIn?: TrialSessionStatus[];
+  },
+): Promise<void> {
+  const res = await tx.trialSession.updateMany({
+    where: {
+      ...args.where,
+      status: { in: args.fromIn ?? TRIAL_ALLOWED_FROM[args.to] },
+    },
+    data: { status: args.to, ...args.data },
+  });
+  if (res.count === 0)
+    throw new IllegalTransitionError("TrialSession", args.to);
+}
 
 //////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
 

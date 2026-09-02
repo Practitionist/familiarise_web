@@ -1,0 +1,146 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * #1319 — the two lifecycles that had no CAS helper: SlotOfAppointment
+ * completion and TrialSession status. The maps are pinned exactly so a silent
+ * widening (e.g. letting COMPLETED come from CANCELLED) fails review here.
+ */
+
+import {
+  SLOT_COMPLETION_ALLOWED_FROM,
+  TRIAL_ALLOWED_FROM,
+  transitionSlotCompletion,
+  transitionTrialSession,
+} from "../../lib/booking/transitions";
+import { IllegalTransitionError } from "../../lib/enterprise/transitions";
+
+type SlotTx = Parameters<typeof transitionSlotCompletion>[0];
+type TrialTx = Parameters<typeof transitionTrialSession>[0];
+
+function slotTx(count: number) {
+  const updateMany = jest.fn().mockResolvedValue({ count });
+  return {
+    tx: { slotOfAppointment: { updateMany } } as unknown as SlotTx,
+    updateMany,
+  };
+}
+
+function trialTx(count: number) {
+  const updateMany = jest.fn().mockResolvedValue({ count });
+  return {
+    tx: { trialSession: { updateMany } } as unknown as TrialTx,
+    updateMany,
+  };
+}
+
+describe("SLOT_COMPLETION_ALLOWED_FROM", () => {
+  it("pins every edge", () => {
+    expect(SLOT_COMPLETION_ALLOWED_FROM).toEqual({
+      SCHEDULED: ["RESCHEDULED"],
+      COMPLETED: ["SCHEDULED", "UNVERIFIED"],
+      UNVERIFIED: ["SCHEDULED", "COMPLETED"],
+      CANCELLED: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"],
+      RESCHEDULED: ["SCHEDULED", "RESCHEDULED"],
+    });
+  });
+
+  it("a late Stream webhook cannot resurrect a cancelled slot", () => {
+    expect(SLOT_COMPLETION_ALLOWED_FROM.COMPLETED).not.toContain("CANCELLED");
+    expect(SLOT_COMPLETION_ALLOWED_FROM.UNVERIFIED).not.toContain("CANCELLED");
+  });
+});
+
+describe("transitionSlotCompletion", () => {
+  it("bakes the allowed-from set into the WHERE and returns the count", async () => {
+    const { tx, updateMany } = slotTx(2);
+    const moved = await transitionSlotCompletion(tx, {
+      where: { appointmentId: "apt_1", deletedAt: null },
+      to: "CANCELLED",
+      data: { deletedAt: new Date("2026-09-02T00:00:00Z") },
+    });
+    expect(moved).toBe(2);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        appointmentId: "apt_1",
+        deletedAt: null,
+        completionStatus: { in: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"] },
+      },
+      data: {
+        completionStatus: "CANCELLED",
+        deletedAt: new Date("2026-09-02T00:00:00Z"),
+      },
+    });
+  });
+
+  it("fromIn narrows the set", async () => {
+    const { tx, updateMany } = slotTx(1);
+    await transitionSlotCompletion(tx, {
+      where: { id: "slot_1" },
+      to: "COMPLETED",
+      fromIn: ["SCHEDULED"],
+    });
+    expect(updateMany.mock.calls[0][0].where).toEqual({
+      id: "slot_1",
+      completionStatus: { in: ["SCHEDULED"] },
+    });
+  });
+
+  it("zero rows throws unless allowZero", async () => {
+    const { tx } = slotTx(0);
+    await expect(
+      transitionSlotCompletion(tx, {
+        where: { id: "slot_1" },
+        to: "COMPLETED",
+      }),
+    ).rejects.toBeInstanceOf(IllegalTransitionError);
+    await expect(
+      transitionSlotCompletion(tx, {
+        where: { id: "slot_1" },
+        to: "COMPLETED",
+        allowZero: true,
+      }),
+    ).resolves.toBe(0);
+  });
+});
+
+describe("TRIAL_ALLOWED_FROM", () => {
+  it("pins every edge (mirror of the route's validTransitions, keyed by target)", () => {
+    expect(TRIAL_ALLOWED_FROM).toEqual({
+      PENDING: [],
+      AWAITING_PAYMENT: ["PENDING"],
+      SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
+      COMPLETED: ["SCHEDULED"],
+      CONVERTED: ["COMPLETED"],
+      CANCELLED: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"],
+      REJECTED: ["PENDING"],
+    });
+  });
+
+  it("a cancelled or converted trial cannot be auto-completed", () => {
+    expect(TRIAL_ALLOWED_FROM.COMPLETED).toEqual(["SCHEDULED"]);
+  });
+});
+
+describe("transitionTrialSession", () => {
+  it("throws IllegalTransitionError on zero rows", async () => {
+    const { tx } = trialTx(0);
+    await expect(
+      transitionTrialSession(tx, { where: { id: "trial_1" }, to: "COMPLETED" }),
+    ).rejects.toBeInstanceOf(IllegalTransitionError);
+  });
+
+  it("carries extra data and the default from-set", async () => {
+    const { tx, updateMany } = trialTx(1);
+    await transitionTrialSession(tx, {
+      where: { id: "trial_1" },
+      to: "CONVERTED",
+      data: { convertedToSubscriptionId: "sub_1" },
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "trial_1", status: { in: ["COMPLETED"] } },
+      data: { status: "CONVERTED", convertedToSubscriptionId: "sub_1" },
+    });
+  });
+});
