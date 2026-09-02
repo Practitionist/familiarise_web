@@ -306,13 +306,29 @@ export async function withCircuitBreaker<T>(
  * Check Redis health (for monitoring and health endpoints)
  * @returns True if Redis is healthy, false otherwise
  */
-export async function checkRedisHealth(): Promise<boolean> {
+// #1319 — every guarded lock acquisition opened with a PING, and an interval
+// lock acquires one atom at a time, so a single consultation booking paid up
+// to a dozen probe round-trips to learn the same thing. Cache the answer per
+// instance for 2 s: short enough that a real outage still fails closed within
+// one attempt, long enough to make the probe free inside one request. A stale
+// negative can only produce a retryable 503, never an unlocked booking.
+const HEALTH_CACHE_MS = 2_000;
+let healthCachedAt = 0;
+let healthCachedValue = false;
+
+export async function checkRedisHealth(force = false): Promise<boolean> {
+  const now = Date.now();
+  if (!force && now - healthCachedAt < HEALTH_CACHE_MS) {
+    return healthCachedValue;
+  }
   try {
     const result = await redis.ping();
-    return result === "PONG";
+    healthCachedValue = result === "PONG";
   } catch {
-    return false;
+    healthCachedValue = false;
   }
+  healthCachedAt = now;
+  return healthCachedValue;
 }
 
 /**
