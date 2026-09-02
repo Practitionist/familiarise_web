@@ -25,7 +25,12 @@
 
 import fs from "fs";
 import path from "path";
-import { Currency, PaymentStatus } from "@prisma/client";
+import {
+  AppointmentStatus,
+  Currency,
+  PaymentStatus,
+  TrialSessionStatus,
+} from "@prisma/client";
 
 const CUID = "clw0000000000000000000000";
 const PLAN_CUID = "clw1111111111111111111111";
@@ -37,8 +42,11 @@ interface State {
   consultationPlan: Record<string, unknown> | null;
   /** What the duplicate guard's walk over consultation.appointment.payment finds. */
   appointmentPayments: Array<Record<string, unknown>>;
+  /** Whether the consultation is still payable, which gates the re-mint. */
+  consultationStatus: string;
   /** What findExistingLivePayment's trial arm reads off TrialSession.payment. */
   trialPayment?: Record<string, unknown> | null;
+  trialStatus?: string;
 }
 
 let state: State;
@@ -56,6 +64,7 @@ jest.mock("../../lib/prisma", () => ({
       // Hydrates the include shape findExistingLivePayment walks.
       findUnique: jest.fn(async () => ({
         id: CONS_CUID,
+        status: state.consultationStatus,
         appointment: { id: APPT_CUID, payment: state.appointmentPayments },
       })),
     },
@@ -64,11 +73,21 @@ jest.mock("../../lib/prisma", () => ({
         id: "pay-new",
         ...data,
       })),
+      update: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => ({ ...where, ...data }),
+      ),
     },
     trialSession: {
       // Hydrates the include shape findExistingLivePayment's trial arm walks.
       findUnique: jest.fn(async () => ({
         id: "trial-1",
+        status: state.trialStatus,
         payment: state.trialPayment,
       })),
     },
@@ -94,6 +113,12 @@ jest.mock("../../lib/payments/index", () => ({
     mockCreatePaymentIntent(...(a as [])),
 }));
 
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  APPROVAL_LOCK_TTL_MS: 45_000,
+  lockApprovalPaymentMint: jest.fn(async () => ({ key: "k", token: "t" })),
+  unlockApproval: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   acquireLock: jest.fn(async () => "lock-token"),
@@ -101,9 +126,13 @@ jest.mock("../../lib/redis", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { createApprovalPaymentIntent } from "../../lib/payments/operations/approval-payment";
+import {
+  ApprovalWindowLapsedError,
+  createApprovalPaymentIntent,
+} from "../../lib/payments/operations/approval-payment";
 
 const mockedPaymentCreate = prisma.payment.create as jest.Mock;
+const mockedPaymentUpdate = prisma.payment.update as jest.Mock;
 
 function freshState(): State {
   return {
@@ -114,6 +143,8 @@ function freshState(): State {
       priceCurrency: Currency.INR,
     },
     appointmentPayments: [],
+    consultationStatus: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    trialStatus: TrialSessionStatus.AWAITING_PAYMENT,
   };
 }
 
@@ -218,13 +249,17 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
   });
 
-  it("falls through to a fresh mint for EXPIRED payments only", async () => {
+  // #1319 review — an EXPIRED row is re-minted INTO, never duplicated: Payment
+  // is unique on [userId, appointmentId], so a second create dies on P2002.
+  it("re-mints a dead intent into the same Payment row", async () => {
     state.appointmentPayments = [
       {
+        id: "pay-dead",
         paymentStatus: PaymentStatus.EXPIRED,
         paymentIntent: "order_dead",
         amount: 500_000,
         currency: Currency.INR,
+        expiresAt: null,
       },
     ];
 
@@ -232,19 +267,67 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
     expect(result.paymentIntentId).toBe("order_new");
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
-    expect(mockedPaymentCreate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    const [{ where, data }] = mockedPaymentUpdate.mock.calls[0];
+    expect(where).toEqual({ id: "pay-dead" });
+    expect(data.paymentIntent).toBe("order_new");
+    expect(data.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(data.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("re-mints a PENDING intent that is past its own window", async () => {
+    state.appointmentPayments = [
+      {
+        id: "pay-lapsed",
+        paymentStatus: PaymentStatus.PENDING,
+        paymentIntent: "order_lapsed",
+        amount: 500_000,
+        currency: Currency.INR,
+        expiresAt: new Date(Date.now() - 60_000),
+      },
+    ];
+
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.paymentIntentId).toBe("order_new");
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses instead of re-minting once the sweep has moved the request on", async () => {
+    state.consultationStatus = AppointmentStatus.REJECTED;
+    state.appointmentPayments = [
+      {
+        id: "pay-dead",
+        paymentStatus: PaymentStatus.EXPIRED,
+        paymentIntent: "order_dead",
+        amount: 500_000,
+        currency: Currency.INR,
+        expiresAt: null,
+      },
+    ];
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      ApprovalWindowLapsedError,
+    );
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockedPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
   });
 
   // CodeRabbit triage — the trial arm of findExistingLivePayment returned
   // the TrialSession's payment UNFILTERED, so an EXPIRED order would have
   // been handed back as a "reusable" checkout link (a dead intent) instead
   // of minting fresh.
-  it("trial arm: an EXPIRED trial payment falls through to a fresh mint", async () => {
+  it("trial arm: an EXPIRED trial payment is re-minted into its own row", async () => {
     state.trialPayment = {
+      id: "pay-trial-dead",
       paymentStatus: PaymentStatus.EXPIRED,
       paymentIntent: "order_trial_dead",
       amount: 250_000,
       currency: Currency.INR,
+      expiresAt: null,
     };
 
     await createApprovalPaymentIntent({
@@ -255,7 +338,10 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     } as never);
 
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
-    expect(mockedPaymentCreate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
+    expect(mockedPaymentUpdate.mock.calls[0][0].where).toEqual({
+      id: "pay-trial-dead",
+    });
   });
 
   it("trial arm: a PENDING trial payment is reused, not duplicated", async () => {
