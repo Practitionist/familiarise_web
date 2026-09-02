@@ -133,6 +133,22 @@ export default [
     },
   },
 
+  // k6 load scripts. These never run under Node or in a browser — the k6
+  // runtime injects `__ENV`, `__VU` and `__ITER` as globals and resolves the
+  // `k6/*` module specifiers itself. Without this block every script reports
+  // `no-undef` on those three names, which is how `load-tests/smoke.js` came
+  // to carry four standing ESLint errors.
+  {
+    files: ["load-tests/**/*.js"],
+    languageOptions: {
+      globals: {
+        __ENV: "readonly",
+        __VU: "readonly",
+        __ITER: "readonly",
+      },
+    },
+  },
+
   // Layering: `app/` is the routing layer. It may depend on lib, components,
   // hooks, types and schemas — never the reverse.
   //
