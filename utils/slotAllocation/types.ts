@@ -5,7 +5,6 @@
  * consistency and reduce duplication.
  */
 
-
 /**
  * Allocation modes supported by the system
  */
@@ -71,6 +70,15 @@ export interface AllocationRequest {
    * caller — a consultee cannot wave away the consultant's schedule.
    */
   override?: boolean;
+  /**
+   * #1206 — place every session that FITS instead of refusing the whole
+   * allocation when the window cannot hold them all. Off by default: a partial
+   * schedule is the consultant's explicit decision, taken after the shortfall
+   * has been shown to them. Only recurring events (subscription, class) can be
+   * partial — a consultation or webinar is one session, so it either fits or
+   * it does not.
+   */
+  allowPartial?: boolean;
 }
 
 /**
@@ -117,6 +125,7 @@ export type AllocationErrorCode =
   | "NO_AVAILABILITY" // consultant has no published availability — 400
   | "PERIOD_ENDED" // scheduling period is in the past — 400
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
+  | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
@@ -132,6 +141,20 @@ export interface AllocationResult {
   // AE-4 — appointment ids whose tentative slots were freed during a partial
   // reschedule, so callers (calendar refresh, notifications) know what to drop.
   deletedAppointmentIds?: string[];
+  /**
+   * #1206 — fewer sessions than the plan requires were placed, at the
+   * consultant's explicit request. Derived at read time from confirmed
+   * sessions vs the plan's total; nothing is persisted.
+   */
+  partial?: boolean;
+  placedSessions?: number;
+  requiredSessions?: number;
+  unplacedSessions?: number;
+  /**
+   * #1206 — on a SLOT_SHORTAGE refusal: how many whole sessions the search
+   * COULD have placed. Zero means offering a partial allocation is pointless.
+   */
+  placeableSessions?: number;
 }
 
 /**
