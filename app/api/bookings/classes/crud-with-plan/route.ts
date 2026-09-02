@@ -25,6 +25,12 @@ import {
   assertCollaboratorsAvailableForWindows,
   CollaboratorUnavailableError,
 } from "@/lib/collaborators/availability";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  ScheduleLockedError,
+  CLASS_SCHEDULE_LOCKED_MESSAGE,
+} from "@/lib/events/schedule-lock";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -220,114 +226,125 @@ export async function POST(request: NextRequest) {
         })
       : [];
 
-    // Create class plan, instance, and appointments in a transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // 1. Create the class plan using validated data
-        const classPlan = await tx.classPlan.create({
-          data: {
-            title,
-            description,
-            durationInMonths,
-            price,
-            priceCurrency,
-            maxParticipants,
-            language,
-            level,
-            prerequisites,
-            materialProvided,
-            learningOutcomes,
-            subtitle,
-            targetAudience,
-            whatsIncluded,
-            faqs: faqCreateNested(faqs),
-            certificateProvided,
-            recordingEnabled,
-            recordingStoragePolicy,
-            sessionsPerWeek,
-            sessionDurationInHours,
-            totalSessions,
-            totalHours,
-            emailSupport,
-            consultantProfile: { connect: { id: consultantProfileId } },
-            topics: topicIds // Use validated topics here
-              ? { connect: topicIds.map((id: string) => ({ id })) }
-              : undefined,
-            classContents: curriculumCreateNested(classContents),
-          },
-          include: {
-            consultantProfile: true,
-            topics: true,
-            classContents: true,
-            faqs: { orderBy: { order: "asc" } },
-          },
-        });
-
-        // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
-        // times an ACCEPTED co-host is already busy for. A plan created in
-        // this very transaction has none, so this only bites once a plan can
-        // carry collaborators before its sessions are laid down.
-        await assertCollaboratorsAvailableForWindows(tx, {
-          planType: "CLASS",
-          planId: classPlan.id,
-          windows: sessionStarts.map((startsAt) => ({
-            startsAt,
-            endsAt: new Date(
-              startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
-            ),
-          })),
-        });
-
-        // 2. Create the class instance with appointments
-        const classEvent = await tx.class.create({
-          data: {
-            status,
-            schedulingPeriodStartsAt: start, // Will be undefined if not provided
-            schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
-            schedulingTimezone: resolveSchedulingTimezone(
-              consultantProfile.user.timezone,
-            ),
-            classPlan: { connect: { id: classPlan.id } },
-            // Create appointments for the full duration
-            appointments: {
-              // Only create appointments if startDate is defined
-              create: sessionStarts.map((slotStart) => ({
-                // #1071 — N×30min atoms per session (allocator parity).
-                appointmentType: "CLASS" as const,
-                slotsOfAppointment: {
-                  create: buildContiguousSlotAtoms({
-                    startsAt: slotStart,
-                    durationInHours: sessionDurationInHours,
-                    consultantProfileId,
-                    isTentative: true,
-                  }),
-                },
-              })),
+    // Create class plan, instance, and appointments in a transaction.
+    // Serializable + retry: this writes N session slot atoms that the #440
+    // exclusion constraint arbitrates, and it was the one crud-with-plan arm
+    // still running at Read Committed while the webinar arm was not. The
+    // callback touches `tx` only, so a P2034 replay re-runs nothing that
+    // already committed on the outer client.
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // 1. Create the class plan using validated data
+          const classPlan = await tx.classPlan.create({
+            data: {
+              title,
+              description,
+              durationInMonths,
+              price,
+              priceCurrency,
+              maxParticipants,
+              language,
+              level,
+              prerequisites,
+              materialProvided,
+              learningOutcomes,
+              subtitle,
+              targetAudience,
+              whatsIncluded,
+              faqs: faqCreateNested(faqs),
+              certificateProvided,
+              recordingEnabled,
+              recordingStoragePolicy,
+              sessionsPerWeek,
+              sessionDurationInHours,
+              totalSessions,
+              totalHours,
+              emailSupport,
+              consultantProfile: { connect: { id: consultantProfileId } },
+              topics: topicIds // Use validated topics here
+                ? { connect: topicIds.map((id: string) => ({ id })) }
+                : undefined,
+              classContents: curriculumCreateNested(classContents),
             },
-          },
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: true,
-                topics: true,
-                classContents: true,
+            include: {
+              consultantProfile: true,
+              topics: true,
+              classContents: true,
+              faqs: { orderBy: { order: "asc" } },
+            },
+          });
+
+          // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
+          // times an ACCEPTED co-host is already busy for. A plan created in
+          // this very transaction has none, so this only bites once a plan can
+          // carry collaborators before its sessions are laid down.
+          await assertCollaboratorsAvailableForWindows(tx, {
+            planType: "CLASS",
+            planId: classPlan.id,
+            windows: sessionStarts.map((startsAt) => ({
+              startsAt,
+              endsAt: new Date(
+                startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
+              ),
+            })),
+          });
+
+          // 2. Create the class instance with appointments
+          const classEvent = await tx.class.create({
+            data: {
+              status,
+              schedulingPeriodStartsAt: start, // Will be undefined if not provided
+              schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
+              schedulingTimezone: resolveSchedulingTimezone(
+                consultantProfile.user.timezone,
+              ),
+              classPlan: { connect: { id: classPlan.id } },
+              // Create appointments for the full duration
+              appointments: {
+                // Only create appointments if startDate is defined
+                create: sessionStarts.map((slotStart) => ({
+                  // #1071 — N×30min atoms per session (allocator parity).
+                  appointmentType: "CLASS" as const,
+                  slotsOfAppointment: {
+                    create: buildContiguousSlotAtoms({
+                      startsAt: slotStart,
+                      durationInHours: sessionDurationInHours,
+                      consultantProfileId,
+                      isTentative: true,
+                    }),
+                  },
+                })),
               },
             },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
+            include: {
+              classPlan: {
+                include: {
+                  consultantProfile: true,
+                  topics: true,
+                  classContents: true,
+                },
+              },
+              appointments: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
                   },
                 },
               },
             },
-          },
-        });
+          });
 
-        return { classPlan, classEvent };
-      },
-      { timeout: 25000 },
+          return { classPlan, classEvent };
+        },
+        {
+          timeout: 25000,
+          maxWait: 5000,
+          isolationLevel: "Serializable",
+        },
+      ),
     );
 
     // Transform topics to strings in response
@@ -350,6 +367,17 @@ export async function POST(request: NextRequest) {
     // AE-2 (#784) — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #784 — the owner is denormalized onto group-event slots, so a scheduling
+    // overlap trips slot_no_confirmed_overlap (23P01): a conflict, not a 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
     }
 
     console.error("Error creating class with plan:", error);
@@ -525,358 +553,364 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // FIX #627/#628: Guard against unsafe edits on classes with confirmed bookings.
-    // TODO: These guards run outside the transaction — a booking could theoretically
-    // land between the check and the transaction commit. The window is milliseconds
-    // and the risk is low, but moving inside the transaction would be more robust.
-    if (classToUpdate) {
-      const activePayments = await prisma.payment.count({
-        where: {
-          appointment: { classId: classToUpdate.id },
-          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
-        },
-      });
-
-      // FIX #627: Block scheduling period changes when bookings exist.
-      // Only block when dates ACTUALLY differ from current values
-      // (the planner client may always send startDate/endDate even for non-date edits).
-      if (activePayments > 0) {
-        const startChanged =
-          startDateString !== undefined &&
-          startDateString !== null &&
-          classToUpdate.schedulingPeriodStartsAt
-            ?.toISOString()
-            ?.slice(0, 10) !==
-            new Date(startDateString).toISOString().slice(0, 10);
-        const endChanged =
-          endDateString !== undefined &&
-          endDateString !== null &&
-          classToUpdate.schedulingPeriodEndsAt?.toISOString()?.slice(0, 10) !==
-            new Date(endDateString).toISOString().slice(0, 10);
-
-        if (startChanged || endChanged) {
-          return NextResponse.json(
-            {
-              error:
-                "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.",
-            },
-            { status: 400 },
+    // Update class plan and related data in a transaction. Serializable +
+    // retry to match the POST arm; the callback touches `tx` only.
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Use topics from existingPlan fetched *before* the transaction
+          const currentTopicIdsFromOuterScope = existingPlan.topics.map(
+            (t) => t.id,
           );
-        }
-      }
-    }
-
-    // Update class plan and related data in a transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // Use topics from existingPlan fetched *before* the transaction
-        const currentTopicIdsFromOuterScope = existingPlan.topics.map(
-          (t) => t.id,
-        );
-        console.log(
-          `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
-          currentTopicIdsFromOuterScope,
-        );
-
-        // Handle class contents update logic (only if provided in validated data)
-        let classContentsUpdateData = {};
-        if (classContents && Array.isArray(classContents)) {
-          // Zod validation for contents already happened via main schema parse
-
-          // Delete existing class contents first
-          await tx.classContent.deleteMany({
-            where: { classPlanId: id },
-          });
-          // Prepare new class contents for creation
-          classContentsUpdateData = {
-            classContents: curriculumCreateNested(classContents),
-          };
           console.log(
-            `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
+            `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
+            currentTopicIdsFromOuterScope,
           );
-        } else {
-          console.log(`No class contents provided for update on plan ${id}.`);
-        }
 
-        // Prepare the main update data, only including fields present in validatedData
-        const updateData: Prisma.ClassPlanUpdateInput = {};
-        if (title !== undefined) updateData.title = title;
-        if (description !== undefined) updateData.description = description;
-        if (durationInMonths !== undefined)
-          updateData.durationInMonths = durationInMonths;
-        if (price !== undefined) updateData.price = price;
-        if (priceCurrency !== undefined)
-          updateData.priceCurrency = priceCurrency;
-        if (certificateProvided !== undefined)
-          updateData.certificateProvided = certificateProvided;
-        if (recordingEnabled !== undefined)
-          updateData.recordingEnabled = recordingEnabled;
-        if (recordingStoragePolicy !== undefined)
-          updateData.recordingStoragePolicy = recordingStoragePolicy;
-        if (sessionsPerWeek !== undefined)
-          updateData.sessionsPerWeek = sessionsPerWeek;
-        if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
+          // Handle class contents update logic (only if provided in validated data)
+          let classContentsUpdateData = {};
+          if (classContents && Array.isArray(classContents)) {
+            // Zod validation for contents already happened via main schema parse
 
-        // Allow updating sessionDurationInHours
-        if (patchSessionDuration !== undefined)
-          updateData.sessionDurationInHours = patchSessionDuration;
-
-        // Recompute derived metrics if base fields are being updated
-        if (
-          sessionsPerWeek !== undefined ||
-          durationInMonths !== undefined ||
-          patchSessionDuration !== undefined
-        ) {
-          const finalMeetingsPerWeek =
-            sessionsPerWeek ?? existingPlan.sessionsPerWeek;
-          const finalDurationInMonths =
-            durationInMonths ?? existingPlan.durationInMonths;
-          const finalSessionDurationInHours =
-            patchSessionDuration ?? existingPlan.sessionDurationInHours ?? 1.0;
-
-          updateData.totalSessions =
-            finalMeetingsPerWeek * finalDurationInMonths * 4;
-          updateData.totalHours =
-            updateData.totalSessions * finalSessionDurationInHours;
-        }
-        // Capacity is per instance. Only move the plan's default when the
-        // caller is editing the plan itself rather than one of its classes.
-        if (maxParticipants !== undefined && !classToUpdate)
-          updateData.maxParticipants = maxParticipants;
-        if (language !== undefined) updateData.language = language;
-        if (level !== undefined) updateData.level = level;
-        if (prerequisites !== undefined)
-          updateData.prerequisites = prerequisites; // handles null too
-        if (materialProvided !== undefined)
-          updateData.materialProvided = materialProvided; // handles null too
-        if (learningOutcomes !== undefined)
-          updateData.learningOutcomes = learningOutcomes;
-        if (subtitle !== undefined) updateData.subtitle = subtitle;
-        if (targetAudience !== undefined)
-          updateData.targetAudience = targetAudience;
-        if (whatsIncluded !== undefined)
-          updateData.whatsIncluded = whatsIncluded;
-        if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
-        if (consultantProfileId !== undefined)
-          updateData.consultantProfile = {
-            connect: { id: consultantProfileId },
-          };
-
-        // Spread the contents update if any (only if classContents was in validatedData)
-        if (classContents !== undefined) {
-          Object.assign(updateData, classContentsUpdateData);
-        }
-
-        // Handle topics: topicIds are already validated/created by findOrCreateTopics
-        if (topicIds !== undefined) {
-          updateData.topics = {
-            set: topicIds.map((topicId: string) => ({ id: topicId })),
-          };
-          console.log(
-            `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
-          );
-        } else {
-          console.log(
-            "Class topics is undefined in the request. Existing topics will not be modified.",
-          );
-        }
-
-        // Execute the plan update only if there's data to update
-        let updatedClassPlan = existingPlan; // Start with existing if no updates
-        // Check if updateData has keys, or if topics/contents were explicitly provided for update
-        if (
-          Object.keys(updateData).length > 0 ||
-          topicIds !== undefined ||
-          classContents !== undefined
-        ) {
-          updatedClassPlan = await tx.classPlan.update({
-            where: { id }, // Use validated id
-            data: updateData,
-            include: {
-              consultantProfile: true,
-              topics: true,
-              classContents: true,
-              classes: true, // Keep included to match existingPlan type
-            },
-          });
-        }
-
-        console.log("Updated class plan:", {
-          id: updatedClassPlan.id,
-          title: updatedClassPlan.title,
-          topicsCount: updatedClassPlan.topics.length,
-          contentsCount: updatedClassPlan.classContents.length,
-        });
-
-        // Update the class instance if it exists and relevant fields are provided
-        let updatedClass = classToUpdate;
-        if (updatedClass) {
-          // Prepare update data for the Class instance, handling optional validated fields
-          const classUpdateData: {
-            status?: ClassStatus;
-            schedulingPeriodStartsAt?: Date | null;
-            schedulingPeriodEndsAt?: Date | null;
-            maxParticipants?: number;
-          } = {};
-
-          // Only include status if it's provided in the validated data
-          if (status !== undefined) {
-            classUpdateData.status = status;
-          }
-
-          // #628 — shrinking below the students already enrolled would strand
-          // paying learners. Checked inside the tx (the old guard ran before
-          // it and left a TOCTOU window).
-          if (maxParticipants !== undefined) {
-            const classAppointments = await tx.appointment.findMany({
-              where: { classId: updatedClass.id },
-              include: {
-                slotsOfAppointment: {
-                  include: { user: { select: { id: true } } },
-                },
-              },
+            // Delete existing class contents first
+            await tx.classContent.deleteMany({
+              where: { classPlanId: id },
             });
-            const consultantUserId = existingPlan.consultantProfile?.userId;
-            const enrolledCount = countUniqueParticipants(
-              classAppointments,
-              consultantUserId ? [consultantUserId] : [],
+            // Prepare new class contents for creation
+            classContentsUpdateData = {
+              classContents: curriculumCreateNested(classContents),
+            };
+            console.log(
+              `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
             );
-            if (maxParticipants < enrolledCount) {
-              throw new CapacityBelowEnrollmentError(
-                capacityBelowRegisteredMessage(maxParticipants, enrolledCount),
-              );
-            }
-            classUpdateData.maxParticipants = maxParticipants;
-          }
-
-          // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
-          // Need to parse the string date from validated data
-          if (startDateString !== undefined) {
-            classUpdateData.schedulingPeriodStartsAt = startDateString
-              ? new Date(startDateString)
-              : null;
-            // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
-            if (
-              classUpdateData.schedulingPeriodStartsAt &&
-              isNaN(classUpdateData.schedulingPeriodStartsAt.getTime())
-            ) {
-              console.warn(
-                "Invalid startDate received in PATCH:",
-                startDateString,
-              );
-              // Decide how to handle: throw error, ignore, set null?
-              // For now, let's ignore the invalid date update for startDate
-              delete classUpdateData.schedulingPeriodStartsAt;
-            }
-          }
-
-          // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
-          if (endDateString !== undefined) {
-            classUpdateData.schedulingPeriodEndsAt = endDateString
-              ? new Date(endDateString)
-              : null;
-            // Optional: Add check for valid date parsing
-            if (
-              classUpdateData.schedulingPeriodEndsAt &&
-              isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
-            ) {
-              console.warn("Invalid endDate received in PATCH:", endDateString);
-              // Ignore invalid date update for endDate
-              delete classUpdateData.schedulingPeriodEndsAt;
-            }
-          }
-
-          // AE-2 (#784) — mirrors the webinar PATCH's guard at its own time
-          // commit: when this PATCH actually MOVES the scheduling period, the
-          // sessions it leaves standing must still be times every ACCEPTED
-          // co-host is free for. Co-hosts are not slot participants, so no
-          // other check here sees their clash.
-          const periodMoved =
-            (classUpdateData.schedulingPeriodStartsAt !== undefined &&
-              classUpdateData.schedulingPeriodStartsAt?.getTime() !==
-                updatedClass.schedulingPeriodStartsAt?.getTime()) ||
-            (classUpdateData.schedulingPeriodEndsAt !== undefined &&
-              classUpdateData.schedulingPeriodEndsAt?.getTime() !==
-                updatedClass.schedulingPeriodEndsAt?.getTime());
-          if (periodMoved) {
-            const liveSessions = await tx.appointment.findMany({
-              where: { classId: updatedClass.id, deletedAt: null },
-              select: {
-                id: true,
-                slotsOfAppointment: {
-                  where: { deletedAt: null },
-                  select: { startsAt: true, endsAt: true },
-                },
-              },
-            });
-            await assertCollaboratorsAvailableForWindows(tx, {
-              planType: "CLASS",
-              planId: id,
-              windows: liveSessions.flatMap((a) => a.slotsOfAppointment),
-              excludeAppointmentIds: liveSessions.map((a) => a.id),
-            });
-          }
-
-          if (Object.keys(classUpdateData).length > 0) {
-            updatedClass = await tx.class.update({
-              where: { id: updatedClass.id },
-              data: classUpdateData,
-              include: {
-                classPlan: {
-                  include: {
-                    consultantProfile: true,
-                    topics: true,
-                    classContents: true,
-                  },
-                },
-                appointments: {
-                  include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                  },
-                },
-              },
-            });
           } else {
-            // If we have a class instance but no updates, fetch it with all its relations
-            updatedClass = await tx.class.findUnique({
-              where: { id: updatedClass.id },
+            console.log(`No class contents provided for update on plan ${id}.`);
+          }
+
+          // Prepare the main update data, only including fields present in validatedData
+          const updateData: Prisma.ClassPlanUpdateInput = {};
+          if (title !== undefined) updateData.title = title;
+          if (description !== undefined) updateData.description = description;
+          if (durationInMonths !== undefined)
+            updateData.durationInMonths = durationInMonths;
+          if (price !== undefined) updateData.price = price;
+          if (priceCurrency !== undefined)
+            updateData.priceCurrency = priceCurrency;
+          if (certificateProvided !== undefined)
+            updateData.certificateProvided = certificateProvided;
+          if (recordingEnabled !== undefined)
+            updateData.recordingEnabled = recordingEnabled;
+          if (recordingStoragePolicy !== undefined)
+            updateData.recordingStoragePolicy = recordingStoragePolicy;
+          if (sessionsPerWeek !== undefined)
+            updateData.sessionsPerWeek = sessionsPerWeek;
+          if (emailSupport !== undefined)
+            updateData.emailSupport = emailSupport;
+
+          // Allow updating sessionDurationInHours
+          if (patchSessionDuration !== undefined)
+            updateData.sessionDurationInHours = patchSessionDuration;
+
+          // Recompute derived metrics if base fields are being updated
+          if (
+            sessionsPerWeek !== undefined ||
+            durationInMonths !== undefined ||
+            patchSessionDuration !== undefined
+          ) {
+            const finalMeetingsPerWeek =
+              sessionsPerWeek ?? existingPlan.sessionsPerWeek;
+            const finalDurationInMonths =
+              durationInMonths ?? existingPlan.durationInMonths;
+            const finalSessionDurationInHours =
+              patchSessionDuration ??
+              existingPlan.sessionDurationInHours ??
+              1.0;
+
+            updateData.totalSessions =
+              finalMeetingsPerWeek * finalDurationInMonths * 4;
+            updateData.totalHours =
+              updateData.totalSessions * finalSessionDurationInHours;
+          }
+          // Capacity is per instance. Only move the plan's default when the
+          // caller is editing the plan itself rather than one of its classes.
+          if (maxParticipants !== undefined && !classToUpdate)
+            updateData.maxParticipants = maxParticipants;
+          if (language !== undefined) updateData.language = language;
+          if (level !== undefined) updateData.level = level;
+          if (prerequisites !== undefined)
+            updateData.prerequisites = prerequisites; // handles null too
+          if (materialProvided !== undefined)
+            updateData.materialProvided = materialProvided; // handles null too
+          if (learningOutcomes !== undefined)
+            updateData.learningOutcomes = learningOutcomes;
+          if (subtitle !== undefined) updateData.subtitle = subtitle;
+          if (targetAudience !== undefined)
+            updateData.targetAudience = targetAudience;
+          if (whatsIncluded !== undefined)
+            updateData.whatsIncluded = whatsIncluded;
+          if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
+          if (consultantProfileId !== undefined)
+            updateData.consultantProfile = {
+              connect: { id: consultantProfileId },
+            };
+
+          // Spread the contents update if any (only if classContents was in validatedData)
+          if (classContents !== undefined) {
+            Object.assign(updateData, classContentsUpdateData);
+          }
+
+          // Handle topics: topicIds are already validated/created by findOrCreateTopics
+          if (topicIds !== undefined) {
+            updateData.topics = {
+              set: topicIds.map((topicId: string) => ({ id: topicId })),
+            };
+            console.log(
+              `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
+            );
+          } else {
+            console.log(
+              "Class topics is undefined in the request. Existing topics will not be modified.",
+            );
+          }
+
+          // Execute the plan update only if there's data to update
+          let updatedClassPlan = existingPlan; // Start with existing if no updates
+          // Check if updateData has keys, or if topics/contents were explicitly provided for update
+          if (
+            Object.keys(updateData).length > 0 ||
+            topicIds !== undefined ||
+            classContents !== undefined
+          ) {
+            updatedClassPlan = await tx.classPlan.update({
+              where: { id }, // Use validated id
+              data: updateData,
               include: {
-                classPlan: {
-                  include: {
-                    consultantProfile: true,
-                    topics: true,
-                    classContents: true,
+                consultantProfile: true,
+                topics: true,
+                classContents: true,
+                classes: true, // Keep included to match existingPlan type
+              },
+            });
+          }
+
+          console.log("Updated class plan:", {
+            id: updatedClassPlan.id,
+            title: updatedClassPlan.title,
+            topicsCount: updatedClassPlan.topics.length,
+            contentsCount: updatedClassPlan.classContents.length,
+          });
+
+          // Update the class instance if it exists and relevant fields are provided
+          let updatedClass = classToUpdate;
+          if (updatedClass) {
+            // Prepare update data for the Class instance, handling optional validated fields
+            const classUpdateData: {
+              status?: ClassStatus;
+              schedulingPeriodStartsAt?: Date | null;
+              schedulingPeriodEndsAt?: Date | null;
+              maxParticipants?: number;
+            } = {};
+
+            // Only include status if it's provided in the validated data
+            if (status !== undefined) {
+              classUpdateData.status = status;
+            }
+
+            // #628 — shrinking below the students already enrolled would strand
+            // paying learners. Checked inside the tx (the old guard ran before
+            // it and left a TOCTOU window).
+            if (maxParticipants !== undefined) {
+              const classAppointments = await tx.appointment.findMany({
+                where: { classId: updatedClass.id },
+                include: {
+                  slotsOfAppointment: {
+                    include: { user: { select: { id: true } } },
                   },
                 },
-                appointments: {
-                  include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
+              });
+              const consultantUserId = existingPlan.consultantProfile?.userId;
+              const enrolledCount = countUniqueParticipants(
+                classAppointments,
+                consultantUserId ? [consultantUserId] : [],
+              );
+              if (maxParticipants < enrolledCount) {
+                throw new CapacityBelowEnrollmentError(
+                  capacityBelowRegisteredMessage(
+                    maxParticipants,
+                    enrolledCount,
+                  ),
+                );
+              }
+              classUpdateData.maxParticipants = maxParticipants;
+            }
+
+            // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+            // Need to parse the string date from validated data
+            if (startDateString !== undefined) {
+              classUpdateData.schedulingPeriodStartsAt = startDateString
+                ? new Date(startDateString)
+                : null;
+              // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
+              if (
+                classUpdateData.schedulingPeriodStartsAt &&
+                isNaN(classUpdateData.schedulingPeriodStartsAt.getTime())
+              ) {
+                console.warn(
+                  "Invalid startDate received in PATCH:",
+                  startDateString,
+                );
+                // Decide how to handle: throw error, ignore, set null?
+                // For now, let's ignore the invalid date update for startDate
+                delete classUpdateData.schedulingPeriodStartsAt;
+              }
+            }
+
+            // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+            if (endDateString !== undefined) {
+              classUpdateData.schedulingPeriodEndsAt = endDateString
+                ? new Date(endDateString)
+                : null;
+              // Optional: Add check for valid date parsing
+              if (
+                classUpdateData.schedulingPeriodEndsAt &&
+                isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
+              ) {
+                console.warn(
+                  "Invalid endDate received in PATCH:",
+                  endDateString,
+                );
+                // Ignore invalid date update for endDate
+                delete classUpdateData.schedulingPeriodEndsAt;
+              }
+            }
+
+            // #627 — a class with enrolled, paying learners may not have its
+            // scheduling period moved here; the reschedule workflow is the front
+            // door. Read INSIDE the txn: the pre-txn version counted payments and
+            // then committed the move, so an enrolment landing in between moved
+            // the schedule under a learner who had just paid.
+            //
+            // Compared at DAY granularity, and only for a value actually sent:
+            // the planner client re-sends startDate/endDate even for a
+            // title-only edit.
+            const liveClass = await tx.class.findUnique({
+              where: { id: updatedClass.id },
+              select: {
+                schedulingPeriodStartsAt: true,
+                schedulingPeriodEndsAt: true,
+              },
+            });
+            const dayKey = (d: Date | null | undefined) =>
+              d?.toISOString()?.slice(0, 10);
+            const startChanged =
+              startDateString !== undefined &&
+              startDateString !== null &&
+              dayKey(liveClass?.schedulingPeriodStartsAt) !==
+                dayKey(new Date(startDateString));
+            const endChanged =
+              endDateString !== undefined &&
+              endDateString !== null &&
+              dayKey(liveClass?.schedulingPeriodEndsAt) !==
+                dayKey(new Date(endDateString));
+            const periodMoved = startChanged || endChanged;
+
+            if (periodMoved) {
+              const activePayments = await tx.payment.count({
+                where: {
+                  appointment: { classId: updatedClass.id },
+                  paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+                },
+              });
+              if (activePayments > 0) {
+                throw new ScheduleLockedError(CLASS_SCHEDULE_LOCKED_MESSAGE);
+              }
+            }
+
+            // AE-2 (#784) — mirrors the webinar PATCH's guard at its own time
+            // commit: when this PATCH actually MOVES the scheduling period, the
+            // sessions it leaves standing must still be times every ACCEPTED
+            // co-host is free for. Co-hosts are not slot participants, so no
+            // other check here sees their clash.
+            if (periodMoved) {
+              const liveSessions = await tx.appointment.findMany({
+                where: { classId: updatedClass.id, deletedAt: null },
+                select: {
+                  id: true,
+                  slotsOfAppointment: {
+                    where: { deletedAt: null },
+                    select: { startsAt: true, endsAt: true },
+                  },
+                },
+              });
+              await assertCollaboratorsAvailableForWindows(tx, {
+                planType: "CLASS",
+                planId: id,
+                windows: liveSessions.flatMap((a) => a.slotsOfAppointment),
+                excludeAppointmentIds: liveSessions.map((a) => a.id),
+              });
+            }
+
+            if (Object.keys(classUpdateData).length > 0) {
+              updatedClass = await tx.class.update({
+                where: { id: updatedClass.id },
+                data: classUpdateData,
+                include: {
+                  classPlan: {
+                    include: {
+                      consultantProfile: true,
+                      topics: true,
+                      classContents: true,
+                    },
+                  },
+                  appointments: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
                       },
                     },
                   },
                 },
-              },
-            });
+              });
+            } else {
+              // If we have a class instance but no updates, fetch it with all its relations
+              updatedClass = await tx.class.findUnique({
+                where: { id: updatedClass.id },
+                include: {
+                  classPlan: {
+                    include: {
+                      consultantProfile: true,
+                      topics: true,
+                      classContents: true,
+                    },
+                  },
+                  appointments: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              });
+            }
           }
-        }
 
-        // Return the results
-        return {
-          classPlan: updatedClassPlan,
-          class: updatedClass,
-        };
-      },
-      {
-        timeout: 10000, // 10 second timeout
-        maxWait: 5000, // 5 second max wait
-        isolationLevel: "Serializable", // Highest isolation level
-      },
+          // Return the results
+          return {
+            classPlan: updatedClassPlan,
+            class: updatedClass,
+          };
+        },
+        {
+          timeout: 10000, // 10 second timeout
+          maxWait: 5000, // 5 second max wait
+          isolationLevel: "Serializable", // Highest isolation level
+        },
+      ),
     );
 
     console.log(
@@ -911,9 +945,23 @@ export async function PATCH(request: NextRequest) {
     if (error instanceof CapacityBelowEnrollmentError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
+    // #627 — a frozen schedule on an enrolled class is a user error, not a 500.
+    if (error instanceof ScheduleLockedError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     // AE-2 (#784) — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // #784 — owner overlap on the shared exclusion constraint → 409, not 500.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "That time conflicts with another confirmed session on your calendar.",
+        },
+        { status: 409 },
+      );
     }
 
     console.error("Error updating class with plan:", error);
