@@ -207,7 +207,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "checkout" } },
+    );
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 

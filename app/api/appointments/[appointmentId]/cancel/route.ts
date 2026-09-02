@@ -2,9 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import {
-  notifyAppointmentCancelled,
-} from "@/lib/novu";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
@@ -507,7 +505,8 @@ export async function POST(
             try {
               const restored = await refundBookingPayment({
                 paymentId: paidPayment.id,
-                reason: "cancellation (credit-funded booking, full restoration)",
+                reason:
+                  "cancellation (credit-funded booking, full restoration)",
                 initiatedByUserId: session.user.id,
               });
               refund = {
@@ -521,7 +520,10 @@ export async function POST(
                 requiresManualReview: false,
               };
             } catch (freeErr) {
-              Sentry.captureException(freeErr instanceof Error ? freeErr : new Error(String(freeErr)), { tags: { subsystem: "bookings" } });
+              Sentry.captureException(
+                freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
+                { tags: { subsystem: "bookings" } },
+              );
               refund = {
                 amountRefundedPaise: 0,
                 refundPct: 100,

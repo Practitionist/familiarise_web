@@ -159,7 +159,10 @@ export async function GET(
         { status: 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
@@ -287,7 +290,10 @@ export async function PUT(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error updating subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the subscription" },
@@ -599,39 +605,40 @@ export async function PATCH(
                   schedulingPeriodEndsAt: endDate,
                 },
               });
-              const updatedSubscription = await tx.subscription.findUniqueOrThrow({
-                where: { id: subscriptionId },
-                include: {
-                  subscriptionPlan: {
-                    include: {
-                      consultantProfile: {
-                        include: {
-                          user: true,
+              const updatedSubscription =
+                await tx.subscription.findUniqueOrThrow({
+                  where: { id: subscriptionId },
+                  include: {
+                    subscriptionPlan: {
+                      include: {
+                        consultantProfile: {
+                          include: {
+                            user: true,
+                          },
+                        },
+                      },
+                    },
+                    requestedBy: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                    appointments: {
+                      // Ordered so bookingOrgId's `find` picks the same org-tagged
+                      // appointment the creator's filtered read picks. Unordered, two
+                      // callers can resolve different orgs for one subscription and
+                      // mint two DM channels for the same pair.
+                      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                      include: {
+                        slotsOfAppointment: {
+                          include: {
+                            user: true,
+                          },
                         },
                       },
                     },
                   },
-                  requestedBy: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                  appointments: {
-                    // Ordered so bookingOrgId's `find` picks the same org-tagged
-                    // appointment the creator's filtered read picks. Unordered, two
-                    // callers can resolve different orgs for one subscription and
-                    // mint two DM channels for the same pair.
-                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                    include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              });
+                });
 
               return {
                 data: updatedSubscription,
@@ -694,7 +701,12 @@ export async function PATCH(
             result.data.schedulingPeriodEndsAt ?? endDate,
           );
         } catch (linkError) {
-          Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            linkError instanceof Error
+              ? linkError
+              : new Error(String(linkError)),
+            { tags: { subsystem: "bookings" } },
+          );
           return NextResponse.json(
             {
               data: result.data,
@@ -724,7 +736,12 @@ export async function PATCH(
             },
           });
         } catch (persistError) {
-          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            persistError instanceof Error
+              ? persistError
+              : new Error(String(persistError)),
+            { tags: { subsystem: "bookings" } },
+          );
           console.error(
             `⚠️ Failed to persist payment link for subscription ${subscriptionId}:`,
             persistError instanceof Error
@@ -750,7 +767,12 @@ export async function PATCH(
             `📧 Payment link email sent for subscription ${subscriptionId}`,
           );
         } catch (emailError) {
-          Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            emailError instanceof Error
+              ? emailError
+              : new Error(String(emailError)),
+            { tags: { subsystem: "bookings" } },
+          );
           console.error(
             `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
@@ -764,9 +786,8 @@ export async function PATCH(
       // is terminal and the cancel route refuses it, so this is the only exit.
       // Runs after the transition commits — the allowed-from guard on that
       // transition is what makes it at-most-once.
-      let rejectionRefund: Awaited<
-        ReturnType<typeof refundRejectedRequest>
-      > = null;
+      let rejectionRefund: Awaited<ReturnType<typeof refundRejectedRequest>> =
+        null;
       if (!result.duplicate && status === AppointmentStatus.REJECTED) {
         rejectionRefund = await refundRejectedRequest({
           kind: "subscription",
@@ -864,7 +885,12 @@ export async function PATCH(
             );
           }
         } catch (channelError) {
-          Sentry.captureException(channelError instanceof Error ? channelError : new Error(String(channelError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            channelError instanceof Error
+              ? channelError
+              : new Error(String(channelError)),
+            { tags: { subsystem: "bookings" } },
+          );
           streamLogger.error(
             "Auto-channel creation failed on subscription approval",
             channelError,
@@ -880,7 +906,10 @@ export async function PATCH(
         refund: rejectionRefund,
       });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "bookings" } },
+      );
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -899,7 +928,10 @@ export async function PATCH(
         { status: error.httpStatus },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

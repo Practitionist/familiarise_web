@@ -1,5 +1,8 @@
 import { Redis } from "@upstash/redis";
-import redisClient, { withCircuitBreaker, checkRedisHealth } from "../lib/redis";
+import redisClient, {
+  withCircuitBreaker,
+  checkRedisHealth,
+} from "../lib/redis";
 import crypto from "crypto";
 import { SlotLockError } from "./errors/SlotLockError";
 
@@ -623,7 +626,8 @@ export async function lockSlotInterval(
       await releaseLock(lock);
     }
     if (error instanceof LockContentionError) {
-      const conflictingAtom = atoms[acquired.length]?.toISOString() ?? String(startsAt);
+      const conflictingAtom =
+        atoms[acquired.length]?.toISOString() ?? String(startsAt);
       throw new SlotLockError(consultantProfileId, conflictingAtom, 60);
     }
     throw error;

@@ -128,7 +128,9 @@ function makeMockTx() {
     consultation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     webinar: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     class: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    slotOfAppointment: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+    slotOfAppointment: {
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    },
     rescheduleRequest: {
       create: jest.fn().mockImplementation(({ data }) => {
         createdData = data;

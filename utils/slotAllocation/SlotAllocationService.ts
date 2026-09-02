@@ -243,7 +243,9 @@ export class SlotAllocationService {
               },
             },
           },
-          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
           appointment: {
             select: {
               id: true,
@@ -284,7 +286,9 @@ export class SlotAllocationService {
               },
             },
           },
-          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
           appointments: {
             select: {
               id: true,
@@ -315,31 +319,31 @@ export class SlotAllocationService {
       };
     } else if (eventType === "webinar") {
       const row = await prisma.webinar.findUnique({
-            where: { id: eventId },
+        where: { id: eventId },
+        select: {
+          webinarPlan: {
             select: {
-              webinarPlan: {
-                select: {
-                  title: true,
-                  consultantProfile: {
-                    select: { user: { select: { id: true, name: true } } },
-                  },
-                },
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
               },
-              appointment: {
+            },
+          },
+          appointment: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
                 select: {
-                  id: true,
-                  organizationId: true,
-                  slotsOfAppointment: {
-                    where: { isTentative: false, deletedAt: null },
-                    select: {
-                      startsAt: true,
-                      user: { select: { id: true, name: true } },
-                    },
-                  },
+                  startsAt: true,
+                  user: { select: { id: true, name: true } },
                 },
               },
             },
-          });
+          },
+        },
+      });
       if (!row?.appointment) return;
       const plan = row.webinarPlan;
       const hostUser = plan.consultantProfile?.user;
@@ -347,8 +351,10 @@ export class SlotAllocationService {
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
       for (const slot of row.appointment.slotsOfAppointment) {
-        if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
-        for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+        if (!firstStart || slot.startsAt < firstStart)
+          firstStart = slot.startsAt;
+        for (const u of slot.user ?? [])
+          userMap.set(u.id, u.name ?? "Attendee");
       }
       userMap.delete(hostUser.id);
       context = {
@@ -365,31 +371,31 @@ export class SlotAllocationService {
       };
     } else {
       const row = await prisma.class.findUnique({
-            where: { id: eventId },
+        where: { id: eventId },
+        select: {
+          classPlan: {
             select: {
-              classPlan: {
-                select: {
-                  title: true,
-                  consultantProfile: {
-                    select: { user: { select: { id: true, name: true } } },
-                  },
-                },
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
               },
-              appointments: {
+            },
+          },
+          appointments: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
                 select: {
-                  id: true,
-                  organizationId: true,
-                  slotsOfAppointment: {
-                    where: { isTentative: false, deletedAt: null },
-                    select: {
-                      startsAt: true,
-                      user: { select: { id: true, name: true } },
-                    },
-                  },
+                  startsAt: true,
+                  user: { select: { id: true, name: true } },
                 },
               },
             },
-          });
+          },
+        },
+      });
       if (!row) return;
       const appts = row.appointments.filter(Boolean);
       if (appts.length === 0) return;
@@ -401,8 +407,10 @@ export class SlotAllocationService {
       let firstStart: Date | null = null;
       for (const a of appts) {
         for (const slot of a.slotsOfAppointment) {
-          if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
-          for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+          if (!firstStart || slot.startsAt < firstStart)
+            firstStart = slot.startsAt;
+          for (const u of slot.user ?? [])
+            userMap.set(u.id, u.name ?? "Attendee");
         }
       }
       userMap.delete(host.id);
@@ -1143,8 +1151,7 @@ export class SlotAllocationService {
       // #1065 — captured BEFORE the write txn deletes these rows. Empty for a
       // fresh allocation, which is exactly when a preference must not apply.
       const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
-      const preference =
-        await this.findAllocationPreference(releasedSlotIds);
+      const preference = await this.findAllocationPreference(releasedSlotIds);
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
@@ -2348,7 +2355,9 @@ export class SlotAllocationService {
         // match a candidate (buildConsecutiveBlock rejects < now), so
         // materializing them only re-creates pool pressure on long-lived
         // appointments (CodeRabbit triage).
-        slotsOfAppointment: { where: { deletedAt: null, endsAt: { gt: occupancyClock } } },
+        slotsOfAppointment: {
+          where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+        },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
         // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
         consultation: { select: { status: true } },
@@ -2401,10 +2410,12 @@ export class SlotAllocationService {
         include: {
           // Same tombstone exclusion as the consultant query above.
           // endsAt bound keeps bookedSlots O(upcoming): past children can never
-        // match a candidate (buildConsecutiveBlock rejects < now), so
-        // materializing them only re-creates pool pressure on long-lived
-        // appointments (CodeRabbit triage).
-        slotsOfAppointment: { where: { deletedAt: null, endsAt: { gt: occupancyClock } } },
+          // match a candidate (buildConsecutiveBlock rejects < now), so
+          // materializing them only re-creates pool pressure on long-lived
+          // appointments (CodeRabbit triage).
+          slotsOfAppointment: {
+            where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+          },
           consultation: { select: { status: true } },
           subscription: { select: { status: true } },
           payment: { select: { expiresAt: true } },
@@ -2590,7 +2601,10 @@ export class SlotAllocationService {
             .filter((r): r is { start: Date; endMs: number } => r !== null)
         : sortedCustom
             .map((slot) => {
-              const start = this.matchCustomSlotToDay(slot.startsAt, currentDay);
+              const start = this.matchCustomSlotToDay(
+                slot.startsAt,
+                currentDay,
+              );
               if (!start) return null;
               return { start, endMs: new Date(slot.endsAt).getTime() };
             })
@@ -2612,7 +2626,9 @@ export class SlotAllocationService {
     const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
       let best: { block: Date[]; score: number } | null = null;
 
-      for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(currentDay)) {
+      for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
+        currentDay,
+      )) {
         const rowDayKey = SlotCalculationService.dayKey(
           rowStart,
           config.schedulingTimezone,
@@ -2632,11 +2648,10 @@ export class SlotAllocationService {
         // with a weekend preference that is ~260 days of wasted block-building
         // per sweep. Safe because bestFittingBlockInRow holds every candidate
         // to the row's own timezone day, so they all share this weekday.
-        if (perfectOnly && !matchesPreferredDays(
-          rowStart,
-          preference,
-          config.schedulingTimezone,
-        )) {
+        if (
+          perfectOnly &&
+          !matchesPreferredDays(rowStart, preference, config.schedulingTimezone)
+        ) {
           continue;
         }
 
@@ -2687,10 +2702,7 @@ export class SlotAllocationService {
         sessionSlots[0],
         config.schedulingTimezone,
       );
-      placedPerDay.set(
-        placedDayKey,
-        (placedPerDay.get(placedDayKey) ?? 0) + 1,
-      );
+      placedPerDay.set(placedDayKey, (placedPerDay.get(placedDayKey) ?? 0) + 1);
       sessionsPlacedPerWeek.set(
         placedWeekKey,
         (sessionsPlacedPerWeek.get(placedWeekKey) ?? 0) + 1,
@@ -2748,7 +2760,10 @@ export class SlotAllocationService {
       // (add availability or extend the period), vs everything is booked
       // (wait for cancellations), vs caps are unsatisfiable. The period check
       // runs first because it's the most actionable answer.
-      if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
+      if (
+        config.schedulingPeriodEndsAt &&
+        config.schedulingPeriodEndsAt < now
+      ) {
         throw new AllocationValidationError(
           `The scheduling period ended on ${config.schedulingPeriodEndsAt.toLocaleDateString()}. ` +
             `Found ${selectedSlots.length} of ${totalSlotsNeeded} required slots. ` +

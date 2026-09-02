@@ -122,7 +122,10 @@ export async function DELETE(
         return NextResponse.json({ error: error.message }, { status: 403 });
       }
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred during webinar deletion" },
       { status: 500 },

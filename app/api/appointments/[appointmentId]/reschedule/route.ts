@@ -223,8 +223,7 @@ export async function POST(
         if (appointment.consultation) {
           const consultationConsultantId =
             appointment.consultation.consultationPlan?.consultantProfileId;
-          const isConsultant =
-            consultantProfileId === consultationConsultantId;
+          const isConsultant = consultantProfileId === consultationConsultantId;
           const isConsultee =
             consulteeProfileId === appointment.consultation.requestedById;
           isParticipant = isConsultant || isConsultee;
@@ -232,8 +231,7 @@ export async function POST(
         } else if (appointment.subscription) {
           const subscriptionConsultantId =
             appointment.subscription.subscriptionPlan?.consultantProfileId;
-          const isConsultant =
-            consultantProfileId === subscriptionConsultantId;
+          const isConsultant = consultantProfileId === subscriptionConsultantId;
           const isConsultee =
             consulteeProfileId === appointment.subscription.requestedById;
           isParticipant = isConsultant || isConsultee;
@@ -533,7 +531,10 @@ export async function POST(
         ) {
           if (
             proposedSlots?.length &&
-            !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)
+            !proposalCountMatches(
+              slotsToReschedule.length,
+              proposedSlots.length,
+            )
           ) {
             throw Object.assign(
               new Error(
@@ -551,9 +552,7 @@ export async function POST(
             // The 24-hour policy gate above should already have rejected this,
             // so reaching here means the two rules have drifted apart.
             throw Object.assign(
-              new Error(
-                "This session is too close to propose a new time for.",
-              ),
+              new Error("This session is too close to propose a new time for."),
               { httpStatus: 400, code: "PROPOSAL_WINDOW_CLOSED" },
             );
           }
@@ -670,7 +669,10 @@ export async function POST(
     if (result.rescheduleRequestId) {
       // Only the two 1:1 kinds carry proposals; a group event never opens one.
       const proposal = result.logContext.consultationId
-        ? { type: "consultation" as const, id: result.logContext.consultationId }
+        ? {
+            type: "consultation" as const,
+            id: result.logContext.consultationId,
+          }
         : null;
       const proposalTarget =
         proposal ??
@@ -873,7 +875,10 @@ export async function POST(
         }
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "appointments" } },
+      );
       console.error("[reschedule] Failed to send notification:", error);
     }
 
@@ -944,7 +949,10 @@ export async function POST(
     }
 
     // Only log unexpected errors — the known error types above are normal control flow
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },

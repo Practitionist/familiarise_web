@@ -269,7 +269,8 @@ export async function createOrgPayoutBatch(
             refundsPaise: 0,
             netPayoutPaise: 0,
             // #1093 §3 — never null: a keyless manual payout had no replay guard.
-            idempotencyKey: opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
+            idempotencyKey:
+              opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
             // mustPayByDate, tdsSectionApplied, tdsAmountPaise,
             // dtaaRateApplied are derived after we resolve the org's
             // MSME + PAN fields below and persisted via the second
@@ -516,9 +517,7 @@ export async function createOrgPayoutBatch(
  * Idempotent: if the payout is not in PENDING the function logs and
  * returns the current status without throwing.
  */
-export async function processOrgPayout(
-  payoutId: string,
-): Promise<{
+export async function processOrgPayout(payoutId: string): Promise<{
   status: PayoutStatus;
   submittedToGateway: boolean;
   /** True only when THIS invocation won the PENDING→PROCESSING claim —
@@ -562,7 +561,9 @@ export async function processOrgPayout(
         where: {
           orgPayoutId: payoutId,
           payment: {
-            disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+            disputes: {
+              some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+            },
           },
         },
         select: { id: true },

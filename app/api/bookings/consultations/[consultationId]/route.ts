@@ -157,7 +157,10 @@ export async function GET(
       );
     }
     console.error("Error fetching consultation:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation" },
       { status: 500 },
@@ -308,7 +311,10 @@ export async function PUT(
     return NextResponse.json({ data: consultationData }, { status: 200 });
   } catch (error) {
     console.error("Error updating consultation:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the consultation" },
       { status: 500 },
@@ -344,7 +350,10 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting consultation:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while deleting the consultation" },
       { status: 500 },
@@ -609,34 +618,35 @@ export async function PATCH(
                 where: { id: consultationId },
                 to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
               });
-              const updatedConsultation = await tx.consultation.findUniqueOrThrow({
-                where: { id: consultationId },
-                include: {
-                  consultationPlan: {
-                    include: {
-                      consultantProfile: {
-                        include: {
-                          user: true,
+              const updatedConsultation =
+                await tx.consultation.findUniqueOrThrow({
+                  where: { id: consultationId },
+                  include: {
+                    consultationPlan: {
+                      include: {
+                        consultantProfile: {
+                          include: {
+                            user: true,
+                          },
+                        },
+                      },
+                    },
+                    requestedBy: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                    appointment: {
+                      include: {
+                        slotsOfAppointment: {
+                          include: {
+                            user: true,
+                          },
                         },
                       },
                     },
                   },
-                  requestedBy: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                  appointment: {
-                    include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              });
+                });
 
               return {
                 data: updatedConsultation,
@@ -712,7 +722,12 @@ export async function PATCH(
         try {
           paymentResult = await generatePaymentLink(result.data);
         } catch (linkError) {
-          Sentry.captureException(linkError instanceof Error ? linkError : new Error(String(linkError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            linkError instanceof Error
+              ? linkError
+              : new Error(String(linkError)),
+            { tags: { subsystem: "bookings" } },
+          );
           return NextResponse.json(
             {
               data: result.data,
@@ -750,7 +765,12 @@ export async function PATCH(
               ? persistError.message
               : "Unknown error",
           );
-          Sentry.captureException(persistError instanceof Error ? persistError : new Error(String(persistError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            persistError instanceof Error
+              ? persistError
+              : new Error(String(persistError)),
+            { tags: { subsystem: "bookings" } },
+          );
         }
 
         try {
@@ -776,7 +796,12 @@ export async function PATCH(
             `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
             emailError instanceof Error ? emailError.message : "Unknown error",
           );
-          Sentry.captureException(emailError instanceof Error ? emailError : new Error(String(emailError)), { tags: { subsystem: "bookings" } });
+          Sentry.captureException(
+            emailError instanceof Error
+              ? emailError
+              : new Error(String(emailError)),
+            { tags: { subsystem: "bookings" } },
+          );
         }
       }
 
@@ -833,7 +858,10 @@ export async function PATCH(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
       );
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "bookings" } },
+      );
       throw error;
     } finally {
       // LAYER 1: Always release lock
@@ -855,7 +883,10 @@ export async function PATCH(
       "Error updating consultation:",
       error instanceof Error ? error.message : "Unknown error",
     );
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating consultation" },
       { status: 500 },

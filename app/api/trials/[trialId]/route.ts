@@ -136,7 +136,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 // returned.
 class TrialSlotUnavailableError extends Error {
   constructor() {
-    super("Selected slot is no longer available. Please choose a different time.");
+    super(
+      "Selected slot is no longer available. Please choose a different time.",
+    );
     this.name = "TrialSlotUnavailableError";
   }
 }
