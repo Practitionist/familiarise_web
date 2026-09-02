@@ -18,7 +18,11 @@ const order: string[] = [];
 
 jest.mock("../../lib/prisma", () => {
   const tx = {
-    payment: { findUnique: jest.fn(), update: jest.fn() },
+    payment: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
     slotOfAppointment: {
       count: jest.fn(),
       updateMany: jest.fn(),
@@ -67,7 +71,11 @@ import { REQUEST_ALLOWED_FROM } from "../../lib/booking/transitions";
 const db = prisma as unknown as {
   appointment: { findMany: jest.Mock };
   __tx: {
-    payment: { findUnique: jest.Mock; update: jest.Mock };
+    payment: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+    };
     slotOfAppointment: {
       count: jest.Mock;
       updateMany: jest.Mock;
@@ -193,10 +201,12 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
   it("marks the payment EXPIRED rather than FAILED", async () => {
     await cleanupAbandonedPayments();
 
-    expect(tx.payment.update).toHaveBeenCalledWith({
-      where: { id: "pay_1" },
+    // Conditional on PENDING: a capture racing the sweep keeps SUCCEEDED.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "pay_1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
     });
+    expect(tx.payment.update).not.toHaveBeenCalled();
   });
 
   it("touches nothing when the payment succeeded mid-sweep", async () => {
