@@ -51,6 +51,10 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { useSession } from "@/lib/auth-client";
 import { buildRazorpayPrefill } from "@/lib/payments/razorpay-prefill";
+import type {
+  OrgReceivablePosting,
+  OrgReceivablesPayload,
+} from "@/lib/data/org-receivables";
 import { WalletTab } from "./WalletTab";
 
 // ---------------------------------------------------------------------------
@@ -260,7 +264,16 @@ function daysLate(dueDate: string | null, createdAt: string): number {
   return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
 }
 
-export function BillingPageClient({ orgId }: { orgId: string }) {
+export function BillingPageClient({
+  orgId,
+  // #1319 — read on the server (lib/data/org-receivables) and handed down, so
+  // the ledger is never queried from the browser. Null when the server gate
+  // said no, which is the same case in which nothing below renders anyway.
+  receivables = null,
+}: {
+  orgId: string;
+  receivables?: OrgReceivablesPayload | null;
+}) {
   // #1132 — invoice pay/create is `billing.manage` (OWNER + BILLING_ADMIN).
   const { can } = useOrgRole(orgId);
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -268,7 +281,9 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
     canSponsor: true,
   });
   const searchParams = useSearchParams();
-  const initialTab = searchParams?.get("tab") === "wallet" ? "wallet" : "invoices";
+  const tabParam = searchParams?.get("tab");
+  const initialTab =
+    tabParam === "wallet" || tabParam === "receivables" ? tabParam : "invoices";
   const { data: session } = useSession();
   const queryClient = useQueryClient();
 
@@ -498,6 +513,52 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
     },
   ];
 
+  // #1169 residual — every ORG_RECEIVABLE posting on this org, read-only. A
+  // DEBIT is the org taking on an obligation; a CREDIT is it being discharged.
+  // Per ADR 20 the source ids are all a posting says about the session behind
+  // it, which is what an accounts-payable team needs to tie a line to a
+  // booking and is also all it is entitled to.
+  const receivableColumns: ResponsiveColumn<OrgReceivablePosting>[] = [
+    {
+      key: "posted",
+      header: "Posted",
+      primary: true,
+      className: "text-xs text-muted-foreground",
+      cell: (p) => new Date(p.postedAt).toLocaleDateString(),
+    },
+    {
+      key: "movement",
+      header: "Movement",
+      cell: (p) => (
+        <Badge variant={p.movement === "ACCRUED" ? "outline" : "default"}>
+          {p.movement === "ACCRUED" ? "Accrued" : "Cleared"}
+        </Badge>
+      ),
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      cell: (p) => formatCurrencyAmount(p.amountPaise, "INR"),
+    },
+    {
+      key: "source",
+      header: "Source",
+      className: "font-mono text-xs",
+      // Ids, not links: ADR 20's addendum is explicit that no org role has a
+      // per-session page to open.
+      cell: (p) => p.appointmentId ?? p.paymentId ?? p.invoiceId ?? "—",
+    },
+    {
+      key: "status",
+      header: "Status",
+      className: "text-xs",
+      // The receivable itself has no status — the ledger is append-only. What
+      // an org can act on is the invoice that would clear it.
+      cell: (p) =>
+        p.invoiceStatus ?? (p.movement === "ACCRUED" ? "Not yet invoiced" : "—"),
+    },
+  ];
+
   // Pay is gated to OWNER on the API; mirror that here so non-owners don't
   // see a button that will 403 on click. MAINTAINERs can view the invoice
   // but only the billing owner pays. Returns null (no action) otherwise.
@@ -553,6 +614,7 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
         <Tabs defaultValue={initialTab}>
           <TabsList>
             <TabsTrigger value="invoices">Invoices</TabsTrigger>
+            <TabsTrigger value="receivables">Receivables</TabsTrigger>
             <TabsTrigger value="wallet">Wallet</TabsTrigger>
           </TabsList>
 
@@ -793,6 +855,70 @@ export function BillingPageClient({ orgId }: { orgId: string }) {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+
+          <TabsContent value="receivables">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Receivables</CardTitle>
+                <CardDescription>
+                  What this organization has consumed and not yet paid for,
+                  posting by posting. A sponsored booking accrues here and an
+                  invoice payment clears it, so a charge appears on this list
+                  before it appears on any invoice. The ledger is append-only:
+                  nothing on this page can be edited, and a correction is a
+                  later counter-posting rather than a change to a row.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <DashboardGrid>
+                  <StatCard
+                    title="Outstanding"
+                    value={formatCurrencyAmount(
+                      receivables?.outstandingPaise ?? 0,
+                      "INR",
+                    )}
+                  />
+                  <StatCard
+                    title="Accrued to date"
+                    value={formatCurrencyAmount(
+                      receivables?.accruedPaise ?? 0,
+                      "INR",
+                    )}
+                  />
+                  <StatCard
+                    title="Cleared to date"
+                    value={formatCurrencyAmount(
+                      receivables?.clearedPaise ?? 0,
+                      "INR",
+                    )}
+                  />
+                </DashboardGrid>
+
+                <ResponsiveTable<OrgReceivablePosting>
+                  columns={receivableColumns}
+                  rows={receivables?.postings ?? []}
+                  getRowId={(p) => p.entryId}
+                  empty={
+                    <p className="text-center text-sm text-muted-foreground py-6">
+                      Nothing has been accrued against this organization yet.
+                      Wallet-funded and license-funded bookings never accrue
+                      here — only invoice-funded ones, and any shortfall a
+                      wallet debit could not cover.
+                    </p>
+                  }
+                />
+
+                {receivables &&
+                  receivables.totalPostings > receivables.postings.length && (
+                    <p className="text-xs text-muted-foreground">
+                      Showing the {receivables.postings.length} most recent of{" "}
+                      {receivables.totalPostings} postings. The totals above
+                      cover all of them.
+                    </p>
+                  )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="wallet">
