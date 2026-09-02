@@ -123,8 +123,13 @@ describe("refundRemovedAttendeeSeat", () => {
     });
 
     // Organiser-initiated, so the consultant-initiated tier applies whatever
-    // the clock says — the attendee did not choose to leave.
-    expect(result).toEqual({ amountRefundedPaise: 50_000, refundPct: 100 });
+    // the clock says — the attendee did not choose to leave. The rail rides
+    // along so the caller's toast can name where the money went (defect 1).
+    expect(result).toEqual({
+      amountRefundedPaise: 50_000,
+      refundPct: 100,
+      rail: "GATEWAY",
+    });
   });
 
   it("targets the removed attendee's own payment", async () => {
@@ -281,7 +286,12 @@ describe("refundRemovedAttendeeSeat", () => {
       initiatedByUserId: "consultant-1",
     });
 
-    expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    // Nothing moved, so there is no rail to name.
+    expect(result).toEqual({
+      amountRefundedPaise: 0,
+      refundPct: 0,
+      rail: null,
+    });
     expect(mockRecordSystemError).not.toHaveBeenCalled();
     expect(mockReportSentryError).not.toHaveBeenCalled();
   });
@@ -297,7 +307,11 @@ describe("refundRemovedAttendeeSeat", () => {
       initiatedByUserId: "consultant-1",
     });
 
-    expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    expect(result).toEqual({
+      amountRefundedPaise: 0,
+      refundPct: 0,
+      rail: null,
+    });
     expect(mockReportSentryError).toHaveBeenCalled();
     expect(mockRecordSystemError).toHaveBeenCalled();
   });
@@ -314,7 +328,11 @@ describe("refundRemovedAttendeeSeat", () => {
       initiatedBy: "attendee",
     });
 
-    expect(result).toEqual({ amountRefundedPaise: 0, refundPct: 0 });
+    expect(result).toEqual({
+      amountRefundedPaise: 0,
+      refundPct: 0,
+      rail: null,
+    });
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
     expect(mockSlotFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -338,7 +356,11 @@ describe("refundRemovedAttendeeSeat", () => {
     });
 
     // Default policy: ≥48h notice → full attendee tier (100% under platform defaults).
-    expect(result).toEqual({ amountRefundedPaise: 50_000, refundPct: 100 });
+    expect(result).toEqual({
+      amountRefundedPaise: 50_000,
+      refundPct: 100,
+      rail: "GATEWAY",
+    });
     expect(mockRefundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: expect.stringContaining("by the attendee"),
