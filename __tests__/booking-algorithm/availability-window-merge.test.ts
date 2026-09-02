@@ -82,6 +82,22 @@ describe("mergeAdjacentWeeklyRows", () => {
     const once = mergeAdjacentWeeklyRows([ROW_A, ROW_B]);
     expect(mergeAdjacentWeeklyRows(once)).toEqual(once);
   });
+
+  // A merged row longer than isValidTimeRange's cap is filtered out of the
+  // settings form, and the next PUT deletes what the form did not send back.
+  it("stops the fold at the twelve-hour bound", () => {
+    const eightHours = { ...ROW_A, startTimeUtc: 0, endTimeUtc: 480 };
+    const nextEightHours = { ...ROW_A, startTimeUtc: 480, endTimeUtc: 960 };
+    expect(mergeAdjacentWeeklyRows([eightHours, nextEightHours])).toHaveLength(
+      2,
+    );
+
+    const fourHours = { ...ROW_A, startTimeUtc: 0, endTimeUtc: 240 };
+    const thenEightHours = { ...ROW_A, startTimeUtc: 240, endTimeUtc: 720 };
+    expect(mergeAdjacentWeeklyRows([fourHours, thenEightHours])).toEqual([
+      { ...fourHours, endTimeUtc: 720 },
+    ]);
+  });
 });
 
 describe("mergeAdjacentCustomRows (#1320)", () => {
@@ -126,6 +142,21 @@ describe("mergeAdjacentCustomRows (#1320)", () => {
   it("is idempotent", () => {
     const once = mergeAdjacentCustomRows([CUSTOM_A, CUSTOM_B]);
     expect(mergeAdjacentCustomRows(once)).toEqual(once);
+  });
+
+  it("stops the fold at the twelve-hour bound", () => {
+    const at = (hour: number) => new Date(Date.UTC(2026, 8, 7, hour, 0));
+    const eightHours = { startsAt: at(0), endsAt: at(8) };
+    const nextEightHours = { startsAt: at(8), endsAt: at(16) };
+    expect(mergeAdjacentCustomRows([eightHours, nextEightHours])).toHaveLength(
+      2,
+    );
+
+    const fourHours = { startsAt: at(0), endsAt: at(4) };
+    const thenEightHours = { startsAt: at(4), endsAt: at(12) };
+    expect(mergeAdjacentCustomRows([fourHours, thenEightHours])).toEqual([
+      { startsAt: at(0), endsAt: at(12) },
+    ]);
   });
 });
 

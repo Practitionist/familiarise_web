@@ -1,5 +1,6 @@
 import type { DayOfWeek, Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { MAX_DURATION_MINUTES } from "@/utils/timeSlotValidation";
 
 /**
  * #1320 — availability is one row per contiguous published window.
@@ -27,6 +28,11 @@ export interface WeeklyRowShape {
  * are left untouched — the overnight day-shift math is per row, and merging
  * across offsets would change the day a minute belongs to. Pure; stable
  * ordering by day then start.
+ *
+ * The fold stops at MAX_DURATION_MINUTES: `isValidTimeRange` rejects anything
+ * longer, and the settings loader filters its rows through that validator, so
+ * a thirteen-hour merged row would vanish from the form and the next save
+ * would delete it. A fold that would cross the bound starts a new row.
  */
 /** Same shape the overlap validators use: a row crossing midnight is overnight. */
 function isOvernight(r: WeeklyRowShape): boolean {
@@ -62,7 +68,8 @@ export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
       !isOvernight(prev) &&
       !isOvernight(row) &&
       (prev.utcOffsetMinutes ?? 0) === (row.utcOffsetMinutes ?? 0) &&
-      prev.endTimeUtc === row.startTimeUtc;
+      prev.endTimeUtc === row.startTimeUtc &&
+      row.endTimeUtc - prev.startTimeUtc <= MAX_DURATION_MINUTES;
     if (canMerge) {
       out[out.length - 1] = { ...prev, endTimeUtc: row.endTimeUtc };
     } else {
@@ -165,11 +172,19 @@ export interface CustomRowShape {
   endsAt: Date;
 }
 
+/** The weekly bound in the units custom rows are stored in. */
+const MAX_DURATION_MS = MAX_DURATION_MINUTES * 60_000;
+
 /**
  * Fold b into a when b starts exactly where a ends (exact adjacency, no
  * tolerance) or inside a (an overlap the bulk save paths already reject but
  * older rows can still carry), keeping the later end. Pure; stable ordering by
  * start.
+ *
+ * A fold that would push the surviving row past MAX_DURATION_MS starts a new
+ * row instead, for the same reason as the weekly twin. A row already contained
+ * in its predecessor still collapses: it extends nothing, so it cannot cross
+ * the bound, and leaving it out is the whole point of the pass.
  */
 export function mergeAdjacentCustomRows<T extends CustomRowShape>(
   rows: T[],
@@ -181,10 +196,13 @@ export function mergeAdjacentCustomRows<T extends CustomRowShape>(
   for (const row of sorted) {
     const prev = out[out.length - 1];
     if (prev !== undefined && row.startsAt.getTime() <= prev.endsAt.getTime()) {
-      if (row.endsAt.getTime() > prev.endsAt.getTime()) {
-        out[out.length - 1] = { ...prev, endsAt: row.endsAt };
+      if (row.endsAt.getTime() <= prev.endsAt.getTime()) {
+        continue;
       }
-      continue;
+      if (row.endsAt.getTime() - prev.startsAt.getTime() <= MAX_DURATION_MS) {
+        out[out.length - 1] = { ...prev, endsAt: row.endsAt };
+        continue;
+      }
     }
     out.push({ ...row });
   }
