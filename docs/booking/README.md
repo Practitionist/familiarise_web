@@ -72,8 +72,8 @@ graph TD
 
 ### API Routes (`app/api/bookings/`)
 
-| Pattern                                   | Method | Purpose                     |
-| ----------------------------------------- | ------ | --------------------------- |
+| Pattern                                     | Method | Purpose                     |
+| ------------------------------------------- | ------ | --------------------------- |
 | `/api/bookings/consultations/{id}/allocate` | PATCH  | Allocate consultation slots |
 | `/api/bookings/consultations/{id}/validate` | POST   | Validate consultation slots |
 | `/api/bookings/subscriptions/{id}/allocate` | PATCH  | Allocate subscription slots |
@@ -106,6 +106,7 @@ graph TD
 | Understand org-sponsored bookings      | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                       |
 | **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
 | **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
+| Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 
