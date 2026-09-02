@@ -31,10 +31,26 @@ const mockMembershipFindUnique = jest.fn();
 let txCommitted = false;
 
 const txStub = {
-  consultation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  subscription: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  webinar: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-  class: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  consultation: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  subscription: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  webinar: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  class: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+  },
+  appointmentParticipant: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   slotOfAppointment: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
   rescheduleRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
 };
@@ -56,10 +72,25 @@ jest.mock("../../lib/prisma", () => ({
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     // #1166 — what `isOrgAdminOfAppointment` reads.
-    membership: { findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a) },
+    membership: {
+      findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a),
+    },
   },
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+}));
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: jest.fn(
+    async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  BookingLockUnavailableError: class extends Error {},
+  AppointmentBusyError: class extends Error {},
+}));
 jest.mock("../../lib/auth-server", () => ({
   getSession: (...a: unknown[]) => mockGetSession(...a),
 }));
@@ -110,7 +141,10 @@ function makeRequest(body?: Record<string, unknown>) {
   return new Request(`http://localhost/api/appointments/${APPT}/cancel`, {
     method: "POST",
     ...(body
-      ? { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }
+      ? {
+          body: JSON.stringify(body),
+          headers: { "Content-Type": "application/json" },
+        }
       : {}),
   }) as never;
 }
@@ -274,11 +308,14 @@ describe("a consultee cancelling a paid consultation gets their money back", () 
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    // The regression: resolved after the transaction this was 0.
+    // The regression: resolved after the transaction this was 0. The rail
+    // rides along so the confirmation can name where the money went rather
+    // than promising a card nobody charged (defect 1).
     expect(body.refund).toEqual({
       amountRefundedPaise: GROSS,
       refundPct: 100,
       status: "REFUNDED",
+      rail: "GATEWAY",
     });
     expect(mockRefundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay-1", amountPaise: GROSS }),
@@ -447,7 +484,9 @@ describe("subscriptions", () => {
     // Against a completed+live denominator of 3 this would pay floor(2/3) —
     // ₹833 more than the plan's per-session price justifies.
     expect(body.refund.amountRefundedPaise).toBe(GROSS / 2);
-    expect(body.refund.amountRefundedPaise).not.toBe(Math.floor((GROSS * 2) / 3));
+    expect(body.refund.amountRefundedPaise).not.toBe(
+      Math.floor((GROSS * 2) / 3),
+    );
   });
 
   it("counts an unverified past session as delivered, not as owed", async () => {
@@ -528,7 +567,9 @@ describe("#1161 — a credit-funded booking refunds as a credit restoration", ()
     mockAppointmentFindMany.mockImplementation(async () =>
       bookingRows({ liveSlotHours: [120], ...freeFunded }),
     );
-    mockRefundBookingPayment.mockRejectedValue(new Error("no refundable balance"));
+    mockRefundBookingPayment.mockRejectedValue(
+      new Error("no refundable balance"),
+    );
 
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
     const body = await res.json();

@@ -29,6 +29,19 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+}));
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: jest.fn(
+    async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  BookingLockUnavailableError: class extends Error {},
+  AppointmentBusyError: class extends Error {},
+}));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
 jest.mock("../../lib/activity/log-activity", () => ({
   logActivity: jest.fn().mockResolvedValue(undefined),
@@ -128,7 +141,9 @@ function makeMockTx() {
     consultation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     webinar: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     class: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    slotOfAppointment: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+    slotOfAppointment: {
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    },
     rescheduleRequest: {
       create: jest.fn().mockImplementation(({ data }) => {
         createdData = data;

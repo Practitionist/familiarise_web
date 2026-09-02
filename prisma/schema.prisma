@@ -64,6 +64,11 @@ model User {
   slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
 
   rescheduleRequestsInitiated RescheduleRequest[]      @relation("RescheduleInitiator")
+  // #1319 — A9 participant edge, A12 status-history actor, cancelledBy FKs.
+  appointmentParticipations   AppointmentParticipant[]
+  bookingStatusActions        BookingStatusHistory[]   @relation("BookingStatusHistoryActor")
+  consultationsCancelled      Consultation[]           @relation("ConsultationCancelledBy")
+  subscriptionsCancelled      Subscription[]           @relation("SubscriptionCancelledBy")
   rescheduleRequestsResolved  RescheduleRequest[]      @relation("RescheduleResolver")
   rescheduleSlotsProposed     RescheduleProposedSlot[] @relation("ProposedSlotAuthor")
 
@@ -1020,15 +1025,17 @@ model Organization {
 
   // #674 personal-vs-org scope split — appointments / recordings booked or
   // produced by org members. Mirrors TrialsByOrg.
-  appointmentsByOrg   Appointment[]       @relation("AppointmentByOrg")
-  rescheduleRequests  RescheduleRequest[] @relation("RescheduleByOrg")
-  recordingsByOrg     Recording[]         @relation("RecordingByOrg")
+  appointmentsByOrg       Appointment[]            @relation("AppointmentByOrg")
+  rescheduleRequests      RescheduleRequest[]      @relation("RescheduleByOrg")
+  appointmentParticipants AppointmentParticipant[] @relation("AppointmentParticipantByOrg")
+  bookingStatusHistory    BookingStatusHistory[]   @relation("BookingStatusHistoryByOrg")
+  recordingsByOrg         Recording[]              @relation("RecordingByOrg")
   // Org-tagged plan materials (mirrored from the owning plan's organizationId)
   // so org dashboards manage handouts without polymorphic joins.
-  planMaterialsByOrg  PlanMaterial[]      @relation("PlanMaterialByOrg")
+  planMaterialsByOrg      PlanMaterial[]           @relation("PlanMaterialByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
   // `MeetingSession.organizationId` for the write-side rationale.
-  streamSessionsByOrg MeetingSession[]    @relation("StreamSessionByOrg")
+  streamSessionsByOrg     MeetingSession[]         @relation("StreamSessionByOrg")
 
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
@@ -1761,7 +1768,7 @@ model BookingUtilization {
   // is expressed as an opposing UsageLedgerEntry plus this timestamp.
   // This keeps history queryable ("was this member using a seat on
   // 2026-04-10?") and makes partial reversals auditable.
-  reversedAt     DateTime?
+  reversedAt     DateTime? @db.Timestamptz
   reversalReason String?
 
   /// PR-1e (G3): tracks which Appointment IDs have already been counted
@@ -1774,7 +1781,10 @@ model BookingUtilization {
   /// call, so the set diff returns the full count).
   appointmentIds String[] @default([])
 
-  createdAt    DateTime      @default(now())
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
+  createdAt    DateTime      @default(now()) @db.Timestamptz
   overageEvent OverageEvent?
 
   // #781 §D — createdAt-ordered utilization scans (statements / reconcile). The
@@ -3194,6 +3204,9 @@ model SlotOfAvailabilityWeekly {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -3207,6 +3220,9 @@ model SlotOfAvailabilityCustom {
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
+
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3301,7 +3317,10 @@ model Consultation {
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
   cancelledAt        DateTime?           @db.Timestamptz
-  cancelledBy        String? // userId who cancelled
+  // #1319 — was a bare userId string; the FK makes the actor queryable and
+  // survives user deletion as NULL. Column name kept so no writer changes.
+  cancelledByUser    User?               @relation("ConsultationCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
+  cancelledBy        String?
 
   /// Freeze ledger for this pair's DIRECT MESSAGE channel, not for a channel of
   /// this booking's own — see `Webinar.chatFrozenAt` for the group-chat twin.
@@ -3317,11 +3336,12 @@ model Consultation {
 
   appointment Appointment?
 
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@index([requestedById])
-  @@index([consultationPlanId])
   // Requests-tab hot path: all consultations for a plan filtered by status,
   // newest first — without this the planner-side list falls back to the
   // single-column indexes + sort.
@@ -3430,7 +3450,9 @@ model Subscription {
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
   cancelledAt        DateTime?           @db.Timestamptz
-  cancelledBy        String? // userId who cancelled
+  // #1319 — see Consultation.cancelledBy.
+  cancelledByUser    User?               @relation("SubscriptionCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
+  cancelledBy        String?
 
   /// Freeze ledger for this pair's DM channel. See `Consultation.chatFrozenAt`
   /// for why it is read as a MAX across the pair rather than per row.
@@ -3442,11 +3464,12 @@ model Subscription {
   appointments       Appointment[]
   convertedFromTrial TrialSession?
 
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@index([requestedById])
-  @@index([subscriptionPlanId])
   // Requests-tab hot path — mirror of the Consultation composite.
   @@index([subscriptionPlanId, status, requestedAt])
   // #1169 PR 9 — availability/allocation scans bound by the scheduling window.
@@ -3515,17 +3538,20 @@ model TrialSession {
   organization   Organization? @relation("TrialsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
-  requestedAt DateTime  @default(now())
-  completedAt DateTime?
+  requestedAt DateTime  @default(now()) @db.Timestamptz
+  completedAt DateTime? @db.Timestamptz
 
   /// Deadline for a paid trial's pay-link, set when the consultant accepts.
   /// 24h from acceptance, or the session start if that comes first — a slot
   /// three hours out must not stay payable past the slot itself. The expiry
   /// job cancels AWAITING_PAYMENT trials past this and frees the slot.
-  paymentDueAt DateTime?
+  paymentDueAt DateTime? @db.Timestamptz
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   // One LIVE trial per consultant. The pair is unique, so re-requesting after
   // a terminal outcome requires clearing the old row — see
@@ -3692,8 +3718,11 @@ model Webinar {
 
   appointment Appointment?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([webinarPlanId])
   @@index([status])
@@ -3818,6 +3847,9 @@ model Class {
   classPlanId String
 
   appointments Appointment[]
+
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3995,6 +4027,10 @@ model Appointment {
 
   rescheduleRequests RescheduleRequest[]
 
+  // #1319 A9 / A12 — shadow-written participant edge + append-only status log.
+  participants  AppointmentParticipant[]
+  statusHistory BookingStatusHistory[]
+
   // #674 personal-vs-org scope split — set at checkout for org-context bookings.
   organization   Organization? @relation("AppointmentByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
@@ -4006,18 +4042,109 @@ model Appointment {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@index([subscriptionId])
-  @@index([classId])
   @@index([consultationId])
   @@index([webinarId])
-  @@index([appointmentType])
   @@index([organizationId, createdAt])
+  // #1319 — every org-scoped read filters organizationId AND deletedAt: null;
+  // the bare [deletedAt] index on a ~99%-NULL column cannot serve that.
+  @@index([organizationId, deletedAt, createdAt])
   // #997 — the PENDING request lists anti-join on `appointments.none.
   // organizationId != null`; these composites let it probe instead of scan.
   @@index([subscriptionId, organizationId])
   @@index([classId, organizationId])
   // #1169 PR 9 — `deletedAt: null` rides nearly every hot filter unindexed.
   @@index([deletedAt])
+}
+
+/// #1319 A9 (adopted, schema-only) — the participant edge the implicit
+/// SlotOfAppointment↔User m:n cannot carry: role, per-seat status, and which
+/// Payment funded the seat. Written by every slot-connect writer in the SAME
+/// transaction; read by nothing in production yet (readers flip in a later
+/// epic), so it is a shadow write whose only consumer is the drift assertion
+/// in scripts/appointments/reconcile-slot-availability.ts. Added before the
+/// pre-MVP reset so it is populated from day one and never backfilled.
+model AppointmentParticipant {
+  id String @id @default(uuid())
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  role   ParticipantRole
+  status ParticipantStatus @default(HELD)
+
+  /// Which money row funded this seat. SetNull, not Cascade: a soft-deleted
+  /// Payment must not take the participation record with it (#781 §B).
+  payment   Payment? @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  paymentId String?
+
+  organization   Organization? @relation("AppointmentParticipantByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@unique([appointmentId, userId])
+  @@index([appointmentId, status])
+  @@index([userId, status])
+  // Prisma does not index FKs; without this the SetNull on Payment delete scans.
+  @@index([paymentId])
+}
+
+enum ParticipantRole {
+  CONSULTANT
+  CONSULTEE
+  COLLABORATOR
+}
+
+enum ParticipantStatus {
+  HELD
+  CONFIRMED
+  CANCELLED
+  REFUNDED
+  ATTENDED
+}
+
+/// #1319 A12 (adopted) — one append-only row per guarded status transition.
+/// Written inside lib/booking/transitions.ts, which already receives `tx`, so
+/// the history row and the state change commit or fail together. `entityId` is
+/// polymorphic and deliberately unconstrained: seven lifecycles share one log
+/// and a real FK per entity would mean seven nullable columns. `fromStatus` and
+/// `toStatus` are strings because three different status enums share the log.
+model BookingStatusHistory {
+  id String @id @default(uuid())
+
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  appointmentId String?
+
+  entity     BookingHistoryEntity
+  entityId   String
+  fromStatus String
+  toStatus   String
+
+  actorUser   User?   @relation("BookingStatusHistoryActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorUserId String?
+  reason      String?
+
+  organization   Organization? @relation("BookingStatusHistoryByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([entityId, createdAt])
+  @@index([appointmentId, createdAt])
+}
+
+enum BookingHistoryEntity {
+  CONSULTATION
+  SUBSCRIPTION
+  WEBINAR
+  CLASS
+  TRIAL
+  RESCHEDULE_REQUEST
+  SLOT
 }
 
 enum AppointmentsType {
@@ -4106,6 +4233,9 @@ model RescheduleRequest {
 
   proposedSlots RescheduleProposedSlot[]
 
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -4129,6 +4259,9 @@ model RescheduleProposedSlot {
 
   proposedBy   User   @relation("ProposedSlotAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
   proposedById String
+
+  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
+  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
 
@@ -4757,9 +4890,10 @@ model Payment {
 
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
-  organizationInvoiceSettled OrganizationInvoice?   @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
-  trialSessionPaid           TrialSession?          @relation("TrialSessionPayment") // back-relation for TrialSession.payment
-  bookingUtilization         BookingUtilization?    @relation("PaymentBookingUtilization") // Program entitlement usage
+  organizationInvoiceSettled OrganizationInvoice?     @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
+  trialSessionPaid           TrialSession?            @relation("TrialSessionPayment") // back-relation for TrialSession.payment
+  appointmentParticipants    AppointmentParticipant[]
+  bookingUtilization         BookingUtilization?      @relation("PaymentBookingUtilization") // Program entitlement usage
   invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
 
   // Stackable funding. A Payment may be split across multiple sources
