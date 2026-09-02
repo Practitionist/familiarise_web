@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { coalesceAndResolveCustom } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -27,7 +28,10 @@ export async function GET(
     return NextResponse.json({ data: customSlot }, { status: 200 });
   } catch (error) {
     console.error("Error fetching custom slot:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "slots" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "slots" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching the custom slot" },
       { status: 500 },
@@ -149,7 +153,16 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json({ data: updatedSlot }, { status: 200 });
+    // #1320 — fold rows the edit made adjacent and answer with the covering row.
+    const covering = await coalesceAndResolveCustom(
+      prisma,
+      updatedSlot.consultantProfileId,
+      { startsAt: updatedSlot.startsAt, endsAt: updatedSlot.endsAt },
+    );
+    return NextResponse.json(
+      { data: covering ?? updatedSlot },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -160,7 +173,10 @@ export async function PUT(
         );
       }
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "slots" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "slots" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the custom slot" },
       { status: 500 },
@@ -279,7 +295,16 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({ data: updatedSlot }, { status: 200 });
+    // #1320 — fold rows the edit made adjacent and answer with the covering row.
+    const covering = await coalesceAndResolveCustom(
+      prisma,
+      updatedSlot.consultantProfileId,
+      { startsAt: updatedSlot.startsAt, endsAt: updatedSlot.endsAt },
+    );
+    return NextResponse.json(
+      { data: covering ?? updatedSlot },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error partially updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

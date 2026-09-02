@@ -139,3 +139,98 @@ export async function coalesceAndResolve<
     },
   });
 }
+
+/**
+ * #1320 — the CUSTOM twin of everything above. Custom rows are date-anchored
+ * absolute instants and purely additive (there is no isAvailable / deletedAt
+ * column, so a row is never a blackout), which makes the merge rule simpler
+ * than the weekly one: no day, offset or overnight predicate is needed, only
+ * the instants themselves.
+ */
+export interface CustomRowShape {
+  startsAt: Date;
+  endsAt: Date;
+}
+
+/**
+ * Fold b into a when b starts exactly where a ends (exact adjacency, no
+ * tolerance) or inside a (an overlap the bulk save paths already reject but
+ * older rows can still carry), keeping the later end. Pure; stable ordering by
+ * start.
+ */
+export function mergeAdjacentCustomRows<T extends CustomRowShape>(
+  rows: T[],
+): T[] {
+  const sorted = [...rows].sort(
+    (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
+  );
+  const out: T[] = [];
+  for (const row of sorted) {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && row.startsAt.getTime() <= prev.endsAt.getTime()) {
+      if (row.endsAt.getTime() > prev.endsAt.getTime()) {
+        out[out.length - 1] = { ...prev, endsAt: row.endsAt };
+      }
+      continue;
+    }
+    out.push({ ...row });
+  }
+  return out;
+}
+
+/**
+ * Rewrite one consultant's custom rows as their merged form. No-op when
+ * nothing touches, so it is safe after every write path. Unlike the weekly
+ * twin this keeps the surviving row's id — a booking names a custom row, so
+ * re-creating every row would orphan ids that are still in flight.
+ */
+export async function coalesceConsultantCustomRows(
+  db: Pick<Tx, "slotOfAvailabilityCustom">,
+  consultantProfileId: string,
+): Promise<{ before: number; after: number }> {
+  const rows = await db.slotOfAvailabilityCustom.findMany({
+    where: { consultantProfileId },
+    select: { id: true, startsAt: true, endsAt: true },
+  });
+  const merged = mergeAdjacentCustomRows(rows);
+  if (merged.length === rows.length) {
+    return { before: rows.length, after: rows.length };
+  }
+  const survivors = new Map(merged.map((r) => [r.id, r]));
+  const foldedIds = rows.filter((r) => !survivors.has(r.id)).map((r) => r.id);
+  await db.slotOfAvailabilityCustom.deleteMany({
+    where: { id: { in: foldedIds } },
+  });
+  for (const original of rows) {
+    const survivor = survivors.get(original.id);
+    if (survivor && survivor.endsAt.getTime() !== original.endsAt.getTime()) {
+      await db.slotOfAvailabilityCustom.update({
+        where: { id: original.id },
+        data: { endsAt: survivor.endsAt },
+      });
+    }
+  }
+  return { before: rows.length, after: merged.length };
+}
+
+/**
+ * After a single custom-row create/update: fold touching rows and return the
+ * row that now covers the written window.
+ */
+export async function coalesceAndResolveCustom<
+  Db extends Pick<Tx, "slotOfAvailabilityCustom">,
+>(db: Db, consultantProfileId: string, window: CustomRowShape) {
+  await coalesceConsultantCustomRows(db, consultantProfileId);
+  return db.slotOfAvailabilityCustom.findFirst({
+    where: {
+      consultantProfileId,
+      startsAt: { lte: window.startsAt },
+      endsAt: { gte: window.endsAt },
+    },
+    include: {
+      consultantProfile: {
+        select: { id: true, user: { select: { name: true, email: true } } },
+      },
+    },
+  });
+}

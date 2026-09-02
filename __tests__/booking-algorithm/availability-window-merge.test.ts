@@ -10,7 +10,10 @@
 
 import fs from "fs";
 import path from "path";
-import { mergeAdjacentWeeklyRows } from "../../utils/slotAllocation/mergeAdjacentWeeklyRows";
+import {
+  mergeAdjacentCustomRows,
+  mergeAdjacentWeeklyRows,
+} from "../../utils/slotAllocation/mergeAdjacentWeeklyRows";
 import {
   findUncoveredAtom,
   windowAtoms,
@@ -75,6 +78,51 @@ describe("mergeAdjacentWeeklyRows", () => {
   it("is idempotent", () => {
     const once = mergeAdjacentWeeklyRows([ROW_A, ROW_B]);
     expect(mergeAdjacentWeeklyRows(once)).toEqual(once);
+  });
+});
+
+describe("mergeAdjacentCustomRows (#1320)", () => {
+  const CUSTOM_A = {
+    startsAt: new Date(Date.UTC(2026, 8, 7, 10, 0)),
+    endsAt: new Date(Date.UTC(2026, 8, 7, 11, 0)),
+  };
+  const CUSTOM_B = {
+    startsAt: new Date(Date.UTC(2026, 8, 7, 11, 0)),
+    endsAt: new Date(Date.UTC(2026, 8, 7, 12, 0)),
+  };
+
+  it("folds an exactly-adjacent pair into one row", () => {
+    expect(mergeAdjacentCustomRows([CUSTOM_B, CUSTOM_A])).toEqual([
+      { startsAt: CUSTOM_A.startsAt, endsAt: CUSTOM_B.endsAt },
+    ]);
+  });
+
+  it("leaves a one-minute gap alone", () => {
+    const gapped = {
+      ...CUSTOM_B,
+      startsAt: new Date(CUSTOM_B.startsAt.getTime() + 60_000),
+    };
+    expect(mergeAdjacentCustomRows([CUSTOM_A, gapped])).toHaveLength(2);
+  });
+
+  it("folds an overlap and keeps the later end", () => {
+    const overlapping = {
+      startsAt: new Date(Date.UTC(2026, 8, 7, 10, 30)),
+      endsAt: new Date(Date.UTC(2026, 8, 7, 12, 0)),
+    };
+    const contained = {
+      startsAt: new Date(Date.UTC(2026, 8, 7, 10, 15)),
+      endsAt: new Date(Date.UTC(2026, 8, 7, 10, 45)),
+    };
+    expect(mergeAdjacentCustomRows([CUSTOM_A, overlapping])).toEqual([
+      { startsAt: CUSTOM_A.startsAt, endsAt: overlapping.endsAt },
+    ]);
+    expect(mergeAdjacentCustomRows([CUSTOM_A, contained])).toEqual([CUSTOM_A]);
+  });
+
+  it("is idempotent", () => {
+    const once = mergeAdjacentCustomRows([CUSTOM_A, CUSTOM_B]);
+    expect(mergeAdjacentCustomRows(once)).toEqual(once);
   });
 });
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
+import { coalesceAndResolveCustom } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -76,7 +77,10 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     console.error("Error fetching custom slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching custom availability slots" },
@@ -184,9 +188,23 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ data: newCustomSlot }, { status: 201 });
+    // #1320 — the overlap guard above still rejects an overlap but permits
+    // exact adjacency, which is how the fragmented rows got there. Fold what
+    // now touches and answer with the row that covers what was asked for.
+    const covering = await coalesceAndResolveCustom(
+      prisma,
+      consultantProfileId,
+      { startsAt: startTime, endsAt: endTime },
+    );
+    return NextResponse.json(
+      { data: covering ?? newCustomSlot },
+      { status: 201 },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     console.error("Error creating custom slot:", error);
     return NextResponse.json(
       {

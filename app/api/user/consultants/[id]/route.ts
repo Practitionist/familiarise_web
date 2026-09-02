@@ -1,5 +1,8 @@
 import prisma from "@/lib/prisma";
-import { mergeAdjacentWeeklyRows } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import {
+  mergeAdjacentCustomRows,
+  mergeAdjacentWeeklyRows,
+} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
@@ -479,12 +482,16 @@ export async function PUT(
     // Update custom slots if schedule type is CUSTOM
     if (scheduleType === ScheduleType.CUSTOM) {
       if (slotsOfAvailabilityCustom?.length) {
-        const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
-          slotsOfAvailabilityCustom.map((slot) => ({
-            consultantProfileId: id,
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-          }));
+        // Dates, not the wider `string | Date` the Prisma input allows, so the
+        // merge below can compare instants (#1320).
+        const customSlotData: (Prisma.SlotOfAvailabilityCustomCreateManyInput & {
+          startsAt: Date;
+          endsAt: Date;
+        })[] = slotsOfAvailabilityCustom.map((slot) => ({
+          consultantProfileId: id,
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
+        }));
 
         // Validate custom slot ordering and check for pairwise overlaps
         for (const slot of customSlotData) {
@@ -520,8 +527,9 @@ export async function PUT(
         await prisma.slotOfAvailabilityCustom.deleteMany({
           where: { consultantProfileId: id },
         });
+        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
         await prisma.slotOfAvailabilityCustom.createMany({
-          data: customSlotData,
+          data: mergeAdjacentCustomRows(customSlotData),
         });
       } else {
         // No custom slots submitted — clear existing

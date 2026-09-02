@@ -1,5 +1,8 @@
 import "server-only";
-import { mergeAdjacentWeeklyRows } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import {
+  mergeAdjacentCustomRows,
+  mergeAdjacentWeeklyRows,
+} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -242,12 +245,16 @@ async function syncAvailabilitySlots(
         }
       }
 
+      // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
+      // adjacent entries still has each entry checked on its own.
       await tx.slotOfAvailabilityCustom.createMany({
-        data: customSlotsToCreate.map((slot) => ({
-          startsAt: slot.startsAt,
-          endsAt: slot.endsAt,
-          consultantProfileId,
-        })),
+        data: mergeAdjacentCustomRows(
+          customSlotsToCreate.map((slot) => ({
+            startsAt: new Date(slot.startsAt),
+            endsAt: new Date(slot.endsAt),
+            consultantProfileId,
+          })),
+        ),
       });
     }
   }
