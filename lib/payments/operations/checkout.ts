@@ -5,6 +5,11 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import {
+  findUncoveredAtom,
+  loadPublishedCoverage,
+  windowAtoms,
+} from "@/utils/slotAllocation/availabilityCoverage";
+import {
   linkParticipantsToPayment,
   recordParticipants,
   setParticipantStatus,
@@ -39,7 +44,6 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
-import { isMinuteWithinWeeklySlot } from "@/utils/slotAllocation/slotTimeUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
@@ -888,89 +892,95 @@ export async function validateSlotAvailability(
     throw new Error(timingError);
   }
 
-  // 0b. Validate slot falls within the specified availability window
-  if (data.slotOfAvailabilityWeeklyId) {
-    const avail = await tx.slotOfAvailabilityWeekly.findUnique({
-      where: { id: data.slotOfAvailabilityWeeklyId },
-      include: {
-        consultantProfile: { select: { userId: true, deletedAt: true } },
+  // 0b. Validate the whole [start, end) window against the consultant's
+  // PUBLISHED availability. #1320 — this used to check the window against the
+  // single row the client named (`slotOfAvailabilityWeeklyId`), so a two-hour
+  // booking spanning two adjacent one-hour rows was rejected even though the
+  // expert-page grid drew them as one block and the generator now merges
+  // them. The rule is now interval containment against the UNION of the
+  // consultant's rows: every 30-minute atom of the window must fall inside
+  // some published row. The named id, when present, still proves ownership
+  // and catches a soft-deleted profile (B13); it is no longer the boundary.
+  if (data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId) {
+    // Both row kinds are read for the same three facts, so they share one
+    // include; a checkout names at most one of them.
+    const namedRowInclude = {
+      consultantProfile: {
+        select: { id: true, userId: true, deletedAt: true },
       },
-    });
-    if (!avail) {
+    } as const;
+    const named =
+      (data.slotOfAvailabilityWeeklyId
+        ? await tx.slotOfAvailabilityWeekly.findUnique({
+            where: { id: data.slotOfAvailabilityWeeklyId },
+            include: namedRowInclude,
+          })
+        : null) ??
+      (data.slotOfAvailabilityCustomId
+        ? await tx.slotOfAvailabilityCustom.findUnique({
+            where: { id: data.slotOfAvailabilityCustomId },
+            include: namedRowInclude,
+          })
+        : null);
+    // A named row can legitimately vanish mid-checkout: a save on the
+    // consultant's side coalesces adjacent rows into one and re-ids it. The
+    // union check below is the authority, so a missing row is not fatal
+    // unless we cannot resolve the consultant at all.
+    if (named) {
+      if (named.consultantProfile.deletedAt) {
+        throw new Error("This expert is no longer accepting bookings");
+      }
+      if (
+        consultantUserId &&
+        named.consultantProfile.userId !== consultantUserId
+      ) {
+        throw new Error(
+          "Availability slot does not belong to the specified consultant",
+        );
+      }
+    }
+    const profileId =
+      named?.consultantProfile.id ??
+      (consultantUserId
+        ? (
+            await tx.consultantProfile.findFirst({
+              // The named row got its deletedAt check above; this fallback
+              // runs when there is no named row, so it carries its own.
+              where: { userId: consultantUserId, deletedAt: null },
+              select: { id: true },
+            })
+          )?.id
+        : undefined);
+    if (!profileId) {
       throw new Error("Availability slot not found");
     }
-    // B13 — the plan-level soft-delete check can race a deletion landing
-    // between plan fetch and slot validation; recheck at the slot level.
-    if (avail.consultantProfile.deletedAt) {
-      throw new Error("This expert is no longer accepting bookings");
-    }
-    // Verify the availability slot belongs to the correct consultant
-    if (
-      consultantUserId &&
-      avail.consultantProfile.userId !== consultantUserId
-    ) {
-      throw new Error(
-        "Availability slot does not belong to the specified consultant",
-      );
-    }
-    // Overnight-aware check: use shared utility instead of same-day-only guard
-    const candidateDay = slotStart.getUTCDay();
-    const candidateMinutes =
-      slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
-    const slotDurationMinutes = Math.round(
-      (slotEnd.getTime() - slotStart.getTime()) / (60 * 1000),
-    );
 
-    // FIX #520 Bug 2: Diagnostic logging for intermittent slot validation failures
-    const slotValidationResult = isMinuteWithinWeeklySlot(
-      candidateDay,
-      candidateMinutes,
-      slotDurationMinutes,
-      avail.startDay,
-      avail.startTimeUtc,
-      avail.endTimeUtc,
-      avail.utcOffsetMinutes,
-    );
+    const atoms = windowAtoms(slotStart, slotEnd);
+    // ScheduleType is exclusive, so only the consultant's active arm publishes
+    // availability; the loader hands back [] for the dormant one (#1320).
+    const { scheduleType, weeklyRows, customRows } =
+      await loadPublishedCoverage(tx, profileId, slotStart, slotEnd);
+    const uncovered = findUncoveredAtom(atoms, weeklyRows, customRows);
 
-    if (!slotValidationResult) {
+    if (uncovered) {
+      // FIX #520 Bug 2: Diagnostic logging for intermittent slot validation failures
       console.error(
         JSON.stringify({
           event: "slot_validation_failed",
-          candidateDay,
-          candidateMinutes,
-          slotDurationMinutes,
-          availStartDay: avail.startDay,
-          availStartTimeUtc: avail.startTimeUtc,
-          availEndTimeUtc: avail.endTimeUtc,
-          utcOffsetMinutes: avail.utcOffsetMinutes,
+          reason: "atom_outside_published_availability",
+          scheduleType,
+          uncoveredAtomStart: uncovered.start.toISOString(),
+          candidateDay: uncovered.day,
+          candidateMinutes: uncovered.minutes,
+          weeklyRows: weeklyRows.length,
+          customRows: customRows.length,
           slotStartISO: data.startsAt,
           slotEndISO: data.endsAt,
-          availId: data.slotOfAvailabilityWeeklyId,
+          namedWeeklyId: data.slotOfAvailabilityWeeklyId ?? null,
+          namedCustomId: data.slotOfAvailabilityCustomId ?? null,
           timestamp: new Date().toISOString(),
         }),
       );
-      throw new Error(
-        "Selected slot does not fall within the specified availability window",
-      );
-    }
-  } else if (data.slotOfAvailabilityCustomId) {
-    const avail = await tx.slotOfAvailabilityCustom.findUnique({
-      where: { id: data.slotOfAvailabilityCustomId },
-      include: { consultantProfile: { select: { userId: true } } },
-    });
-    if (!avail) {
-      throw new Error("Custom availability slot not found");
-    }
-    // Verify the custom availability slot belongs to the correct consultant
-    if (
-      consultantUserId &&
-      avail.consultantProfile.userId !== consultantUserId
-    ) {
-      throw new Error(
-        "Availability slot does not belong to the specified consultant",
-      );
-    }
-    if (slotStart < avail.startsAt || slotEnd > avail.endsAt) {
       throw new Error(
         "Selected slot does not fall within the specified availability window",
       );

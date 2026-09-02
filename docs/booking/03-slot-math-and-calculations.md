@@ -65,10 +65,10 @@ Whether a person may open the video room for a booking is decided by three indep
 
 `getSessionJoinState(run)` answers this over the whole run, never over a single row. It returns one of four values. A `countdown` session has not opened yet, a `joinable` one is open now, an `ended` one is over, and a `disabled` one is a tentative placeholder or a dead row that can never be joined at all. The window itself is a role-dependent lead time before the session starts, and there are exactly two of them.
 
-| Constant                     | Value      | Who it applies to                                                        |
-| ---------------------------- | ---------- | ------------------------------------------------------------------------ |
-| `CONSULTEE_JOIN_WINDOW_MS`   | 10 minutes | Learners, on every consultee and organization-member surface.             |
-| `CONSULTANT_JOIN_WINDOW_MS`  | 15 minutes | Hosts, so that they can be in the room before the first attendee arrives. |
+| Constant                    | Value      | Who it applies to                                                         |
+| --------------------------- | ---------- | ------------------------------------------------------------------------- |
+| `CONSULTEE_JOIN_WINDOW_MS`  | 10 minutes | Learners, on every consultee and organization-member surface.             |
+| `CONSULTANT_JOIN_WINDOW_MS` | 15 minutes | Hosts, so that they can be in the room before the first attendee arrives. |
 
 Both constants are exported from `lib/appointments/slots.ts` and every caller imports one of them. Declaring the value locally is what #1270 removed: six surfaces had each written their own, landing on four different answers, so the same booking opened at four different times depending on which page the user happened to be looking at. The planner in particular gave a host a ten-minute window while the appointments list beside it gave the same host fifteen.
 
@@ -86,7 +86,7 @@ The third question is asked by the adapter, not by the shared helpers. A read-on
 
 `NEXT_PUBLIC_ENABLE_DEV_TOOLS` is the single flag that opens the force-join backdoor, and it is opt-in: `.env.sample` ships it as `"false"`. Keying the backdoor off `NODE_ENV` instead means it is open on every local run whether or not the developer asked for it, which is why #1270 standardised the surfaces that did so.
 
-The backdoor is always **additive**. It adds a separately labelled "Join (Dev)" affordance in the places where the real Join is absent; it never relaxes, re-labels or un-disables the real one. The consultant home tab used to do exactly that — the dev arm *was* the gate — with the side effect that every genuine Join on a development build was mislabelled as a dev join.
+The backdoor is always **additive**. It adds a separately labelled "Join (Dev)" affordance in the places where the real Join is absent; it never relaxes, re-labels or un-disables the real one. The consultant home tab used to do exactly that — the dev arm _was_ the gate — with the side effect that every genuine Join on a development build was mislabelled as a dev join.
 
 ## Week Boundaries (Sunday-Saturday)
 
@@ -159,7 +159,7 @@ Always use `SlotCalculationService.countWeeks()`.
 | ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------- |
 | Consultation | `Math.ceil(durationInHours / 0.5)`                                            | 1.5h = 3 slots                                      |
 | Webinar      | `Math.ceil(durationInHours / 0.5)`                                            | 2h = 4 slots                                        |
-| Subscription | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)`    | 5 weeks, 2/week, 1h sessions = 5 _ 2 _ 2 = 20 slots |
+| Subscription | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | 5 weeks, 2/week, 1h sessions = 5 × 2 × 2 = 20 slots |
 | Class        | `countWeeks(start, end) * sessionsPerWeek * Math.ceil(sessionDuration / 0.5)` | Same formula                                        |
 
 ## Consecutive Slot Validation
@@ -257,3 +257,7 @@ This feature applies to all event types where `slotsPerSession > 1`. Implementat
 - Warns if > 24 hours (unusual but not blocked)
 
 This prevents division-by-zero, infinite loops, and negative slot counts in `calculateRequiredSlots` and `getSlotsPerCall`.
+
+## Availability windows are contiguous, and validation is a union (#1320)
+
+A consultant's published availability is stored as one `SlotOfAvailabilityWeekly` row per contiguous window, up to the twelve-hour bound that `isValidTimeRange` enforces on a single row, beyond which the fold starts a new row and the booking still spans both through the union check described below. Every save path merges exactly-adjacent same-day rows before writing, so an entry of "3:30–4:30" followed by "4:30–5:30" lands as one "3:30–5:30" row, and a one-off script folds rows that already exist. The booking generator merges consecutive available atoms regardless of which row produced them, and checkout validates a booking window by requiring that every thirty-minute atom of the window falls inside some published row, weekly or custom, rather than inside the single row the client named. The named row id still proves ownership and catches a soft-deleted profile, but it is no longer the boundary of what can be booked. This is what makes a two-hour plan bookable inside a two-hour block that the expert page draws as one, which was not the case while the generator and checkout were row-bound.

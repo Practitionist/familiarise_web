@@ -39,6 +39,11 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import {
+  findUncoveredAtom,
+  loadPublishedCoverage,
+  windowAtoms,
+} from "@/utils/slotAllocation/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -143,6 +148,17 @@ class TrialSlotUnavailableError extends Error {
       "Selected slot is no longer available. Please choose a different time.",
     );
     this.name = "TrialSlotUnavailableError";
+  }
+}
+
+// R7 (#1319) — a trial obeys the calendar like every other booking. The
+// schedule arm only ever checked conflicts, so a trial could be pinned at
+// 03:00 on a day the consultant publishes nothing. Distinct from the 409
+// above: the slot is not taken, it was never on offer, which is a 400.
+class OutsideAvailabilityWindowError extends Error {
+  constructor() {
+    super("The selected time is outside the expert's published availability");
+    this.name = "OutsideAvailabilityWindowError";
   }
 }
 
@@ -424,6 +440,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // check previously ran on the global client before the transaction
           // opened, a classic check-then-act window (#1093 §1).
           const result = await prisma.$transaction(async (tx) => {
+            // The published window first — the same union coverage rule
+            // checkout applies, on this transaction's client. Enforced even
+            // when the consultant is the one scheduling: a trial is a booking.
+            const { weeklyRows, customRows } = await loadPublishedCoverage(
+              tx,
+              existingTrial.consultantProfileId,
+              startTime,
+              endTime,
+            );
+            const uncovered = findUncoveredAtom(
+              windowAtoms(startTime, endTime),
+              weeklyRows,
+              customRows,
+            );
+            if (uncovered) {
+              throw new OutsideAvailabilityWindowError();
+            }
+
             const isAvailable = await validateSlotAvailability(
               tx,
               existingTrial.consultantProfileId,
@@ -613,6 +647,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
           return NextResponse.json({ data: result });
         } catch (error) {
+          // R7 (#1319) — the time was never published, so it is a bad request
+          // rather than a lost race.
+          if (error instanceof OutsideAvailabilityWindowError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+          }
           // In-transaction availability failure, or the #440 exclusion
           // constraint rejecting a concurrent overlap now that trial slots
           // carry consultantProfileId — both are "slot taken", a 409.

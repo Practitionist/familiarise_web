@@ -1,4 +1,9 @@
 import prisma from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  mergeAdjacentCustomRows,
+  mergeAdjacentWeeklyRows,
+} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
@@ -158,10 +163,11 @@ export async function GET(
     // consultant detail page. Privileged viewers (the consultant
     // themselves + ADMIN) see everything; the public include narrows
     // to PUBLIC + ORG_AND_PUBLIC.
-    const planVisibilityFilter: { visibility: { in: OrgPlanVisibility[] } } | undefined =
-      isPrivilegedAccess
-        ? undefined
-        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+    const planVisibilityFilter:
+      | { visibility: { in: OrgPlanVisibility[] } }
+      | undefined = isPrivilegedAccess
+      ? undefined
+      : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
 
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
@@ -249,7 +255,10 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.GET]", error });
   }
 }
@@ -398,9 +407,7 @@ export async function PUT(
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {
-            const startTimeUtc = dateToMinuteUtc(
-              new Date(slot.startsAt),
-            );
+            const startTimeUtc = dateToMinuteUtc(new Date(slot.startsAt));
             const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
             return {
               consultantProfileId: id,
@@ -457,13 +464,33 @@ export async function PUT(
           }
         }
 
-        // Delete existing then create new
-        await prisma.slotOfAvailabilityWeekly.deleteMany({
-          where: { consultantProfileId: id },
-        });
-        await prisma.slotOfAvailabilityWeekly.createMany({
-          data: weeklySlotData,
-        });
+        // Delete existing then create new, atomically — a failure between the
+        // two halves would leave the consultant with no availability at all.
+        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        //
+        // Serializable, like the per-row slot routes: at Read Committed a
+        // second replacement running concurrently takes its snapshot before
+        // the first commits, so its delete misses the rows the first inserted
+        // and both sets survive — overlapping availability, which every
+        // downstream reader assumes cannot exist.
+        const mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData);
+        await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await tx.slotOfAvailabilityWeekly.deleteMany({
+                where: { consultantProfileId: id },
+              });
+              await tx.slotOfAvailabilityWeekly.createMany({
+                data: mergedWeekly,
+              });
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              maxWait: 10_000,
+              timeout: 15_000,
+            },
+          ),
+        );
       } else {
         // No weekly slots submitted — clear existing
         await prisma.slotOfAvailabilityWeekly.deleteMany({
@@ -475,12 +502,16 @@ export async function PUT(
     // Update custom slots if schedule type is CUSTOM
     if (scheduleType === ScheduleType.CUSTOM) {
       if (slotsOfAvailabilityCustom?.length) {
-        const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
-          slotsOfAvailabilityCustom.map((slot) => ({
-            consultantProfileId: id,
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-          }));
+        // Dates, not the wider `string | Date` the Prisma input allows, so the
+        // merge below can compare instants (#1320).
+        const customSlotData: (Prisma.SlotOfAvailabilityCustomCreateManyInput & {
+          startsAt: Date;
+          endsAt: Date;
+        })[] = slotsOfAvailabilityCustom.map((slot) => ({
+          consultantProfileId: id,
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
+        }));
 
         // Validate custom slot ordering and check for pairwise overlaps
         for (const slot of customSlotData) {
@@ -512,13 +543,27 @@ export async function PUT(
           }
         }
 
-        // Delete existing then create new
-        await prisma.slotOfAvailabilityCustom.deleteMany({
-          where: { consultantProfileId: id },
-        });
-        await prisma.slotOfAvailabilityCustom.createMany({
-          data: customSlotData,
-        });
+        // Delete existing then create new, atomically and Serializably — see
+        // the weekly arm for both reasons.
+        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        const mergedCustom = mergeAdjacentCustomRows(customSlotData);
+        await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await tx.slotOfAvailabilityCustom.deleteMany({
+                where: { consultantProfileId: id },
+              });
+              await tx.slotOfAvailabilityCustom.createMany({
+                data: mergedCustom,
+              });
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              maxWait: 10_000,
+              timeout: 15_000,
+            },
+          ),
+        );
       } else {
         // No custom slots submitted — clear existing
         await prisma.slotOfAvailabilityCustom.deleteMany({
@@ -570,7 +615,10 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.PUT]", error });
   }
 }
@@ -677,7 +725,10 @@ export async function DELETE(
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.DELETE]", error });
   }
 }
