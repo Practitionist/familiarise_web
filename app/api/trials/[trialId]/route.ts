@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
@@ -35,7 +36,10 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/slotAllocation/occupancyPolicy";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -161,7 +165,11 @@ async function validateSlotAvailability(
   const overlapping = await db.slotOfAppointment.findFirst({
     where: {
       appointment: {
-        OR: occupiedFilter,
+        AND: [
+          { OR: occupiedFilter },
+          // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
+          { NOT: buildDeadHoldFilter(new Date()) },
+        ],
       },
       // Canonical overlap predicate
       startsAt: { lt: endTime },
@@ -194,6 +202,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+  // #1319 — accept mints a pay-link and takes a slot; it had no limiter.
+  const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (limited) return limited;
 
   const { trialId } = await context.params;
 

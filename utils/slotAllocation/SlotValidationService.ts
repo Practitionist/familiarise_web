@@ -7,7 +7,12 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { AppointmentStatus, ScheduleType } from "@prisma/client";
+import {
+  AppointmentStatus,
+  ScheduleType,
+  BookingSource,
+  PaymentStatus,
+} from "@prisma/client";
 import {
   EventType,
   ValidationResult,
@@ -36,9 +41,18 @@ const SLOT_DURATION_MS = 30 * 60 * 1000;
  * from disagreeing on expired APPROVED_PENDING_PAYMENT holds.
  */
 export interface LiveAppointmentOccupancy {
-  consultation?: { status?: AppointmentStatus | null } | null;
-  subscription?: { status?: AppointmentStatus | null } | null;
-  payment?: Array<{ expiresAt?: Date | null }> | null;
+  consultation?: {
+    status?: AppointmentStatus | null;
+    bookingSource?: BookingSource | null;
+  } | null;
+  subscription?: {
+    status?: AppointmentStatus | null;
+    bookingSource?: BookingSource | null;
+  } | null;
+  payment?: Array<{
+    expiresAt?: Date | null;
+    paymentStatus?: PaymentStatus | null;
+  }> | null;
 }
 
 /**
@@ -53,16 +67,34 @@ export function isOccupiedByLiveAppointment(
   appointment: LiveAppointmentOccupancy,
   now: Date = new Date(),
 ): boolean {
-  const pendingStatus =
-    appointment.consultation?.status ?? appointment.subscription?.status;
+  const request = appointment.consultation ?? appointment.subscription;
+  const pendingStatus = request?.status;
+  // #873 — free the slot only when EVERY payment row is dead; a later active
+  // retry row can still be live even if payment[0] lapsed. A row is dead when
+  // the sweep already marked it EXPIRED or its window has passed.
+  const payments = appointment.payment ?? [];
+  const allPaymentsDead =
+    payments.length > 0 &&
+    payments.every(
+      (p) =>
+        p.paymentStatus === PaymentStatus.EXPIRED ||
+        (!!p.expiresAt && new Date(p.expiresAt) < now),
+    );
+
   if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-    // #873 — free the slot only when EVERY payment row is expired; a later
-    // active retry row can still be live even if payment[0] lapsed.
-    const payments = appointment.payment ?? [];
-    const allPaymentsExpired =
-      payments.length > 0 &&
-      payments.every((p) => !!p.expiresAt && new Date(p.expiresAt) < now);
-    if (allPaymentsExpired) return false;
+    if (allPaymentsDead) return false;
+  }
+  // #1319 — a DIRECT_CHECKOUT hold sits in PENDING, not
+  // APPROVED_PENDING_PAYMENT (the consultant never approves it), so once its
+  // payment lapsed nothing here freed the slot: it stayed blocked until the
+  // 15-minute GitHub Actions sweep got round to it. A REQUEST_SUBMITTED
+  // PENDING is a different animal — it waits on a human, not a payment.
+  if (
+    pendingStatus === AppointmentStatus.PENDING &&
+    request?.bookingSource === BookingSource.DIRECT_CHECKOUT &&
+    allPaymentsDead
+  ) {
+    return false;
   }
   return true;
 }

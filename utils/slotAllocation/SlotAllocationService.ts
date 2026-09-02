@@ -2360,9 +2360,9 @@ export class SlotAllocationService {
         },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
         // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
-        consultation: { select: { status: true } },
-        subscription: { select: { status: true } },
-        payment: { select: { expiresAt: true } },
+        consultation: { select: { status: true, bookingSource: true } },
+        subscription: { select: { status: true, bookingSource: true } },
+        payment: { select: { expiresAt: true, paymentStatus: true } },
       },
     });
 
@@ -2416,9 +2416,9 @@ export class SlotAllocationService {
           slotsOfAppointment: {
             where: { deletedAt: null, endsAt: { gt: occupancyClock } },
           },
-          consultation: { select: { status: true } },
-          subscription: { select: { status: true } },
-          payment: { select: { expiresAt: true } },
+          consultation: { select: { status: true, bookingSource: true } },
+          subscription: { select: { status: true, bookingSource: true } },
+          payment: { select: { expiresAt: true, paymentStatus: true } },
         },
       });
       consulteeAppointments

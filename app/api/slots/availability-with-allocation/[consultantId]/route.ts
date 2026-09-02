@@ -290,9 +290,9 @@ export async function GET(
     // live; without them isOccupiedByLiveAppointment cannot drop an expired
     // APPROVED_PENDING_PAYMENT and the grid blanks out genuinely free time.
     const LIVE_OCCUPANCY_SELECT = {
-      consultation: { select: { status: true } },
-      subscription: { select: { status: true } },
-      payment: { select: { expiresAt: true } },
+      consultation: { select: { status: true, bookingSource: true } },
+      subscription: { select: { status: true, bookingSource: true } },
+      payment: { select: { expiresAt: true, paymentStatus: true } },
     } as const;
 
     // #997 Phase 2 — two separate queries (rather than one conditionally-built
@@ -351,6 +351,7 @@ export async function GET(
             consultation: {
               select: {
                 status: true,
+                bookingSource: true,
                 consultationPlan: { select: { title: true } },
                 requestedBy: { select: { user: { select: { name: true } } } },
               },
@@ -358,13 +359,14 @@ export async function GET(
             subscription: {
               select: {
                 status: true,
+                bookingSource: true,
                 subscriptionPlan: { select: { title: true } },
                 requestedBy: { select: { user: { select: { name: true } } } },
               },
             },
             webinar: { select: { webinarPlan: { select: { title: true } } } },
             class: { select: { classPlan: { select: { title: true } } } },
-            payment: { select: { expiresAt: true } },
+            payment: { select: { expiresAt: true, paymentStatus: true } },
           },
         }),
         consulteeOccupancy,
