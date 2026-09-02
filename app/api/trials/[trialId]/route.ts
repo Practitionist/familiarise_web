@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { recordParticipants } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
@@ -38,7 +39,10 @@ import {
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/slotAllocation/occupancyPolicy";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
@@ -151,6 +155,21 @@ class TrialSlotUnavailableError extends Error {
   }
 }
 
+// #1319 review — the scheduling transition read `existingTrial.status` on the
+// global client, outside the transaction that acts on it. Two accepts that both
+// saw PENDING serialise on the consultee lock but pick DIFFERENT slots, so
+// neither trips the availability check: the second created a second appointment
+// and overwrote TrialSession.appointmentId, stranding the first one's slot hold
+// with nothing pointing at it. Thrown when the CAS claim matches no row.
+class TrialStateChangedError extends Error {
+  constructor() {
+    super(
+      "This trial was already updated by another request. Refresh and try again.",
+    );
+    this.name = "TrialStateChangedError";
+  }
+}
+
 // R7 (#1319) — a trial obeys the calendar like every other booking. The
 // schedule arm only ever checked conflicts, so a trial could be pinned at
 // 03:00 on a day the consultant publishes nothing. Distinct from the 409
@@ -180,7 +199,11 @@ async function validateSlotAvailability(
   const overlapping = await db.slotOfAppointment.findFirst({
     where: {
       appointment: {
-        OR: occupiedFilter,
+        AND: [
+          { OR: occupiedFilter },
+          // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
+          { NOT: buildDeadHoldFilter(new Date()) },
+        ],
       },
       // Canonical overlap predicate
       startsAt: { lt: endTime },
@@ -213,6 +236,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+  // #1319 — accept mints a pay-link and takes a slot; it had no limiter.
+  const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (limited) return limited;
 
   const { trialId } = await context.params;
 
@@ -518,20 +544,36 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
             // Update trial with appointment link and the resulting status —
             // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
-            // CAS (#1319): only a PENDING trial can be scheduled; a concurrent
-            // reject/cancel makes this match zero rows and roll the tx back.
-            await transitionTrialSession(tx, {
-              where: { id: trialId },
-              to: requiresPayment
-                ? TrialSessionStatus.AWAITING_PAYMENT
-                : TrialSessionStatus.SCHEDULED,
-              data: {
-                appointmentId: appointment.id,
-                paymentDueAt: requiresPayment
-                  ? computeTrialPaymentDueAt(new Date(), startTime)
-                  : null,
-              },
-            });
+            // CAS (#1319): fromIn narrows the allowed-from map to the exact
+            // status this request read outside the transaction. Two accepts
+            // that both saw PENDING pick DIFFERENT slots, so neither trips the
+            // availability check above; without this the loser overwrote
+            // TrialSession.appointmentId and stranded the winner's slot hold.
+            // Zero rows rolls the whole attempt back, appointment included.
+            // Never wider than TRIAL_ALLOWED_FROM: the validTransitions gate
+            // above only lets PENDING/AWAITING_PAYMENT reach this arm.
+            try {
+              await transitionTrialSession(tx, {
+                where: { id: trialId },
+                to: requiresPayment
+                  ? TrialSessionStatus.AWAITING_PAYMENT
+                  : TrialSessionStatus.SCHEDULED,
+                fromIn: [existingTrial.status],
+                data: {
+                  appointmentId: appointment.id,
+                  paymentDueAt: requiresPayment
+                    ? computeTrialPaymentDueAt(new Date(), startTime)
+                    : null,
+                },
+              });
+            } catch (error) {
+              // Narrowed from-state means a zero-row CAS is specifically "the
+              // status moved under us", not "this edge is illegal".
+              if (error instanceof IllegalTransitionError) {
+                throw new TrialStateChangedError();
+              }
+              throw error;
+            }
             const updatedTrial = await tx.trialSession.findUniqueOrThrow({
               where: { id: trialId },
               include: {
@@ -672,6 +714,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               },
               { status: 409 },
             );
+          }
+          // A lost CAS claim is the same class of answer — the caller acted on
+          // a state that has since moved — but it is not the slot that went.
+          if (error instanceof TrialStateChangedError) {
+            return NextResponse.json({ error: error.message }, { status: 409 });
           }
           throw error;
         } finally {
@@ -953,6 +1000,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+  // #1319 — the same throttle as PATCH: this path reaches the refund gateway.
+  const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (limited) return limited;
 
   const { trialId } = await context.params;
 
