@@ -316,7 +316,11 @@ async function releaseGroupSeats(
 async function expireRequestAndReleaseSlots(
   tx: Pick<
     Tx,
-    "slotOfAppointment" | "appointment" | "consultation" | "subscription"
+    | "slotOfAppointment"
+    | "appointment"
+    | "consultation"
+    | "subscription"
+    | "bookingStatusHistory"
   >,
   appointment: AbandonedAppointment,
 ): Promise<void> {

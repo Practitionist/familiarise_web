@@ -117,6 +117,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     return {
       slotUpdateMany,
       tx: {
+        appointmentParticipant: {
+          createMany: jest.fn().mockResolvedValue({ count: 1 }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
         appointment: {
           findUnique: jest.fn().mockResolvedValue({
             id: "appt-1",
@@ -147,12 +151,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
         consultation: {
           update: jest.fn().mockResolvedValue({}),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-          findUnique: jest
-            .fn()
-            .mockResolvedValue({
-              id: "c1",
-              status: "APPROVED_PENDING_PAYMENT",
-            }),
+          findUnique: jest.fn().mockResolvedValue({
+            id: "c1",
+            status: "APPROVED_PENDING_PAYMENT",
+          }),
         },
       } as never,
     };
@@ -188,6 +190,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
 describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
   function mockTx(consultationStatus: string, casCount: number) {
     return {
+      appointmentParticipant: {
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       appointment: {
         findUnique: jest.fn().mockResolvedValue({
           id: "appt-1",

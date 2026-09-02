@@ -4,6 +4,11 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  linkParticipantsToPayment,
+  recordParticipants,
+  setParticipantStatus,
+} from "@/lib/booking/participants";
 import { transitionTrialSession } from "@/lib/booking/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
@@ -1837,6 +1842,16 @@ export async function handleConsultationCheckout(
       },
     },
   });
+  // #1319 A9 — shadow participant rows, same tx as the slot connects.
+  await recordParticipants(
+    tx,
+    appointment.id,
+    [
+      { userId: consultantUserId, role: "CONSULTANT" },
+      { userId: consulteeUserId, role: "CONSULTEE" },
+    ],
+    { organizationId, status: skipPayment ? "CONFIRMED" : "HELD" },
+  );
 
   return { appointment, plan, amount: plan.price };
 }
@@ -1965,6 +1980,20 @@ export async function handleSubscriptionCheckout(
       // No slots created - consultant allocates later via Requests tab
     },
   });
+  // #1319 A9 — the placeholder has no slots yet, but the buyer is a
+  // participant of the engagement from the moment they hold it.
+  const consulteeUser = await tx.consulteeProfile.findUnique({
+    where: { id: consulteeProfileId },
+    select: { userId: true },
+  });
+  if (consulteeUser) {
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId: consulteeUser.userId, role: "CONSULTEE" }],
+      { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
+    );
+  }
 
   return {
     appointment,
@@ -2092,6 +2121,13 @@ export async function handleWebinarCheckout(
         },
       });
     }
+    // #1319 A9 — one participant row per seat holder.
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId, role: "CONSULTEE" }],
+      { status: _skipPayment ? "CONFIRMED" : "HELD" },
+    );
   }
 
   return { appointment, plan, amount: plan.price };
@@ -2184,6 +2220,13 @@ export async function handleClassCheckout(
       });
       linkedSlotCount++;
     }
+    // #1319 A9 — one participant row per session the buyer is enrolled in.
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId, role: "CONSULTEE" }],
+      { status: _skipPayment ? "CONFIRMED" : "HELD" },
+    );
   }
 
   // Return the first appointment for compatibility
@@ -2907,6 +2950,42 @@ export async function handleCheckout(
                 billingAccountId,
               },
             });
+
+            // #1319 A9 — stamp the funding Payment on the participant rows and,
+            // when no gateway leg follows (mock / zero-amount / org-sponsored),
+            // confirm them here since no capture webhook ever will.
+            if (createdAppointment) {
+              const participantWhere =
+                validatedData.appointmentType === "CLASS" &&
+                validatedData.eventId
+                  ? { appointment: { classId: validatedData.eventId }, userId }
+                  : validatedData.appointmentType === "WEBINAR"
+                    ? { appointmentId: createdAppointment.id, userId }
+                    : { appointmentId: createdAppointment.id };
+              if (
+                validatedData.appointmentType === "CLASS" &&
+                validatedData.eventId
+              ) {
+                // Cross-appointment scope (every session of the class); the
+                // helper is per-appointment.
+                await tx.appointmentParticipant.updateMany({
+                  where: { ...participantWhere, paymentId: null },
+                  data: { paymentId: payment.id },
+                });
+              } else {
+                await linkParticipantsToPayment(
+                  tx,
+                  createdAppointment.id,
+                  payment.id,
+                  validatedData.appointmentType === "WEBINAR"
+                    ? userId
+                    : undefined,
+                );
+              }
+              if (skipPayment) {
+                await setParticipantStatus(tx, participantWhere, "CONFIRMED");
+              }
+            }
 
             // Enterprise: WALLET fundingSource — debit from BillingAccount
             // atomically via the wallet helper (raw-SQL conditional UPDATE).

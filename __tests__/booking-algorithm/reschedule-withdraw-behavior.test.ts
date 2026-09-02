@@ -55,7 +55,9 @@ interface SlotCas {
 
 function makeTx() {
   return {
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     rescheduleRequest: {
+      findUnique: jest.fn(async () => state.request),
       updateMany: jest.fn(async ({ where, data }: StatusCas) => {
         const row = state.request;
         if (!row || row.id !== where.id) return { count: 0 };
@@ -95,6 +97,7 @@ function makeTx() {
       }),
     },
     consultation: {
+      findUnique: jest.fn(async () => state.consultation ?? null),
       updateMany: jest.fn(async ({ where, data }: StatusCas) => {
         const row = state.consultation;
         if (!row || row.id !== where.id) return { count: 0 };
@@ -116,8 +119,8 @@ jest.mock("../../lib/prisma", () => ({
     rescheduleRequest: {
       findUnique: jest.fn(async () => state.request),
     },
-    $transaction: jest.fn(async (fn: (t: ReturnType<typeof makeTx>) => unknown) =>
-      fn(tx),
+    $transaction: jest.fn(
+      async (fn: (t: ReturnType<typeof makeTx>) => unknown) => fn(tx),
     ),
   },
 }));
@@ -148,7 +151,9 @@ function seed(
     { id: "slot-2", isTentative: true, completionStatus: "RESCHEDULED" },
   ];
   const consultationId =
-    overrides.consultationId === undefined ? "cons-1" : overrides.consultationId;
+    overrides.consultationId === undefined
+      ? "cons-1"
+      : overrides.consultationId;
 
   state = {
     request: {
@@ -165,7 +170,10 @@ function seed(
     },
     slots,
     consultation: consultationId
-      ? { id: consultationId, status: overrides.consultationStatus ?? "PENDING" }
+      ? {
+          id: consultationId,
+          status: overrides.consultationStatus ?? "PENDING",
+        }
       : null,
     subscription: overrides.subscriptionId
       ? {

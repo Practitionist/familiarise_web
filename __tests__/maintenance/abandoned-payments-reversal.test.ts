@@ -26,13 +26,15 @@ jest.mock("../../lib/prisma", () => {
     },
     slotOfAppointment: {
       count: jest.fn(),
-      updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
     },
     appointment: { updateMany: jest.fn() },
-    consultation: { updateMany: jest.fn() },
-    subscription: { updateMany: jest.fn() },
+    consultation: { findUnique: jest.fn(), updateMany: jest.fn() },
+    subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
+    // #1319 A12 — every CAS helper appends its history row in the same tx.
+    bookingStatusHistory: { create: jest.fn() },
   };
   const client = {
     ...tx,
@@ -81,13 +83,14 @@ const db = prisma as unknown as {
     };
     slotOfAppointment: {
       count: jest.Mock;
-      updateMany: jest.Mock;
+      updateManyAndReturn: jest.Mock;
       findMany: jest.Mock;
       update: jest.Mock;
     };
     appointment: { updateMany: jest.Mock };
-    consultation: { updateMany: jest.Mock };
-    subscription: { updateMany: jest.Mock };
+    consultation: { findUnique: jest.Mock; updateMany: jest.Mock };
+    subscription: { findUnique: jest.Mock; updateMany: jest.Mock };
+    bookingStatusHistory: { create: jest.Mock };
   };
 };
 const tx = db.__tx;
@@ -125,11 +128,13 @@ beforeEach(() => {
   });
   tx.payment.update.mockResolvedValue({});
   tx.slotOfAppointment.count.mockResolvedValue(0);
-  tx.slotOfAppointment.updateMany.mockImplementation(() => {
+  tx.slotOfAppointment.updateManyAndReturn.mockImplementation(() => {
     order.push("cancelSlots");
-    return Promise.resolve({ count: 1 });
+    return Promise.resolve([{ id: "slot_1" }]);
   });
-  tx.slotOfAppointment.findMany.mockResolvedValue([]);
+  tx.slotOfAppointment.findMany.mockResolvedValue([
+    { id: "slot_1", completionStatus: "SCHEDULED" },
+  ]);
   tx.slotOfAppointment.update.mockResolvedValue({});
   tx.appointment.updateMany.mockImplementation(() => {
     order.push("tombstoneAppointment");
@@ -140,6 +145,9 @@ beforeEach(() => {
     return Promise.resolve({ count: 1 });
   });
   tx.subscription.updateMany.mockResolvedValue({ count: 1 });
+  tx.consultation.findUnique.mockResolvedValue({ status: "PENDING" });
+  tx.subscription.findUnique.mockResolvedValue({ status: "PENDING" });
+  tx.bookingStatusHistory.create.mockResolvedValue({});
   mockReverse.mockImplementation(() => {
     order.push("reverseCredits");
     return Promise.resolve(500);
@@ -175,7 +183,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
       },
       data: { status: "EXPIRED" },
     });
-    expect(tx.slotOfAppointment.updateMany).toHaveBeenCalledWith(
+    expect(tx.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           appointmentId: "apt_1",
@@ -239,7 +247,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
 
     const result = await cleanupAbandonedPayments();
 
-    expect(tx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(tx.slotOfAppointment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(tx.appointment.updateMany).not.toHaveBeenCalled();
     expect(result.errorCount).toBe(0);
     expect(result.skippedCount).toBe(1);
@@ -279,7 +287,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
     expect(mockReverse).toHaveBeenCalledWith("pay_1", tx);
     expect(tx.consultation.updateMany).not.toHaveBeenCalled();
     expect(tx.appointment.updateMany).not.toHaveBeenCalled();
-    expect(tx.slotOfAppointment.updateMany).toHaveBeenCalledWith(
+    expect(tx.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           appointmentId: "apt_1",

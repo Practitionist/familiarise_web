@@ -1,10 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
+import { setParticipantStatus } from "@/lib/booking/participants";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import {
-  notifyAppointmentCancelled,
-} from "@/lib/novu";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
@@ -372,6 +371,16 @@ export async function POST(
             data: { completionStatus: "CANCELLED" },
           });
         }
+        // #1319 A9 — every participant of the cancelled engagement.
+        await setParticipantStatus(
+          tx,
+          appointment.subscription
+            ? { appointment: { subscriptionId: appointment.subscription.id } }
+            : appointment.class
+              ? { appointment: { classId: appointment.class.id } }
+              : { appointmentId },
+          "CANCELLED",
+        );
 
         // Close any live reschedule proposal on this booking. Leaving one open
         // would keep openForAppointmentId reserved forever and let the expiry
@@ -507,7 +516,8 @@ export async function POST(
             try {
               const restored = await refundBookingPayment({
                 paymentId: paidPayment.id,
-                reason: "cancellation (credit-funded booking, full restoration)",
+                reason:
+                  "cancellation (credit-funded booking, full restoration)",
                 initiatedByUserId: session.user.id,
               });
               refund = {
@@ -521,7 +531,10 @@ export async function POST(
                 requiresManualReview: false,
               };
             } catch (freeErr) {
-              Sentry.captureException(freeErr instanceof Error ? freeErr : new Error(String(freeErr)), { tags: { subsystem: "bookings" } });
+              Sentry.captureException(
+                freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
+                { tags: { subsystem: "bookings" } },
+              );
               refund = {
                 amountRefundedPaise: 0,
                 refundPct: 100,

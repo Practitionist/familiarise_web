@@ -1,6 +1,6 @@
 # Booking Architecture Decisions
 
-This document is the architecture-decision register for the booking subsystem. It records the load-bearing choices that shape slot allocation, validation, and the background jobs that keep bookings consistent, so that a reader can understand *why* the system is built the way it is without reverse-engineering it from the code. Each entry summarises a decision, the alternative it rejected, and where the decision lives; the linked chapter carries the full detail.
+This document is the architecture-decision register for the booking subsystem. It records the load-bearing choices that shape slot allocation, validation, and the background jobs that keep bookings consistent, so that a reader can understand _why_ the system is built the way it is without reverse-engineering it from the code. Each entry summarises a decision, the alternative it rejected, and where the decision lives; the linked chapter carries the full detail.
 
 The decisions below are stable. When one of them changes, update both the entry here and the chapter it points at, and note the change with its issue or PR reference.
 
@@ -8,19 +8,27 @@ The decisions below are stable. When one of them changes, update both the entry 
 
 The following table is the index. Read it top-to-bottom for a quick orientation, then follow the link in any row whose rationale you need in full.
 
-| ADR | Decision                                                              | Status | Detail                                                                       |
-| --- | --------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------- |
-| B1  | All scheduling is built on 30-minute atomic slots                     | Live   | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)       |
-| B2  | Weeks run Sunday to Saturday via a single `countWeeks` source         | Live   | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)       |
-| B3  | Validation is a three-layer pipeline (Zod, service, database)         | Live   | [01-architecture.md](./01-architecture.md)                                   |
-| B4  | Weekly availability is stored as UTC integers; same-day is local      | Superseded by B9 | [02-event-types-and-validation.md](./02-event-types-and-validation.md)       |
-| B5  | Tentative slots are released by a 24-hour, idempotent cleanup job      | Live   | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
-| B6  | An expired pending-payment hold frees its slot for both code paths    | Live   | [01-architecture.md](./01-architecture.md)                                   |
-| B7  | Concurrency is guarded by Redis distributed locks plus DB constraints | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
-| B8  | Background jobs run on GitHub Actions cron                            | Live   | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
-| B9  | All daily and weekly limit bucketing uses the event's scheduling timezone (default Asia/Kolkata) via `SlotCalculationService`; display stays viewer-local | Live   | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)       |
-| B10 | A dialog-initiated fresh allocation sends `initialAllocation` and is rejected with 409 if confirmed slots already exist | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
-| B11 | Direct slot writers share one `slot-booking:` namespace keyed by 30-minute interval atoms, and booking locks fail closed when Redis is unreachable | Live   | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)             |
+| ADR | Decision                                                                                                                                                  | Status           | Detail                                                                         |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------ |
+| B1  | All scheduling is built on 30-minute atomic slots                                                                                                         | Live             | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |
+| B2  | Weeks run Sunday to Saturday via a single `countWeeks` source                                                                                             | Live             | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |
+| B3  | Validation is a three-layer pipeline (Zod, service, database)                                                                                             | Live             | [01-architecture.md](./01-architecture.md)                                     |
+| B4  | Weekly availability is stored as UTC integers; same-day is local                                                                                          | Superseded by B9 | [02-event-types-and-validation.md](./02-event-types-and-validation.md)         |
+| B5  | Tentative slots are released by a 24-hour, idempotent cleanup job                                                                                         | Live             | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
+| B6  | An expired pending-payment hold frees its slot for both code paths                                                                                        | Live             | [01-architecture.md](./01-architecture.md)                                     |
+| B7  | Concurrency is guarded by Redis distributed locks plus DB constraints                                                                                     | Live             | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
+| B8  | Background jobs run on GitHub Actions cron                                                                                                                | Live             | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
+| B9  | All daily and weekly limit bucketing uses the event's scheduling timezone (default Asia/Kolkata) via `SlotCalculationService`; display stays viewer-local | Live             | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |
+| B10 | A dialog-initiated fresh allocation sends `initialAllocation` and is rejected with 409 if confirmed slots already exist                                   | Live             | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
+| B11 | Direct slot writers share one `slot-booking:` namespace keyed by 30-minute interval atoms, and booking locks fail closed when Redis is unreachable        | Live             | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
+
+The B-series above records algorithm and concurrency decisions. The A-series below records schema-shape decisions for the booking aggregate; it was introduced in wave 5 (#1319) because three decisions from the June 2026 schema audit had no written home.
+
+| ADR | Decision                                                                                                                      | Status                | Detail    |
+| --- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------- | --------- |
+| A9  | `AppointmentParticipant` is the participant edge; written from day one after the reset, read by nothing until the reader flip | Adopted (schema-only) | this file |
+| A11 | Row-version columns on booking models                                                                                         | Deferred              | this file |
+| A12 | `BookingStatusHistory` is appended inside every CAS transition helper (tracked during design as "B4-audit")                   | Adopted               | this file |
 
 ## ADR B1 — Thirty-minute atomic slots
 
@@ -89,3 +97,19 @@ Two alternatives were rejected. Bucketing by UTC everywhere is fully consistent 
 An allocation request may carry `initialAllocation: true`, which makes the server reject the request with a typed 409 conflict if the event already has any confirmed (non-tentative) slot. The Allocate Slots dialog sends the flag for fresh `PENDING` requests on all three modes (manual, auto, and requested); reschedule and re-allocation flows omit it, preserving their intentional replace semantics. The check runs once under the distributed locks and is repeated inside the write transaction, and the client answers the 409 by closing the dialog, refreshing the request list, and telling the consultant the request was already allocated in another session.
 
 The guard exists because the Redis locks alone cannot catch a cross-mode race: auto-allocation locks the whole consultant while manual allocation shards its lock key by target day (#860), so a consultant with the same request open in two tabs could run manual in one and auto in the other concurrently. One-to-one events still serialise on the consultee lock, but serialisation is not rejection — the manual path treats an already-allocated event as a legal re-allocation and would silently delete and replace the first tab's appointments. Group events (webinars and classes) have no consultee lock at all, which is why the in-transaction re-check exists. Client-side, every allocation attempt also carries an `Idempotency-Key` (reused when the identical payload is retried), so a double-click replays the original batch (#837) instead of racing itself.
+
+## ADR A9 — AppointmentParticipant is the participant edge (Adopted, schema-only)
+
+Participation in a booking was modelled only as the implicit many-to-many join between `SlotOfAppointment` and `User`. That join can say who is attached to a slot, but it cannot carry a role, a per-seat status, or which `Payment` funded the seat, so capacity counts walked every slot of every session, per-attendee cancel and refund logic had no row to update, and a class checkout read every appointment, slot and user of the class for each buyer. The decision is a first-class `AppointmentParticipant` row keyed on `(appointmentId, userId)` with `role`, `status` (`HELD`, `CONFIRMED`, `CANCELLED`, `REFUNDED`, `ATTENDED`) and an optional `paymentId`.
+
+The table is adopted schema-only in wave 5: every writer that connects a user to a slot also records the participant edge in the same transaction, the seed suite writes it, and the only production reader is a drift log in `reconcile-slot-availability`. Readers (capacity counts, rosters, org scoping) keep using the join until a dedicated epic flips them, so the two representations coexist under a reconciliation check rather than a cut-over. The rejected alternative was to keep inferring roles from the join and add columns to `SlotOfAppointment`; that would have multiplied per-seat state by the number of slots in a session. The table was added before the pre-MVP reset so that it is populated from the first day and never backfilled.
+
+## ADR A11 — Row-version columns on booking models (Deferred)
+
+A `version` column with compare-and-set on write exists on four enterprise models. It is not added to the booking models. The status column already carries the concurrency guarantee that matters: every status write goes through a helper whose allowed-from set is baked into the UPDATE's WHERE clause, which is optimistic locking on the field that gates money. A version column would only add protection for concurrent edits of non-status fields, such as two tabs editing a plan description, and no incident has needed it. The decision is revisited if a non-status field ever needs last-writer-wins protection.
+
+## ADR A12 — BookingStatusHistory is appended inside the transition helpers (Adopted)
+
+Every guarded transition in `lib/booking/transitions.ts` appends one row to `BookingStatusHistory` in the same transaction as the state change, carrying the entity kind, the entity id, the from and to statuses, and optional actor, reason and organisation attribution. This is the audit trail that reschedule and cancel disputes needed and that support and staff views read. It is written by the helpers rather than by a database trigger because the helpers already receive the transaction and the actor, and because the seven lifecycles share three different status enums, which is why `fromStatus` and `toStatus` are strings and `entityId` is polymorphic.
+
+The from-status is read with a `findUnique` immediately before the compare-and-set update, because an `updateMany` cannot return the row's previous value. A second legal transition committing between that read and the update can therefore log a stale from-status. That imprecision is accepted: it can only affect an append-only audit row, never the state change itself, and the alternative of narrowing the compare-and-set to the observed value would have turned legitimate concurrent moves into spurious conflicts across roughly forty call sites. There is no outbox or dispatcher on this table; notifications keep their existing paths, and a drainer is only worth adding once the platform has a queue that is not the throttled GitHub Actions cron fleet.

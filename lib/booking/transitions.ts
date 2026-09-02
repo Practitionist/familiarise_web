@@ -14,6 +14,7 @@ import type { Tx } from "@/lib/prisma";
  * the row may currently be in. Dependency-light (Prisma types only).
  */
 import type {
+  BookingHistoryEntity,
   ClassStatus,
   Prisma,
   AppointmentStatus,
@@ -24,6 +25,40 @@ import type {
 } from "@prisma/client";
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+
+// #1319 A12 — every guarded transition appends one BookingStatusHistory row in
+// the same tx. The from-status is read before the CAS because updateMany
+// cannot return the pre-image; a lost race between the read and the write logs
+// a stale from-status on an append-only audit row, never a wrong state change.
+type HistoryTx = Pick<Tx, "bookingStatusHistory">;
+interface HistoryMeta {
+  /** Audit attribution. Optional so no existing caller changes. */
+  actorUserId?: string | null;
+  reason?: string | null;
+  organizationId?: string | null;
+  appointmentId?: string | null;
+}
+async function appendHistory(
+  tx: HistoryTx,
+  entity: BookingHistoryEntity,
+  entityId: string,
+  fromStatus: string | null | undefined,
+  toStatus: string,
+  meta: HistoryMeta,
+): Promise<void> {
+  await tx.bookingStatusHistory.create({
+    data: {
+      entity,
+      entityId,
+      fromStatus: fromStatus ?? "UNKNOWN",
+      toStatus,
+      actorUserId: meta.actorUserId ?? null,
+      reason: meta.reason ?? null,
+      organizationId: meta.organizationId ?? null,
+      appointmentId: meta.appointmentId ?? null,
+    },
+  });
+}
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
 
@@ -73,8 +108,8 @@ export const ALLOCATION_APPROVABLE_FROM: AppointmentStatus[] = [
 ];
 
 export async function transitionConsultationRequest(
-  tx: Pick<Tx, "consultation">,
-  args: {
+  tx: Pick<Tx, "consultation" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     /**
      * Always one row, by id. Extra predicates are the doctrine's own idiom: a
      * condition that must still hold at write time belongs in this WHERE, not
@@ -88,6 +123,10 @@ export async function transitionConsultationRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  const before = await tx.consultation.findUnique({
+    where: { id: args.where.id },
+    select: { status: true },
+  });
   const res = await tx.consultation.updateMany({
     where: {
       ...args.where,
@@ -97,11 +136,19 @@ export async function transitionConsultationRequest(
   });
   if (res.count === 0)
     throw new IllegalTransitionError("Consultation", args.to);
+  await appendHistory(
+    tx,
+    "CONSULTATION",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 export async function transitionSubscriptionRequest(
-  tx: Pick<Tx, "subscription">,
-  args: {
+  tx: Pick<Tx, "subscription" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     /** Same idiom as the consultation helper: extra predicates that must still
      * hold at write time belong in this WHERE, not in a read ahead of it. */
     where: Prisma.SubscriptionWhereInput & { id: string };
@@ -111,6 +158,10 @@ export async function transitionSubscriptionRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  const before = await tx.subscription.findUnique({
+    where: { id: args.where.id },
+    select: { status: true },
+  });
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
@@ -120,6 +171,14 @@ export async function transitionSubscriptionRequest(
   });
   if (res.count === 0)
     throw new IllegalTransitionError("Subscription", args.to);
+  await appendHistory(
+    tx,
+    "SUBSCRIPTION",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
@@ -151,14 +210,18 @@ export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
 export const EVENT_PUBLISHABLE_FROM: WebinarStatus[] = ["DRAFT"];
 
 export async function transitionWebinarEvent(
-  tx: Pick<Tx, "webinar">,
-  args: {
+  tx: Pick<Tx, "webinar" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: WebinarStatus;
     data?: Omit<Prisma.WebinarUncheckedUpdateManyInput, "status">;
     fromIn?: WebinarStatus[];
   },
 ): Promise<void> {
+  const before = await tx.webinar.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.webinar.updateMany({
     where: {
       ...args.where,
@@ -167,17 +230,29 @@ export async function transitionWebinarEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Webinar", args.to);
+  await appendHistory(
+    tx,
+    "WEBINAR",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 export async function transitionClassEvent(
-  tx: Pick<Tx, "class">,
-  args: {
+  tx: Pick<Tx, "class" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: ClassStatus;
     data?: Omit<Prisma.ClassUncheckedUpdateManyInput, "status">;
     fromIn?: ClassStatus[];
   },
 ): Promise<void> {
+  const before = await tx.class.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.class.updateMany({
     where: {
       ...args.where,
@@ -186,6 +261,14 @@ export async function transitionClassEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
+  await appendHistory(
+    tx,
+    "CLASS",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 //////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
@@ -225,10 +308,16 @@ export const SLOT_COMPLETION_ALLOWED_FROM: Record<
  * appointmentId or a user relation rather than by slot id, and `allowZero`
  * exists because cancel/reschedule sweeps legitimately match zero live rows
  * and must not 409. Returns the matched count so sweeps can report honestly.
+ *
+ * The history guarantee is exact in both directions: a SLOT row exists only
+ * for a slot THIS call moved, because the ids come from the UPDATE's own
+ * RETURNING rather than from the pre-read. The pre-read supplies from-status
+ * only, so the documented A12 limitation stays what it is — a stale
+ * `fromStatus` on a row that did move, never a row that did not.
  */
 export async function transitionSlotCompletion(
-  tx: Pick<Tx, "slotOfAppointment">,
-  args: {
+  tx: Pick<Tx, "slotOfAppointment" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: Prisma.SlotOfAppointmentWhereInput;
     to: SlotCompletionStatus;
     data?: Omit<
@@ -239,19 +328,39 @@ export async function transitionSlotCompletion(
     allowZero?: boolean;
   },
 ): Promise<number> {
-  const res = await tx.slotOfAppointment.updateMany({
-    where: {
-      ...args.where,
-      completionStatus: {
-        in: args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to],
-      },
-    },
-    data: { completionStatus: args.to, ...args.data },
+  const fromIn = args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to];
+  const casWhere = { ...args.where, completionStatus: { in: fromIn } };
+  // The pre-read carries the CAS's own from-set, not just the caller's where,
+  // so it is a from-status lookup for the cohort the UPDATE may move. It does
+  // NOT decide who gets a history row: a concurrent writer can pull a row out
+  // of the from-set between the two statements, and logging the pre-read would
+  // fabricate an audit row for a slot this call never touched.
+  const before = await tx.slotOfAppointment.findMany({
+    where: casWhere,
+    select: { id: true, completionStatus: true },
   });
-  if (res.count === 0 && !args.allowZero) {
+  const moved = await tx.slotOfAppointment.updateManyAndReturn({
+    where: casWhere,
+    data: { completionStatus: args.to, ...args.data },
+    select: { id: true },
+  });
+  if (moved.length === 0 && !args.allowZero) {
     throw new IllegalTransitionError("SlotOfAppointment", args.to);
   }
-  return res.count;
+  const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
+  for (const row of moved) {
+    // A row that entered the from-set after the pre-read has no entry here and
+    // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
+    await appendHistory(
+      tx,
+      "SLOT",
+      row.id,
+      fromById.get(row.id),
+      args.to,
+      args,
+    );
+  }
+  return moved.length;
 }
 
 //////////////////////////////////////////////// TrialSession ////////////////////////////////////////////////
@@ -274,14 +383,18 @@ export const TRIAL_ALLOWED_FROM: Record<
 };
 
 export async function transitionTrialSession(
-  tx: Pick<Tx, "trialSession">,
-  args: {
+  tx: Pick<Tx, "trialSession" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: TrialSessionStatus;
     data?: Omit<Prisma.TrialSessionUncheckedUpdateManyInput, "status">;
     fromIn?: TrialSessionStatus[];
   },
 ): Promise<void> {
+  const before = await tx.trialSession.findUnique({
+    where: { id: args.where.id },
+    select: { status: true },
+  });
   const res = await tx.trialSession.updateMany({
     where: {
       ...args.where,
@@ -291,6 +404,14 @@ export async function transitionTrialSession(
   });
   if (res.count === 0)
     throw new IllegalTransitionError("TrialSession", args.to);
+  await appendHistory(
+    tx,
+    "TRIAL",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
 
 //////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
@@ -329,8 +450,8 @@ export const RESCHEDULE_TERMINAL_STATUSES: RescheduleRequestStatus[] = [
 ];
 
 export async function transitionRescheduleRequest(
-  tx: Pick<Tx, "rescheduleRequest">,
-  args: {
+  tx: Pick<Tx, "rescheduleRequest" | "bookingStatusHistory">,
+  args: HistoryMeta & {
     where: { id: string };
     to: RescheduleRequestStatus;
     data?: Omit<Prisma.RescheduleRequestUncheckedUpdateManyInput, "status">;
@@ -342,6 +463,10 @@ export async function transitionRescheduleRequest(
   // nullable-unique stops reserving the appointment and a fresh reschedule can
   // open. Callers must not have to remember this.
   const releasesLock = RESCHEDULE_TERMINAL_STATUSES.includes(args.to);
+  const before = await tx.rescheduleRequest.findUnique({
+    where: args.where,
+    select: { status: true },
+  });
   const res = await tx.rescheduleRequest.updateMany({
     where: {
       ...args.where,
@@ -358,4 +483,12 @@ export async function transitionRescheduleRequest(
   if (res.count === 0) {
     throw new IllegalTransitionError("RescheduleRequest", args.to);
   }
+  await appendHistory(
+    tx,
+    "RESCHEDULE_REQUEST",
+    args.where.id,
+    before?.status,
+    args.to,
+    args,
+  );
 }
