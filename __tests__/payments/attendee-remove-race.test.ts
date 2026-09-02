@@ -100,19 +100,31 @@ function serializationFailure() {
   );
 }
 
+/**
+ * The two handlers differ only in the name of their route param, so the cases
+ * are driven through one shape. Widened deliberately: keeping the two literal
+ * param types would intersect across the table and satisfy neither.
+ */
+type ParticipantDelete = (
+  request: Request,
+  ctx: { params: Promise<Record<string, string>> },
+) => Promise<Response>;
+
 const CASES = [
   {
     label: "webinar",
-    handler: deleteWebinarParticipant,
+    handler: deleteWebinarParticipant as unknown as ParticipantDelete,
     eventId: "webinar-1",
-    params: () => Promise.resolve({ webinarId: "webinar-1" }),
+    params: (): Promise<Record<string, string>> =>
+      Promise.resolve({ webinarId: "webinar-1" }),
     findFirst: mockWebinarFindFirst,
   },
   {
     label: "class",
-    handler: deleteClassParticipant,
+    handler: deleteClassParticipant as unknown as ParticipantDelete,
     eventId: "class-1",
-    params: () => Promise.resolve({ classId: "class-1" }),
+    params: (): Promise<Record<string, string>> =>
+      Promise.resolve({ classId: "class-1" }),
     findFirst: mockClassFindFirst,
   },
 ] as const;

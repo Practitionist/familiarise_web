@@ -86,7 +86,9 @@ describe("fall-through 1 — the chat sidebar's Stream filter", () => {
 describe("fall-through 2 — the consultee events read", () => {
   it("pins every booking model to the org for an orgMember", async () => {
     jest.resetModules();
-    const findMany = jest.fn(async () => []);
+    // Typed as jest.Mock so `.mock.calls[n][0]` is readable — the inferred
+    // empty-tuple return would make every argument index a type error.
+    const findMany: jest.Mock = jest.fn(async () => []);
     jest.doMock("../../lib/prisma", () => ({
       __esModule: true,
       default: {
@@ -116,7 +118,7 @@ describe("fall-through 2 — the consultee events read", () => {
 describe("fall-through 3 — the trial list", () => {
   it("pins the where clause to the org for an orgMember", async () => {
     jest.resetModules();
-    const trialFindMany = jest.fn(async () => []);
+    const trialFindMany: jest.Mock = jest.fn(async () => []);
     jest.doMock("../../lib/prisma", () => ({
       __esModule: true,
       default: {
@@ -157,7 +159,7 @@ describe("fall-through 3 — the trial list", () => {
 describe("fall-through 4 — the consultation request list", () => {
   it("pins the appointment to the org for an orgMember", async () => {
     jest.resetModules();
-    const consultationFindMany = jest.fn(async () => []);
+    const consultationFindMany: jest.Mock = jest.fn(async () => []);
     jest.doMock("../../lib/prisma", () => ({
       __esModule: true,
       default: {
@@ -200,7 +202,7 @@ describe("fall-through 4 — the consultation request list", () => {
 describe("fall-through 5 — the consultant appointments list", () => {
   it("hands the resolved Scope down whole rather than a hand-rolled filter", async () => {
     jest.resetModules();
-    const getConsultantAppointments = jest.fn(async () => []);
+    const getConsultantAppointments: jest.Mock = jest.fn(async () => []);
     jest.doMock("../../lib/prisma", () => ({
       __esModule: true,
       default: {
