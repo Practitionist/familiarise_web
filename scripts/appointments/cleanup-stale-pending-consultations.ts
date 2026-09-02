@@ -19,7 +19,12 @@
  */
 
 import prisma from "../../lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
+import {
+  transitionConsultationRequest,
+  transitionSlotCompletion,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Cancel consultations with APPROVED/APPROVED_PENDING_PAYMENT but no payment after 7 days
@@ -39,8 +44,10 @@ export interface StalePendingConsultationsResult {
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function cleanupStalePendingConsultations(): Promise<StalePendingConsultationsResult> {
-  return withCronLock("cleanup-stale-pending-consultations", { failMode: "open" }, () =>
-    cleanupStalePendingConsultationsUnlocked(),
+  return withCronLock(
+    "cleanup-stale-pending-consultations",
+    { failMode: "open" },
+    () => cleanupStalePendingConsultationsUnlocked(),
   );
 }
 
@@ -62,7 +69,10 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
     const staleConsultations = await prisma.consultation.findMany({
       where: {
         status: {
-          in: [AppointmentStatus.APPROVED, AppointmentStatus.APPROVED_PENDING_PAYMENT],
+          in: [
+            AppointmentStatus.APPROVED,
+            AppointmentStatus.APPROVED_PENDING_PAYMENT,
+          ],
         },
         updatedAt: { lt: staleDate },
         appointment: {
@@ -127,33 +137,41 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
 
       try {
         // Cancel the consultation and release tentative slots
-        await prisma.$transaction(async (tx) => {
-          // Update consultation status
-          await tx.consultation.update({
+        const released = await prisma.$transaction(async (tx) => {
+          // CAS (#1319): the cohort is PENDING-only; a request approved since
+          // the read matches zero rows and is skipped, never cancelled.
+          await transitionConsultationRequest(tx, {
             where: { id: consultation.id },
+            to: AppointmentStatus.CANCELLED,
+            fromIn: [AppointmentStatus.PENDING],
             data: {
-              status: AppointmentStatus.CANCELLED,
               cancellationNotes: `Auto-cancelled: No payment activity for ${STALE_THRESHOLD_DAYS} days`,
               cancelledAt: new Date(),
             },
           });
 
-          // Delete tentative slots if appointment exists
-          if (appointment) {
-            await tx.slotOfAppointment.deleteMany({
-              where: {
-                appointmentId: appointment.id,
-                isTentative: true,
-              },
-            });
-          }
+          // Release tentative slots by status (rule 2: nothing is deleted).
+          if (!appointment) return 0;
+          return transitionSlotCompletion(tx, {
+            where: {
+              appointmentId: appointment.id,
+              isTentative: true,
+              deletedAt: null,
+            },
+            to: SlotCompletionStatus.CANCELLED,
+            data: { deletedAt: new Date() },
+            allowZero: true,
+          });
         });
 
-        // Only count slots after successful transaction
-        slotsReleased += tentativeSlotsCount;
+        slotsReleased += released;
         console.log(`   ✅ Cancelled consultation`);
         consultationsCancelled++;
       } catch (error) {
+        if (error instanceof IllegalTransitionError) {
+          console.log(`   ⏭️ Skipped — status changed since the sweep read`);
+          continue;
+        }
         const msg = `Failed to cancel consultation ${consultation.id}: ${error}`;
         console.error(`   ❌ ${msg}`);
         errors.push(msg);
