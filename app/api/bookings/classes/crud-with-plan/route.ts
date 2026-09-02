@@ -21,6 +21,10 @@ import {
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { buildContiguousSlotAtoms } from "@/lib/appointments/contiguous-slot-run";
+import {
+  assertCollaboratorsAvailableForWindows,
+  CollaboratorUnavailableError,
+} from "@/lib/collaborators/availability";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -197,6 +201,25 @@ export async function POST(request: NextRequest) {
       start = undefined; // Treat invalid start date string as undefined
     }
 
+    // #784 — the session start times, computed once so the AE-2 co-host guard
+    // and the appointment create below cannot drift apart.
+    const sessionStarts: Date[] = start
+      ? Array.from({ length: totalSessions }).map((_, index) => {
+          const appointmentDate = new Date(start!);
+          // Spread meetings evenly within each week:
+          // weekOffset positions the week, dayWithinWeek spaces meetings apart
+          // e.g. sessionsPerWeek=2 -> days 0,3 (Mon,Thu)
+          // e.g. sessionsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
+          const weekOffset = Math.floor(index / sessionsPerWeek) * 7;
+          const dayWithinWeek =
+            (index % sessionsPerWeek) * Math.floor(7 / sessionsPerWeek);
+          appointmentDate.setDate(
+            appointmentDate.getDate() + weekOffset + dayWithinWeek,
+          );
+          return appointmentDate;
+        })
+      : [];
+
     // Create class plan, instance, and appointments in a transaction
     const result = await prisma.$transaction(
       async (tx) => {
@@ -240,6 +263,21 @@ export async function POST(request: NextRequest) {
           },
         });
 
+        // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
+        // times an ACCEPTED co-host is already busy for. A plan created in
+        // this very transaction has none, so this only bites once a plan can
+        // carry collaborators before its sessions are laid down.
+        await assertCollaboratorsAvailableForWindows(tx, {
+          planType: "CLASS",
+          planId: classPlan.id,
+          windows: sessionStarts.map((startsAt) => ({
+            startsAt,
+            endsAt: new Date(
+              startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
+            ),
+          })),
+        });
+
         // 2. Create the class instance with appointments
         const classEvent = await tx.class.create({
           data: {
@@ -253,40 +291,18 @@ export async function POST(request: NextRequest) {
             // Create appointments for the full duration
             appointments: {
               // Only create appointments if startDate is defined
-              create: start
-                ? Array.from({
-                    // Use totalSessions (sessionsPerWeek * durationInMonths * 4)
-                    // to stay in sync with ClassPlan.totalSessions
-                    length: totalSessions,
-                  }).map((_, index) => {
-                    const appointmentDate = new Date(start!);
-                    // Spread meetings evenly within each week:
-                    // weekOffset positions the week, dayWithinWeek spaces meetings apart
-                    // e.g. sessionsPerWeek=2 -> days 0,3 (Mon,Thu)
-                    // e.g. sessionsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
-                    const weekOffset = Math.floor(index / sessionsPerWeek) * 7;
-                    const dayWithinWeek =
-                      (index % sessionsPerWeek) *
-                      Math.floor(7 / sessionsPerWeek);
-                    appointmentDate.setDate(
-                      appointmentDate.getDate() + weekOffset + dayWithinWeek,
-                    );
-                    const slotStart = new Date(appointmentDate);
-
-                    // #1071 — N×30min atoms per session (allocator parity).
-                    return {
-                      appointmentType: "CLASS",
-                      slotsOfAppointment: {
-                        create: buildContiguousSlotAtoms({
-                          startsAt: slotStart,
-                          durationInHours: sessionDurationInHours,
-                          consultantProfileId,
-                          isTentative: true,
-                        }),
-                      },
-                    };
-                  })
-                : undefined,
+              create: sessionStarts.map((slotStart) => ({
+                // #1071 — N×30min atoms per session (allocator parity).
+                appointmentType: "CLASS" as const,
+                slotsOfAppointment: {
+                  create: buildContiguousSlotAtoms({
+                    startsAt: slotStart,
+                    durationInHours: sessionDurationInHours,
+                    consultantProfileId,
+                    isTentative: true,
+                  }),
+                },
+              })),
             },
           },
           include: {
@@ -330,6 +346,12 @@ export async function POST(request: NextRequest) {
       );
     }
     // --- End Zod Error Handling ---
+
+    // AE-2 (#784) — co-host clash is a conflict, not a server error.
+    if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+
     console.error("Error creating class with plan:", error);
     // Add more detailed logging
     let errorMessage = "An error occurred while creating the class";
@@ -764,6 +786,37 @@ export async function PATCH(request: NextRequest) {
             }
           }
 
+          // AE-2 (#784) — mirrors the webinar PATCH's guard at its own time
+          // commit: when this PATCH actually MOVES the scheduling period, the
+          // sessions it leaves standing must still be times every ACCEPTED
+          // co-host is free for. Co-hosts are not slot participants, so no
+          // other check here sees their clash.
+          const periodMoved =
+            (classUpdateData.schedulingPeriodStartsAt !== undefined &&
+              classUpdateData.schedulingPeriodStartsAt?.getTime() !==
+                updatedClass.schedulingPeriodStartsAt?.getTime()) ||
+            (classUpdateData.schedulingPeriodEndsAt !== undefined &&
+              classUpdateData.schedulingPeriodEndsAt?.getTime() !==
+                updatedClass.schedulingPeriodEndsAt?.getTime());
+          if (periodMoved) {
+            const liveSessions = await tx.appointment.findMany({
+              where: { classId: updatedClass.id, deletedAt: null },
+              select: {
+                id: true,
+                slotsOfAppointment: {
+                  where: { deletedAt: null },
+                  select: { startsAt: true, endsAt: true },
+                },
+              },
+            });
+            await assertCollaboratorsAvailableForWindows(tx, {
+              planType: "CLASS",
+              planId: id,
+              windows: liveSessions.flatMap((a) => a.slotsOfAppointment),
+              excludeAppointmentIds: liveSessions.map((a) => a.id),
+            });
+          }
+
           if (Object.keys(classUpdateData).length > 0) {
             updatedClass = await tx.class.update({
               where: { id: updatedClass.id },
@@ -857,6 +910,10 @@ export async function PATCH(request: NextRequest) {
     // Shrinking below the current roster is a user error, not a 500.
     if (error instanceof CapacityBelowEnrollmentError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    // AE-2 (#784) — co-host clash is a conflict, not a server error.
+    if (error instanceof CollaboratorUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
 
     console.error("Error updating class with plan:", error);

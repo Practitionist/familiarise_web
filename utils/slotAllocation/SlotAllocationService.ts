@@ -82,6 +82,10 @@ import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
+import {
+  assertCollaboratorsAvailableForWindows,
+  CollaboratorUnavailableError,
+} from "@/lib/collaborators/availability";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
 import { notifyAppointmentBooked } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -243,7 +247,9 @@ export class SlotAllocationService {
               },
             },
           },
-          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
           appointment: {
             select: {
               id: true,
@@ -284,7 +290,9 @@ export class SlotAllocationService {
               },
             },
           },
-          requestedBy: { select: { user: { select: { id: true, name: true } } } },
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
           appointments: {
             select: {
               id: true,
@@ -315,31 +323,31 @@ export class SlotAllocationService {
       };
     } else if (eventType === "webinar") {
       const row = await prisma.webinar.findUnique({
-            where: { id: eventId },
+        where: { id: eventId },
+        select: {
+          webinarPlan: {
             select: {
-              webinarPlan: {
-                select: {
-                  title: true,
-                  consultantProfile: {
-                    select: { user: { select: { id: true, name: true } } },
-                  },
-                },
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
               },
-              appointment: {
+            },
+          },
+          appointment: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
                 select: {
-                  id: true,
-                  organizationId: true,
-                  slotsOfAppointment: {
-                    where: { isTentative: false, deletedAt: null },
-                    select: {
-                      startsAt: true,
-                      user: { select: { id: true, name: true } },
-                    },
-                  },
+                  startsAt: true,
+                  user: { select: { id: true, name: true } },
                 },
               },
             },
-          });
+          },
+        },
+      });
       if (!row?.appointment) return;
       const plan = row.webinarPlan;
       const hostUser = plan.consultantProfile?.user;
@@ -347,8 +355,10 @@ export class SlotAllocationService {
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
       for (const slot of row.appointment.slotsOfAppointment) {
-        if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
-        for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+        if (!firstStart || slot.startsAt < firstStart)
+          firstStart = slot.startsAt;
+        for (const u of slot.user ?? [])
+          userMap.set(u.id, u.name ?? "Attendee");
       }
       userMap.delete(hostUser.id);
       context = {
@@ -365,31 +375,31 @@ export class SlotAllocationService {
       };
     } else {
       const row = await prisma.class.findUnique({
-            where: { id: eventId },
+        where: { id: eventId },
+        select: {
+          classPlan: {
             select: {
-              classPlan: {
-                select: {
-                  title: true,
-                  consultantProfile: {
-                    select: { user: { select: { id: true, name: true } } },
-                  },
-                },
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { id: true, name: true } } },
               },
-              appointments: {
+            },
+          },
+          appointments: {
+            select: {
+              id: true,
+              organizationId: true,
+              slotsOfAppointment: {
+                where: { isTentative: false, deletedAt: null },
                 select: {
-                  id: true,
-                  organizationId: true,
-                  slotsOfAppointment: {
-                    where: { isTentative: false, deletedAt: null },
-                    select: {
-                      startsAt: true,
-                      user: { select: { id: true, name: true } },
-                    },
-                  },
+                  startsAt: true,
+                  user: { select: { id: true, name: true } },
                 },
               },
             },
-          });
+          },
+        },
+      });
       if (!row) return;
       const appts = row.appointments.filter(Boolean);
       if (appts.length === 0) return;
@@ -401,8 +411,10 @@ export class SlotAllocationService {
       let firstStart: Date | null = null;
       for (const a of appts) {
         for (const slot of a.slotsOfAppointment) {
-          if (!firstStart || slot.startsAt < firstStart) firstStart = slot.startsAt;
-          for (const u of slot.user ?? []) userMap.set(u.id, u.name ?? "Attendee");
+          if (!firstStart || slot.startsAt < firstStart)
+            firstStart = slot.startsAt;
+          for (const u of slot.user ?? [])
+            userMap.set(u.id, u.name ?? "Attendee");
         }
       }
       userMap.delete(host.id);
@@ -453,8 +465,42 @@ export class SlotAllocationService {
       error instanceof IllegalTransitionError ||
       error instanceof ProgramAssignmentLimitError ||
       isUniqueViolation(error) ||
-      isExclusionViolation(error)
+      isExclusionViolation(error) ||
+      // AE-2 (#784) — a co-host already committed elsewhere is a scheduling
+      // answer, not a fault.
+      error instanceof CollaboratorUnavailableError
     );
+  }
+
+  /**
+   * AE-2 (#784) — refuse to commit these times when an ACCEPTED co-host on a
+   * webinar/class plan is already busy. Co-hosts are not slot participants, so
+   * neither `slot_no_confirmed_overlap` nor the owner-scoped validators see
+   * them; only this guard does. No-op for consultations/subscriptions (no
+   * collaborators) and for plans with no accepted co-hosts.
+   *
+   * Contiguous 30-minute atoms are merged back into session windows by the
+   * helper, so one query covers a whole class allocation.
+   */
+  private static async assertCollaboratorsFree(
+    tx: Tx,
+    eventType: EventType,
+    planId: string | null | undefined,
+    slotStarts: Date[],
+    excludeAppointmentIds: string[],
+  ): Promise<void> {
+    if (eventType !== "webinar" && eventType !== "class") return;
+    if (!planId || slotStarts.length === 0) return;
+
+    await assertCollaboratorsAvailableForWindows(tx, {
+      planType: eventType === "webinar" ? "WEBINAR" : "CLASS",
+      planId,
+      windows: slotStarts.map((startsAt) => ({
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + SLOT_DURATION_MS),
+      })),
+      excludeAppointmentIds,
+    });
   }
 
   /**
@@ -488,6 +534,12 @@ export class SlotAllocationService {
     // recordOverageAtCheckout returns for the very same ceiling.
     if (error instanceof ProgramAssignmentLimitError) {
       return { errorCode: "PROGRAM_CAP_EXHAUSTED", httpStatus: 402 };
+    }
+
+    // AE-2 (#784) — a co-host's clash is a conflict, and the crud-with-plan
+    // routes already answer 409 for the identical rejection.
+    if (error instanceof CollaboratorUnavailableError) {
+      return { errorCode: "COLLABORATOR_UNAVAILABLE", httpStatus: 409 };
     }
 
     // Structured DB-conflict detection (no message sniffing): unique (P2002 /
@@ -998,7 +1050,8 @@ export class SlotAllocationService {
         throw new AllocationNotFoundError(`${eventType} not found`);
       }
 
-      const { consultant, config, consulteeUserId, organizationId } = eventData;
+      const { consultant, config, consulteeUserId, organizationId, planId } =
+        eventData;
 
       // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
       // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -1143,8 +1196,7 @@ export class SlotAllocationService {
       // #1065 — captured BEFORE the write txn deletes these rows. Empty for a
       // fresh allocation, which is exactly when a preference must not apply.
       const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
-      const preference =
-        await this.findAllocationPreference(releasedSlotIds);
+      const preference = await this.findAllocationPreference(releasedSlotIds);
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
@@ -1205,6 +1257,17 @@ export class SlotAllocationService {
               `Slot taken during allocation: ${recheck.errors.join("; ")}`,
             );
           }
+
+          // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
+          // nothing else here can see their clash. Checked in-txn, next to the
+          // conflict recheck, so the read matches the write that follows.
+          await SlotAllocationService.assertCollaboratorsFree(
+            tx,
+            eventType,
+            planId,
+            selectedSlots,
+            appointmentIdsToExclude,
+          );
 
           // In-txn re-check of the multi-tab guard, serialized per event via
           // an advisory xact lock; a same-key double submit replays instead
@@ -1410,7 +1473,8 @@ export class SlotAllocationService {
         throw new AllocationNotFoundError(`${eventType} not found`);
       }
 
-      const { consultant, config, consulteeUserId, organizationId } = eventData;
+      const { consultant, config, consulteeUserId, organizationId, planId } =
+        eventData;
 
       // Convert to Date objects with validation
       const slots = slotStrings.map((s, i) => {
@@ -1621,6 +1685,17 @@ export class SlotAllocationService {
             );
           }
 
+          // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
+          // nothing else here can see their clash. Checked in-txn, next to the
+          // conflict recheck, so the read matches the write that follows.
+          await SlotAllocationService.assertCollaboratorsFree(
+            tx,
+            eventType,
+            planId,
+            slots,
+            appointmentIdsToExclude,
+          );
+
           // In-txn re-check of the multi-tab guard, serialized per event via
           // an advisory xact lock; a same-key double submit replays instead
           // of 409ing (see guardInitialAllocationInTx).
@@ -1815,8 +1890,13 @@ export class SlotAllocationService {
             throw new AllocationNotFoundError(`${eventType} not found`);
           }
 
-          const { consultant, config, requestedSlots, consulteeUserId } =
-            eventData;
+          const {
+            consultant,
+            config,
+            requestedSlots,
+            consulteeUserId,
+            planId,
+          } = eventData;
 
           if (!requestedSlots || requestedSlots.length === 0) {
             throw new AllocationValidationError("No requested slots found");
@@ -1909,6 +1989,18 @@ export class SlotAllocationService {
               `Validation failed: ${validation.errors.join("; ")}`,
             );
           }
+
+          // AE-2 (#784) — confirming the consultee's stored times is a time
+          // commit like any other, so the co-host guard applies here too. This
+          // path has no createAppointments; the isTentative flip below is the
+          // write it protects.
+          await SlotAllocationService.assertCollaboratorsFree(
+            tx,
+            eventType,
+            planId,
+            requestedSlots,
+            existingAppointmentIds,
+          );
 
           // Update event status to approved (appointments already exist and verified)
           await this.updateEventStatus(
@@ -2348,7 +2440,9 @@ export class SlotAllocationService {
         // match a candidate (buildConsecutiveBlock rejects < now), so
         // materializing them only re-creates pool pressure on long-lived
         // appointments (CodeRabbit triage).
-        slotsOfAppointment: { where: { deletedAt: null, endsAt: { gt: occupancyClock } } },
+        slotsOfAppointment: {
+          where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+        },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
         // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
         consultation: { select: { status: true } },
@@ -2401,10 +2495,12 @@ export class SlotAllocationService {
         include: {
           // Same tombstone exclusion as the consultant query above.
           // endsAt bound keeps bookedSlots O(upcoming): past children can never
-        // match a candidate (buildConsecutiveBlock rejects < now), so
-        // materializing them only re-creates pool pressure on long-lived
-        // appointments (CodeRabbit triage).
-        slotsOfAppointment: { where: { deletedAt: null, endsAt: { gt: occupancyClock } } },
+          // match a candidate (buildConsecutiveBlock rejects < now), so
+          // materializing them only re-creates pool pressure on long-lived
+          // appointments (CodeRabbit triage).
+          slotsOfAppointment: {
+            where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+          },
           consultation: { select: { status: true } },
           subscription: { select: { status: true } },
           payment: { select: { expiresAt: true } },
@@ -2590,7 +2686,10 @@ export class SlotAllocationService {
             .filter((r): r is { start: Date; endMs: number } => r !== null)
         : sortedCustom
             .map((slot) => {
-              const start = this.matchCustomSlotToDay(slot.startsAt, currentDay);
+              const start = this.matchCustomSlotToDay(
+                slot.startsAt,
+                currentDay,
+              );
               if (!start) return null;
               return { start, endMs: new Date(slot.endsAt).getTime() };
             })
@@ -2612,7 +2711,9 @@ export class SlotAllocationService {
     const tryPlaceOnDay = (currentDay: Date, perfectOnly: boolean): boolean => {
       let best: { block: Date[]; score: number } | null = null;
 
-      for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(currentDay)) {
+      for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
+        currentDay,
+      )) {
         const rowDayKey = SlotCalculationService.dayKey(
           rowStart,
           config.schedulingTimezone,
@@ -2632,11 +2733,10 @@ export class SlotAllocationService {
         // with a weekend preference that is ~260 days of wasted block-building
         // per sweep. Safe because bestFittingBlockInRow holds every candidate
         // to the row's own timezone day, so they all share this weekday.
-        if (perfectOnly && !matchesPreferredDays(
-          rowStart,
-          preference,
-          config.schedulingTimezone,
-        )) {
+        if (
+          perfectOnly &&
+          !matchesPreferredDays(rowStart, preference, config.schedulingTimezone)
+        ) {
           continue;
         }
 
@@ -2687,10 +2787,7 @@ export class SlotAllocationService {
         sessionSlots[0],
         config.schedulingTimezone,
       );
-      placedPerDay.set(
-        placedDayKey,
-        (placedPerDay.get(placedDayKey) ?? 0) + 1,
-      );
+      placedPerDay.set(placedDayKey, (placedPerDay.get(placedDayKey) ?? 0) + 1);
       sessionsPlacedPerWeek.set(
         placedWeekKey,
         (sessionsPlacedPerWeek.get(placedWeekKey) ?? 0) + 1,
@@ -2748,7 +2845,10 @@ export class SlotAllocationService {
       // (add availability or extend the period), vs everything is booked
       // (wait for cancellations), vs caps are unsatisfiable. The period check
       // runs first because it's the most actionable answer.
-      if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
+      if (
+        config.schedulingPeriodEndsAt &&
+        config.schedulingPeriodEndsAt < now
+      ) {
         throw new AllocationValidationError(
           `The scheduling period ended on ${config.schedulingPeriodEndsAt.toLocaleDateString()}. ` +
             `Found ${selectedSlots.length} of ${totalSlotsNeeded} required slots. ` +
@@ -3693,6 +3793,8 @@ export class SlotAllocationService {
      * Resolved per event type; see #768 Comment 5.
      */
     organizationId?: string | null;
+    /** AE-2 (#784) — the plan the co-host guard reads its collaborators from. */
+    planId?: string | null;
   } | null> {
     const consultantProfileSelect = {
       select: {
@@ -3717,6 +3819,8 @@ export class SlotAllocationService {
     let requestedSlots: Date[] | undefined;
     // #768 Comment 5
     let organizationId: string | null = null;
+    // AE-2 (#784) — webinar/class only; the other two have no collaborators.
+    let planId: string | null = null;
 
     switch (eventType) {
       case "consultation": {
@@ -3804,6 +3908,7 @@ export class SlotAllocationService {
         // #768 — WEBINAR Appointment is SHARED across registrants from
         // multiple orgs; tag with the plan's host org if any.
         organizationId = event.webinarPlan?.organizationId ?? null;
+        planId = event.webinarPlanId ?? null;
         break;
       }
 
@@ -3844,6 +3949,7 @@ export class SlotAllocationService {
         // #768 — CLASS sessions inherit host-org from the plan; locked
         // even on reschedule. Marketplace classes stay null.
         organizationId = event.classPlan?.organizationId ?? null;
+        planId = event.classPlanId ?? null;
         break;
       }
     }
@@ -3876,6 +3982,7 @@ export class SlotAllocationService {
       consulteeUserId,
       requestedSlots,
       organizationId,
+      planId,
     };
   }
 

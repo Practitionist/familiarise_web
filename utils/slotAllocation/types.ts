@@ -5,7 +5,6 @@
  * consistency and reduce duplication.
  */
 
-
 /**
  * Allocation modes supported by the system
  */
@@ -117,6 +116,7 @@ export type AllocationErrorCode =
   | "NO_AVAILABILITY" // consultant has no published availability — 400
   | "PERIOD_ENDED" // scheduling period is in the past — 400
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
+  | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
