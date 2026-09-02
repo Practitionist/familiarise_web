@@ -16,7 +16,6 @@
 
 import { check, sleep } from "k6";
 import {
-  CONSULTANT_IDS,
   DURATION,
   MOCK_PAYMENT,
   PEAK_VUS,
@@ -104,6 +103,3 @@ export default function (data) {
 export function handleSummary(data) {
   return summaryOutputs(data);
 }
-
-/** Documented so a reader of CONSULTANT_IDS knows why it exists here. */
-export const BROWSE_TARGETS = CONSULTANT_IDS;

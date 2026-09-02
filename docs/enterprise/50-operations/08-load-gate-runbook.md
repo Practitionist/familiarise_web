@@ -48,6 +48,12 @@ using the site at that moment.
 
 ## Prerequisites
 
+### k6
+
+Version 0.52 or newer. The scripts use optional chaining and nullish
+coalescing, and the workflow's `grafana/setup-k6-action` installs a current
+build. Locally, `brew install k6`.
+
 ### A target
 
 A Netlify deploy preview URL. The workflow refuses a `base_url` containing the
@@ -203,12 +209,17 @@ out a fixture problem before spending a gate run:
 
 ```bash
 k6 run \
+  --summary-trend-stats "avg,med,p(95),p(99),max" \
   --env BASE_URL=http://localhost:3000 \
   --env SCENARIO=17 \
   --env BUYER_COOKIES='better-auth.session_token=...|better-auth.session_token=...' \
   --env PLAN_IDS=... --env EVENT_ID=... --env EVENT_PLAN_ID=... \
   load-tests/booking/scenarios.js
 ```
+
+The `--summary-trend-stats` flag is what puts the p99 column in the report; k6
+does not compute it by default, and without the flag that column reads as a
+dash.
 
 Each write path also has its own runnable script — `checkout-consultation.js`,
 `checkout-event.js`, `allocate.js`, `cancel.js` and `reschedule.js` — for

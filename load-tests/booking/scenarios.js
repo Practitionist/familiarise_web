@@ -196,19 +196,6 @@ const STORM_THRESHOLDS = {
 export const options = {
   scenarios: scenarioSet(),
   thresholds: Object.assign({}, ALL_THRESHOLDS, STORM_THRESHOLDS),
-  // Keep the tag in the metric stream so the sub-metric thresholds above
-  // resolve; k6 drops unrecognised tags from the summary otherwise.
-  systemTags: [
-    "status",
-    "method",
-    "url",
-    "name",
-    "group",
-    "check",
-    "error",
-    "scenario",
-    "expected_response",
-  ],
 };
 
 export function setup() {
