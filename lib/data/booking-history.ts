@@ -32,7 +32,6 @@
 import type {
   BookingHistoryEntity,
   RescheduleInitiatorRole,
-  RescheduleRequestStatus,
 } from "@prisma/client";
 
 import type { Scope } from "@/lib/api/scope/parse";
@@ -217,10 +216,10 @@ export async function getBookingTimeline(
     appointment.rescheduleRequests.map((request) => ({
       id: request.id,
       kind: "reschedule" as const,
-      entity: "RESCHEDULE_REQUEST" as BookingHistoryEntity,
+      entity: "RESCHEDULE_REQUEST",
       entityId: request.id,
       from: null,
-      to: request.status as RescheduleRequestStatus,
+      to: request.status,
       reason: request.reason,
       actor: request.initiatedBy
         ? { id: request.initiatedBy.id, name: request.initiatedBy.name }
