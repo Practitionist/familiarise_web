@@ -22,11 +22,11 @@
 import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
 import {
   CANCELLABLE_FROM,
-  IllegalTransitionError,
   transitionConsultationRequest,
   transitionSlotCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
