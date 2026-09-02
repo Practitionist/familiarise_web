@@ -15,7 +15,10 @@ import {
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  refundBookingPayment,
+  type FundingRail,
+} from "@/lib/payments/operations/booking-refund";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
@@ -434,6 +437,13 @@ export async function POST(
         | "MANUAL_REVIEW";
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
+      /**
+       * Which rail returned the money. The client renders a different sentence
+       * per rail — an org-funded cancellation credits the org's balance, not
+       * the learner's card — and `refundBookingPayment` already answers this;
+       * dropping it left the UI guessing "card, 5–7 working days" for all three.
+       */
+      rail?: FundingRail;
     } | null = null;
     if (bookingCtx) {
       const paidPayment = bookingCtx.paidPayment;
@@ -529,6 +539,7 @@ export async function POST(
                 refundPct: 100,
                 status: "REFUNDED",
                 requiresManualReview: false,
+                rail: restored.rail,
               };
             } catch (freeErr) {
               Sentry.captureException(
@@ -572,6 +583,7 @@ export async function POST(
               amountRefundedPaise: r.amountRefundedPaise,
               refundPct,
               status: "REFUNDED",
+              rail: r.rail,
             };
           } catch (refundErr) {
             // The cancellation itself stands; a failed refund must be visible,

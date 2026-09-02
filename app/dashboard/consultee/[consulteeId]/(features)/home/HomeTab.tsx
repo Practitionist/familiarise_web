@@ -498,7 +498,7 @@ function MonthlyEventItem({
               <div className="space-y-2 bg-muted rounded-lg p-3">
                 {sessions.slice(0, 10).map((session) => (
                   <div
-                    key={session.appointmentId}
+                    key={session.id}
                     className="flex items-center gap-4 text-sm text-muted-foreground"
                   >
                     <span

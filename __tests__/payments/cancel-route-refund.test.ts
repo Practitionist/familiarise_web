@@ -295,11 +295,14 @@ describe("a consultee cancelling a paid consultation gets their money back", () 
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    // The regression: resolved after the transaction this was 0.
+    // The regression: resolved after the transaction this was 0. The rail
+    // rides along so the confirmation can name where the money went rather
+    // than promising a card nobody charged (defect 1).
     expect(body.refund).toEqual({
       amountRefundedPaise: GROSS,
       refundPct: 100,
       status: "REFUNDED",
+      rail: "GATEWAY",
     });
     expect(mockRefundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay-1", amountPaise: GROSS }),

@@ -60,7 +60,10 @@ jest.mock("../../lib/prisma", () => ({
       })),
     },
     payment: {
-      create: jest.fn(async ({ data }: any) => ({ id: "pay-new", ...data })),
+      create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "pay-new",
+        ...data,
+      })),
     },
     trialSession: {
       // Hydrates the include shape findExistingLivePayment's trial arm walks.
@@ -157,6 +160,19 @@ describe("approval mint threads appointmentId (#1181)", () => {
     expect(created.appointmentId).toBe(APPT_CUID);
     expect(created.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(created.amount).toBe(500_000);
+  });
+
+  it("omits the metadata key entirely when there is no appointment yet", async () => {
+    // Defect 17 — the second path still wrote the literal "pending", which the
+    // Payment column stopped doing. Gateway notes are string-valued, so an
+    // absent key IS that null: a reader can now tell "no appointment yet" from
+    // an appointment whose id happens to read like a sentinel.
+    const { appointmentId: _dropped, ...withoutAppointment } = mintParams();
+    await createApprovalPaymentIntent(withoutAppointment);
+
+    const intentArg = mockCreatePaymentIntent.mock.calls[0][0];
+    expect(intentArg.metadata).not.toHaveProperty("appointmentId");
+    expect(mockedPaymentCreate.mock.calls[0][0].data.appointmentId).toBeNull();
   });
 });
 
@@ -284,6 +300,15 @@ describe("approval routes thread the appointment (source contract)", () => {
     );
     expect(fn).toContain("appointmentId,");
     expect(fn).toContain("subscription.appointments[0]?.id ?? undefined");
+  });
+
+  it('the metadata builder no longer carries the "pending" sentinel', () => {
+    // Defect 17 — a behavioural assertion above proves the key is absent, but
+    // the sentinel could come back as a different literal on the same line and
+    // still pass it. Pin the source too so the revert is unmistakable.
+    const src = read("lib/payments/operations/approval-payment.ts");
+    expect(src).not.toContain('?? "pending"');
+    expect(src).not.toContain('|| "pending"');
   });
 
   it("every approval mint site names appointmentId explicitly", () => {

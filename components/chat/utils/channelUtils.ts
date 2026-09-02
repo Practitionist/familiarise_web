@@ -1,4 +1,6 @@
 import type { Channel } from "stream-chat";
+import type { Scope } from "@/lib/api/scope/parse";
+import { scopeOrgId } from "@/lib/api/scope/parse";
 
 export interface ChannelDisplayInfo {
   displayName: string;
@@ -180,3 +182,23 @@ export const getTruncatedDisplayName = (
   // Generic truncation
   return displayInfo.displayName.substring(0, maxLength - 3) + "...";
 };
+
+/**
+ * The `?orgScope=` selection as a Stream channel filter. Stream channels
+ * created by the enterprise wiring carry a `custom.organization_id`, and
+ * without this a consultant in Acme + Zeta sees every chat cross-tenanted in
+ * one inbox (#674). Lives here rather than inline in ChatSidebar so the
+ * initial fetch and the load-more page share one definition and can never
+ * disagree about which tenant is on screen.
+ *
+ * #674 B2B gap 9 — `orgMember` (what an active member below `operations.read`
+ * resolves to) pins an org exactly as `org` does, so the question goes through
+ * `scopeOrgId`. Branching on `kind === "org"` alone left that member
+ * unfiltered: picking one org showed the whole cross-tenant inbox this filter
+ * exists to prevent. Only `all` is genuinely unfiltered.
+ */
+export function buildOrgChannelFilter(scope: Scope): Record<string, unknown> {
+  if (scope.kind === "personal") return { organization_id: { $exists: false } };
+  const pinnedOrgId = scopeOrgId(scope);
+  return pinnedOrgId ? { organization_id: { $eq: pinnedOrgId } } : {};
+}
