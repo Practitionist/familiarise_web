@@ -1465,34 +1465,21 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
     },
   });
 
-  // Build appointment data conditionally based on scheduling approach
-  const appointmentData: Prisma.AppointmentUncheckedCreateInput = {
-    appointmentType: AppointmentsType.SUBSCRIPTION,
-    subscriptionId: subscription.id,
-  };
-
-  // Only add slots if NOT a scheduling period request
-  if (!isSchedulingPeriodRequest && data.startsAt && data.endsAt) {
-    appointmentData.slotsOfAppointment = {
-      create: {
-        // HOIf/#1202 — LEGACY creators now birth TENTATIVE rows. Birthed
-        // confirmed, a capture landing on a CANCELLED/DRAFT booking committed
-        // real slots the B2 guard could only refund AROUND — ghost confirmed
-        // slots blocking a dead calendar. Tentative births flip via the
-        // ordinary confirm machinery on success and sweep as orphans on
-        // terminal capture (#830).
-        isTentative: true,
-        // #440 — same overlap-guard population as the consultation twin;
-        // a NULL here would bypass the exclusion constraint's scope.
-        consultantProfileId: plan.consultantProfileId,
-        user: { connect: { id: data.userId } },
-      } as unknown as Prisma.SlotOfAppointmentUncheckedCreateWithoutAppointmentInput,
-    };
-  }
-
-  // Single appointment creation call
+  // #1319 — a slotless placeholder, which is what handleSubscriptionCheckout
+  // has always produced: a subscription's sessions are allocated later by the
+  // consultant from the Requests tab, so there is no time here to chunk.
+  //
+  // This used to branch on `!isSchedulingPeriodRequest && startsAt && endsAt`
+  // and write one seat row — a row with no `startsAt` and no `endsAt`, which
+  // are NOT NULL with no default. The `as unknown as` cast was what let it
+  // compile; at runtime the branch could only ever throw and take the whole
+  // capture transaction down with it. Matching the checkout counterpart
+  // removes the divergence and the dead branch in one move.
   return await tx.appointment.create({
-    data: appointmentData,
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscriptionId: subscription.id,
+    },
     include: {
       slotsOfAppointment: true,
     },
@@ -1512,19 +1499,14 @@ async function createWebinar(tx: Tx, data: EventData) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  // Use the master slot's times — guaranteed to exist after validation above.
-  // HOIf/#1202 — tentative birth (see the subscription creator above): the
-  // payer's seat only becomes confirmed when the event-state guard in
-  // confirmExistingAppointment succeeds; capacity recounts are
-  // tentative-inclusive so nothing else changes.
-  await tx.slotOfAppointment.create({
-    data: {
-      appointmentId: webinar.appointment.id,
-      startsAt: masterSlot.startsAt,
-      endsAt: masterSlot.endsAt,
-      isTentative: true,
-      user: { connect: { id: data.userId } },
-    },
+  // #1319 — register the payer against the consultant's existing slots, which
+  // is what handleWebinarCheckout does. The seat row this used to mint carried
+  // no `consultantProfileId` and duplicated the master slot's window, so a
+  // webinar's occupancy grew by a full session for every ticket sold and the
+  // atom run gained a second, parallel row nobody could group with it.
+  await connectAttendeeToEventSlots(tx, {
+    appointments: [webinar.appointment],
+    userId: data.userId,
   });
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1540,28 +1522,36 @@ async function createWebinar(tx: Tx, data: EventData) {
 async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
-    include: { classPlan: true },
-  });
-  if (!classInstance) throw new Error("Class not found");
-
-  const appointment = await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.CLASS,
-      classId: classInstance.id,
-      slotsOfAppointment: {
-        create: {
-          // HOIf/#1202 — tentative birth (see createWebinar).
-          isTentative: true,
-          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
-          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
-          user: { connect: { id: data.userId } },
-        },
+    include: {
+      appointments: {
+        include: { slotsOfAppointment: { select: { id: true } } },
       },
     },
   });
+  if (!classInstance) throw new Error("Class not found");
+
+  // #1319 — enrol the payer into the sessions that already exist, exactly as
+  // handleClassCheckout does. This used to CREATE an appointment per buyer,
+  // holding one seat row spanning `schedulingPeriodStartsAt` to
+  // `schedulingPeriodEndsAt` — months wide, with no `consultantProfileId`.
+  // Worse than a bad row shape: a class's Appointments ARE its sessions, so
+  // every enrolment added a phantom session to the class, inflating the
+  // session count that capacity, the "fully scheduled" enrolment gate and the
+  // consultee's timeline all read.
+  const [firstAppointment] = classInstance.appointments;
+  if (!firstAppointment) {
+    // Same refusal createWebinar makes for an unscheduled event: there is
+    // nothing to enrol into, and inventing a placeholder is what caused this.
+    throw new Error("Class has not been scheduled. Cannot create booking.");
+  }
+
+  await connectAttendeeToEventSlots(tx, {
+    appointments: classInstance.appointments,
+    userId: data.userId,
+  });
 
   const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
+    where: { id: firstAppointment.id },
     include: { slotsOfAppointment: true },
   });
   if (!createdAppointment) {
