@@ -488,6 +488,14 @@ export class AllocationService {
      * consultant would not see the slots they just booked.
      */
     bypassHttpCache?: boolean,
+    /**
+     * #1319 PR 9 — the previous response's ETag. The route recomputes its
+     * change marker in one indexed read and answers 304 when nothing this grid
+     * depends on has moved, so an unchanged 60s poll costs one statement
+     * instead of eight. Skipped on the bypass path: that caller just mutated
+     * and wants the body regardless.
+     */
+    ifNoneMatch?: string | null,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -516,10 +524,29 @@ export class AllocationService {
       if (consulteeUserId) {
         params.set("consulteeUserId", consulteeUserId);
       }
+      // Sending a conditional header makes fetch treat the request as
+      // `no-store` (Fetch spec §4.6), so the browser's own 30s freshness
+      // shortcut no longer short-circuits it. That is the trade: one cheap
+      // round trip that ends in 304, in exchange for never repainting from a
+      // body the browser may have evicted.
+      const conditional =
+        !bypassHttpCache && ifNoneMatch
+          ? { headers: { "If-None-Match": ifNoneMatch } }
+          : undefined;
       const response = await fetch(
         `/api/slots/availability-with-allocation/${consultantId}?${params}`,
-        bypassHttpCache ? { cache: "no-store" } : undefined,
+        bypassHttpCache ? { cache: "no-store" } : conditional,
       );
+      // 304 — the marker says nothing this grid reads has changed. The caller
+      // keeps the state it already has; no body was sent to parse.
+      if (response.status === 304) {
+        return {
+          weekly: [] as RawAvailabilityApiSlot[],
+          custom: [] as RawAvailabilityApiSlot[],
+          etag: ifNoneMatch ?? null,
+          notModified: true,
+        };
+      }
       if (!response.ok) {
         const errorData = await response.json();
         // See fetchConsultantData: httpStatus lets the catch distinguish a
@@ -541,6 +568,8 @@ export class AllocationService {
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),
+        etag: response.headers.get("ETag"),
+        notModified: false,
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);

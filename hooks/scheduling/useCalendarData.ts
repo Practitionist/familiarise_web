@@ -261,6 +261,12 @@ export function useCalendarData(
   // `loading` — leaves the grid on the skeleton for good. Above 60s of
   // response time that is the whole first load. The poll waits for it instead.
   const availabilityInFlightRef = useRef<Promise<void> | null>(null);
+  // #1319 PR 9 — the last availability response's ETag, echoed back as
+  // If-None-Match so an unchanged poll costs the server one indexed read and
+  // this hook one early return. Not keyed by window: the tag itself encodes
+  // the window and the viewer, so a tag from another week simply misses and
+  // the route answers 200.
+  const availabilityEtagRef = useRef<string | null>(null);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): TimeSlot[] => {
@@ -360,11 +366,17 @@ export function useCalendarData(
         includeAppointmentDetails,
         consulteeUserId,
         options?.fresh,
+        availabilityEtagRef.current,
       );
 
       // A newer request was issued (user moved on) while this one was in
       // flight — its result is stale, discard rather than repaint.
       if (requestId !== availabilityRequestIdRef.current) return;
+
+      // #1319 PR 9 — 304: nothing this grid depends on moved. Keep the state
+      // (and the tag) exactly as they are; calling setState with a fresh but
+      // equal object would re-render every calendar cell for nothing.
+      if (data?.notModified) return;
 
       // A shape the route cannot legitimately return. Emptying the grid on it
       // is the failure this change exists to remove: an empty grid is a valid
@@ -401,6 +413,9 @@ export function useCalendarData(
           : [],
       };
 
+      // Stamped only once the body validated — a tag paired with a payload we
+      // rejected would 304 the next poll into keeping the rejected state.
+      availabilityEtagRef.current = data.etag ?? null;
       setRawAvailabilitySlots(validatedData);
     } catch (error) {
       // A stale request's failure must not clobber the error state of
