@@ -62,7 +62,9 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
           program: {
             select: {
               name: true,
-              contract: { select: { organization: { select: { name: true } } } },
+              contract: {
+                select: { organization: { select: { name: true } } },
+              },
             },
           },
         },
@@ -138,9 +140,14 @@ async function main() {
   console.log(
     `[timeout-member-overages] Done. scanned=${stats.scanned} timedOut=${stats.timedOut}`,
   );
-  Sentry.logger.info("job:timeout-member-overages finished", { scanned: stats.scanned, timedOut: stats.timedOut });
+  Sentry.logger.info("job:timeout-member-overages finished", {
+    scanned: stats.scanned,
+    timedOut: stats.timedOut,
+  });
 }
 
 if (require.main === module) {
-  runJob("timeout-member-overages", () => main().finally(() => prisma.$disconnect()));
+  runJob("timeout-member-overages", () =>
+    main().finally(() => prisma.$disconnect()),
+  );
 }

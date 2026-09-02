@@ -121,57 +121,104 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
       // still fall through to the outer catch's skip-with-Sentry semantics.
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
-        async (tx) => {
-          // Wave-3 TOCTOU closure (#1230) — the ROLL/CLOSE decision above was
-          // computed from the candidate SCAN, which auto-renew/supersede can
-          // re-point or retire before this tx claims. Serializable cannot
-          // protect rows the tx never reads, so re-read the contract facts
-          // here and recompute before claiming.
-          // CR #1234 r5 — PROGRAM eligibility gets the same treatment: an
-          // operator archiving/disabling the program after the scan must not
-          // have a successor minted under it (the archive guard in the API
-          // route only sees new allocations).
-          const liveProgram = await tx.program.findUnique({
-            where: { id: a.programId },
-            select: { status: true, archivedAt: true },
-          });
-          if (
-            liveProgram?.status !== "ACTIVE" ||
-            liveProgram?.archivedAt !== null
-          ) {
-            // Also covers the not-found case via undefined !== "ACTIVE".
-            return { outcome: "skipped" as const };
-          }
-          const liveContract = await tx.contract.findUnique({
-            where: { id: a.program.contract.id },
-            select: { status: true, autoRenew: true, effectiveTo: true },
-          });
-          // Contract deleted between scan and claim ⇒ CLOSE (never roll
-          // under a contract that no longer exists).
-          // Contract deleted between scan and claim ⇒ CLOSE via the engine's own
-          // decision table (jobs may not carry free-form audit-action literals).
-          const effectiveDecision = liveContract
-            ? decideCycleTransition({
-                successorPeriodStart: successorStart,
-                successorPeriodEnd: successorEnd,
-                contractStatus: liveContract.status,
-                contractAutoRenew: liveContract.autoRenew,
-                contractEffectiveTo: liveContract.effectiveTo,
-              })
-            : decideCycleTransition({
-                successorPeriodStart: successorStart,
-                successorPeriodEnd: successorEnd,
-                contractStatus: "EXPIRED",
-                contractAutoRenew: false,
-                contractEffectiveTo: null,
+          async (tx) => {
+            // Wave-3 TOCTOU closure (#1230) — the ROLL/CLOSE decision above was
+            // computed from the candidate SCAN, which auto-renew/supersede can
+            // re-point or retire before this tx claims. Serializable cannot
+            // protect rows the tx never reads, so re-read the contract facts
+            // here and recompute before claiming.
+            // CR #1234 r5 — PROGRAM eligibility gets the same treatment: an
+            // operator archiving/disabling the program after the scan must not
+            // have a successor minted under it (the archive guard in the API
+            // route only sees new allocations).
+            const liveProgram = await tx.program.findUnique({
+              where: { id: a.programId },
+              select: { status: true, archivedAt: true },
+            });
+            if (
+              liveProgram?.status !== "ACTIVE" ||
+              liveProgram?.archivedAt !== null
+            ) {
+              // Also covers the not-found case via undefined !== "ACTIVE".
+              return { outcome: "skipped" as const };
+            }
+            const liveContract = await tx.contract.findUnique({
+              where: { id: a.program.contract.id },
+              select: { status: true, autoRenew: true, effectiveTo: true },
+            });
+            // Contract deleted between scan and claim ⇒ CLOSE (never roll
+            // under a contract that no longer exists).
+            // Contract deleted between scan and claim ⇒ CLOSE via the engine's own
+            // decision table (jobs may not carry free-form audit-action literals).
+            const effectiveDecision = liveContract
+              ? decideCycleTransition({
+                  successorPeriodStart: successorStart,
+                  successorPeriodEnd: successorEnd,
+                  contractStatus: liveContract.status,
+                  contractAutoRenew: liveContract.autoRenew,
+                  contractEffectiveTo: liveContract.effectiveTo,
+                })
+              : decideCycleTransition({
+                  successorPeriodStart: successorStart,
+                  successorPeriodEnd: successorEnd,
+                  contractStatus: "EXPIRED",
+                  contractAutoRenew: false,
+                  contractEffectiveTo: null,
+                });
+            if (effectiveDecision.action === "CLOSE") {
+              // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
+              const claim = await tx.programAssignment.updateMany({
+                where: { id: a.id, status: "ACTIVE", rolledAt: null },
+                data: { status: "CLOSED", rolledAt: now },
               });
-          if (effectiveDecision.action === "CLOSE") {
-            // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
+              if (claim.count === 0) return { outcome: "skipped" as const };
+
+              await tx.orgAuditLog.create({
+                data: {
+                  organizationId: orgId,
+                  actorMembershipId: null,
+                  targetMembershipId: null,
+                  category: "PROGRAM",
+                  action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
+                  description: `ProgramAssignment ${a.id} closed (${effectiveDecision.reason}); no successor`,
+                  details: {
+                    assignmentId: a.id,
+                    programId: a.programId,
+                    closed: true,
+                    reason: effectiveDecision.reason,
+                  },
+                },
+              });
+              return { outcome: "closed" as const };
+            }
+
+            // ROLL: claim ACTIVE→ROLLED, then mint the successor for next cycle.
             const claim = await tx.programAssignment.updateMany({
               where: { id: a.id, status: "ACTIVE", rolledAt: null },
-              data: { status: "CLOSED", rolledAt: now },
+              data: { status: "ROLLED", rolledAt: now },
             });
             if (claim.count === 0) return { outcome: "skipped" as const };
+
+            const successor = await tx.programAssignment.create({
+              data: {
+                programId: a.programId,
+                membershipId: a.membershipId,
+                periodStart: successorStart,
+                periodEnd: successorEnd,
+                status: "ACTIVE",
+                // Fresh cycle — counters reset.
+                engagementsUsed: 0,
+                consumedPaise: 0,
+                overageCount: 0,
+              },
+            });
+
+            // Link the chain; @unique on rolledToAssignmentId backstops a
+            // double-mint if two replicas slipped past the claim gate.
+            await tx.programAssignment.update({
+              where: { id: a.id },
+              data: { rolledToAssignmentId: successor.id },
+            });
 
             await tx.orgAuditLog.create({
               data: {
@@ -180,66 +227,19 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
                 targetMembershipId: null,
                 category: "PROGRAM",
                 action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-                description: `ProgramAssignment ${a.id} closed (${effectiveDecision.reason}); no successor`,
+                description: `ProgramAssignment ${a.id} rolled to ${successor.id} (${successorStart.toISOString()} → ${successorEnd.toISOString()})`,
                 details: {
                   assignmentId: a.id,
                   programId: a.programId,
-                  closed: true,
-                  reason: effectiveDecision.reason,
+                  successorAssignmentId: successor.id,
+                  periodStart: successorStart.toISOString(),
+                  periodEnd: successorEnd.toISOString(),
                 },
               },
             });
-            return { outcome: "closed" as const };
-          }
-
-          // ROLL: claim ACTIVE→ROLLED, then mint the successor for next cycle.
-          const claim = await tx.programAssignment.updateMany({
-            where: { id: a.id, status: "ACTIVE", rolledAt: null },
-            data: { status: "ROLLED", rolledAt: now },
-          });
-          if (claim.count === 0) return { outcome: "skipped" as const };
-
-          const successor = await tx.programAssignment.create({
-            data: {
-              programId: a.programId,
-              membershipId: a.membershipId,
-              periodStart: successorStart,
-              periodEnd: successorEnd,
-              status: "ACTIVE",
-              // Fresh cycle — counters reset.
-              engagementsUsed: 0,
-              consumedPaise: 0,
-              overageCount: 0,
-            },
-          });
-
-          // Link the chain; @unique on rolledToAssignmentId backstops a
-          // double-mint if two replicas slipped past the claim gate.
-          await tx.programAssignment.update({
-            where: { id: a.id },
-            data: { rolledToAssignmentId: successor.id },
-          });
-
-          await tx.orgAuditLog.create({
-            data: {
-              organizationId: orgId,
-              actorMembershipId: null,
-              targetMembershipId: null,
-              category: "PROGRAM",
-              action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-              description: `ProgramAssignment ${a.id} rolled to ${successor.id} (${successorStart.toISOString()} → ${successorEnd.toISOString()})`,
-              details: {
-                assignmentId: a.id,
-                programId: a.programId,
-                successorAssignmentId: successor.id,
-                periodStart: successorStart.toISOString(),
-                periodEnd: successorEnd.toISOString(),
-              },
-            },
-          });
-          return { outcome: "rolled" as const, successorId: successor.id };
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+            return { outcome: "rolled" as const, successorId: successor.id };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         ),
       );
 
@@ -261,7 +261,9 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         `[advance-program-cycles] Failed for assignment ${a.id}:`,
         err,
       );
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "advance-program-cycles" } });
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "advance-program-cycles" },
+      });
       stats.skipped += 1;
     }
   }
@@ -293,5 +295,7 @@ async function main() {
 
 // Self-execute only when invoked directly (importable for unit tests).
 if (require.main === module) {
-  runJob("advance-program-cycles", () => main().finally(() => prisma.$disconnect()));
+  runJob("advance-program-cycles", () =>
+    main().finally(() => prisma.$disconnect()),
+  );
 }

@@ -69,8 +69,8 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
   // forward through "now" so a single sweep catches both upcoming and
   // overdue rows.
   const warnCutoff = new Date(
-    now.getTime()
-      - (REPORTING_DEADLINE_HOURS - WARN_HOURS_BEFORE_DEADLINE) * 60 * 60 * 1000,
+    now.getTime() -
+      (REPORTING_DEADLINE_HOURS - WARN_HOURS_BEFORE_DEADLINE) * 60 * 60 * 1000,
   );
 
   const candidates = await prisma.dataBreach.findMany({
@@ -160,7 +160,9 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       emailSent = true;
       console.log(`[DataBreach] alert email sent to ${to}`);
     } catch (err) {
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "databreach-deadline-alerts" } });
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+      });
       console.error("[DataBreach] alert email failed:", err);
     }
   } else {
@@ -169,7 +171,11 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     );
   }
 
-  Sentry.logger.info("job:databreach-deadline-alerts finished", { atRisk, overdue, emailSent });
+  Sentry.logger.info("job:databreach-deadline-alerts finished", {
+    atRisk,
+    overdue,
+    emailSent,
+  });
   return { atRisk, overdue, emailSent };
 }
 

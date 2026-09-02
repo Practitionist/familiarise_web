@@ -133,13 +133,19 @@ async function runReleasePendingTrustEarningsUnlocked(): Promise<ReleasePendingT
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result.errors.push(message);
-    Sentry.captureException(err, { tags: { subsystem: "jobs", job: "release-pending-trust-earnings" } });
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "release-pending-trust-earnings" },
+    });
   }
 
   console.log(
     `[release-pending-trust-earnings] scanned=${result.scanned} released=${result.released} errors=${result.errors.length}`,
   );
-  Sentry.logger.info("job:release-pending-trust-earnings finished", { scanned: result.scanned, released: result.released, errors: result.errors.length });
+  Sentry.logger.info("job:release-pending-trust-earnings finished", {
+    scanned: result.scanned,
+    released: result.released,
+    errors: result.errors.length,
+  });
   return result;
 }
 

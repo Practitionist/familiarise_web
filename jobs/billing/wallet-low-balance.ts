@@ -110,9 +110,14 @@ async function main() {
   console.log(
     `[wallet-low-balance] Done. scanned=${stats.scanned} notified=${stats.notified}`,
   );
-  Sentry.logger.info("job:wallet-low-balance finished", { scanned: stats.scanned, notified: stats.notified });
+  Sentry.logger.info("job:wallet-low-balance finished", {
+    scanned: stats.scanned,
+    notified: stats.notified,
+  });
 }
 
 if (require.main === module) {
-  runJob("wallet-low-balance", () => main().finally(() => prisma.$disconnect()));
+  runJob("wallet-low-balance", () =>
+    main().finally(() => prisma.$disconnect()),
+  );
 }

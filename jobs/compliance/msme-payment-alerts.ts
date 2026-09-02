@@ -170,7 +170,9 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       console.log(`[MSME] alert email sent to ${to}`);
     } catch (err) {
       console.error("[MSME] alert email failed:", err);
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "msme-payment-alerts" } });
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "msme-payment-alerts" },
+      });
     }
   } else {
     console.log(
@@ -179,7 +181,11 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
   }
 
   const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };
-  Sentry.logger.info("job:msme-payment-alerts finished", { alerted: result.alerted, atRisk: result.atRisk, emailSent: result.emailSent });
+  Sentry.logger.info("job:msme-payment-alerts finished", {
+    alerted: result.alerted,
+    atRisk: result.atRisk,
+    emailSent: result.emailSent,
+  });
   return result;
 }
 

@@ -149,7 +149,6 @@ async function fetchIrpCandidates(thirtyDaysAgo: Date) {
     },
     take: 50, // batch size
   });
-
 }
 
 /**
@@ -260,7 +259,6 @@ async function runIrpUploaderUnlocked(): Promise<{
 
   const candidates = await fetchIrpCandidates(thirtyDaysAgo);
 
-
   let processed = 0;
   let failed = 0;
   let skipped = 0;
@@ -277,7 +275,11 @@ async function runIrpUploaderUnlocked(): Promise<{
   console.log(
     `[IRP] uploader finished — processed=${processed} failed=${failed} skipped=${skipped}`,
   );
-  Sentry.logger.info("job:irp-uploader finished", { processed, failed, skipped });
+  Sentry.logger.info("job:irp-uploader finished", {
+    processed,
+    failed,
+    skipped,
+  });
   return { processed, failed, skipped };
 }
 

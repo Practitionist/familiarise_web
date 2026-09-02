@@ -48,8 +48,8 @@ models what actually matters — concurrent load on the Supabase pool.
 runtime anywhere in the file with a comment:
 
 ```yaml
-    - cron: "32 * * * *"
-    # cron-runtime-minutes: 8
+- cron: "32 * * * *"
+# cron-runtime-minutes: 8
 ```
 
 The value covers the job's database-active window (the `tsx` step), not the
@@ -196,11 +196,11 @@ real numbers whenever a heavy one wants in.
 
 **Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers three distinct scenarios:
 
-| Scenario                           | Source Status              | Threshold                                                                        | Target Status |
-| ---------------------------------- | -------------------------- | ------------------------------------------------------------------------------- | ------------- |
-| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`)      | `EXPIRED`     |
-| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                     | `EXPIRED`     |
-| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)                 | `EXPIRED`     |
+| Scenario                           | Source Status              | Threshold                                                                   | Target Status |
+| ---------------------------------- | -------------------------- | --------------------------------------------------------------------------- | ------------- |
+| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`) | `EXPIRED`     |
+| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                | `EXPIRED`     |
+| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)            | `EXPIRED`     |
 
 **Action**:
 
@@ -243,13 +243,13 @@ real numbers whenever a heavy one wants in.
 
 ### g. Detect Consultant No-Shows
 
-| Field              | Value                                                 |
-| ------------------ | ----------------------------------------------------- |
-| **Schedule**       | `17 * * * *` -- every hour, at :17                    |
-| **Source**         | `scripts/appointments/detect-consultant-no-shows.ts`  |
-| **API**            | N/A -- runs via GitHub Actions only                   |
-| **GitHub Actions** | `.github/workflows/detect-consultant-no-shows.yml`    |
-| **HTTP Methods**   | N/A                                                   |
+| Field              | Value                                                |
+| ------------------ | ---------------------------------------------------- |
+| **Schedule**       | `17 * * * *` -- every hour, at :17                   |
+| **Source**         | `scripts/appointments/detect-consultant-no-shows.ts` |
+| **API**            | N/A -- runs via GitHub Actions only                  |
+| **GitHub Actions** | `.github/workflows/detect-consultant-no-shows.yml`   |
+| **HTTP Methods**   | N/A                                                  |
 
 **Purpose**: Closes the loop on the platform's promise of a full refund when the consultant fails to attend a paid session. The job scans confirmed `CONSULTATION` bookings whose session ended at least the grace window ago, uses the per-attendee `MeetingAttendance` records (stamped by the Stream session handlers) to identify the ones the consultant never joined, and for each such no-show it auto-refunds the consultee via `refundPayment`, marks the booking cancelled, and notifies both parties.
 
