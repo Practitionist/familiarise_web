@@ -170,7 +170,8 @@ export function quoteBookingRefund(
     : input.grossPaise;
   // refundPct may carry two decimals; scale by 100 so the division is exact.
   const refundBeforeClamp = Number(
-    (BigInt(proratedBasePaise) * BigInt(Math.round(refundPct * 100))) / 10_000n,
+    (BigInt(proratedBasePaise) * BigInt(Math.round(refundPct * 100))) /
+      BigInt(10_000),
   );
 
   return {
