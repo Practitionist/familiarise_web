@@ -9,6 +9,7 @@ import {
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
+import { transitionTrialSession } from "@/lib/booking/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -1948,12 +1949,12 @@ export async function handleSubscriptionCheckout(
 
   if (completedTrial) {
     // Mark the trial as converted and link to this subscription
-    await tx.trialSession.update({
+    // CAS (#1319): the findFirst above filtered COMPLETED; the WHERE here is
+    // what makes that hold at write time.
+    await transitionTrialSession(tx, {
       where: { id: completedTrial.id },
-      data: {
-        status: TrialSessionStatus.CONVERTED,
-        convertedToSubscriptionId: subscription.id,
-      },
+      to: TrialSessionStatus.CONVERTED,
+      data: { convertedToSubscriptionId: subscription.id },
     });
 
     console.log(

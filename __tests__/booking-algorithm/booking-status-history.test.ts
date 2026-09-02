@@ -13,6 +13,8 @@ import {
   transitionWebinarEvent,
   transitionClassEvent,
   transitionRescheduleRequest,
+  transitionSlotCompletion,
+  transitionTrialSession,
 } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
@@ -92,6 +94,14 @@ const cases: Array<{
     run: (tx) =>
       transitionRescheduleRequest(tx, { where: { id: "r1" }, to: "ACCEPTED" }),
   },
+  {
+    name: "trial session",
+    model: "trialSession",
+    entity: "TRIAL",
+    to: "CANCELLED",
+    run: (tx) =>
+      transitionTrialSession(tx, { where: { id: "t1" }, to: "CANCELLED" }),
+  },
 ];
 
 describe.each(cases)(
@@ -147,5 +157,92 @@ describe("attribution rides the row", () => {
       organizationId: "org1",
       appointmentId: "a1",
     });
+  });
+});
+
+// The slot helper is the one bulk CAS: it sweeps a WhereInput rather than an
+// id, so it pre-reads the cohort and appends one row per slot it moved.
+describe("slot completion history", () => {
+  function slotTx(rows: Array<{ id: string; completionStatus: string }>) {
+    const order: string[] = [];
+    const findMany = jest.fn(async () => {
+      order.push("read");
+      return rows;
+    });
+    const updateMany = jest.fn(async () => {
+      order.push("cas");
+      return { count: rows.length };
+    });
+    const create = jest.fn(async (_args: { data: Record<string, unknown> }) => {
+      order.push("history");
+      return {};
+    });
+    return {
+      tx: {
+        slotOfAppointment: { findMany, updateMany },
+        bookingStatusHistory: { create },
+      } as never,
+      findMany,
+      create,
+      order,
+    };
+  }
+
+  it("appends one SLOT row per slot the sweep moved, carrying each from-status", async () => {
+    const { tx, create, order } = slotTx([
+      { id: "slot_1", completionStatus: "SCHEDULED" },
+      { id: "slot_2", completionStatus: "UNVERIFIED" },
+    ]);
+    const moved = await transitionSlotCompletion(tx, {
+      where: { appointmentId: "apt_1", deletedAt: null },
+      to: "CANCELLED",
+      actorUserId: "u1",
+    });
+    expect(moved).toBe(2);
+    expect(order).toEqual(["read", "cas", "history", "history"]);
+    expect(create.mock.calls.map((c) => c[0].data)).toEqual([
+      expect.objectContaining({
+        entity: "SLOT",
+        entityId: "slot_1",
+        fromStatus: "SCHEDULED",
+        toStatus: "CANCELLED",
+        actorUserId: "u1",
+      }),
+      expect.objectContaining({
+        entity: "SLOT",
+        entityId: "slot_2",
+        fromStatus: "UNVERIFIED",
+        toStatus: "CANCELLED",
+      }),
+    ]);
+  });
+
+  it("pre-reads with the CAS's own from-set, so an ineligible row is never logged", async () => {
+    const { tx, findMany } = slotTx([
+      { id: "slot_1", completionStatus: "SCHEDULED" },
+    ]);
+    await transitionSlotCompletion(tx, {
+      where: { appointmentId: "apt_1" },
+      to: "CANCELLED",
+    });
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        appointmentId: "apt_1",
+        completionStatus: { in: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"] },
+      },
+      select: { id: true, completionStatus: true },
+    });
+  });
+
+  it("writes no history when a permitted zero-row sweep matches nothing", async () => {
+    const { tx, create } = slotTx([]);
+    await expect(
+      transitionSlotCompletion(tx, {
+        where: { appointmentId: "apt_1" },
+        to: "CANCELLED",
+        allowZero: true,
+      }),
+    ).resolves.toBe(0);
+    expect(create).not.toHaveBeenCalled();
   });
 });
