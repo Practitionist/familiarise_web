@@ -376,34 +376,6 @@ ALTER TABLE "Contract" DROP CONSTRAINT IF EXISTS "contract_payment_terms_nonnega
 -- SPLIT
 ALTER TABLE "Contract" ADD CONSTRAINT "contract_payment_terms_nonnegative"
   CHECK ("paymentTermsDays" >= 0);
--- ============================================================================
--- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
--- Each of these can fail against pre-reset data (existing nulls, historical
--- overlaps, drifted denormalizations). They ship here commented so review and
--- the reset runbook see them; uncomment at the reset.
---
--- 1. #1093 §3 — make the idempotency guarantees structural once no nulls exist
---    (writers mint since #1169 PR 9, so no new nulls are created):
---    ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
---    ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
---
--- 2. #1093 §5 — overlapping ACTIVE program assignments double-bill a seat; the
---    (programId, membershipId, periodStart) unique cannot see different starts:
---    ALTER TABLE "ProgramAssignment" ADD CONSTRAINT "program_assignment_no_active_overlap"
---      EXCLUDE USING gist (
---        "programId" WITH =,
---        "membershipId" WITH =,
---        tstzrange("periodStart", "periodEnd") WITH &&
---      ) WHERE ("status" = 'ACTIVE');
---
--- 3. #1169 PR 1 residue — the denormalized session totals feed
---    calculateRequiredSlots as authoritative; incoherent values make plans
---    impossible to allocate ("Could only find N of M"):
---    ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
---      CHECK ("totalSessions" >= 1);
---    ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
---      CHECK ("totalSessions" >= 1);
--- ============================================================================
 
 -- #1244 review — document review thread versioning. Prisma cannot express a
 -- functional/partial unique, so this rides the sidecar like the CHECKs above:
@@ -445,3 +417,33 @@ ALTER TABLE "onboarding_drafts" DROP CONSTRAINT IF EXISTS "onboarding_draft_payl
 -- SPLIT
 ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
   CHECK (pg_column_size("payload") <= 65536);
+
+-- SPLIT
+-- ============================================================================
+-- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
+-- Each of these can fail against pre-reset data (existing nulls, historical
+-- overlaps, drifted denormalizations). They ship here commented so review and
+-- the reset runbook see them; uncomment at the reset.
+--
+-- 1. #1093 §3 — make the idempotency guarantees structural once no nulls exist
+--    (writers mint since #1169 PR 9, so no new nulls are created):
+--    ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
+--    ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
+--
+-- 2. #1093 §5 — overlapping ACTIVE program assignments double-bill a seat; the
+--    (programId, membershipId, periodStart) unique cannot see different starts:
+--    ALTER TABLE "ProgramAssignment" ADD CONSTRAINT "program_assignment_no_active_overlap"
+--      EXCLUDE USING gist (
+--        "programId" WITH =,
+--        "membershipId" WITH =,
+--        tstzrange("periodStart", "periodEnd") WITH &&
+--      ) WHERE ("status" = 'ACTIVE');
+--
+-- 3. #1169 PR 1 residue — the denormalized session totals feed
+--    calculateRequiredSlots as authoritative; incoherent values make plans
+--    impossible to allocate ("Could only find N of M"):
+--    ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
+--      CHECK ("totalSessions" >= 1);
+--    ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
+--      CHECK ("totalSessions" >= 1);
+-- ============================================================================

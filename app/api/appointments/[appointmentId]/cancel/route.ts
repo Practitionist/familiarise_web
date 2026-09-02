@@ -1,10 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
+import { setParticipantStatus } from "@/lib/booking/participants";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
-import {
-  notifyAppointmentCancelled,
-} from "@/lib/novu";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
@@ -16,7 +15,10 @@ import {
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  refundBookingPayment,
+  type FundingRail,
+} from "@/lib/payments/operations/booking-refund";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
@@ -372,6 +374,16 @@ export async function POST(
             data: { completionStatus: "CANCELLED" },
           });
         }
+        // #1319 A9 — every participant of the cancelled engagement.
+        await setParticipantStatus(
+          tx,
+          appointment.subscription
+            ? { appointment: { subscriptionId: appointment.subscription.id } }
+            : appointment.class
+              ? { appointment: { classId: appointment.class.id } }
+              : { appointmentId },
+          "CANCELLED",
+        );
 
         // Close any live reschedule proposal on this booking. Leaving one open
         // would keep openForAppointmentId reserved forever and let the expiry
@@ -425,6 +437,13 @@ export async function POST(
         | "MANUAL_REVIEW";
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
+      /**
+       * Which rail returned the money. The client renders a different sentence
+       * per rail — an org-funded cancellation credits the org's balance, not
+       * the learner's card — and `refundBookingPayment` already answers this;
+       * dropping it left the UI guessing "card, 5–7 working days" for all three.
+       */
+      rail?: FundingRail;
     } | null = null;
     if (bookingCtx) {
       const paidPayment = bookingCtx.paidPayment;
@@ -507,7 +526,8 @@ export async function POST(
             try {
               const restored = await refundBookingPayment({
                 paymentId: paidPayment.id,
-                reason: "cancellation (credit-funded booking, full restoration)",
+                reason:
+                  "cancellation (credit-funded booking, full restoration)",
                 initiatedByUserId: session.user.id,
               });
               refund = {
@@ -519,9 +539,13 @@ export async function POST(
                 refundPct: 100,
                 status: "REFUNDED",
                 requiresManualReview: false,
+                rail: restored.rail,
               };
             } catch (freeErr) {
-              Sentry.captureException(freeErr instanceof Error ? freeErr : new Error(String(freeErr)), { tags: { subsystem: "bookings" } });
+              Sentry.captureException(
+                freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
+                { tags: { subsystem: "bookings" } },
+              );
               refund = {
                 amountRefundedPaise: 0,
                 refundPct: 100,
@@ -559,6 +583,7 @@ export async function POST(
               amountRefundedPaise: r.amountRefundedPaise,
               refundPct,
               status: "REFUNDED",
+              rail: r.rail,
             };
           } catch (refundErr) {
             // The cancellation itself stands; a failed refund must be visible,

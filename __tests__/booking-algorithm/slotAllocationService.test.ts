@@ -129,6 +129,11 @@ function makeMockTx() {
       // the payment-appeared race.
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    appointmentParticipant: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     slotOfAppointment: {
       update: jest.fn(),
       updateMany: jest.fn(),

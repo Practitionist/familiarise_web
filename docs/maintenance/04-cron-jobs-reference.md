@@ -1,8 +1,8 @@
 # Cron Jobs Reference
 
-The platform runs **65 scheduled GitHub Actions workflows**. Each one boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, and exits — no Next.js server, no middleware, and therefore none of the protections the request path takes for granted. Everything a cron job needs, it has to arrange for itself.
+The platform runs **67 scheduled GitHub Actions workflows**. Each one boots a bare Node process with `tsx`, connects straight to PostgreSQL through Prisma, and exits — no Next.js server, no middleware, and therefore none of the protections the request path takes for granted. Everything a cron job needs, it has to arrange for itself.
 
-This page is the inventory of that fleet. It was regenerated on **2026-08-14** directly from `.github/workflows/`, the entrypoints those workflows execute, and `lib/maintenance-cron.ts`, replacing a hand-written version that had drifted badly: it described 28 jobs and asserted that all of them called `abortIfMaintenance()`. Both claims were wrong, and the second one was wrong in the direction that gets a database corrupted during a migration.
+This page is the inventory of that fleet. It was regenerated on **2026-08-14** and last re-verified on **2026-09-02** directly from `.github/workflows/`, the entrypoints those workflows execute, and `lib/maintenance-cron.ts`, replacing a hand-written version that had drifted badly: it described 28 jobs and asserted that all of them called `abortIfMaintenance()`. Both claims were wrong, and the second one was wrong in the direction that gets a database corrupted during a migration.
 
 ## What changed in #1169
 
@@ -24,14 +24,14 @@ Two things now prevent a repeat. The Supabase clients and storage primitives a j
 
 | Property                                | Count |
 | --------------------------------------- | ----- |
-| Scheduled workflows                     | 65    |
-| Locked via `withCronLock`               | 61    |
-| — fail-closed                           | 25    |
-| — fail-open                             | 36    |
+| Scheduled workflows                     | 67    |
+| Locked via `withCronLock`               | 63    |
+| — fail-closed                           | 28    |
+| — fail-open                             | 35    |
 | Locked by a bespoke Redis lock          | 2     |
 | Deliberately unlocked                   | 2     |
-| On the financial list                   | 14    |
-| Without an `abortIfMaintenance()` guard | 14    |
+| On the financial list                   | 20    |
+| Without an `abortIfMaintenance()` guard | 3     |
 
 ## How to read the tables
 
@@ -91,48 +91,48 @@ The payout and earnings pipeline, which turns completed sessions into money leav
 | **Process Payouts**<br>`process-payouts`                               | `0 21 * * 1`   | `jobs/payouts/process-payouts.ts`                                                           | bespoke | yes       | Consultant and org payout status, `ConsultantEarnings`, `TDSRecord`, ledger; submits RazorpayX and Stripe payouts | Skips: OFFLINE + DEGRADED |
 | **Reconcile Payout Status**<br>`reconcile-payout-status`               | `33 */6 * * *` | `jobs/payouts/reconcile-payout-status.ts`<br>→ `scripts/payouts/reconcile-payout-status.ts` | closed  | yes       | `ConsultantPayout` status and TDS fields, `ConsultantEarnings`, `TDSRecord`, ledger entries                       | Skips: OFFLINE + DEGRADED |
 | **Release Earnings from Hold**<br>`release-earnings`                   | `17 * * * *`   | `jobs/earnings/release-earnings.ts`<br>→ `scripts/earnings/release-earnings.ts`             | closed  | yes       | `ConsultantEarnings` released from hold                                                                           | Skips: OFFLINE + DEGRADED |
-| **Release PENDING_TRUST Earnings**<br>`release-pending-trust-earnings` | `42 * * * *`   | `jobs/cleanup/release-pending-trust-earnings.ts`                                            | closed  | no        | Consultant and org earnings released from PENDING_TRUST                                                           | **Runs anyway**           |
+| **Release PENDING_TRUST Earnings**<br>`release-pending-trust-earnings` | `42 * * * *`   | `jobs/cleanup/release-pending-trust-earnings.ts`                                            | closed  | yes       | Consultant and org earnings released from PENDING_TRUST                                                           | Skips: OFFLINE, DEGRADED  |
 | **Sync Payment to Earnings**<br>`sync-payment-earnings`                | `22 * * * *`   | `jobs/earnings/sync-payment-earnings.ts`<br>→ `scripts/earnings/sync-payment-earnings.ts`   | closed  | yes       | Creates consultant and org earnings plus the booking ledger rows                                                  | Skips: OFFLINE + DEGRADED |
 
 ## Billing and contracts
 
-Organisation billing runs on its own cycle engine, and these jobs advance it. They are the newest part of the fleet, and it shows in the maintenance column: six of the eight are self-contained `jobs/**` entrypoints written after the `abortIfMaintenance()` convention was established, and none of them adopted it.
+Organisation billing runs on its own cycle engine, and these jobs advance it. They were the newest part of the fleet, and until the wave-5 sweep it showed in the maintenance column: six of the eight were self-contained `jobs/**` entrypoints written after the `abortIfMaintenance()` convention was established, and none of them had adopted it. All eight now call the guard.
 
 | Workflow                                                               | Schedule (UTC) | Entrypoint                                       | Lock   | Financial | Mutates                                                                                | During maintenance        |
 | ---------------------------------------------------------------------- | -------------- | ------------------------------------------------ | ------ | --------- | -------------------------------------------------------------------------------------- | ------------------------- |
-| **Advance Program Cycles**<br>`advance-program-cycles`                 | `15 2 * * *`   | `jobs/billing/advance-program-cycles.ts`         | closed | no        | `ProgramAssignment` cycle advancement, `OrgAuditLog`                                   | **Runs anyway**           |
-| **Auto-Renew Contracts**<br>`auto-renew-contracts`                     | `30 2 * * *`   | `jobs/contracts/auto-renew-contracts.ts`         | open   | no        | `Contract` renewal dates, `Program` rollover, `OrgAuditLog`                            | **Runs anyway**           |
-| **Dunning**<br>`dunning`                                               | `30 23 * * *`  | `jobs/billing/dunning.ts`                        | closed | no        | `OrganizationInvoice` dunning state, `OrgAuditLog`, Novu overdue notices               | **Runs anyway**           |
-| **Expire Contracts**<br>`expire-contracts`                             | `10 3 * * *`   | `jobs/contracts/expire-contracts.ts`             | open   | no        | `Contract`, `Program` and `ProgramAssignment` expiry, `OrgAuditLog`                    | **Runs anyway**           |
+| **Advance Program Cycles**<br>`advance-program-cycles`                 | `15 2 * * *`   | `jobs/billing/advance-program-cycles.ts`         | closed | yes       | `ProgramAssignment` cycle advancement, `OrgAuditLog`                                   | Skips: OFFLINE, DEGRADED  |
+| **Auto-Renew Contracts**<br>`auto-renew-contracts`                     | `30 2 * * *`   | `jobs/contracts/auto-renew-contracts.ts`         | closed | yes       | `Contract` renewal dates, `Program` rollover, `OrgAuditLog`                            | Skips: OFFLINE, DEGRADED  |
+| **Dunning**<br>`dunning`                                               | `30 23 * * *`  | `jobs/billing/dunning.ts`                        | closed | yes       | `OrganizationInvoice` dunning state, `OrgAuditLog`, Novu overdue notices               | Skips: OFFLINE, DEGRADED  |
+| **Expire Contracts**<br>`expire-contracts`                             | `10 3 * * *`   | `jobs/contracts/expire-contracts.ts`             | closed | yes       | `Contract`, `Program` and `ProgramAssignment` expiry, `OrgAuditLog`                    | Skips: OFFLINE, DEGRADED  |
 | **Generate Subscription Invoices**<br>`generate-subscription-invoices` | `0 1 * * *`    | `jobs/billing/generate-subscription-invoices.ts` | closed | yes       | `OrganizationInvoice` creation, `OrgInvoiceCounter`, `BillingSubscription` period roll | Skips: OFFLINE + DEGRADED |
 | **Settle Invoice Accruals**<br>`settle-invoice-accruals`               | `0 4 1 * *`    | `jobs/billing/settle-invoice-accruals.ts`        | closed | yes       | `OrganizationInvoice` accrual settlement, `Payment` rows                               | Skips: OFFLINE + DEGRADED |
-| **Timeout Member Overages**<br>`timeout-member-overages`               | `0 23 * * *`   | `jobs/billing/timeout-member-overages.ts`        | closed | no        | `OverageEvent` timeout, `Payment`/`PaymentLeg` restore, `SystemEvent`                  | **Runs anyway**           |
-| **Wallet Low Balance**<br>`wallet-low-balance`                         | `45 23 * * *`  | `jobs/billing/wallet-low-balance.ts`             | open   | no        | `BillingAccount` low-balance flag; Novu wallet alerts                                  | **Runs anyway**           |
+| **Timeout Member Overages**<br>`timeout-member-overages`               | `0 23 * * *`   | `jobs/billing/timeout-member-overages.ts`        | closed | yes       | `OverageEvent` timeout, `Payment`/`PaymentLeg` restore, `SystemEvent`                  | Skips: OFFLINE, DEGRADED  |
+| **Wallet Low Balance**<br>`wallet-low-balance`                         | `45 23 * * *`  | `jobs/billing/wallet-low-balance.ts`             | open   | no        | `BillingAccount` low-balance flag; Novu wallet alerts                                  | Skips: OFFLINE            |
 
 ## Compliance
 
 These jobs exist because a statute or a regulator says they must, and their deadlines are external. Skipping one for a maintenance window is cheap; skipping one for a week is not.
 
-| Workflow                                                                | Schedule (UTC) | Entrypoint                                      | Lock | Financial | Mutates                                                                          | During maintenance |
-| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------- | ---- | --------- | -------------------------------------------------------------------------------- | ------------------ |
-| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`   | `jobs/compliance/consent-retention-sweeper.ts`  | open | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE     |
-| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`   | `jobs/compliance/databreach-deadline-alerts.ts` | open | no        | Reads only; emails the DPDP officer inbox                                        | **Runs anyway**    |
-| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`   | `jobs/compliance/irp-uploader.ts`               | open | no        | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | **Runs anyway**    |
-| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`   | `jobs/compliance/msme-payment-alerts.ts`        | open | no        | Reads only; emails the finance inbox                                             | **Runs anyway**    |
+| Workflow                                                                | Schedule (UTC) | Entrypoint                                      | Lock   | Financial | Mutates                                                                          | During maintenance       |
+| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- | ------------------------ |
+| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`   | `jobs/compliance/consent-retention-sweeper.ts`  | open   | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE           |
+| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`   | `jobs/compliance/databreach-deadline-alerts.ts` | open   | no        | Reads only; emails the DPDP officer inbox                                        | Skips: OFFLINE           |
+| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`   | `jobs/compliance/irp-uploader.ts`               | closed | yes       | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | Skips: OFFLINE, DEGRADED |
+| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`   | `jobs/compliance/msme-payment-alerts.ts`        | open   | no        | Reads only; emails the finance inbox                                             | Skips: OFFLINE           |
 
 ## Stream and recordings
 
 Chat channels, video sessions and the recordings they produce all live in Stream's systems as well as ours, so these jobs reconcile two sources of truth and move recording files into our own storage before Stream expires them.
 
-| Workflow                                                             | Schedule (UTC) | Entrypoint                                                                                              | Lock    | Financial | Mutates                                                          | During maintenance |
-| -------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------- | ------- | --------- | ---------------------------------------------------------------- | ------------------ |
-| **Cleanup Old Stream Recordings**<br>`cleanup-old-stream-recordings` | `0 3 * * *`    | `jobs/cleanup/cleanup-old-stream-recordings.ts`<br>→ `scripts/cleanup/cleanup-old-stream-recordings.ts` | open    | no        | `Recording` rows and Supabase objects deleted past org retention | Skips: OFFLINE     |
-| **Expire Event Chat Channels**<br>`expire-event-channels`            | `35 4 * * *`   | `jobs/stream/expire-event-channels.ts`                                                                  | open    | no        | Stream channels frozen then deleted; no DB writes                | Skips: OFFLINE     |
-| **Mark Expired Recordings**<br>`mark-expired-recordings`             | `20 3 * * *`   | `jobs/stream/mark-expired-recordings.ts`                                                                | open    | no        | `Recording` → EXPIRED past retention                             | Skips: OFFLINE     |
-| **Stream User Sync**<br>`stream-sync`                                | `40 3 * * *`   | `jobs/stream/stream-sync.ts`<br>→ `scripts/stream/stream-sync.ts`                                       | closed  | no        | Stream Chat users soft-deleted; no DB writes                     | Skips: OFFLINE     |
-| **Transfer Expiring Recordings**<br>`transfer-expiring-recordings`   | `58 */6 * * *` | `jobs/stream/transfer-expiring-recordings.ts`                                                           | open    | no        | `Recording` storage path; copies Stream recordings into Supabase | Skips: OFFLINE     |
-| **Reconcile Orphaned Recordings**<br>`reconcile-orphaned-recordings`  | `0 5 * * *`    | `jobs/stream/reconcile-orphaned-recordings.ts`<br>→ `scripts/stream/reconcile-orphaned-recordings.ts`    | open    | no        | Creates `Recording` rows for sessions whose `call.recording_ready` webhook was lost | Skips: OFFLINE     |
-| **Stream Webhook Drift**<br>`stream-webhook-drift`                    | `15 5 * * *`   | `scripts/stream/ensure-webhook-subscription.ts --check`                                                 | none    | no        | Nothing. Reads Stream's app settings and fails the job on drift  | Runs anyway        |
+| Workflow                                                             | Schedule (UTC) | Entrypoint                                                                                              | Lock   | Financial | Mutates                                                                             | During maintenance |
+| -------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------- | ------ | --------- | ----------------------------------------------------------------------------------- | ------------------ |
+| **Cleanup Old Stream Recordings**<br>`cleanup-old-stream-recordings` | `0 3 * * *`    | `jobs/cleanup/cleanup-old-stream-recordings.ts`<br>→ `scripts/cleanup/cleanup-old-stream-recordings.ts` | open   | no        | `Recording` rows and Supabase objects deleted past org retention                    | Skips: OFFLINE     |
+| **Expire Event Chat Channels**<br>`expire-event-channels`            | `35 4 * * *`   | `jobs/stream/expire-event-channels.ts`                                                                  | open   | no        | Stream channels frozen then deleted; no DB writes                                   | Skips: OFFLINE     |
+| **Mark Expired Recordings**<br>`mark-expired-recordings`             | `20 3 * * *`   | `jobs/stream/mark-expired-recordings.ts`                                                                | open   | no        | `Recording` → EXPIRED past retention                                                | Skips: OFFLINE     |
+| **Stream User Sync**<br>`stream-sync`                                | `40 3 * * *`   | `jobs/stream/stream-sync.ts`<br>→ `scripts/stream/stream-sync.ts`                                       | closed | no        | Stream Chat users soft-deleted; no DB writes                                        | Skips: OFFLINE     |
+| **Transfer Expiring Recordings**<br>`transfer-expiring-recordings`   | `58 */6 * * *` | `jobs/stream/transfer-expiring-recordings.ts`                                                           | open   | no        | `Recording` storage path; copies Stream recordings into Supabase                    | Skips: OFFLINE     |
+| **Reconcile Orphaned Recordings**<br>`reconcile-orphaned-recordings` | `0 5 * * *`    | `jobs/stream/reconcile-orphaned-recordings.ts`<br>→ `scripts/stream/reconcile-orphaned-recordings.ts`   | open   | no        | Creates `Recording` rows for sessions whose `call.recording_ready` webhook was lost | Skips: OFFLINE     |
+| **Stream Webhook Drift**<br>`stream-webhook-drift`                   | `15 5 * * *`   | `scripts/stream/ensure-webhook-subscription.ts --check`                                                 | none   | no        | Nothing. Reads Stream's app settings and fails the job on drift                     | **Runs anyway**    |
 
 ## Housekeeping and platform hygiene
 
@@ -140,7 +140,7 @@ The long tail: janitors, sweepers, retry drains and the watchdog. Individually n
 
 | Workflow                                                                 | Schedule (UTC)     | Entrypoint                                                                                                  | Lock   | Financial | Mutates                                                                                                | During maintenance |
 | ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- | ------ | --------- | ------------------------------------------------------------------------------------------------------ | ------------------ |
-| **Purge Deleted Documents**<br>`purge-deleted-documents`            | `34 3 * * *`   | `jobs/cleanup/purge-deleted-documents.ts`                                                               | open    | no        | Storage objects + rows hard-deleted past the 7-day soft-delete grace window | Skips: OFFLINE     |
+| **Purge Deleted Documents**<br>`purge-deleted-documents`                 | `34 3 * * *`       | `jobs/cleanup/purge-deleted-documents.ts`                                                                   | open   | no        | Storage objects + rows hard-deleted past the 7-day soft-delete grace window                            | Skips: OFFLINE     |
 | **Alert Orphaned Payments**<br>`alert-orphaned-payments`                 | `30 */6 * * *`     | `jobs/alerts/alert-orphaned-payments.ts`<br>→ `scripts/alerts/alert-orphaned-payments.ts`                   | open   | no        | Reads only; logs CRITICAL alerts                                                                       | Skips: OFFLINE     |
 | **Archive Webhook Events**<br>`archive-webhook-events`                   | `25 0 * * 0`       | `jobs/cleanup/archive-webhook-events.ts`<br>→ `scripts/cleanup/archive-webhook-events.ts`                   | open   | no        | `WebhookEvent` rows archived and pruned                                                                | Skips: OFFLINE     |
 | **Cleanup Abandoned Org Top-Ups**<br>`cleanup-abandoned-org-top-ups`     | `0 2 * * *`        | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts`<br>→ `scripts/cleanup/cleanup-abandoned-org-top-ups.ts`     | closed | no        | `WalletTopUp` cancellation; cancels the Razorpay order                                                 | Skips: OFFLINE     |
@@ -152,6 +152,7 @@ The long tail: janitors, sweepers, retry drains and the watchdog. Individually n
 | **Dispatch Outbound Webhooks**<br>`dispatch-outbound-webhooks`           | `* * * * *`        | `jobs/cleanup/dispatch-outbound-webhooks.ts`<br>→ `scripts/cleanup/dispatch-outbound-webhooks.ts`           | open   | no        | `OutboundWebhookDelivery` status and attempts, `WebhookEndpoint.lastSuccessAt`; POSTs to org endpoints | Skips: OFFLINE     |
 | **Process Data Exports**<br>`process-data-exports`                       | `9-59/10 * * * *`  | `jobs/cleanup/process-data-exports.ts`<br>→ `scripts/cleanup/process-data-exports.ts`                       | open   | no        | `OrgDataExportJob` status; writes export archives to Supabase                                          | Skips: OFFLINE     |
 | **Prune Audit Logs**<br>`prune-audit-logs`                               | `15 3 * * *`       | `jobs/cleanup/prune-audit-logs.ts`<br>→ `scripts/cleanup/prune-audit-logs.ts`                               | open   | no        | `OrgAuditLog` rows pruned past the retention floor                                                     | Skips: OFFLINE     |
+| **Prune System Job Executions**<br>`prune-system-job-executions`         | `26 3 * * *`       | `jobs/cleanup/prune-system-job-executions.ts`<br>→ `scripts/cleanup/prune-system-job-executions.ts`         | open   | no        | `SystemJobExecution` rows past 90 days pruned; runs stuck in RUNNING for 6+ hours closed as stranded   | Skips: OFFLINE     |
 | **Reconcile Document Storage**<br>`reconcile-document-storage`           | `35 2 * * *`       | `jobs/cleanup/reconcile-document-storage.ts`<br>→ `scripts/cleanup/reconcile-document-storage.ts`           | open   | no        | `AppointmentDocument.isStorageMissing`, reconciled against Supabase objects                            | Skips: OFFLINE     |
 | **Reconcile Ledgers**<br>`reconcile-ledgers`                             | `45 3 * * *`       | `jobs/reconcile/reconcile-ledgers.ts`<br>→ `scripts/reconcile/reconcile-ledgers.ts`                         | open   | no        | Reads every financial table; writes `LedgerReconciliationReport` findings                              | Skips: OFFLINE     |
 | **Retry Failed Emails**<br>`retry-failed-emails`                         | `5-59/15 * * * *`  | `jobs/email/retry-failed-emails.ts`                                                                         | open   | no        | `FailedEmail` retry state; re-sends the queued mail                                                    | Skips: OFFLINE     |
@@ -162,22 +163,15 @@ The long tail: janitors, sweepers, retry drains and the watchdog. Individually n
 
 ## Jobs that ignore maintenance mode
 
-12 of the 61 scheduled jobs never call `abortIfMaintenance()`, so they run straight through both DEGRADED and OFFLINE maintenance. The previous version of this page claimed the opposite for all of them, which is the kind of documentation error that gets acted on at two in the morning.
+Three of the 67 scheduled jobs never call `abortIfMaintenance()`. It used to be twelve, and the twelve included six jobs that move money or rewrite the org entitlement state the checkout resolver reads — `dunning`, `advance-program-cycles`, `auto-renew-contracts`, `expire-contracts`, `timeout-member-overages` and `release-pending-trust-earnings` — as well as `wallet-low-balance`, which only flags a low wallet and sends the alert. All of them now carry the guard. The six that move money joined `FINANCIAL_JOB_NAMES` at the same time, so they exit on DEGRADED as well as OFFLINE; `wallet-low-balance` did not, so it exits on OFFLINE only. `auto-renew-contracts` and `expire-contracts` were additionally flipped from fail-open to fail-closed locks, because a financial job that keeps running while Redis is unreachable is exactly the window in which two runners both believe they hold the lock.
 
-- `advance-program-cycles` — jobs/billing/advance-program-cycles.ts
-- `auto-renew-contracts` — jobs/contracts/auto-renew-contracts.ts
-- `cleanup-empty-folders` — scripts/utils/cleanup-empty-folders.ts
-- `cron-heartbeat` — scripts/ci/check-cron-heartbeat.ts
-- `databreach-deadline-alerts` — jobs/compliance/databreach-deadline-alerts.ts
-- `dunning` — jobs/billing/dunning.ts
-- `expire-contracts` — jobs/contracts/expire-contracts.ts
-- `irp-uploader` — jobs/compliance/irp-uploader.ts
-- `msme-payment-alerts` — jobs/compliance/msme-payment-alerts.ts
-- `release-pending-trust-earnings` — jobs/cleanup/release-pending-trust-earnings.ts
-- `timeout-member-overages` — jobs/billing/timeout-member-overages.ts
-- `wallet-low-balance` — jobs/billing/wallet-low-balance.ts
+The three that remain are deliberate.
 
-None of them is on the financial list, so the DEGRADED protection is not what is missing here; the OFFLINE protection is. Until the guard is added, an OFFLINE window has to assume these jobs are live, and a migration that rewrites the models in their **Mutates** column should be scheduled against their cron minute rather than against the maintenance flag. This is tracked as follow-up work rather than fixed in #1169, because adding a guard changes when a job runs and each one deserves its own reasoning.
+- `cleanup-empty-folders` — scripts/utils/cleanup-empty-folders.ts. Touches Supabase storage objects only and never opens a database connection, so a migration cannot catch it mid-write.
+- `cron-heartbeat` — scripts/ci/check-cron-heartbeat.ts. The dead-man switch itself. Silencing the watchdog during maintenance would mean the one window in which the fleet is most likely to stop is also the window in which nobody would notice.
+- `stream-webhook-drift` — scripts/stream/ensure-webhook-subscription.ts. A read-only drift check against Stream's app settings; the whole run is one API read.
+
+The same sweep closed the other half of the hole. The forty-odd HTTP twins under `app/api/cleanup/` import these job cores directly and had no guard at all, so an ops trigger ran the job straight through an OFFLINE window. They cannot call `abortIfMaintenance()`, whose `process.exit(0)` would take the Next instance down with the request, so they call `assertNotInMaintenance()` instead: the same phase rule, surfaced as a `MaintenanceActiveError` the handler answers with 503.
 
 ## Locking
 
@@ -187,12 +181,12 @@ It is a mutual-exclusion tool and nothing more. Data correctness comes from comp
 
 Four scheduled workflows do not use it, each for a stated reason.
 
-| Workflow              | Mechanism                              | Why not `withCronLock`                                                                                                                                                        |
-| --------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `process-payouts`     | `lock:payout_processing`               | Predates the wrapper and additionally guards the HTTP approval path, which the `cron:lock:` key shape does not reach.                                                         |
-| `create-payout-batch` | `lock:payout_batch_creation`           | Same lock family as above, held across a batch that outlives the default TTL.                                                                                                 |
-| `cron-heartbeat`      | None, deliberately                     | Locking the dead-man switch through Redis would make the watchdog depend on the infrastructure it exists to report on. The check is read-only, so a double-run costs nothing. |
-| `stream-webhook-drift` | None, deliberately                    | A read-only drift check rather than a job. The whole run is one `getAppSettings` call, so a concurrent second run costs one extra API request, and a lock would give a guard a hard dependency on the infrastructure it does not need. |
+| Workflow               | Mechanism                    | Why not `withCronLock`                                                                                                                                                                                                                 |
+| ---------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `process-payouts`      | `lock:payout_processing`     | Predates the wrapper and additionally guards the HTTP approval path, which the `cron:lock:` key shape does not reach.                                                                                                                  |
+| `create-payout-batch`  | `lock:payout_batch_creation` | Same lock family as above, held across a batch that outlives the default TTL.                                                                                                                                                          |
+| `cron-heartbeat`       | None, deliberately           | Locking the dead-man switch through Redis would make the watchdog depend on the infrastructure it exists to report on. The check is read-only, so a double-run costs nothing.                                                          |
+| `stream-webhook-drift` | None, deliberately           | A read-only drift check rather than a job. The whole run is one `getAppSettings` call, so a concurrent second run costs one extra API request, and a lock would give a guard a hard dependency on the infrastructure it does not need. |
 
 Each entry is mirrored in `LOCK_EXEMPT` in `__tests__/maintenance/cron-lock-registry.test.ts`. That test fails both when a new workflow appears without a lock and when an exempt workflow grows a real one, so the table above cannot rot without CI saying so.
 
@@ -214,7 +208,7 @@ The second closes that gap from the other side. Every locked run refreshes `cron
 }
 ```
 
-`stale` turns true once the key is older than six hours, and is `null` before the fleet has ever written one or when Redis is not configured. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
+`stale` turns true once the key is older than six hours, and is `null` before the fleet has ever written one, when Redis is not configured, or when the stored timestamp will not parse — the last of those is a heartbeat we cannot date, which the probe treats exactly like one that was never written rather than guessing at an age. When the probe itself fails, `stale` is the string `"unknown"` and a `probeError: true` field appears alongside it. Those two cases used to be indistinguishable: an unreadable Redis returned exactly the same body as a fleet that had never run, so a monitor watching the field could not tell an outage from a cold start. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
 
 ## Keeping this page true
 

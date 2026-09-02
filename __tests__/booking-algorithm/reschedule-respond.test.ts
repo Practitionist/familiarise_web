@@ -23,9 +23,16 @@ const mockRequestFindFirst = jest.fn();
 const mockAllocate = jest.fn();
 const mockGetSession = jest.fn();
 const mockHasActiveDispute = jest.fn();
+// #1166 ORG-9 — what isOrgAdminOfAppointment reads to tell a payer admin's
+// initiation from a stranger's.
+const mockMembershipFindUnique = jest.fn();
 
 const txStub = {
-  rescheduleRequest: { updateMany: jest.fn() },
+  rescheduleRequest: {
+    updateMany: jest.fn(),
+    findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // Present so a decline that wrote slots would be caught rather than silently
   // passing: "the released slots stay released" is the contract.
   slotOfAppointment: { updateMany: jest.fn() },
@@ -38,6 +45,9 @@ jest.mock("../../lib/prisma", () => ({
     rescheduleRequest: {
       findUnique: (...a: unknown[]) => mockRequestFindUnique(...a),
       findFirst: (...a: unknown[]) => mockRequestFindFirst(...a),
+    },
+    membership: {
+      findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a),
     },
   },
 }));
@@ -134,6 +144,7 @@ beforeEach(() => {
   mockRequestFindUnique.mockResolvedValue(proposalRow());
   mockRequestFindFirst.mockResolvedValue(openRequestRow());
   mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+  mockMembershipFindUnique.mockResolvedValue(null);
 });
 
 describe("accept re-validates through the allocator before anything is written", () => {
@@ -152,10 +163,7 @@ describe("accept re-validates through the allocator before anything is written",
       eventType: "consultation",
       eventId: "cons-1",
       mode: "manual",
-      slots: [
-        "2026-09-01T10:00:00.000Z",
-        "2026-09-08T10:00:00.000Z",
-      ],
+      slots: ["2026-09-01T10:00:00.000Z", "2026-09-08T10:00:00.000Z"],
       // Day-sharded keys would let two concurrent confirmations pass a
       // per-week cap on stale counts.
       wideLock: true,
@@ -453,6 +461,114 @@ describe("#1008 — a disputed booking is frozen against acceptance", () => {
     );
 
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * #1166 ORG-9 — three openers, not two.
+ *
+ * "The counterparty" used to mean "a participant who is not the initiator",
+ * which reads correctly only while the initiator IS one of the two
+ * participants. An org admin rescheduling a session their organization funded
+ * matches neither profile, so the test was true for BOTH parties at once: the
+ * consultee could accept a proposal opened on their own behalf, and either
+ * party could confirm a move the other had never seen. An org admin acts on the
+ * payer's side, so the consultant is the one who answers.
+ */
+describe("who counts as the counterparty", () => {
+  const ORG_ADMIN_USER = "org-admin-user-1";
+  const ORG = "org-acme";
+
+  function orgFundedRow(initiatedById: string) {
+    return openRequestRow({
+      initiatedById,
+      appointment: {
+        consultationId: "cons-1",
+        subscriptionId: null,
+        organizationId: ORG,
+        consultation: {
+          requestedBy: { userId: CONSULTEE_USER },
+          consultationPlan: { consultantProfile: { userId: CONSULTANT_USER } },
+        },
+        subscription: null,
+      },
+    });
+  }
+
+  it("consultant opened it — the consultee answers, the consultant cannot", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(CONSULTANT_USER));
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      200,
+    );
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTANT_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      404,
+    );
+  });
+
+  it("consultee opened it — the consultant answers, the consultee cannot", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(CONSULTEE_USER));
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTANT_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      200,
+    );
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      404,
+    );
+  });
+
+  it("an org admin opened it — that is a payer-side act, so only the consultant answers", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(ORG_ADMIN_USER));
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTANT_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      200,
+    );
+
+    // The regression: pre-fix this was 200, letting the sponsored learner
+    // confirm a move made on their own behalf.
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      404,
+    );
+
+    expect(mockMembershipFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId_organizationId: {
+            userId: ORG_ADMIN_USER,
+            organizationId: ORG,
+          },
+        },
+      }),
+    );
+  });
+
+  it("an initiator who is neither party nor a payer admin leaves nobody able to answer", async () => {
+    // Fail closed: a proposal from an unidentifiable opener must not be
+    // confirmable by whoever asks first.
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow("stranger-user"));
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "LEARNER",
+    });
+
+    for (const who of [CONSULTANT_USER, CONSULTEE_USER]) {
+      mockGetSession.mockResolvedValue(sessionOf(who));
+      expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+        404,
+      );
+    }
   });
 });
 

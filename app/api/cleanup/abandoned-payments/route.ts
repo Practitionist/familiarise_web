@@ -6,6 +6,10 @@ import {
   disconnectDatabase,
 } from "@/scripts/payments/cleanup-abandoned-payments";
 import * as Sentry from "@sentry/nextjs";
+import {
+  assertNotInMaintenance,
+  MaintenanceActiveError,
+} from "@/lib/maintenance-cron";
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +25,9 @@ export async function POST(req: NextRequest) {
         { status: 401 },
       );
     }
+    // The cron core is shared with the jobs/** entrypoint, which exits on
+    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
+    await assertNotInMaintenance("cleanup-abandoned-payments");
 
     Sentry.logger.info("cron:cleanup-abandoned-payments started");
 
@@ -45,7 +52,15 @@ export async function POST(req: NextRequest) {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    Sentry.captureException(error, { tags: { subsystem: "cron", job: "cleanup-abandoned-payments" } });
+    if (error instanceof MaintenanceActiveError) {
+      return NextResponse.json(
+        { error: error.message, phase: error.phase },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(error, {
+      tags: { subsystem: "cron", job: "cleanup-abandoned-payments" },
+    });
     console.error("Cleanup API route failed:", error);
     return NextResponse.json(
       {

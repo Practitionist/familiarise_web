@@ -98,6 +98,13 @@ function makeMockTx() {
     },
     // AE-2 — the two reads the guard makes.
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+    // #1319 A9/A12 — allocation shadow-writes the participant edge and
+    // appends status history inside the CAS helpers.
+    appointmentParticipant: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: {
       findMany: jest.fn().mockResolvedValue([]),
       create: jest

@@ -29,7 +29,12 @@ import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { REQUEST_ALLOWED_FROM } from "@/lib/booking/transitions";
+import {
+  EVENT_ALLOWED_FROM,
+  REQUEST_ALLOWED_FROM,
+  transitionTrialSession,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
@@ -100,10 +105,16 @@ async function completeWebinars(): Promise<{
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.webinar.update({
-        where: { id: webinar.id },
+      // CAS (#1319): a webinar cancelled since the cohort read must not be
+      // resurrected as COMPLETED — that would release earnings for nothing.
+      const moved = await prisma.webinar.updateMany({
+        where: { id: webinar.id, status: { in: EVENT_ALLOWED_FROM.COMPLETED } },
         data: { status: WebinarStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since the sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
@@ -185,10 +196,15 @@ async function completeClasses(): Promise<{
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.class.update({
-        where: { id: cls.id },
+      // CAS (#1319) — same reasoning as the webinar arm above.
+      const moved = await prisma.class.updateMany({
+        where: { id: cls.id, status: { in: EVENT_ALLOWED_FROM.COMPLETED } },
         data: { status: ClassStatus.COMPLETED },
       });
+      if (moved.count === 0) {
+        console.log(`   ⏭️ Skipped — status changed since the sweep read`);
+        continue;
+      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
@@ -518,13 +534,18 @@ async function completeTrials(): Promise<{
         `   Last slot ended: ${lastSlot?.endsAt?.toISOString() || "Unknown"}`,
       );
 
-      await prisma.trialSession.update({
-        where: { id: trial.id },
-        data: {
-          status: TrialSessionStatus.COMPLETED,
-          completedAt: new Date(),
-        },
-      });
+      // CAS (#1319): a trial cancelled or converted since the read stays put.
+      try {
+        await transitionTrialSession(prisma, {
+          where: { id: trial.id },
+          to: TrialSessionStatus.COMPLETED,
+          data: { completedAt: new Date() },
+        });
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        console.log(`   ⏭️ Skipped — status changed since the sweep read`);
+        continue;
+      }
 
       // Log activity for trial completion
       try {
