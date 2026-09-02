@@ -60,7 +60,10 @@ jest.mock("../../lib/prisma", () => ({
       })),
     },
     payment: {
-      create: jest.fn(async ({ data }: any) => ({ id: "pay-new", ...data })),
+      create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "pay-new",
+        ...data,
+      })),
     },
     trialSession: {
       // Hydrates the include shape findExistingLivePayment's trial arm walks.
