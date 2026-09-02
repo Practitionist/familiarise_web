@@ -308,6 +308,12 @@ export const SLOT_COMPLETION_ALLOWED_FROM: Record<
  * appointmentId or a user relation rather than by slot id, and `allowZero`
  * exists because cancel/reschedule sweeps legitimately match zero live rows
  * and must not 409. Returns the matched count so sweeps can report honestly.
+ *
+ * The history guarantee is exact in both directions: a SLOT row exists only
+ * for a slot THIS call moved, because the ids come from the UPDATE's own
+ * RETURNING rather than from the pre-read. The pre-read supplies from-status
+ * only, so the documented A12 limitation stays what it is — a stale
+ * `fromStatus` on a row that did move, never a row that did not.
  */
 export async function transitionSlotCompletion(
   tx: Pick<Tx, "slotOfAppointment" | "bookingStatusHistory">,
@@ -323,36 +329,38 @@ export async function transitionSlotCompletion(
   },
 ): Promise<number> {
   const fromIn = args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to];
+  const casWhere = { ...args.where, completionStatus: { in: fromIn } };
   // The pre-read carries the CAS's own from-set, not just the caller's where,
-  // so the ids it returns are the ids the UPDATE is about to match — a bulk
-  // sweep must not log a transition for a row it was never allowed to move.
+  // so it is a from-status lookup for the cohort the UPDATE may move. It does
+  // NOT decide who gets a history row: a concurrent writer can pull a row out
+  // of the from-set between the two statements, and logging the pre-read would
+  // fabricate an audit row for a slot this call never touched.
   const before = await tx.slotOfAppointment.findMany({
-    where: { ...args.where, completionStatus: { in: fromIn } },
+    where: casWhere,
     select: { id: true, completionStatus: true },
   });
-  const res = await tx.slotOfAppointment.updateMany({
-    where: {
-      ...args.where,
-      completionStatus: { in: fromIn },
-    },
+  const moved = await tx.slotOfAppointment.updateManyAndReturn({
+    where: casWhere,
     data: { completionStatus: args.to, ...args.data },
+    select: { id: true },
   });
-  if (res.count === 0 && !args.allowZero) {
+  if (moved.length === 0 && !args.allowZero) {
     throw new IllegalTransitionError("SlotOfAppointment", args.to);
   }
-  if (res.count > 0) {
-    for (const row of before) {
-      await appendHistory(
-        tx,
-        "SLOT",
-        row.id,
-        row.completionStatus,
-        args.to,
-        args,
-      );
-    }
+  const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
+  for (const row of moved) {
+    // A row that entered the from-set after the pre-read has no entry here and
+    // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
+    await appendHistory(
+      tx,
+      "SLOT",
+      row.id,
+      fromById.get(row.id),
+      args.to,
+      args,
+    );
   }
-  return res.count;
+  return moved.length;
 }
 
 //////////////////////////////////////////////// TrialSession ////////////////////////////////////////////////

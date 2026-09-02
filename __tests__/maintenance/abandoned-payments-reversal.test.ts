@@ -26,7 +26,7 @@ jest.mock("../../lib/prisma", () => {
     },
     slotOfAppointment: {
       count: jest.fn(),
-      updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
     },
@@ -83,7 +83,7 @@ const db = prisma as unknown as {
     };
     slotOfAppointment: {
       count: jest.Mock;
-      updateMany: jest.Mock;
+      updateManyAndReturn: jest.Mock;
       findMany: jest.Mock;
       update: jest.Mock;
     };
@@ -128,11 +128,13 @@ beforeEach(() => {
   });
   tx.payment.update.mockResolvedValue({});
   tx.slotOfAppointment.count.mockResolvedValue(0);
-  tx.slotOfAppointment.updateMany.mockImplementation(() => {
+  tx.slotOfAppointment.updateManyAndReturn.mockImplementation(() => {
     order.push("cancelSlots");
-    return Promise.resolve({ count: 1 });
+    return Promise.resolve([{ id: "slot_1" }]);
   });
-  tx.slotOfAppointment.findMany.mockResolvedValue([]);
+  tx.slotOfAppointment.findMany.mockResolvedValue([
+    { id: "slot_1", completionStatus: "SCHEDULED" },
+  ]);
   tx.slotOfAppointment.update.mockResolvedValue({});
   tx.appointment.updateMany.mockImplementation(() => {
     order.push("tombstoneAppointment");
@@ -181,7 +183,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
       },
       data: { status: "EXPIRED" },
     });
-    expect(tx.slotOfAppointment.updateMany).toHaveBeenCalledWith(
+    expect(tx.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           appointmentId: "apt_1",
@@ -245,7 +247,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
 
     const result = await cleanupAbandonedPayments();
 
-    expect(tx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(tx.slotOfAppointment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(tx.appointment.updateMany).not.toHaveBeenCalled();
     expect(result.errorCount).toBe(0);
     expect(result.skippedCount).toBe(1);
@@ -285,7 +287,7 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
     expect(mockReverse).toHaveBeenCalledWith("pay_1", tx);
     expect(tx.consultation.updateMany).not.toHaveBeenCalled();
     expect(tx.appointment.updateMany).not.toHaveBeenCalled();
-    expect(tx.slotOfAppointment.updateMany).toHaveBeenCalledWith(
+    expect(tx.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           appointmentId: "apt_1",

@@ -21,22 +21,23 @@ type TrialTx = Parameters<typeof transitionTrialSession>[0];
 
 // #1319 A12 — both helpers pre-read the from-status and append one
 // BookingStatusHistory row per moved row, so the mock tx carries the read and
-// the history delegate as well as the CAS itself.
+// the history delegate as well as the CAS itself. The slot CAS is
+// updateManyAndReturn: the ids it returns are the only ids that get history.
 function slotTx(count: number, from: string = "SCHEDULED") {
-  const updateMany = jest.fn().mockResolvedValue({ count });
-  const findMany = jest.fn().mockResolvedValue(
-    Array.from({ length: count }, (_, i) => ({
-      id: `slot_${i + 1}`,
-      completionStatus: from,
-    })),
-  );
+  const ids = Array.from({ length: count }, (_, i) => ({
+    id: `slot_${i + 1}`,
+  }));
+  const updateManyAndReturn = jest.fn().mockResolvedValue(ids);
+  const findMany = jest
+    .fn()
+    .mockResolvedValue(ids.map(({ id }) => ({ id, completionStatus: from })));
   const create = jest.fn().mockResolvedValue({});
   return {
     tx: {
-      slotOfAppointment: { updateMany, findMany },
+      slotOfAppointment: { updateManyAndReturn, findMany },
       bookingStatusHistory: { create },
     } as unknown as SlotTx,
-    updateMany,
+    updateManyAndReturn,
     findMany,
     create,
   };
@@ -76,14 +77,14 @@ describe("SLOT_COMPLETION_ALLOWED_FROM", () => {
 
 describe("transitionSlotCompletion", () => {
   it("bakes the allowed-from set into the WHERE and returns the count", async () => {
-    const { tx, updateMany } = slotTx(2);
+    const { tx, updateManyAndReturn } = slotTx(2);
     const moved = await transitionSlotCompletion(tx, {
       where: { appointmentId: "apt_1", deletedAt: null },
       to: "CANCELLED",
       data: { deletedAt: new Date("2026-09-02T00:00:00Z") },
     });
     expect(moved).toBe(2);
-    expect(updateMany).toHaveBeenCalledWith({
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
       where: {
         appointmentId: "apt_1",
         deletedAt: null,
@@ -93,17 +94,18 @@ describe("transitionSlotCompletion", () => {
         completionStatus: "CANCELLED",
         deletedAt: new Date("2026-09-02T00:00:00Z"),
       },
+      select: { id: true },
     });
   });
 
   it("fromIn narrows the set", async () => {
-    const { tx, updateMany } = slotTx(1);
+    const { tx, updateManyAndReturn } = slotTx(1);
     await transitionSlotCompletion(tx, {
       where: { id: "slot_1" },
       to: "COMPLETED",
       fromIn: ["SCHEDULED"],
     });
-    expect(updateMany.mock.calls[0][0].where).toEqual({
+    expect(updateManyAndReturn.mock.calls[0][0].where).toEqual({
       id: "slot_1",
       completionStatus: { in: ["SCHEDULED"] },
     });

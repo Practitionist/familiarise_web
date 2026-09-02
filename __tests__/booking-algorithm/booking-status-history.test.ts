@@ -161,17 +161,21 @@ describe("attribution rides the row", () => {
 });
 
 // The slot helper is the one bulk CAS: it sweeps a WhereInput rather than an
-// id, so it pre-reads the cohort and appends one row per slot it moved.
+// id, so it pre-reads the cohort for from-statuses and appends one row per id
+// the UPDATE's own RETURNING says it moved.
 describe("slot completion history", () => {
-  function slotTx(rows: Array<{ id: string; completionStatus: string }>) {
+  function slotTx(
+    rows: Array<{ id: string; completionStatus: string }>,
+    movedIds: string[] = rows.map((r) => r.id),
+  ) {
     const order: string[] = [];
     const findMany = jest.fn(async () => {
       order.push("read");
       return rows;
     });
-    const updateMany = jest.fn(async () => {
+    const updateManyAndReturn = jest.fn(async () => {
       order.push("cas");
-      return { count: rows.length };
+      return movedIds.map((id) => ({ id }));
     });
     const create = jest.fn(async (_args: { data: Record<string, unknown> }) => {
       order.push("history");
@@ -179,7 +183,7 @@ describe("slot completion history", () => {
     });
     return {
       tx: {
-        slotOfAppointment: { findMany, updateMany },
+        slotOfAppointment: { findMany, updateManyAndReturn },
         bookingStatusHistory: { create },
       } as never,
       findMany,
@@ -231,6 +235,32 @@ describe("slot completion history", () => {
         completionStatus: { in: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"] },
       },
       select: { id: true, completionStatus: true },
+    });
+  });
+
+  // A concurrent writer can pull a pre-read row out of the from-set before the
+  // CAS lands. Logging the pre-read would invent an audit row for a slot this
+  // call never moved, which is a different (and worse) defect than A12's
+  // stale from-status.
+  it("logs only the ids the CAS actually moved, not the whole pre-read cohort", async () => {
+    const { tx, create } = slotTx(
+      [
+        { id: "slot_1", completionStatus: "SCHEDULED" },
+        { id: "slot_2", completionStatus: "SCHEDULED" },
+      ],
+      ["slot_2"],
+    );
+    const moved = await transitionSlotCompletion(tx, {
+      where: { appointmentId: "apt_1" },
+      to: "CANCELLED",
+    });
+    expect(moved).toBe(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      entity: "SLOT",
+      entityId: "slot_2",
+      fromStatus: "SCHEDULED",
+      toStatus: "CANCELLED",
     });
   });
 
