@@ -136,7 +136,9 @@ export async function DELETE(
     const isOrganiser =
       isPrivileged(session.user.role) || !!session.user.consultantProfileId;
     if (!isSelfLeave && !isOrganiser) {
-      return forbiddenResponse("Only consultants can remove other participants");
+      return forbiddenResponse(
+        "Only consultants can remove other participants",
+      );
     }
 
     // Ownership check for organiser removals; self-leave only needs the event
@@ -206,8 +208,8 @@ export async function DELETE(
 
     // One atomic batch — sequential awaits paid a DB round trip per slot
     // and could partially remove a participant on mid-loop failure.
-    await prisma.$transaction(
-      userSlots.map((slot) =>
+    await prisma.$transaction([
+      ...userSlots.map((slot) =>
         prisma.slotOfAppointment.update({
           where: { id: slot.id },
           data: {
@@ -217,7 +219,12 @@ export async function DELETE(
           },
         }),
       ),
-    );
+      // #1319 A9 — the seat is released; the row stays as history.
+      prisma.appointmentParticipant.updateMany({
+        where: { appointment: { webinarId }, userId },
+        data: { status: "CANCELLED" },
+      }),
+    ]);
 
     // #1003 — seat was paid; refund after roster commit (non-throwing).
     // #1005 — must pass initiatedBy: self-leave used to inherit organiser-fault

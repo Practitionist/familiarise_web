@@ -269,8 +269,13 @@ async function detectDoubleBookings(): Promise<{
 
     for (const slot of confirmedSlots) {
       // FIX #625: Resolve consultant from all 5 appointment types
-      const { consultation, subscription, webinar, class: classEvent, trialSession } =
-        slot.appointment;
+      const {
+        consultation,
+        subscription,
+        webinar,
+        class: classEvent,
+        trialSession,
+      } = slot.appointment;
 
       const consultantProfile =
         consultation?.consultationPlan.consultantProfile ||
@@ -362,8 +367,10 @@ async function detectDoubleBookings(): Promise<{
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileSlotAvailability(): Promise<SlotReconciliationResult> {
-  return withCronLock("reconcile-slot-availability", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcileSlotAvailabilityUnlocked(),
+  return withCronLock(
+    "reconcile-slot-availability",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcileSlotAvailabilityUnlocked(),
   );
 }
 
@@ -379,6 +386,10 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
   // Detect double bookings
   const doubleBookingResult = await detectDoubleBookings();
   allErrors.push(...doubleBookingResult.errors);
+
+  // #1319 A9 — the only reader of the shadow participant table until the
+  // reader flip: report divergence from the slot↔user join, never repair it.
+  await logParticipantDrift();
 
   // Summary
   console.log("\n📊 Slot Availability Reconciliation Summary:");
@@ -398,6 +409,58 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };
+}
+
+/**
+ * #1319 A9 — compare AppointmentParticipant against the slot↔user join for
+ * upcoming appointments. Log-only: the participant table is written by every
+ * slot writer in the same transaction, so drift here means a writer was
+ * missed, which is a bug to fix at the source rather than a row to patch.
+ */
+async function logParticipantDrift(): Promise<void> {
+  const windowEnd = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+  const appointments = await prisma.appointment.findMany({
+    where: {
+      deletedAt: null,
+      slotsOfAppointment: {
+        some: { endsAt: { gt: new Date() }, startsAt: { lt: windowEnd } },
+      },
+    },
+    select: {
+      id: true,
+      participants: { select: { userId: true, status: true } },
+      slotsOfAppointment: { select: { user: { select: { id: true } } } },
+    },
+    take: 2000,
+  });
+
+  let drifted = 0;
+  for (const appointment of appointments) {
+    const joined = new Set(
+      appointment.slotsOfAppointment.flatMap((s) => s.user.map((u) => u.id)),
+    );
+    const live = new Set(
+      appointment.participants
+        .filter((p) => p.status === "HELD" || p.status === "CONFIRMED")
+        .map((p) => p.userId),
+    );
+    const onlyInJoin = [...joined].filter((id) => !live.has(id));
+    const onlyInParticipants = [...live].filter((id) => !joined.has(id));
+    if (onlyInJoin.length === 0 && onlyInParticipants.length === 0) continue;
+    drifted++;
+    console.log(
+      JSON.stringify({
+        event: "participant_drift",
+        appointmentId: appointment.id,
+        onlyInJoin,
+        onlyInParticipants,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  console.log(
+    `   Participant drift: ${drifted} of ${appointments.length} upcoming appointments`,
+  );
 }
 
 /**

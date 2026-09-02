@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { recordParticipants } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
@@ -136,7 +137,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 // returned.
 class TrialSlotUnavailableError extends Error {
   constructor() {
-    super("Selected slot is no longer available. Please choose a different time.");
+    super(
+      "Selected slot is no longer available. Please choose a different time.",
+    );
     this.name = "TrialSlotUnavailableError";
   }
 }
@@ -449,6 +452,25 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 slotsOfAppointment: true,
               },
             });
+            // #1319 A9 — a paid trial holds its seat until capture confirms it.
+            await recordParticipants(
+              tx,
+              appointment.id,
+              [
+                {
+                  userId: existingTrial.consulteeProfile.user.id,
+                  role: "CONSULTEE",
+                },
+                {
+                  userId: existingTrial.consultantProfile.user.id,
+                  role: "CONSULTANT",
+                },
+              ],
+              {
+                organizationId: existingTrial.organizationId ?? null,
+                status: requiresPayment ? "HELD" : "CONFIRMED",
+              },
+            );
 
             // Update trial with appointment link and the resulting status —
             // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
