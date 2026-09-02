@@ -6,6 +6,7 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
+import { recordParticipants } from "@/lib/booking/participants";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -1274,6 +1275,7 @@ export class SlotAllocationService {
               appointments,
               enrolledUserIds,
               consultant.userId,
+              organizationId,
             );
           }
 
@@ -1689,6 +1691,7 @@ export class SlotAllocationService {
               appointments,
               enrolledUserIds,
               consultant.userId,
+              organizationId,
             );
           }
 
@@ -3060,6 +3063,22 @@ export class SlotAllocationService {
           });
         }),
       );
+      // #1319 A9 — allocation writes confirmed slots, so the participants are
+      // CONFIRMED from the start; a reused 1:1 appointment already has its
+      // rows (createMany skips duplicates).
+      for (const appt of appointments) {
+        await recordParticipants(
+          tx,
+          appt.id,
+          consulteeUserId
+            ? [
+                { userId: consultantUserId, role: "CONSULTANT" },
+                { userId: consulteeUserId, role: "CONSULTEE" },
+              ]
+            : [{ userId: consultantUserId, role: "CONSULTANT" }],
+          { organizationId: organizationId ?? null, status: "CONFIRMED" },
+        );
+      }
     } catch (error) {
       // Not captured here — createAppointments only runs inside
       // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
@@ -3255,6 +3274,7 @@ export class SlotAllocationService {
     appointments: AppointmentWithSlots[],
     enrolledUserIds: string[],
     consultantUserId: string,
+    organizationId: string | null | undefined,
   ): Promise<void> {
     // Filter out the consultant (already connected via createAppointments)
     const userIdsToConnect = enrolledUserIds.filter(
@@ -3270,6 +3290,18 @@ export class SlotAllocationService {
           data: { user: { connect: connectData } },
         });
       }
+      // #1319 A9 — re-linked learners keep their seat; idempotent on retry.
+      await recordParticipants(
+        tx,
+        appointment.id,
+        userIdsToConnect.map((userId) => ({
+          userId,
+          role: "CONSULTEE" as const,
+        })),
+        // Same org tag as the consultant row createAppointments wrote, so an
+        // org-scoped read of the participants never sees a half-tagged seat.
+        { status: "CONFIRMED", organizationId },
+      );
     }
   }
 

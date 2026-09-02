@@ -10,11 +10,7 @@ import {
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
-import {
-  nextPollDelay,
-  shouldPoll,
-  shouldRefetchOnReturn,
-} from "@/lib/scheduling/availabilityPolling";
+import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
 import { INTERVALS } from "@/utils/timeSlotsMeta";
 
 /**
@@ -813,69 +809,30 @@ export function useCalendarData(
     if (!autoLoad || !consultantId) return;
     if (typeof document === "undefined") return;
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let disposed = false;
+    // Timers + the two decisions live in lib/scheduling/availabilityPolling so
+    // the loop can be driven by fake timers. Focus and visibilitychange BOTH
+    // fire on a tab return; whichever runs first refetches and stamps
+    // availabilityFetchedAtRef, so the second sees sub-floor staleness and only
+    // re-arms (see shouldRefetchOnReturn).
+    const poller = createAvailabilityPoller({
+      // Read, not captured: the literal `true` this replaced made the gate a
+      // dead branch that could never say no.
+      isEnabled: () => Boolean(autoLoad && consultantId),
+      visibilityState: () => document.visibilityState,
+      msSinceLastFetch: () => Date.now() - availabilityFetchedAtRef.current,
+      inFlight: () => availabilityInFlightRef.current,
+      fetch: () => fetchAvailabilitySlots({ background: true }),
+    });
 
-    const poll = (): boolean =>
-      shouldPoll({ enabled: true, visibilityState: document.visibilityState });
-
-    const arm = () => {
-      if (disposed || !poll()) return;
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(
-        tick,
-        nextPollDelay(Date.now() - availabilityFetchedAtRef.current),
-      );
-    };
-
-    const tick = () => {
-      if (disposed || !poll()) return;
-      // A navigation (or post-allocation) fetch is still running. Starting a
-      // poll now would bump the request id out from under it and strand its
-      // id-guarded `setLoading(false)` — the grid would sit on the skeleton
-      // until the next navigation. Wait for that answer, which is the fresher
-      // one anyway, and re-arm behind it.
-      const inFlight = availabilityInFlightRef.current;
-      if (inFlight) {
-        void inFlight.finally(arm);
-        return;
-      }
-      // Serialized: the next tick is armed only once this fetch settles, so a
-      // slow response never stacks polls behind it.
-      void fetchAvailabilitySlots({ background: true }).finally(arm);
-    };
-
-    // Focus and visibilitychange BOTH fire on a tab return; whichever runs
-    // first refetches and stamps availabilityFetchedAtRef, so the second sees
-    // sub-floor staleness and only re-arms (see shouldRefetchOnReturn).
-    const onReturn = () => {
-      if (disposed || !poll()) {
-        if (timer !== null) clearTimeout(timer);
-        return;
-      }
-      if (shouldRefetchOnReturn(Date.now() - availabilityFetchedAtRef.current)) {
-        tick();
-      } else {
-        arm();
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        // Paused: nothing polls a hidden tab; onReturn re-arms it.
-        if (timer !== null) clearTimeout(timer);
-      } else {
-        onReturn();
-      }
-    };
+    const onReturn = () => poller.onReturn();
+    const onVisibilityChange = () => poller.onVisibilityChange();
 
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("focus", onReturn);
-    arm();
+    poller.arm();
 
     return () => {
-      disposed = true;
-      if (timer !== null) clearTimeout(timer);
+      poller.dispose();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onReturn);
     };

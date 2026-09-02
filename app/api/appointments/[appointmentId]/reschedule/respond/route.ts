@@ -9,6 +9,7 @@ import {
 } from "@/lib/booking/reschedule-respond";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
+import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import type { EventType } from "@/utils/slotAllocation/types";
 
 const RespondSchema = z.object({ action: z.enum(["accept", "decline"]) });
@@ -43,7 +44,7 @@ export async function POST(
     const parsed = RespondSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "action must be \"accept\" or \"decline\"" },
+        { error: 'action must be "accept" or "decline"' },
         { status: 400 },
       );
     }
@@ -61,6 +62,9 @@ export async function POST(
           select: {
             consultationId: true,
             subscriptionId: true,
+            // #1166 ORG-9 — needed to tell an org admin's initiation from a
+            // stranger's (see the side resolution below).
+            organizationId: true,
             consultation: {
               select: {
                 requestedBy: { select: { userId: true } },
@@ -90,15 +94,44 @@ export async function POST(
     // consultant from the authorization set.
     const consultation = open?.appointment?.consultation;
     const subscription = open?.appointment?.subscription;
-    const participants = [
-      consultation?.requestedBy?.userId ?? subscription?.requestedBy?.userId,
+    const consulteeUserId =
+      consultation?.requestedBy?.userId ?? subscription?.requestedBy?.userId;
+    const consultantUserId =
       consultation?.consultationPlan?.consultantProfile?.userId ??
-        subscription?.subscriptionPlan?.consultantProfile?.userId,
-    ].filter((id): id is string => !!id);
-    const isCounterparty =
+      subscription?.subscriptionPlan?.consultantProfile?.userId;
+
+    // #1166 ORG-9 — "the counterparty" is the side that did not open the
+    // request, and there are three possible openers, not two. An org admin
+    // rescheduling a session their organization funded matches NEITHER profile,
+    // so the old "is a participant and is not the initiator" test was true for
+    // BOTH parties at once: the consultee could accept a proposal made on their
+    // own behalf, and either party could answer a request the other had not
+    // seen. An org admin acts on the payer's side, so their initiation is a
+    // consultee-side initiation and the consultant is the one who answers.
+    //
+    // An initiator who is neither party nor a payer admin resolves to no side
+    // at all, which leaves nobody able to answer — the anti-oracle 404 below.
+    // Fail closed: a proposal from an unidentifiable opener should not be
+    // confirmable by whoever asks first.
+    const initiatedByConsultant =
+      !!open && !!consultantUserId && open.initiatedById === consultantUserId;
+    const initiatedByConsultee =
+      !!open && !!consulteeUserId && open.initiatedById === consulteeUserId;
+    const initiatedByPayerAdmin =
       !!open &&
-      participants.includes(session.user.id) &&
-      open.initiatedById !== session.user.id;
+      !initiatedByConsultant &&
+      !initiatedByConsultee &&
+      (await isOrgAdminOfAppointment(
+        open.initiatedById,
+        open.appointment?.organizationId,
+      ));
+    const counterpartyUserId = initiatedByConsultant
+      ? consulteeUserId
+      : initiatedByConsultee || initiatedByPayerAdmin
+        ? consultantUserId
+        : undefined;
+    const isCounterparty =
+      !!counterpartyUserId && session.user.id === counterpartyUserId;
     if (!open || !isCounterparty) {
       return NextResponse.json(
         { error: "No open reschedule request for this booking." },
@@ -113,7 +146,10 @@ export async function POST(
       });
       if (!result.done) {
         return NextResponse.json(
-          { error: "This proposal can no longer be answered.", code: result.reason },
+          {
+            error: "This proposal can no longer be answered.",
+            code: result.reason,
+          },
           { status: 409 },
         );
       }
@@ -177,7 +213,8 @@ export async function POST(
     }
     return NextResponse.json({
       accepted: true,
-      message: "Proposal accepted — the booking has moved to the proposed times.",
+      message:
+        "Proposal accepted — the booking has moved to the proposed times.",
     });
   } catch (error) {
     return apiError({ tag: "[Reschedule.Respond]", error });

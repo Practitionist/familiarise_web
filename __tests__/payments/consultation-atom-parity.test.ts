@@ -64,6 +64,11 @@ const webhookTx = {
     updateMany: jest.fn(),
     update: jest.fn(),
   },
+  // #1319 A9 — the creators shadow-write participant rows in the same tx.
+  appointmentParticipant: {
+    createMany: jest.fn().mockResolvedValue({ count: 2 }),
+    updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+  },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -262,6 +267,10 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
     },
     consultation: { create: jest.fn().mockResolvedValue({ id: "cons-2" }) },
     appointment: { create: checkoutAppointmentCreate },
+    appointmentParticipant: {
+      createMany: jest.fn().mockResolvedValue({ count: 2 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    },
   } as unknown as Tx;
 
   await handleConsultationCheckout(

@@ -8,6 +8,10 @@ import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
+import {
+  recordParticipants,
+  setParticipantStatus,
+} from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -1410,6 +1414,15 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
       slotsOfAppointment: { create: slotAtoms },
+      // #1319 A9 — legacy-shape capture creates the appointment itself, so the
+      // participant rows are born here rather than flipped by the confirm path.
+      // One row per user the atoms connect: the consultant attends too.
+      participants: {
+        create: [
+          { userId: consultantUserId, role: "CONSULTANT", status: "CONFIRMED" },
+          { userId: data.userId, role: "CONSULTEE", status: "CONFIRMED" },
+        ],
+      },
     },
     include: {
       slotsOfAppointment: true,
@@ -1509,6 +1522,16 @@ async function createWebinar(tx: Tx, data: EventData) {
     userId: data.userId,
   });
 
+  // #1319 A9 — the seat row is gone, but the seat is not: record the payer
+  // against the event's own appointment, the same edge handleWebinarCheckout
+  // writes. CONFIRMED because this creator only runs after capture.
+  await recordParticipants(
+    tx,
+    webinar.appointment.id,
+    [{ userId: data.userId, role: "CONSULTEE" }],
+    { status: "CONFIRMED" },
+  );
+
   const createdAppointment = await tx.appointment.findUnique({
     where: { id: webinar.appointment.id },
     include: { slotsOfAppointment: true },
@@ -1549,6 +1572,16 @@ async function createClass(tx: Tx, data: EventData) {
     appointments: classInstance.appointments,
     userId: data.userId,
   });
+
+  // #1319 A9 — one participant row per session, matching handleClassCheckout.
+  for (const appointment of classInstance.appointments) {
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId: data.userId, role: "CONSULTEE" }],
+      { status: "CONFIRMED" },
+    );
+  }
 
   const createdAppointment = await tx.appointment.findUnique({
     where: { id: firstAppointment.id },
@@ -1832,6 +1865,18 @@ export async function confirmExistingAppointment(
       },
       data: { isTentative: false },
     });
+    // #1319 A9 — the seat is paid for; mirror the flip on the participant rows.
+    // Only a HELD seat confirms: a capture landing on a cancelled seat must
+    // not resurrect it (the refund arm below handles the money).
+    await setParticipantStatus(
+      tx,
+      {
+        appointment: { classId: appointment.class.id },
+        userId,
+        status: "HELD",
+      },
+      "CONFIRMED",
+    );
 
     console.log(
       JSON.stringify({
@@ -1877,6 +1922,11 @@ export async function confirmExistingAppointment(
       },
       data: { isTentative: false },
     });
+    await setParticipantStatus(
+      tx,
+      { appointmentId, userId, status: "HELD" },
+      "CONFIRMED",
+    );
 
     console.log(
       JSON.stringify({
@@ -1893,6 +1943,11 @@ export async function confirmExistingAppointment(
       where: { appointmentId },
       data: { isTentative: false },
     });
+    await setParticipantStatus(
+      tx,
+      { appointmentId, status: "HELD" },
+      "CONFIRMED",
+    );
   }
 
   // Update status for consultation and subscription

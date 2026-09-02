@@ -52,6 +52,11 @@ const txStub = {
     update: slotUpdate,
     updateMany: slotUpdateMany,
   },
+  // #1319 A9 — the creators shadow-write participant rows in the same tx.
+  appointmentParticipant: {
+    createMany: jest.fn().mockResolvedValue({ count: 1 }),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  },
   appointment: { create: appointmentCreate, findUnique: appointmentFindUnique },
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
 };
