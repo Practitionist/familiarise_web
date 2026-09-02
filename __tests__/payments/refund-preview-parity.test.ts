@@ -91,6 +91,15 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: (...a: unknown[]) => mockGetSession(...a),
 }));
 
+// #1328 put a per-user limiter on the cancel route. This suite cancels the
+// same booking as the same user once per case, which is a rate the limiter is
+// right to refuse and this suite is not testing.
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+}));
+
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   // Only the charge is stubbed. `fundingRailForIntent` stays real, because the
   // rail the preview names is part of what this suite is comparing and a

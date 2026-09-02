@@ -207,7 +207,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
+    // #1319 — an exhausted serialization retry (P2034 ×4) means the tx never
+    // committed: nothing was charged and a retry will see the sibling's state.
+    // classifyError is message-only and would label it 500.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
+          errorType: "SERIALIZATION_CONFLICT",
+          retryAfter: 2,
+          yourCardWasNotCharged: true,
+          timestamp: new Date().toISOString(),
+        },
+        { status: 409 },
+      );
+    }
+
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "checkout" } },
+    );
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 

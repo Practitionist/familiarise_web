@@ -1051,7 +1051,12 @@ describe("Auto allocation", () => {
           slotsOfAppointment: blockedSlots,
           consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
           subscription: null,
-          payment: [{ expiresAt: new Date("2024-01-01T00:00:00Z") }], // expired
+          payment: [
+            {
+              paymentStatus: "PENDING",
+              expiresAt: new Date("2024-01-01T00:00:00Z"),
+            },
+          ], // expired
         },
       ])
       .mockResolvedValue([]); // delete
@@ -1098,7 +1103,12 @@ describe("Auto allocation", () => {
           slotsOfAppointment: blockedSlots,
           consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
           subscription: null,
-          payment: [{ expiresAt: new Date("2026-12-31T00:00:00Z") }], // not expired
+          payment: [
+            {
+              paymentStatus: "PENDING",
+              expiresAt: new Date("2026-12-31T00:00:00Z"),
+            },
+          ], // not expired
         },
       ])
       .mockResolvedValue([]); // delete

@@ -44,7 +44,10 @@ import {
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/slotAllocation/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
@@ -989,10 +992,16 @@ export async function validateSlotAvailability(
               },
             ]
           : []),
-        // FIX #540: Only count slots from active/occupied appointments
+        // FIX #540: Only count slots from active/occupied appointments.
+        // #1319 — minus dead holds (lapsed DIRECT_CHECKOUT / pay-link windows),
+        // so a slot frees the moment its payment window passes rather than
+        // when the sweep runs. The JS twin is isOccupiedByLiveAppointment.
         {
           appointment: {
-            OR: buildOccupiedAppointmentFilter(),
+            AND: [
+              { OR: buildOccupiedAppointmentFilter() },
+              { NOT: buildDeadHoldFilter(new Date()) },
+            ],
           },
         },
       ],
@@ -1062,62 +1071,10 @@ export async function validateSlotAvailability(
     }
   }
 
-  // 3. Check for excessive tentative bookings (rate limiting) FOR THIS CONSULTANT
-  // FIX Bug #05: Use canonical overlap predicate
-  const tentativeCount = await tx.slotOfAppointment.count({
-    where: {
-      AND: [
-        { startsAt: { lt: slotEnd } },
-        { endsAt: { gt: slotStart } },
-        { isTentative: true },
-        // FIX: Filter by consultant - only count tentative slots for this consultant
-        ...(consultantUserId
-          ? [
-              {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
-                },
-              },
-            ]
-          : []),
-        {
-          appointment: {
-            payment: {
-              some: {
-                AND: [
-                  { paymentStatus: "PENDING" },
-                  {
-                    OR: [
-                      { expiresAt: { gt: new Date() } },
-                      {
-                        AND: [
-                          { expiresAt: null },
-                          {
-                            createdAt: {
-                              gte: new Date(Date.now() - 30 * 60 * 1000),
-                            },
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-        },
-      ],
-    },
-  });
-
-  // Allow max 3 pending attempts for the same slot for this consultant
-  if (tentativeCount >= 3) {
-    throw new Error(
-      "This time slot is temporarily unavailable due to high demand. Please try again later.",
-    );
-  }
+  // #1319 — the former "max 3 pending attempts per slot" step is gone: since
+  // #1169 PR 2 step 1 blocks on ANY live hold, this count could never reach
+  // one, let alone three. Do not re-add a per-slot attempt cap here; the hold
+  // itself is the cap.
 }
 
 // ============================================================================
@@ -1419,12 +1376,21 @@ async function verifyPlanExistsInsideLock(
  * Re-validate availability inside the lock
  * Critical for preventing TOCTOU race conditions
  */
+/** What the pre-lock org gate chain resolved; re-asserted under the lock. */
+interface OrgFundingContext {
+  organizationId: string;
+  callerMembershipId: string;
+  programAssignmentId: string | null;
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+}
+
 async function revalidateInsideLock(
   data: CheckoutInput,
   userId: string,
   // ADR 18 — Program funding this org-sponsored booking; null for
   // PERSONAL/marketplace checkouts. Drives the curated-panel check.
   programId: string | null = null,
+  orgContext: OrgFundingContext | null = null,
 ): Promise<void> {
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
@@ -1472,6 +1438,96 @@ async function revalidateInsideLock(
       plan.consultantProfileId === user.consultantProfile.id
     ) {
       throw new Error("You cannot book your own plan.");
+    }
+
+    // #1319 (B2B gap 3) — the org gate chain ran BEFORE the locks, so an org
+    // suspended, a membership revoked, an assignment rolled or a consent
+    // withdrawn between the gate and the write still got sponsored. Re-assert
+    // the resolved rows by id under the lock; the credit limit is re-checked
+    // inside the Serializable booking tx already.
+    if (orgContext) {
+      const now = new Date();
+      const org = await tx.organization.findUnique({
+        where: { id: orgContext.organizationId },
+        select: { status: true, canSponsor: true },
+      });
+      if (
+        !org ||
+        !org.canSponsor ||
+        (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION")
+      ) {
+        throw new Error(
+          "This organization can no longer sponsor bookings. Please refresh and try again.",
+        );
+      }
+      const membership = await tx.membership.findUnique({
+        where: { id: orgContext.callerMembershipId },
+        select: { status: true },
+      });
+      if (membership?.status !== "ACTIVE") {
+        throw new Error("You are not an active member of this organization.");
+      }
+      if (orgContext.programAssignmentId) {
+        const assignment = await tx.programAssignment.findFirst({
+          where: {
+            id: orgContext.programAssignmentId,
+            status: "ACTIVE",
+            periodStart: { lte: now },
+            periodEnd: { gte: now },
+            program: {
+              status: "ACTIVE",
+              OR: [
+                { coveredPlanTypes: { isEmpty: true } },
+                { coveredPlanTypes: { has: orgContext.appointmentType } },
+              ],
+              contract: {
+                organizationId: orgContext.organizationId,
+                status: "ACTIVE",
+                effectiveFrom: { lte: now },
+                OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+              },
+            },
+          },
+          select: { id: true },
+        });
+        if (!assignment) {
+          throw new Error(
+            "Your program assignment changed while this booking was in progress. Please refresh and try again.",
+          );
+        }
+      }
+      if (ENABLE_DUNNING_SUSPEND) {
+        const suspended = await tx.organizationInvoice.findFirst({
+          where: {
+            organizationId: orgContext.organizationId,
+            status: "OVERDUE",
+            dunningSuspendedAt: { not: null },
+          },
+          select: { id: true },
+        });
+        if (suspended) {
+          throw new Error(
+            "This organization is suspended from new sponsored bookings until its overdue invoice is paid.",
+          );
+        }
+      }
+      if (
+        !(await checkConsent({
+          userId,
+          purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+        }))
+      ) {
+        throw Object.assign(
+          new Error(
+            "Consent required before your organization can book sessions for you.",
+          ),
+          {
+            httpStatus: 403,
+            code: "CONSENT_REQUIRED",
+            purposeCode: "SESSION_BOOKING",
+          },
+        );
+      }
     }
 
     // ADR 18 — curated-panel enforcement (#971 shipped the stub). Rows on
@@ -1558,6 +1614,8 @@ async function revalidateInsideLock(
             where: {
               AND: [
                 { OR: buildOccupiedAppointmentFilter() },
+                // #1319 — parity with step 1 of validateSlotAvailability.
+                { NOT: buildDeadHoldFilter(new Date()) },
                 {
                   slotsOfAppointment: {
                     some: {
@@ -1612,6 +1670,8 @@ async function revalidateInsideLock(
             where: {
               AND: [
                 { OR: buildOccupiedAppointmentFilter() },
+                // #1319 — parity with step 1 of validateSlotAvailability.
+                { NOT: buildDeadHoldFilter(new Date()) },
                 {
                   slotsOfAppointment: {
                     some: {
@@ -2564,7 +2624,19 @@ export async function handleCheckout(
     );
 
     // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
-    await revalidateInsideLock(validatedData, userId, fundingProgramId);
+    await revalidateInsideLock(
+      validatedData,
+      userId,
+      fundingProgramId,
+      organizationId && callerMembershipId
+        ? {
+            organizationId,
+            callerMembershipId,
+            programAssignmentId,
+            appointmentType,
+          }
+        : null,
+    );
 
     console.log(
       JSON.stringify({
@@ -2693,18 +2765,29 @@ export async function handleCheckout(
     // heartbeat is deliberately avoided: serverless freeze makes intervals
     // unreliable, and the message must contain "already in progress" so
     // classifyError maps it to LOCK_CONTENTION → 409.
-    if (lock) {
-      const renewalTtl =
-        CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000;
+    // #1319 (R8) — one renewal here did not cover the Serializable retry loop
+    // below: four 25 s attempts outlive a 60 s CONSULTATION grant, and the
+    // lock silently lapsed mid-payment. Renew at the top of EVERY attempt
+    // with a grant sized to one attempt plus slack, so elapsed time stops
+    // mattering; only per-attempt duration does. Ownership lost → abort the
+    // attempt (not a P2034, so the retry helper rethrows immediately).
+    const checkoutTxTimeoutMs = 25_000;
+    const perAttemptTtl = Math.max(
+      CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
+      checkoutTxTimeoutMs + 10_000,
+    );
+    const renewOrAbort = async (ttl: number): Promise<void> => {
+      if (!lock) return;
       const renewed = Array.isArray(lock)
-        ? await extendSlotInterval(lock, renewalTtl)
-        : await extendLock(lock, renewalTtl);
+        ? await extendSlotInterval(lock, ttl)
+        : await extendLock(lock, ttl);
       if (!renewed) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
         );
       }
-    }
+    };
+    await renewOrAbort(perAttemptTtl);
 
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {
@@ -2757,8 +2840,9 @@ export async function handleCheckout(
       // does on the OUTER prisma client therefore has to be idempotent across
       // attempts — see capNearNotified.
       let capNearNotified = false;
-      const result = await withSerializableRetry(() =>
-        prisma.$transaction(
+      const result = await withSerializableRetry(async () => {
+        await renewOrAbort(perAttemptTtl);
+        return prisma.$transaction(
           async (tx) => {
             // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
             // tx. The pre-lock check ran on the global client before this tx, so
@@ -3382,15 +3466,15 @@ export async function handleCheckout(
             };
           },
           {
-            timeout: 25000,
+            timeout: checkoutTxTimeoutMs,
             // H6 FIX: Use Serializable isolation for booking transactions to prevent
             // phantom reads on capacity-limited events (webinars, classes). The
             // distributed lock serializes per-event, but Serializable adds DB-level
             // safety for edge cases like lock expiry under high load.
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           },
-        ),
-      );
+        );
+      });
 
       const logMessage = isZeroAmountPayment
         ? `🎁 Zero-amount payment (credits covered full cost) + appointment created: ${paymentResponse.id}`
