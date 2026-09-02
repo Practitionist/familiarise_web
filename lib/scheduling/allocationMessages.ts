@@ -176,7 +176,9 @@ export const invalidSelection = (reason: string): AllocationToast => ({
   description: reason,
 });
 
-export const outsideSchedulingWindow = (rangeText: string): AllocationToast => ({
+export const outsideSchedulingWindow = (
+  rangeText: string,
+): AllocationToast => ({
   variant: "destructive",
   title: "Outside scheduling window",
   description: `Slots can only be selected within the scheduling period (${rangeText}).`,
@@ -198,8 +200,7 @@ export const pastSessionBlocked = (): AllocationToast => ({
 export const sessionTooSoon = (): AllocationToast => ({
   variant: "destructive",
   title: "Session too soon",
-  description:
-    "This session starts within 24 hours and cannot be rescheduled.",
+  description: "This session starts within 24 hours and cannot be rescheduled.",
 });
 
 export const sessionBeingRescheduled = (): AllocationToast => ({
@@ -258,6 +259,20 @@ export const autoScheduled = (): AllocationToast => ({
   variant: "default",
   title: "Sessions auto-scheduled",
   description: "All sessions have been automatically scheduled.",
+});
+
+/**
+ * #1206 — the consultant asked for a partial placement and got one. Says how
+ * many sessions are still unscheduled, because "scheduled" on its own would
+ * read as the whole plan.
+ */
+export const partiallyScheduled = (
+  placed: number,
+  required: number,
+): AllocationToast => ({
+  variant: "default",
+  title: "Some sessions scheduled",
+  description: `${placed} of ${required} session${plural(required)} now have times. The remaining ${required - placed} stay unscheduled until more availability opens.`,
 });
 
 export const allocationFailed = (reason: string): AllocationToast => ({

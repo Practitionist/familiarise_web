@@ -1,6 +1,16 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -514,6 +524,8 @@ export function UnifiedCalendar({
     manualAllocate,
     autoAllocate,
     allocateRequestedSlots,
+    partialOffer,
+    dismissPartialOffer,
     slotLimits,
   } = useEventSlotAllocation({
     eventType,
@@ -1597,6 +1609,52 @@ export function UnifiedCalendar({
           </Button>
         </div>
       )}
+
+      {/* #1206 — auto-allocation found room for only part of the plan. The
+          consultant decides between placing those sessions now and leaving the
+          request unallocated until more availability exists; nothing is
+          scheduled without this answer. */}
+      <AlertDialog
+        open={!!partialOffer}
+        onOpenChange={(open) => {
+          if (!open) dismissPartialOffer();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Only {partialOffer?.placeableSessions} of{" "}
+              {partialOffer?.requiredSessions} sessions fit
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Your published availability in this scheduling period can hold{" "}
+              {partialOffer?.placeableSessions} session
+              {partialOffer?.placeableSessions === 1 ? "" : "s"}. Schedule those
+              now and leave the remaining{" "}
+              {(partialOffer?.requiredSessions ?? 0) -
+                (partialOffer?.placeableSessions ?? 0)}{" "}
+              pending? The consultee is told how many are booked, and you can
+              allocate the rest once you open up more time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isAllocating}>
+              Not now
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isAllocating}
+              onClick={(event) => {
+                // The dialog must stay under the hook's control: closing it
+                // here would drop the in-flight state the retry reports into.
+                event.preventDefault();
+                void autoAllocate(availableSlots, { allowPartial: true });
+              }}
+            >
+              Schedule {partialOffer?.placeableSessions} now
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
