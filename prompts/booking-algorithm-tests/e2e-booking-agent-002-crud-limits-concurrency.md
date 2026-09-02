@@ -467,7 +467,7 @@ DB verify: ALL slots across ALL appointments in the subscription → `isTentativ
 As CONSULTANT, use `evaluate_script` to PATCH:
 
 ```javascript
-fetch("/api/events/webinars/test-webinar-002/allocate", {
+fetch("/api/bookings/webinars/test-webinar-002/allocate", {
   method: "PATCH",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -926,7 +926,7 @@ Verify: `totalUnallocated < totalConfigured` after some slots are occupied.
 After allocating a subscription, POST:
 
 ```javascript
-fetch("/api/events/subscriptions/<sub_id>/validate", {
+fetch("/api/bookings/subscriptions/<sub_id>/validate", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({

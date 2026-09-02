@@ -1039,7 +1039,7 @@ As CONSULTANT, try to manually allocate a class session that starts within the p
 ```javascript
 async () => {
   // Get the class scheduling period
-  const classResp = await fetch("/api/events/classes/test-class-005");
+  const classResp = await fetch("/api/bookings/classes/test-class-005");
   const classData = await classResp.json();
   const periodEnd = new Date(
     classData.data?.schedulingPeriodEndsAt || classData.schedulingPeriodEndsAt,
@@ -1049,18 +1049,21 @@ async () => {
   const slotStart = new Date(periodEnd.getTime() - 30 * 60000);
   const slotEnd = new Date(periodEnd.getTime() + 30 * 60000);
 
-  const response = await fetch("/api/events/classes/test-class-005/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      slots: [
-        {
-          startsAt: slotStart.toISOString(),
-          endsAt: slotEnd.toISOString(),
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/bookings/classes/test-class-005/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slots: [
+          {
+            startsAt: slotStart.toISOString(),
+            endsAt: slotEnd.toISOString(),
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
 };
 ```
@@ -1082,18 +1085,21 @@ async () => {
   const slotEnd = new Date(slotStart);
   slotEnd.setUTCHours(11, 0, 0, 0); // 1h session
 
-  const response = await fetch("/api/events/classes/test-class-005/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      slots: [
-        {
-          startsAt: slotStart.toISOString(),
-          endsAt: slotEnd.toISOString(),
-        },
-      ],
-    }),
-  });
+  const response = await fetch(
+    "/api/bookings/classes/test-class-005/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slots: [
+          {
+            startsAt: slotStart.toISOString(),
+            endsAt: slotEnd.toISOString(),
+          },
+        ],
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
 };
 ```

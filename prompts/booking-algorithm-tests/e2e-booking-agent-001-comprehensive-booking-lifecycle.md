@@ -918,7 +918,7 @@ async () => {
   slotEnd.setUTCHours(10, 30, 0, 0); // 16:00 IST (2 hours)
 
   const response = await fetch(
-    "/api/events/webinars/test-webinar-001/allocate",
+    "/api/bookings/webinars/test-webinar-001/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -976,6 +976,7 @@ This requires multiple consultee accounts. If testing capacity:
 3. The next checkout attempt should fail with "Webinar is full"
 
 ```sql
+
 ```
 
 ### Test 3.4: Webinar Reschedule (Consultant Only)
@@ -1046,14 +1047,17 @@ async () => {
     slots.push(thu.toISOString());
   }
 
-  const response = await fetch("/api/events/classes/test-class-001/allocate", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      isAuto: false,
-      slots: slots,
-    }),
-  });
+  const response = await fetch(
+    "/api/bookings/classes/test-class-001/allocate",
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isAuto: false,
+        slots: slots,
+      }),
+    },
+  );
   return await response.json();
 };
 ```
@@ -1110,7 +1114,7 @@ Log out and make API calls without authentication:
 async () => {
   // Clear auth state
   const response = await fetch(
-    "/api/events/consultations?consultantProfileId=test-consultant-profile-001",
+    "/api/bookings/consultations?consultantProfileId=test-consultant-profile-001",
   );
   const data = await response.json();
   return { status: response.status, data };
@@ -1659,7 +1663,7 @@ async () => {
 
   const subscriptionId = "<SUBSCRIPTION_ID>";
   const response = await fetch(
-    `/api/events/subscriptions/${subscriptionId}/validate`,
+    `/api/bookings/subscriptions/${subscriptionId}/validate`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1796,29 +1800,50 @@ UserRole: CONSULTANT | CONSULTEE | STAFF | ADMIN
 
 ## APPENDIX B: Key API Routes Reference
 
-| Route                                          | Method                  | Purpose                         |
-| ---------------------------------------------- | ----------------------- | ------------------------------- |
-| `/api/checkout`                                | POST                    | Create booking with payment     |
-| `/api/slots/request-for-approval`              | POST                    | Consultee requests booking      |
-| `/api/events/consultations`                    | GET, PATCH              | List/update consultations       |
-| `/api/events/consultations/[id]`               | GET, PUT, DELETE        | Single consultation CRUD        |
-| `/api/events/consultations/[id]/allocate`      | PATCH                   | Allocate consultation slots     |
-| `/api/events/consultations/[id]/validate`      | POST                    | Validate proposed slots         |
-| `/api/events/subscriptions`                    | GET, PATCH              | List/update subscriptions       |
-| `/api/events/subscriptions/[id]`               | GET, PUT, DELETE, PATCH | Single subscription CRUD        |
-| `/api/events/subscriptions/[id]/allocate`      | PATCH                   | Allocate subscription slots     |
-| `/api/events/subscriptions/[id]/validate`      | POST                    | Validate proposed slots         |
-| `/api/events/webinars/[id]/allocate`           | PATCH                   | Allocate webinar time slot      |
-| `/api/events/webinars/[id]/validate`           | POST                    | Validate webinar slots          |
-| `/api/events/classes/[id]/allocate`            | PATCH                   | Allocate class sessions         |
-| `/api/events/classes/[id]/validate`            | POST                    | Validate class slots            |
-| `/api/appointments/[id]/reschedule`            | POST                    | Reschedule appointment          |
-| `/api/appointments/[id]/cancel`                | POST                    | Cancel appointment              |
-| `/api/slots/availability-with-allocation/[id]` | GET                     | Available + occupied slots      |
-| `/api/slots/unallocated/weekly`                | GET                     | Unallocated weekly slots        |
-| `/api/slots/unallocated/custom`                | GET                     | Unallocated custom slots        |
-| `/api/slots/unallocated/[id]`                  | GET                     | Unallocated slots by consultant |
-| `/api/slots/appointments`                      | GET                     | List appointments with filters  |
+Verified against the route files on 2026-09-02. Note the dynamic segments are
+named for their entity (`[consultationId]`, `[webinarId]`, `[appointmentId]`),
+never `[id]`, and that every allocate route is a **PATCH**.
+
+| Route                                                                   | Method                  | Purpose                                                     |
+| ----------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
+| `/api/checkout`                                                         | POST                    | Create a booking with payment                               |
+| `/api/checkout/pending/[paymentId]`                                     | DELETE                  | Release your own pending hold early                         |
+| `/api/checkout/verify`                                                  | GET                     | Verify a payment intent                                     |
+| `/api/slots/request-for-approval`                                       | POST                    | Consultee requests a booking                                |
+| `/api/bookings/consultations`                                           | GET, PATCH              | List consultations / update one status                      |
+| `/api/bookings/consultations/[consultationId]`                          | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
+| `/api/bookings/consultations/[consultationId]/allocate`                 | PATCH                   | Allocate consultation slots                                 |
+| `/api/bookings/consultations/[consultationId]/validate`                 | POST                    | Validate proposed slots                                     |
+| `/api/bookings/subscriptions`                                           | GET, PATCH              | List subscriptions / update one status                      |
+| `/api/bookings/subscriptions/[subscriptionId]`                          | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
+| `/api/bookings/subscriptions/[subscriptionId]/allocate`                 | PATCH                   | Allocate subscription slots                                 |
+| `/api/bookings/subscriptions/[subscriptionId]/validate`                 | POST                    | Validate proposed slots                                     |
+| `/api/bookings/webinars`                                                | GET, POST               | List / create a webinar                                     |
+| `/api/bookings/webinars/[webinarId]`                                    | GET, PUT, DELETE        | Single webinar                                              |
+| `/api/bookings/webinars/[webinarId]/allocate`                           | PATCH                   | Allocate the webinar's time slot                            |
+| `/api/bookings/webinars/[webinarId]/validate`                           | POST                    | Validate webinar slots                                      |
+| `/api/bookings/webinars/crud-with-plan`                                 | POST, PATCH             | Create/update webinar plus its plan                         |
+| `/api/bookings/classes`                                                 | GET                     | List classes                                                |
+| `/api/bookings/classes/[classId]`                                       | GET, PUT, DELETE        | Single class                                                |
+| `/api/bookings/classes/[classId]/allocate`                              | PATCH                   | Allocate class sessions                                     |
+| `/api/bookings/classes/[classId]/validate`                              | POST                    | Validate class slots                                        |
+| `/api/bookings/classes/crud-with-plan`                                  | POST, PATCH             | Create/update class plus its plan                           |
+| `/api/appointments`                                                     | GET                     | Scoped appointment list (`?orgScope=`, `?appointmentType=`) |
+| `/api/appointments/[appointmentId]`                                     | GET                     | Single appointment detail                                   |
+| `/api/appointments/[appointmentId]/cancel`                              | POST                    | Cancel an appointment                                       |
+| `/api/appointments/[appointmentId]/cancel/preview`                      | GET                     | Quote the refund before cancelling                          |
+| `/api/appointments/[appointmentId]/reschedule`                          | POST                    | Open a reschedule proposal                                  |
+| `/api/appointments/[appointmentId]/reschedule/respond`                  | POST                    | Counterparty accepts or declines                            |
+| `/api/appointments/[appointmentId]/reschedule/withdraw`                 | POST                    | Initiator takes their proposal back                         |
+| `/api/trials`                                                           | GET, POST               | List / request a trial                                      |
+| `/api/trials/[trialId]`                                                 | GET, PATCH, DELETE      | Read, schedule/accept/reject, delete                        |
+| `/api/slots/availability-with-allocation/[consultantId]`                | GET                     | Grid of available and occupied slots                        |
+| `/api/slots/availability/weekly`, `/api/slots/availability/weekly/[id]` | POST, PATCH             | Weekly availability rows                                    |
+| `/api/slots/availability/custom`, `/api/slots/availability/custom/[id]` | POST, PATCH             | Custom availability rows                                    |
+| `/api/slots/unallocated/weekly`                                         | GET                     | Unallocated weekly slots                                    |
+| `/api/slots/unallocated/custom`                                         | GET                     | Unallocated custom slots                                    |
+| `/api/slots/unallocated/[consultantId]`                                 | GET                     | Unallocated slots for one consultant                        |
+| `/api/slots/appointments`                                               | GET                     | List appointments with filters                              |
 
 ## APPENDIX C: Key Dashboard Routes
 
