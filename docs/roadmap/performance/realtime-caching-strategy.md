@@ -1,7 +1,18 @@
 # Real-Time Dashboard Caching Strategy
 
 **Last Updated**: December 2025
-**Status**: Active Implementation Guide
+**Status**: Superseded — not implemented, and the platform decided against the freshness problem this doc solves for
+
+> **Superseded by [ADR 16 — Slot freshness without Supabase Realtime](../../enterprise/70-design-decisions/16-slot-freshness-without-realtime.md).**
+> None of the Redis-caching, SWR, or SSE layers below were ever built — there
+> is no `lib/cache/dashboard.ts`, no dashboard Redis cache, and no SSE
+> endpoint in this repo today. For the booking surfaces this document was
+> written for, ADR 16 concluded the freshness gap does not need closing with
+> new infrastructure: correctness is already server-authoritative (locks +
+> CAS transitions + a DB exclusion constraint), and staleness is bounded by a
+> 60-second visibility-gated poll (`lib/scheduling/availabilityPolling.ts`,
+> #1164) plus focus-triggered refetch and mutation-driven invalidation. Read
+> this page as a rejected proposal, not a live implementation guide.
 
 ---
 
