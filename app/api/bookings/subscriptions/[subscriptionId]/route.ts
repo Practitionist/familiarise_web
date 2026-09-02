@@ -9,7 +9,10 @@ import {
 } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
-import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import {
+  ApprovalWindowLapsedError,
+  createApprovalPaymentIntent,
+} from "@/lib/payments/operations/approval-payment";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
   APPROVAL_LOCK_TTL_MS,
@@ -714,6 +717,20 @@ export async function PATCH(
             result.data.schedulingPeriodEndsAt ?? endDate,
           );
         } catch (linkError) {
+          // #1319 review — a lapsed approval is not a retryable mint failure:
+          // the dead intent's request has already been swept, so re-approving
+          // would loop forever. Answer 409 and tell the consultee to re-request.
+          if (linkError instanceof ApprovalWindowLapsedError) {
+            return NextResponse.json(
+              {
+                data: result.data,
+                error: linkError.message,
+                requiresPayment: true,
+                paymentUrl: null,
+              },
+              { status: 409 },
+            );
+          }
           Sentry.captureException(
             linkError instanceof Error
               ? linkError
