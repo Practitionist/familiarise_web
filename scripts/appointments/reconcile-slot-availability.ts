@@ -429,7 +429,15 @@ async function logParticipantDrift(): Promise<void> {
     select: {
       id: true,
       participants: { select: { userId: true, status: true } },
-      slotsOfAppointment: { select: { user: { select: { id: true } } } },
+      // A cancelled or replaced slot keeps its user relation as history; only
+      // live rows are the join-side truth the participant rows must match.
+      slotsOfAppointment: {
+        where: {
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        },
+        select: { user: { select: { id: true } } },
+      },
     },
     take: 2000,
   });

@@ -1813,9 +1813,15 @@ export async function confirmExistingAppointment(
       data: { isTentative: false },
     });
     // #1319 A9 — the seat is paid for; mirror the flip on the participant rows.
+    // Only a HELD seat confirms: a capture landing on a cancelled seat must
+    // not resurrect it (the refund arm below handles the money).
     await setParticipantStatus(
       tx,
-      { appointment: { classId: appointment.class.id }, userId },
+      {
+        appointment: { classId: appointment.class.id },
+        userId,
+        status: "HELD",
+      },
       "CONFIRMED",
     );
 
@@ -1863,7 +1869,11 @@ export async function confirmExistingAppointment(
       },
       data: { isTentative: false },
     });
-    await setParticipantStatus(tx, { appointmentId, userId }, "CONFIRMED");
+    await setParticipantStatus(
+      tx,
+      { appointmentId, userId, status: "HELD" },
+      "CONFIRMED",
+    );
 
     console.log(
       JSON.stringify({
@@ -1880,7 +1890,11 @@ export async function confirmExistingAppointment(
       where: { appointmentId },
       data: { isTentative: false },
     });
-    await setParticipantStatus(tx, { appointmentId }, "CONFIRMED");
+    await setParticipantStatus(
+      tx,
+      { appointmentId, status: "HELD" },
+      "CONFIRMED",
+    );
   }
 
   // Update status for consultation and subscription

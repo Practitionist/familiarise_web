@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import {
   requireApiAuth,
@@ -129,11 +130,16 @@ export async function DELETE(
     const { classId } = await params;
 
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
+    const parsedUserId = z
+      .string()
+      .trim()
+      .min(1)
+      .max(64)
+      .safeParse(searchParams.get("userId"));
+    if (!parsedUserId.success) {
       return new NextResponse("User ID is required", { status: 400 });
     }
+    const userId = parsedUserId.data;
 
     // #1005 — consultees may remove themselves (self-leave). Organisers and
     // privileged roles may remove anyone on their event.

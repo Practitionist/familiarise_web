@@ -5,6 +5,7 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import {
+  linkParticipantsToPayment,
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
@@ -2960,10 +2961,26 @@ export async function handleCheckout(
                   : validatedData.appointmentType === "WEBINAR"
                     ? { appointmentId: createdAppointment.id, userId }
                     : { appointmentId: createdAppointment.id };
-              await tx.appointmentParticipant.updateMany({
-                where: { ...participantWhere, paymentId: null },
-                data: { paymentId: payment.id },
-              });
+              if (
+                validatedData.appointmentType === "CLASS" &&
+                validatedData.eventId
+              ) {
+                // Cross-appointment scope (every session of the class); the
+                // helper is per-appointment.
+                await tx.appointmentParticipant.updateMany({
+                  where: { ...participantWhere, paymentId: null },
+                  data: { paymentId: payment.id },
+                });
+              } else {
+                await linkParticipantsToPayment(
+                  tx,
+                  createdAppointment.id,
+                  payment.id,
+                  validatedData.appointmentType === "WEBINAR"
+                    ? userId
+                    : undefined,
+                );
+              }
               if (skipPayment) {
                 await setParticipantStatus(tx, participantWhere, "CONFIRMED");
               }

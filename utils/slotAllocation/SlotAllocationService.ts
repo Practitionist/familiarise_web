@@ -1274,6 +1274,7 @@ export class SlotAllocationService {
               appointments,
               enrolledUserIds,
               consultant.userId,
+              organizationId,
             );
           }
 
@@ -1689,6 +1690,7 @@ export class SlotAllocationService {
               appointments,
               enrolledUserIds,
               consultant.userId,
+              organizationId,
             );
           }
 
@@ -3259,6 +3261,7 @@ export class SlotAllocationService {
     appointments: AppointmentWithSlots[],
     enrolledUserIds: string[],
     consultantUserId: string,
+    organizationId: string | null | undefined,
   ): Promise<void> {
     // Filter out the consultant (already connected via createAppointments)
     const userIdsToConnect = enrolledUserIds.filter(
@@ -3282,7 +3285,9 @@ export class SlotAllocationService {
           userId,
           role: "CONSULTEE" as const,
         })),
-        { status: "CONFIRMED" },
+        // Same org tag as the consultant row createAppointments wrote, so an
+        // org-scoped read of the participants never sees a half-tagged seat.
+        { status: "CONFIRMED", organizationId },
       );
     }
   }
