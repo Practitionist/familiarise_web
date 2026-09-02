@@ -33,7 +33,28 @@
  * SUCCEEDED payment through.
  */
 
-import { EarningStatus, Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
+import {
+  EarningStatus,
+  Prisma,
+  PaymentStatus,
+  RefundStatus,
+} from "@prisma/client";
+import { setParticipantStatus } from "@/lib/booking/participants";
+
+async function markParticipantsRefunded(paymentId: string): Promise<void> {
+  try {
+    await setParticipantStatus(prisma, { paymentId }, "REFUNDED");
+  } catch (error) {
+    // Shadow table: never let it fail a refund that already went through.
+    console.warn(
+      JSON.stringify({
+        event: "participant_refund_stamp_failed",
+        paymentId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+}
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -97,6 +118,9 @@ export async function refundBookingPayment(input: {
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
+    // #1319 A9 — the seat this payment funded is refunded (best-effort, after
+    // the gateway refund committed; the participant table is shadow-only).
+    await markParticipantsRefunded(input.paymentId);
     return {
       refundId: r.refundId,
       amountRefundedPaise: r.amountRefundedPaise,
@@ -202,13 +226,18 @@ async function refundFreeCreditPayment(input: {
           initiatedByUserId: input.initiatedByUserId ?? null,
         });
 
+        await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
         return {
           refundId: refundRow.id,
           amountRefundedPaise: 0,
           rail: "CREDITS" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 }
@@ -277,7 +306,10 @@ async function reverseFreeCreditSettlement(
     },
   });
 
-  if (payment.earnings.length === 0 && payment.organizationEarnings.length === 0)
+  if (
+    payment.earnings.length === 0 &&
+    payment.organizationEarnings.length === 0
+  )
     return;
 
   // Consultant earnings net in full — same cap + legal-transition guard as
@@ -390,8 +422,7 @@ async function reverseFreeCreditSettlement(
       amountPaise: promoTotal,
     });
   } else {
-    const discountBack =
-      payment.originalAmount + (payment.taxAmount ?? 0);
+    const discountBack = payment.originalAmount + (payment.taxAmount ?? 0);
     if (discountBack > 0) {
       credits.push({
         account: { kind: "DISCOUNT" },
@@ -432,7 +463,10 @@ async function reverseFreeCreditSettlement(
   for (const orgEarn of payment.organizationEarnings) {
     if (orgEarn.orgSharePaise > 0) {
       debits.push({
-        account: { kind: "ORG_PAYABLE", organizationId: orgEarn.organizationId },
+        account: {
+          kind: "ORG_PAYABLE",
+          organizationId: orgEarn.organizationId,
+        },
         direction: "DEBIT",
         amountPaise: orgEarn.orgSharePaise,
       });
@@ -607,13 +641,18 @@ async function refundInternalFundedPayment(input: {
           payment.amount,
         );
 
+        await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
         return {
           refundId: refundRow.id,
           amountRefundedPaise: requested,
           rail: "INTERNAL" as const,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 }

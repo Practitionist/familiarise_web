@@ -84,7 +84,11 @@ function makeTx() {
         return { count: 1 };
       }),
     },
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     consultation: {
+      findUnique: jest.fn(
+        async ({ where }: any) => state.consultations.get(where.id) ?? null,
+      ),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const c = state.consultations.get(where.id);
         if (!c) return { count: 0 };
@@ -96,6 +100,9 @@ function makeTx() {
       }),
     },
     subscription: {
+      findUnique: jest.fn(
+        async ({ where }: any) => state.subscriptions.get(where.id) ?? null,
+      ),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const s = state.subscriptions.get(where.id);
         if (!s) return { count: 0 };
