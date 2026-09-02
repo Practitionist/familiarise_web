@@ -50,6 +50,7 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
@@ -234,238 +235,240 @@ export async function createOrgPayoutBatch(
   }
 
   try {
-    const result = await prisma.$transaction(
-      async (tx) => {
-        const payoutAccount = await tx.organizationPayoutAccount.findUnique({
-          where: { organizationId: orgId },
-        });
-        if (!payoutAccount) {
-          throw new PayoutValidationError(
-            "No payout account configured for this organization",
-            409,
-          );
-        }
-        if (payoutAccount.status !== "VERIFIED") {
-          throw new PayoutValidationError(
-            `Payout account is ${payoutAccount.status} — cannot create payouts until VERIFIED`,
-            409,
-          );
-        }
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const payoutAccount = await tx.organizationPayoutAccount.findUnique({
+            where: { organizationId: orgId },
+          });
+          if (!payoutAccount) {
+            throw new PayoutValidationError(
+              "No payout account configured for this organization",
+              409,
+            );
+          }
+          if (payoutAccount.status !== "VERIFIED") {
+            throw new PayoutValidationError(
+              `Payout account is ${payoutAccount.status} — cannot create payouts until VERIFIED`,
+              409,
+            );
+          }
 
-        // Race-safe claim: create placeholder, then atomically claim
-        // READY earnings into it. Same proven pattern as the
-        // /api/organizations/[orgId]/payouts route.
-        const created = await tx.organizationPayout.create({
-          data: {
-            organizationId: orgId,
-            amountPaise: 0,
-            currency: "INR",
-            status: "PENDING",
-            paymentGateway: opts.paymentGateway ?? "RAZORPAY",
-            periodStart,
-            periodEnd,
-            grossRevenuePaise: 0,
-            platformFeePaise: 0,
-            refundsPaise: 0,
-            netPayoutPaise: 0,
-            // #1093 §3 — never null: a keyless manual payout had no replay guard.
-            idempotencyKey:
-              opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
-            // mustPayByDate, tdsSectionApplied, tdsAmountPaise,
-            // dtaaRateApplied are derived after we resolve the org's
-            // MSME + PAN fields below and persisted via the second
-            // update (alongside the post-TDS amount). Form 15 / FIRC
-            // still populated manually until cross-border crons land.
-          },
-        });
-
-        const claim = await tx.organizationEarnings.updateMany({
-          where: {
-            organizationId: orgId,
-            status: "READY",
-            orgPayoutId: null,
-            createdAt: { gte: periodStart, lt: periodEnd },
-          },
-          data: { orgPayoutId: created.id },
-        });
-        if (claim.count === 0) {
-          throw new PayoutValidationError(
-            "No READY earnings in the requested window",
-            409,
-          );
-        }
-
-        const readyEarnings = await tx.organizationEarnings.findMany({
-          where: { orgPayoutId: created.id },
-          select: {
-            id: true,
-            grossAmountPaise: true,
-            platformFeePaise: true,
-            orgSharePaise: true,
-            refundedAmountPaise: true,
-            currency: true,
-          },
-        });
-        const first = readyEarnings[0];
-        if (!first) {
-          throw new PayoutValidationError(
-            "No READY earnings in the requested window",
-            409,
-          );
-        }
-        const mixedCurrency = readyEarnings.some(
-          (e) => e.currency !== first.currency,
-        );
-        if (mixedCurrency) {
-          throw new PayoutValidationError(
-            "Cannot roll earnings in mixed currencies into a single payout. Split the window.",
-            409,
-          );
-        }
-
-        const totals = readyEarnings.reduce(
-          (acc, e) => {
-            acc.gross += e.grossAmountPaise;
-            acc.platformFeePaise += e.platformFeePaise;
-            acc.orgShare += e.orgSharePaise;
-            acc.refunds += e.refundedAmountPaise;
-            return acc;
-          },
-          { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
-        );
-        const netPayout = totals.orgShare - totals.refunds;
-        if (netPayout <= 0) {
-          throw new PayoutValidationError(
-            `Net payout would be ${netPayout} paise — refunds exceed earnings. Reconcile first.`,
-            409,
-          );
-        }
-
-        // Resolve the org's India statutory metadata in one fetch and
-        // use it for both TDS (PAN, residency) and the MSME payment
-        // deadline (msmeStatus, writtenAgreement).
-        //
-        // TDS: the marketplace e-commerce-operator rate (the old §194-O,
-        // now §393 of the Income-tax Act 2025 in force since 1-Apr-2026)
-        // is the default for payouts to host orgs; the no-PAN higher-rate
-        // fallback (old §206AA, now §397(2)) applies when PAN is missing
-        // or malformed. Computed on `netPayout` (= orgShare − refunds),
-        // then deducted from what we send through the gateway. The withheld
-        // amount is deposited with the govt and reported quarterly on the
-        // return that succeeds Form 26Q (separate cron — see
-        // lib/compliance/tds.ts module docblock).
-        //
-        // MSME: when the host org is MICRO / SMALL we owe payment within
-        // 15 / 45 days under MSMED Act §15 (the deduction-disallowance
-        // teeth moved from Income-tax §43B(h) to §37(2)(g) under the 2025
-        // Act); fall through to contract.paymentTermsDays for MEDIUM / NONE.
-        //
-        // All host orgs are assumed RESIDENT in v1. When the first
-        // non-resident host org ships, extend Organization with
-        // `residencyStatus` + `tdsSection` overrides and thread them in.
-        const orgForCompliance = await tx.organization.findUnique({
-          where: { id: orgId },
-          select: {
-            taxInfo: { select: { panEncrypted: true } },
-            msmeInfo: {
-              select: { msmeStatus: true, msmeWrittenAgreementOnFile: true },
+          // Race-safe claim: create placeholder, then atomically claim
+          // READY earnings into it. Same proven pattern as the
+          // /api/organizations/[orgId]/payouts route.
+          const created = await tx.organizationPayout.create({
+            data: {
+              organizationId: orgId,
+              amountPaise: 0,
+              currency: "INR",
+              status: "PENDING",
+              paymentGateway: opts.paymentGateway ?? "RAZORPAY",
+              periodStart,
+              periodEnd,
+              grossRevenuePaise: 0,
+              platformFeePaise: 0,
+              refundsPaise: 0,
+              netPayoutPaise: 0,
+              // #1093 §3 — never null: a keyless manual payout had no replay guard.
+              idempotencyKey:
+                opts.idempotencyKey ?? globalThis.crypto.randomUUID(),
+              // mustPayByDate, tdsSectionApplied, tdsAmountPaise,
+              // dtaaRateApplied are derived after we resolve the org's
+              // MSME + PAN fields below and persisted via the second
+              // update (alongside the post-TDS amount). Form 15 / FIRC
+              // still populated manually until cross-border crons land.
             },
-          },
-        });
-        const tds = computeTdsForPayout({
-          grossAmountPaise: netPayout,
-          consultant: {
-            // #768 — PAN at rest is encrypted. TDS rate derivation only
-            // needs to know whether a PAN is on file (treats null as
-            // higher-rate). Plaintext decrypt is deferred to Form 26Q
-            // filing (admin-only flow).
-            // #785 — PAN at rest is encrypted; signal presence via panOnFile
-            // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
-            panNumber: null,
-            panOnFile: !!orgForCompliance?.taxInfo?.panEncrypted,
-            residencyStatus: "RESIDENT",
-            tdsSection: null,
-            tdsRateBps: null,
-            tdsLowerRateCert: null,
-            providerCountry: null,
-          },
-        });
-        const amountAfterTds = netPayout - tds.tdsAmountPaise;
-        const mustPayByDate = computeMsmePaymentDeadline({
-          invoiceDate: new Date(),
-          counterpartyMsmeStatus:
-            orgForCompliance?.msmeInfo?.msmeStatus ?? "NONE",
-          writtenAgreement:
-            orgForCompliance?.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
-        });
+          });
 
-        await tx.organizationPayout.update({
-          where: { id: created.id },
-          data: {
-            amountPaise: amountAfterTds,
-            currency: first.currency,
-            grossRevenuePaise: totals.gross,
-            platformFeePaise: totals.platformFeePaise,
-            refundsPaise: totals.refunds,
-            netPayoutPaise: netPayout,
-            tdsSectionApplied: tds.tdsSection,
-            tdsAmountPaise: tds.tdsAmountPaise,
-            dtaaRateApplied:
-              tds.dtaaRateApplied !== null
-                ? new Prisma.Decimal(tds.dtaaRateApplied)
-                : null,
-            mustPayByDate,
-          },
-        });
+          const claim = await tx.organizationEarnings.updateMany({
+            where: {
+              organizationId: orgId,
+              status: "READY",
+              orgPayoutId: null,
+              createdAt: { gte: periodStart, lt: periodEnd },
+            },
+            data: { orgPayoutId: created.id },
+          });
+          if (claim.count === 0) {
+            throw new PayoutValidationError(
+              "No READY earnings in the requested window",
+              409,
+            );
+          }
 
-        // #837 E-03/E-04 — batch creation only STAGES the earnings; cash has
-        // not left. Mark BATCHED, not PAID. The PAID flip moves to
-        // markOrgPayoutCompleted (PROCESSING → COMPLETED), so a batch built
-        // with ENABLE_LIVE_PAYOUTS off never reads as paid to auditors.
-        await tx.organizationEarnings.updateMany({
-          where: { orgPayoutId: created.id, status: "READY" },
-          data: { status: "BATCHED" },
-        });
+          const readyEarnings = await tx.organizationEarnings.findMany({
+            where: { orgPayoutId: created.id },
+            select: {
+              id: true,
+              grossAmountPaise: true,
+              platformFeePaise: true,
+              orgSharePaise: true,
+              refundedAmountPaise: true,
+              currency: true,
+            },
+          });
+          const first = readyEarnings[0];
+          if (!first) {
+            throw new PayoutValidationError(
+              "No READY earnings in the requested window",
+              409,
+            );
+          }
+          const mixedCurrency = readyEarnings.some(
+            (e) => e.currency !== first.currency,
+          );
+          if (mixedCurrency) {
+            throw new PayoutValidationError(
+              "Cannot roll earnings in mixed currencies into a single payout. Split the window.",
+              409,
+            );
+          }
 
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: opts.actorMembershipId ?? null,
-            category: "PAYOUT",
-            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
-            description: `Payout batch created: ${readyEarnings.length} earnings, ${amountAfterTds} paise ${first.currency} (after ${tds.tdsAmountPaise} paise TDS ${tds.tdsSection})`,
-            details: {
-              payoutId: created.id,
-              earningsCount: readyEarnings.length,
-              netPayoutPaise: netPayout,
-              amountAfterTdsPaise: amountAfterTds,
-              grossPaise: totals.gross,
+          const totals = readyEarnings.reduce(
+            (acc, e) => {
+              acc.gross += e.grossAmountPaise;
+              acc.platformFeePaise += e.platformFeePaise;
+              acc.orgShare += e.orgSharePaise;
+              acc.refunds += e.refundedAmountPaise;
+              return acc;
+            },
+            { gross: 0, platformFeePaise: 0, orgShare: 0, refunds: 0 },
+          );
+          const netPayout = totals.orgShare - totals.refunds;
+          if (netPayout <= 0) {
+            throw new PayoutValidationError(
+              `Net payout would be ${netPayout} paise — refunds exceed earnings. Reconcile first.`,
+              409,
+            );
+          }
+
+          // Resolve the org's India statutory metadata in one fetch and
+          // use it for both TDS (PAN, residency) and the MSME payment
+          // deadline (msmeStatus, writtenAgreement).
+          //
+          // TDS: the marketplace e-commerce-operator rate (the old §194-O,
+          // now §393 of the Income-tax Act 2025 in force since 1-Apr-2026)
+          // is the default for payouts to host orgs; the no-PAN higher-rate
+          // fallback (old §206AA, now §397(2)) applies when PAN is missing
+          // or malformed. Computed on `netPayout` (= orgShare − refunds),
+          // then deducted from what we send through the gateway. The withheld
+          // amount is deposited with the govt and reported quarterly on the
+          // return that succeeds Form 26Q (separate cron — see
+          // lib/compliance/tds.ts module docblock).
+          //
+          // MSME: when the host org is MICRO / SMALL we owe payment within
+          // 15 / 45 days under MSMED Act §15 (the deduction-disallowance
+          // teeth moved from Income-tax §43B(h) to §37(2)(g) under the 2025
+          // Act); fall through to contract.paymentTermsDays for MEDIUM / NONE.
+          //
+          // All host orgs are assumed RESIDENT in v1. When the first
+          // non-resident host org ships, extend Organization with
+          // `residencyStatus` + `tdsSection` overrides and thread them in.
+          const orgForCompliance = await tx.organization.findUnique({
+            where: { id: orgId },
+            select: {
+              taxInfo: { select: { panEncrypted: true } },
+              msmeInfo: {
+                select: { msmeStatus: true, msmeWrittenAgreementOnFile: true },
+              },
+            },
+          });
+          const tds = computeTdsForPayout({
+            grossAmountPaise: netPayout,
+            consultant: {
+              // #768 — PAN at rest is encrypted. TDS rate derivation only
+              // needs to know whether a PAN is on file (treats null as
+              // higher-rate). Plaintext decrypt is deferred to Form 26Q
+              // filing (admin-only flow).
+              // #785 — PAN at rest is encrypted; signal presence via panOnFile
+              // (passing the ciphertext as panNumber fails isValidPan → wrong 5%).
+              panNumber: null,
+              panOnFile: !!orgForCompliance?.taxInfo?.panEncrypted,
+              residencyStatus: "RESIDENT",
+              tdsSection: null,
+              tdsRateBps: null,
+              tdsLowerRateCert: null,
+              providerCountry: null,
+            },
+          });
+          const amountAfterTds = netPayout - tds.tdsAmountPaise;
+          const mustPayByDate = computeMsmePaymentDeadline({
+            invoiceDate: new Date(),
+            counterpartyMsmeStatus:
+              orgForCompliance?.msmeInfo?.msmeStatus ?? "NONE",
+            writtenAgreement:
+              orgForCompliance?.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
+          });
+
+          await tx.organizationPayout.update({
+            where: { id: created.id },
+            data: {
+              amountPaise: amountAfterTds,
+              currency: first.currency,
+              grossRevenuePaise: totals.gross,
               platformFeePaise: totals.platformFeePaise,
               refundsPaise: totals.refunds,
-              tdsSection: tds.tdsSection,
-              tdsRate: tds.tdsRate,
+              netPayoutPaise: netPayout,
+              tdsSectionApplied: tds.tdsSection,
               tdsAmountPaise: tds.tdsAmountPaise,
-              tdsFallback: tds.fallbackApplied,
-              tdsReason: tds.reason,
-              // #1093 §3 — echo the payout's own key; a fresh mint here would
-              // stamp the audit row with a UUID matching no payout.
-              idempotencyKey: created.idempotencyKey,
+              dtaaRateApplied:
+                tds.dtaaRateApplied !== null
+                  ? new Prisma.Decimal(tds.dtaaRateApplied)
+                  : null,
+              mustPayByDate,
             },
-          },
-        });
+          });
 
-        return {
-          payoutId: created.id,
-          amountPaise: amountAfterTds,
-          earningsCount: readyEarnings.length,
-          periodStart,
-          periodEnd,
-        };
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        timeout: 25_000,
-      },
+          // #837 E-03/E-04 — batch creation only STAGES the earnings; cash has
+          // not left. Mark BATCHED, not PAID. The PAID flip moves to
+          // markOrgPayoutCompleted (PROCESSING → COMPLETED), so a batch built
+          // with ENABLE_LIVE_PAYOUTS off never reads as paid to auditors.
+          await tx.organizationEarnings.updateMany({
+            where: { orgPayoutId: created.id, status: "READY" },
+            data: { status: "BATCHED" },
+          });
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: orgId,
+              actorMembershipId: opts.actorMembershipId ?? null,
+              category: "PAYOUT",
+              action: AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
+              description: `Payout batch created: ${readyEarnings.length} earnings, ${amountAfterTds} paise ${first.currency} (after ${tds.tdsAmountPaise} paise TDS ${tds.tdsSection})`,
+              details: {
+                payoutId: created.id,
+                earningsCount: readyEarnings.length,
+                netPayoutPaise: netPayout,
+                amountAfterTdsPaise: amountAfterTds,
+                grossPaise: totals.gross,
+                platformFeePaise: totals.platformFeePaise,
+                refundsPaise: totals.refunds,
+                tdsSection: tds.tdsSection,
+                tdsRate: tds.tdsRate,
+                tdsAmountPaise: tds.tdsAmountPaise,
+                tdsFallback: tds.fallbackApplied,
+                tdsReason: tds.reason,
+                // #1093 §3 — echo the payout's own key; a fresh mint here would
+                // stamp the audit row with a UUID matching no payout.
+                idempotencyKey: created.idempotencyKey,
+              },
+            },
+          });
+
+          return {
+            payoutId: created.id,
+            amountPaise: amountAfterTds,
+            earningsCount: readyEarnings.length,
+            periodStart,
+            periodEnd,
+          };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: 25_000,
+        },
+      ),
     );
 
     return result;

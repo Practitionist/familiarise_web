@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   PaymentGateway,
@@ -11,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
+  APPROVAL_LOCK_TTL_MS,
   lockConsultationApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
@@ -465,7 +467,10 @@ export async function PATCH(
     let lock;
     if (status === AppointmentStatus.APPROVED) {
       try {
-        lock = await lockConsultationApproval(consultationId, 30000); // 30-second TTL
+        lock = await lockConsultationApproval(
+          consultationId,
+          APPROVAL_LOCK_TTL_MS,
+        ); // #1319 — must outlive the 30 s tx
       } catch (error) {
         return NextResponse.json(
           {
@@ -479,192 +484,194 @@ export async function PATCH(
 
     try {
       // LAYER 2: Serializable transaction with idempotency checks
-      const result = await prisma.$transaction(
-        async (tx) => {
-          // Fetch current state inside transaction
-          const currentConsultation = await tx.consultation.findUnique({
-            where: { id: consultationId },
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-              appointment: {
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          });
-
-          if (!currentConsultation) {
-            throw new Error("Consultation not found");
-          }
-
-          // IDEMPOTENCY: Check if already in target state or processing
-          if (status === AppointmentStatus.APPROVED) {
-            if (
-              currentConsultation.status ===
-              AppointmentStatus.APPROVED_PENDING_PAYMENT
-            ) {
-              // Already processing, return existing state
-              return {
-                data: currentConsultation,
-                message: "Approval already in progress",
-                duplicate: true,
-              };
-            }
-
-            if (currentConsultation.status === AppointmentStatus.APPROVED) {
-              return {
-                data: currentConsultation,
-                message: "Already approved",
-                duplicate: true,
-              };
-            }
-          }
-
-          // #836 — allowed-from guard rides the WHERE; the idempotency
-          // pre-checks above are only friendly error text. updateMany
-          // returns no row, so re-read for the heavy include.
-          await transitionConsultationRequest(tx, {
-            where: { id: consultationId },
-            to: status,
-          });
-          const consultation = await tx.consultation.findUniqueOrThrow({
-            where: { id: consultationId },
-            include: {
-              consultationPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-              appointment: {
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          });
-
-          // If approved, check if payment exists
-          if (status === AppointmentStatus.APPROVED) {
-            const hasPayment = await checkConsultationPayment(
-              tx,
-              consultation.id,
-            );
-
-            if (hasPayment) {
-              // Payment already exists - check if tentative appointment exists
-              if (consultation.appointment) {
-                // Confirm existing tentative appointment. RESCHEDULED rows are
-                // excluded (#1169 PR 2): they keep their ORIGINAL startsAt, so
-                // flipping them re-confirms exactly the time the consultee
-                // asked to move away from.
-                await tx.slotOfAppointment.updateMany({
-                  where: {
-                    appointmentId: consultation.appointment.id,
-                    completionStatus: "SCHEDULED",
-                  },
-                  data: { isTentative: false },
-                });
-              } else {
-                // Paid but no appointment row: the capture webhook that
-                // creates the appointment has not landed (or died mid-flight).
-                // The old fallback fabricated a confirmed slot at now+1h on
-                // the GLOBAL client — no availability check, no lock, no
-                // consultantProfileId, and it survived this transaction's
-                // rollback (#1169 PR 2 / CORE-3). Refuse instead: the
-                // reconcile-orphaned-confirmations sweep (#830) settles this
-                // exact state, after which approval succeeds normally.
-                throw new PaidWithoutAppointmentError(consultation.id);
-              }
-              return { data: consultation, duplicate: false };
-            } else {
-              // No payment — record the approval now; the pay-link is minted
-              // AFTER commit (#1169 PR 2). A gateway round-trip inside a
-              // Serializable transaction pinned a pooled connection for
-              // seconds, could blow the 30s budget, and on rollback left a
-              // live payment link for an approval that never persisted. The
-              // trial path documents the same rule.
-              await transitionConsultationRequest(tx, {
-                where: { id: consultationId },
-                to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-              });
-              const updatedConsultation =
-                await tx.consultation.findUniqueOrThrow({
-                  where: { id: consultationId },
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            // Fetch current state inside transaction
+            const currentConsultation = await tx.consultation.findUnique({
+              where: { id: consultationId },
+              include: {
+                consultationPlan: {
                   include: {
-                    consultationPlan: {
-                      include: {
-                        consultantProfile: {
-                          include: {
-                            user: true,
-                          },
-                        },
-                      },
-                    },
-                    requestedBy: {
+                    consultantProfile: {
                       include: {
                         user: true,
                       },
                     },
-                    appointment: {
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
                       include: {
-                        slotsOfAppointment: {
-                          include: {
-                            user: true,
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+            if (!currentConsultation) {
+              throw new Error("Consultation not found");
+            }
+
+            // IDEMPOTENCY: Check if already in target state or processing
+            if (status === AppointmentStatus.APPROVED) {
+              if (
+                currentConsultation.status ===
+                AppointmentStatus.APPROVED_PENDING_PAYMENT
+              ) {
+                // Already processing, return existing state
+                return {
+                  data: currentConsultation,
+                  message: "Approval already in progress",
+                  duplicate: true,
+                };
+              }
+
+              if (currentConsultation.status === AppointmentStatus.APPROVED) {
+                return {
+                  data: currentConsultation,
+                  message: "Already approved",
+                  duplicate: true,
+                };
+              }
+            }
+
+            // #836 — allowed-from guard rides the WHERE; the idempotency
+            // pre-checks above are only friendly error text. updateMany
+            // returns no row, so re-read for the heavy include.
+            await transitionConsultationRequest(tx, {
+              where: { id: consultationId },
+              to: status,
+            });
+            const consultation = await tx.consultation.findUniqueOrThrow({
+              where: { id: consultationId },
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+            // If approved, check if payment exists
+            if (status === AppointmentStatus.APPROVED) {
+              const hasPayment = await checkConsultationPayment(
+                tx,
+                consultation.id,
+              );
+
+              if (hasPayment) {
+                // Payment already exists - check if tentative appointment exists
+                if (consultation.appointment) {
+                  // Confirm existing tentative appointment. RESCHEDULED rows are
+                  // excluded (#1169 PR 2): they keep their ORIGINAL startsAt, so
+                  // flipping them re-confirms exactly the time the consultee
+                  // asked to move away from.
+                  await tx.slotOfAppointment.updateMany({
+                    where: {
+                      appointmentId: consultation.appointment.id,
+                      completionStatus: "SCHEDULED",
+                    },
+                    data: { isTentative: false },
+                  });
+                } else {
+                  // Paid but no appointment row: the capture webhook that
+                  // creates the appointment has not landed (or died mid-flight).
+                  // The old fallback fabricated a confirmed slot at now+1h on
+                  // the GLOBAL client — no availability check, no lock, no
+                  // consultantProfileId, and it survived this transaction's
+                  // rollback (#1169 PR 2 / CORE-3). Refuse instead: the
+                  // reconcile-orphaned-confirmations sweep (#830) settles this
+                  // exact state, after which approval succeeds normally.
+                  throw new PaidWithoutAppointmentError(consultation.id);
+                }
+                return { data: consultation, duplicate: false };
+              } else {
+                // No payment — record the approval now; the pay-link is minted
+                // AFTER commit (#1169 PR 2). A gateway round-trip inside a
+                // Serializable transaction pinned a pooled connection for
+                // seconds, could blow the 30s budget, and on rollback left a
+                // live payment link for an approval that never persisted. The
+                // trial path documents the same rule.
+                await transitionConsultationRequest(tx, {
+                  where: { id: consultationId },
+                  to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+                });
+                const updatedConsultation =
+                  await tx.consultation.findUniqueOrThrow({
+                    where: { id: consultationId },
+                    include: {
+                      consultationPlan: {
+                        include: {
+                          consultantProfile: {
+                            include: {
+                              user: true,
+                            },
+                          },
+                        },
+                      },
+                      requestedBy: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                      appointment: {
+                        include: {
+                          slotsOfAppointment: {
+                            include: {
+                              user: true,
+                            },
                           },
                         },
                       },
                     },
-                  },
-                });
+                  });
 
-              return {
-                data: updatedConsultation,
-                message: "Consultation approved. Payment link sent to user.",
-                requiresPayment: true,
-                needsPaymentLink: true,
-                duplicate: false,
-              };
+                return {
+                  data: updatedConsultation,
+                  message: "Consultation approved. Payment link sent to user.",
+                  requiresPayment: true,
+                  needsPaymentLink: true,
+                  duplicate: false,
+                };
+              }
             }
-          }
 
-          return { data: consultation, duplicate: false };
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
-          maxWait: 10000, // 10 seconds
-          timeout: 30000, // 30 seconds
-        },
+            return { data: consultation, duplicate: false };
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
+            maxWait: 10000, // 10 seconds
+            timeout: 30000, // 30 seconds
+          },
+        ),
       );
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose

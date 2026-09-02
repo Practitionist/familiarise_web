@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   PaymentGateway,
@@ -11,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
+  APPROVAL_LOCK_TTL_MS,
   lockSubscriptionApproval,
   unlockApproval,
 } from "@/utils/appointmentlock";
@@ -432,7 +434,10 @@ export async function PATCH(
     let lock;
     if (status === AppointmentStatus.APPROVED) {
       try {
-        lock = await lockSubscriptionApproval(subscriptionId, 30000); // 30-second TTL
+        lock = await lockSubscriptionApproval(
+          subscriptionId,
+          APPROVAL_LOCK_TTL_MS,
+        ); // #1319 — must outlive the 30 s tx
       } catch (error) {
         return NextResponse.json(
           {
@@ -446,217 +451,219 @@ export async function PATCH(
 
     try {
       // LAYER 2: Serializable transaction with idempotency checks
-      const result = await prisma.$transaction(
-        async (tx) => {
-          // Fetch current state inside transaction
-          const currentSubscription = await tx.subscription.findUnique({
-            where: { id: subscriptionId },
-            include: {
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-              appointments: {
-                // Ordered so bookingOrgId's `find` picks the same org-tagged
-                // appointment the creator's filtered read picks. Unordered, two
-                // callers can resolve different orgs for one subscription and
-                // mint two DM channels for the same pair.
-                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          });
-
-          if (!currentSubscription) {
-            throw new Error("Subscription not found");
-          }
-
-          // IDEMPOTENCY: Check if already in target state or processing
-          if (status === AppointmentStatus.APPROVED) {
-            if (
-              currentSubscription.status ===
-              AppointmentStatus.APPROVED_PENDING_PAYMENT
-            ) {
-              // Already processing, return existing state
-              return {
-                data: currentSubscription,
-                message: "Approval already in progress",
-                duplicate: true,
-              };
-            }
-
-            if (currentSubscription.status === AppointmentStatus.APPROVED) {
-              return {
-                data: currentSubscription,
-                message: "Already approved",
-                duplicate: true,
-              };
-            }
-          }
-
-          // #836 — allowed-from guard rides the WHERE; the idempotency
-          // pre-checks above are only friendly error text. updateMany
-          // returns no row, so re-read for the heavy include.
-          await transitionSubscriptionRequest(tx, {
-            where: { id: subscriptionId },
-            to: status,
-          });
-          const subscription = await tx.subscription.findUniqueOrThrow({
-            where: { id: subscriptionId },
-            include: {
-              subscriptionPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-              requestedBy: {
-                include: {
-                  user: true,
-                },
-              },
-              appointments: {
-                // Ordered so bookingOrgId's `find` picks the same org-tagged
-                // appointment the creator's filtered read picks. Unordered, two
-                // callers can resolve different orgs for one subscription and
-                // mint two DM channels for the same pair.
-                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          });
-
-          // If approved, check if payment exists
-          if (status === AppointmentStatus.APPROVED) {
-            const hasPayment = await checkSubscriptionPayment(
-              tx,
-              subscription.id,
-            );
-
-            if (hasPayment) {
-              // Payment already exists - update scheduling dates
-              await tx.subscription.update({
-                where: { id: subscriptionId },
-                data: {
-                  schedulingPeriodStartsAt: startDate,
-                  schedulingPeriodEndsAt: endDate,
-                },
-              });
-
-              // Confirm existing tentative appointments by setting slots to non-tentative.
-              // Appointment slots are created by SlotAllocationService during checkout/allocation,
-              // not by this status handler. If no appointments exist here, that's expected for
-              // approval-pending-payment flows where slots get allocated after payment succeeds.
-              if (
-                subscription.appointments &&
-                subscription.appointments.length > 0
-              ) {
-                // RESCHEDULED rows keep their ORIGINAL startsAt; flipping them
-                // re-confirms the time the consultee asked to leave (#1169
-                // PR 2). One statement, not one per appointment — the loop
-                // multiplied round-trips against the 30s tx budget.
-                await tx.slotOfAppointment.updateMany({
-                  where: {
-                    appointmentId: {
-                      in: subscription.appointments.map((a) => a.id),
-                    },
-                    completionStatus: "SCHEDULED",
-                  },
-                  data: { isTentative: false },
-                });
-              }
-              return { data: subscription, duplicate: false };
-            } else {
-              // No payment — record the approval now; the pay-link is minted
-              // AFTER commit (#1169 PR 2). A gateway round-trip inside a
-              // Serializable transaction pinned a pooled connection, could
-              // blow the 30s budget, and on rollback left a live link for an
-              // approval that never persisted.
-              await transitionSubscriptionRequest(tx, {
-                where: { id: subscriptionId },
-                to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-                data: {
-                  schedulingPeriodStartsAt: startDate,
-                  schedulingPeriodEndsAt: endDate,
-                },
-              });
-              const updatedSubscription =
-                await tx.subscription.findUniqueOrThrow({
-                  where: { id: subscriptionId },
+      const result = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            // Fetch current state inside transaction
+            const currentSubscription = await tx.subscription.findUnique({
+              where: { id: subscriptionId },
+              include: {
+                subscriptionPlan: {
                   include: {
-                    subscriptionPlan: {
-                      include: {
-                        consultantProfile: {
-                          include: {
-                            user: true,
-                          },
-                        },
-                      },
-                    },
-                    requestedBy: {
+                    consultantProfile: {
                       include: {
                         user: true,
                       },
                     },
-                    appointments: {
-                      // Ordered so bookingOrgId's `find` picks the same org-tagged
-                      // appointment the creator's filtered read picks. Unordered, two
-                      // callers can resolve different orgs for one subscription and
-                      // mint two DM channels for the same pair.
-                      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+                appointments: {
+                  // Ordered so bookingOrgId's `find` picks the same org-tagged
+                  // appointment the creator's filtered read picks. Unordered, two
+                  // callers can resolve different orgs for one subscription and
+                  // mint two DM channels for the same pair.
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                  include: {
+                    slotsOfAppointment: {
                       include: {
-                        slotsOfAppointment: {
-                          include: {
-                            user: true,
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+            if (!currentSubscription) {
+              throw new Error("Subscription not found");
+            }
+
+            // IDEMPOTENCY: Check if already in target state or processing
+            if (status === AppointmentStatus.APPROVED) {
+              if (
+                currentSubscription.status ===
+                AppointmentStatus.APPROVED_PENDING_PAYMENT
+              ) {
+                // Already processing, return existing state
+                return {
+                  data: currentSubscription,
+                  message: "Approval already in progress",
+                  duplicate: true,
+                };
+              }
+
+              if (currentSubscription.status === AppointmentStatus.APPROVED) {
+                return {
+                  data: currentSubscription,
+                  message: "Already approved",
+                  duplicate: true,
+                };
+              }
+            }
+
+            // #836 — allowed-from guard rides the WHERE; the idempotency
+            // pre-checks above are only friendly error text. updateMany
+            // returns no row, so re-read for the heavy include.
+            await transitionSubscriptionRequest(tx, {
+              where: { id: subscriptionId },
+              to: status,
+            });
+            const subscription = await tx.subscription.findUniqueOrThrow({
+              where: { id: subscriptionId },
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: true,
+                  },
+                },
+                appointments: {
+                  // Ordered so bookingOrgId's `find` picks the same org-tagged
+                  // appointment the creator's filtered read picks. Unordered, two
+                  // callers can resolve different orgs for one subscription and
+                  // mint two DM channels for the same pair.
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                  include: {
+                    slotsOfAppointment: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+              },
+            });
+
+            // If approved, check if payment exists
+            if (status === AppointmentStatus.APPROVED) {
+              const hasPayment = await checkSubscriptionPayment(
+                tx,
+                subscription.id,
+              );
+
+              if (hasPayment) {
+                // Payment already exists - update scheduling dates
+                await tx.subscription.update({
+                  where: { id: subscriptionId },
+                  data: {
+                    schedulingPeriodStartsAt: startDate,
+                    schedulingPeriodEndsAt: endDate,
+                  },
+                });
+
+                // Confirm existing tentative appointments by setting slots to non-tentative.
+                // Appointment slots are created by SlotAllocationService during checkout/allocation,
+                // not by this status handler. If no appointments exist here, that's expected for
+                // approval-pending-payment flows where slots get allocated after payment succeeds.
+                if (
+                  subscription.appointments &&
+                  subscription.appointments.length > 0
+                ) {
+                  // RESCHEDULED rows keep their ORIGINAL startsAt; flipping them
+                  // re-confirms the time the consultee asked to leave (#1169
+                  // PR 2). One statement, not one per appointment — the loop
+                  // multiplied round-trips against the 30s tx budget.
+                  await tx.slotOfAppointment.updateMany({
+                    where: {
+                      appointmentId: {
+                        in: subscription.appointments.map((a) => a.id),
+                      },
+                      completionStatus: "SCHEDULED",
+                    },
+                    data: { isTentative: false },
+                  });
+                }
+                return { data: subscription, duplicate: false };
+              } else {
+                // No payment — record the approval now; the pay-link is minted
+                // AFTER commit (#1169 PR 2). A gateway round-trip inside a
+                // Serializable transaction pinned a pooled connection, could
+                // blow the 30s budget, and on rollback left a live link for an
+                // approval that never persisted.
+                await transitionSubscriptionRequest(tx, {
+                  where: { id: subscriptionId },
+                  to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+                  data: {
+                    schedulingPeriodStartsAt: startDate,
+                    schedulingPeriodEndsAt: endDate,
+                  },
+                });
+                const updatedSubscription =
+                  await tx.subscription.findUniqueOrThrow({
+                    where: { id: subscriptionId },
+                    include: {
+                      subscriptionPlan: {
+                        include: {
+                          consultantProfile: {
+                            include: {
+                              user: true,
+                            },
+                          },
+                        },
+                      },
+                      requestedBy: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                      appointments: {
+                        // Ordered so bookingOrgId's `find` picks the same org-tagged
+                        // appointment the creator's filtered read picks. Unordered, two
+                        // callers can resolve different orgs for one subscription and
+                        // mint two DM channels for the same pair.
+                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                        include: {
+                          slotsOfAppointment: {
+                            include: {
+                              user: true,
+                            },
                           },
                         },
                       },
                     },
-                  },
-                });
+                  });
 
-              return {
-                data: updatedSubscription,
-                message: "Subscription approved. Payment link sent to user.",
-                requiresPayment: true,
-                needsPaymentLink: true,
-                duplicate: false,
-              };
+                return {
+                  data: updatedSubscription,
+                  message: "Subscription approved. Payment link sent to user.",
+                  requiresPayment: true,
+                  needsPaymentLink: true,
+                  duplicate: false,
+                };
+              }
             }
-          }
 
-          return { data: subscription, duplicate: false };
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
-          maxWait: 10000, // 10 seconds
-          timeout: 30000, // 30 seconds
-        },
+            return { data: subscription, duplicate: false };
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
+            maxWait: 10000, // 10 seconds
+            timeout: 30000, // 30 seconds
+          },
+        ),
       );
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose

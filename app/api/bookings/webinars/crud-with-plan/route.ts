@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
@@ -229,124 +230,130 @@ export async function POST(request: NextRequest) {
     const initialStatus = startTime ? "SCHEDULED" : "DRAFT";
 
     // Create webinar plan, instance, and appointment in a transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // Topics are already created/found by findOrCreateTopics, no verification needed
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Topics are already created/found by findOrCreateTopics, no verification needed
 
-        // 1. Create the webinar plan using validated data
-        console.log("Creating webinar plan with validated data:", {
-          title,
-          description,
-          durationInHours,
-          price,
-          maxParticipants,
-          consultantProfileId,
-          topicIds,
-        });
-
-        const webinarPlan = await tx.webinarPlan.create({
-          data: {
-            // Spread validated plan fields
+          // 1. Create the webinar plan using validated data
+          console.log("Creating webinar plan with validated data:", {
             title,
             description,
             durationInHours,
             price,
-            priceCurrency,
             maxParticipants,
-            language,
-            level,
-            prerequisites,
-            materialProvided,
-            learningOutcomes,
-            subtitle,
-            targetAudience,
-            whatsIncluded,
-            faqs: faqCreateNested(faqs),
-            certificateProvided,
-            recordingEnabled,
-            recordingStoragePolicy,
-            consultantProfile: { connect: { id: consultantProfileId } },
-            topics:
-              topicIds.length > 0
-                ? { connect: topicIds.map((id: string) => ({ id })) }
-                : undefined,
-          },
-          include: {
-            consultantProfile: true,
-            topics: true,
-            faqs: { orderBy: { order: "asc" } },
-          },
-        });
+            consultantProfileId,
+            topicIds,
+          });
 
-        console.log("Created webinar plan:", {
-          id: webinarPlan.id,
-          title: webinarPlan.title,
-          topicsCount: webinarPlan.topics.length,
-        });
-
-        // 2. Create the webinar instance using validated data
-        console.log("Creating webinar instance with plan ID:", webinarPlan.id);
-
-        const webinar = await tx.webinar.create({
-          data: {
-            // A session-less webinar is authored, not live — see initialStatus.
-            // The client cannot promote it past DRAFT by sending a status.
-            status: initialStatus === "DRAFT" ? "DRAFT" : status,
-            webinarPlan: { connect: { id: webinarPlan.id } },
-            // Create the appointment at the same time
-            // Ensure startTime and endTime are valid before creating appointment
-            appointment:
-              startTime && endTime
-                ? {
-                    // #1071 — N×30min atoms (same shape as SlotAllocationService),
-                    // never one long row spanning the full duration.
-                    create: {
-                      appointmentType: "WEBINAR",
-                      slotsOfAppointment: {
-                        create: buildContiguousSlotAtoms({
-                          startsAt: startTime,
-                          durationInHours,
-                          consultantProfileId,
-                          isTentative: false,
-                        }),
-                      },
-                    },
-                  }
-                : undefined, // Don't create appointment if no valid scheduledAt
-          },
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: true,
-                topics: true,
-              },
+          const webinarPlan = await tx.webinarPlan.create({
+            data: {
+              // Spread validated plan fields
+              title,
+              description,
+              durationInHours,
+              price,
+              priceCurrency,
+              maxParticipants,
+              language,
+              level,
+              prerequisites,
+              materialProvided,
+              learningOutcomes,
+              subtitle,
+              targetAudience,
+              whatsIncluded,
+              faqs: faqCreateNested(faqs),
+              certificateProvided,
+              recordingEnabled,
+              recordingStoragePolicy,
+              consultantProfile: { connect: { id: consultantProfileId } },
+              topics:
+                topicIds.length > 0
+                  ? { connect: topicIds.map((id: string) => ({ id })) }
+                  : undefined,
             },
-            appointment: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
+            include: {
+              consultantProfile: true,
+              topics: true,
+              faqs: { orderBy: { order: "asc" } },
+            },
+          });
+
+          console.log("Created webinar plan:", {
+            id: webinarPlan.id,
+            title: webinarPlan.title,
+            topicsCount: webinarPlan.topics.length,
+          });
+
+          // 2. Create the webinar instance using validated data
+          console.log(
+            "Creating webinar instance with plan ID:",
+            webinarPlan.id,
+          );
+
+          const webinar = await tx.webinar.create({
+            data: {
+              // A session-less webinar is authored, not live — see initialStatus.
+              // The client cannot promote it past DRAFT by sending a status.
+              status: initialStatus === "DRAFT" ? "DRAFT" : status,
+              webinarPlan: { connect: { id: webinarPlan.id } },
+              // Create the appointment at the same time
+              // Ensure startTime and endTime are valid before creating appointment
+              appointment:
+                startTime && endTime
+                  ? {
+                      // #1071 — N×30min atoms (same shape as SlotAllocationService),
+                      // never one long row spanning the full duration.
+                      create: {
+                        appointmentType: "WEBINAR",
+                        slotsOfAppointment: {
+                          create: buildContiguousSlotAtoms({
+                            startsAt: startTime,
+                            durationInHours,
+                            consultantProfileId,
+                            isTentative: false,
+                          }),
+                        },
+                      },
+                    }
+                  : undefined, // Don't create appointment if no valid scheduledAt
+            },
+            include: {
+              webinarPlan: {
+                include: {
+                  consultantProfile: true,
+                  topics: true,
+                },
+              },
+              appointment: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
                   },
                 },
               },
             },
-          },
-        });
+          });
 
-        console.log("Created webinar instance:", {
-          id: webinar.id,
-          planId: webinar.webinarPlanId,
-          appointmentId: webinar.appointment?.id,
-          hasSlots: (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0,
-        });
+          console.log("Created webinar instance:", {
+            id: webinar.id,
+            planId: webinar.webinarPlanId,
+            appointmentId: webinar.appointment?.id,
+            hasSlots:
+              (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0,
+          });
 
-        return { webinarPlan, webinar };
-      },
-      {
-        timeout: 10000, // 10 second timeout
-        maxWait: 5000, // 5 second max wait
-        isolationLevel: "Serializable", // Highest isolation level
-      },
+          return { webinarPlan, webinar };
+        },
+        {
+          timeout: 10000, // 10 second timeout
+          maxWait: 5000, // 5 second max wait
+          isolationLevel: "Serializable", // Highest isolation level
+        },
+      ),
     );
 
     console.log("Transaction completed successfully. Returning webinar data.");
@@ -644,137 +651,237 @@ export async function PATCH(request: NextRequest) {
       durationInHours ?? existingPlan.durationInHours;
 
     // Update webinar plan and related data in a transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // -> Use topics from existingPlan fetched *before* the transaction
-        const currentTopicIdsFromOuterScope = existingPlan.topics.map(
-          (t) => t.id,
-        );
-        console.log(
-          `[Before Transaction Update] Topics from initial fetch for plan ${id}:`,
-          currentTopicIdsFromOuterScope,
-        );
-
-        // Prepare base update data using validated fields (excluding topics for now)
-        const updateData: Prisma.WebinarPlanUpdateInput = {};
-        if (title !== undefined) updateData.title = title;
-        if (description !== undefined) updateData.description = description;
-        if (durationInHours !== undefined)
-          updateData.durationInHours = durationInHours;
-        if (price !== undefined) updateData.price = price;
-        if (priceCurrency !== undefined)
-          updateData.priceCurrency = priceCurrency;
-        // Capacity is per instance. Only move the plan's default when the
-        // caller is editing the plan itself rather than one of its webinars.
-        if (maxParticipants !== undefined && !webinarToUpdate)
-          updateData.maxParticipants = maxParticipants;
-        if (language !== undefined) updateData.language = language;
-        if (level !== undefined) updateData.level = level;
-        if (prerequisites !== undefined)
-          updateData.prerequisites = prerequisites;
-        if (materialProvided !== undefined)
-          updateData.materialProvided = materialProvided;
-        if (certificateProvided !== undefined)
-          updateData.certificateProvided = certificateProvided;
-        if (recordingEnabled !== undefined)
-          updateData.recordingEnabled = recordingEnabled;
-        if (recordingStoragePolicy !== undefined)
-          updateData.recordingStoragePolicy = recordingStoragePolicy;
-        if (learningOutcomes !== undefined)
-          updateData.learningOutcomes = learningOutcomes;
-        if (subtitle !== undefined) updateData.subtitle = subtitle;
-        if (targetAudience !== undefined)
-          updateData.targetAudience = targetAudience;
-        if (whatsIncluded !== undefined)
-          updateData.whatsIncluded = whatsIncluded;
-        if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
-        if (consultantProfileId !== undefined)
-          updateData.consultantProfile = {
-            connect: { id: consultantProfileId },
-          };
-
-        // Handle topics: topicIds are already validated/created by findOrCreateTopics
-        if (topicIds !== undefined) {
-          updateData.topics = {
-            set: topicIds.map((topicId: string) => ({ id: topicId })),
-          };
-          console.log(
-            `Syncing topics with provided IDs: [${topicIds.join(", ")}]`,
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // -> Use topics from existingPlan fetched *before* the transaction
+          const currentTopicIdsFromOuterScope = existingPlan.topics.map(
+            (t) => t.id,
           );
-        } else {
           console.log(
-            "topics is undefined in PATCH request. Existing topics will not be modified.",
+            `[Before Transaction Update] Topics from initial fetch for plan ${id}:`,
+            currentTopicIdsFromOuterScope,
           );
-        }
 
-        // Execute the plan update only if there are changes
-        let updatedWebinarPlan = existingPlan;
-        if (Object.keys(updateData).length > 0 || topicIds !== undefined) {
-          // Check topics for changes
-          updatedWebinarPlan = await tx.webinarPlan.update({
-            where: { id },
-            data: updateData,
-            include: {
-              consultantProfile: true,
-              topics: true,
-              webinars: {
-                // Ensure webinars relation is included
-                include: {
-                  // And nest includes to match existingPlan type
-                  appointment: {
-                    // Include the appointment
-                    include: {
-                      // And the slots within the appointment
-                      slotsOfAppointment: true,
+          // Prepare base update data using validated fields (excluding topics for now)
+          const updateData: Prisma.WebinarPlanUpdateInput = {};
+          if (title !== undefined) updateData.title = title;
+          if (description !== undefined) updateData.description = description;
+          if (durationInHours !== undefined)
+            updateData.durationInHours = durationInHours;
+          if (price !== undefined) updateData.price = price;
+          if (priceCurrency !== undefined)
+            updateData.priceCurrency = priceCurrency;
+          // Capacity is per instance. Only move the plan's default when the
+          // caller is editing the plan itself rather than one of its webinars.
+          if (maxParticipants !== undefined && !webinarToUpdate)
+            updateData.maxParticipants = maxParticipants;
+          if (language !== undefined) updateData.language = language;
+          if (level !== undefined) updateData.level = level;
+          if (prerequisites !== undefined)
+            updateData.prerequisites = prerequisites;
+          if (materialProvided !== undefined)
+            updateData.materialProvided = materialProvided;
+          if (certificateProvided !== undefined)
+            updateData.certificateProvided = certificateProvided;
+          if (recordingEnabled !== undefined)
+            updateData.recordingEnabled = recordingEnabled;
+          if (recordingStoragePolicy !== undefined)
+            updateData.recordingStoragePolicy = recordingStoragePolicy;
+          if (learningOutcomes !== undefined)
+            updateData.learningOutcomes = learningOutcomes;
+          if (subtitle !== undefined) updateData.subtitle = subtitle;
+          if (targetAudience !== undefined)
+            updateData.targetAudience = targetAudience;
+          if (whatsIncluded !== undefined)
+            updateData.whatsIncluded = whatsIncluded;
+          if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
+          if (consultantProfileId !== undefined)
+            updateData.consultantProfile = {
+              connect: { id: consultantProfileId },
+            };
+
+          // Handle topics: topicIds are already validated/created by findOrCreateTopics
+          if (topicIds !== undefined) {
+            updateData.topics = {
+              set: topicIds.map((topicId: string) => ({ id: topicId })),
+            };
+            console.log(
+              `Syncing topics with provided IDs: [${topicIds.join(", ")}]`,
+            );
+          } else {
+            console.log(
+              "topics is undefined in PATCH request. Existing topics will not be modified.",
+            );
+          }
+
+          // Execute the plan update only if there are changes
+          let updatedWebinarPlan = existingPlan;
+          if (Object.keys(updateData).length > 0 || topicIds !== undefined) {
+            // Check topics for changes
+            updatedWebinarPlan = await tx.webinarPlan.update({
+              where: { id },
+              data: updateData,
+              include: {
+                consultantProfile: true,
+                topics: true,
+                webinars: {
+                  // Ensure webinars relation is included
+                  include: {
+                    // And nest includes to match existingPlan type
+                    appointment: {
+                      // Include the appointment
+                      include: {
+                        // And the slots within the appointment
+                        slotsOfAppointment: true,
+                      },
                     },
                   },
                 },
               },
-            },
-          });
-        }
-
-        // Update the webinar instance status if provided in the validated data
-        let updatedWebinar = webinarToUpdate;
-        if (updatedWebinar) {
-          const webinarUpdateData: Prisma.WebinarUpdateInput = {};
-
-          // Only update status if it was present in validatedData
-          if (status !== undefined) {
-            webinarUpdateData.status = status;
+            });
           }
 
-          // #628 — shrinking below the people already in the room would
-          // silently strand paying registrants. Checked inside the tx (the
-          // old guard ran before it and left a TOCTOU window).
-          if (maxParticipants !== undefined) {
-            const appointmentWithSlots = updatedWebinar.appointment
-              ? await tx.appointment.findUnique({
-                  where: { id: updatedWebinar.appointment.id },
-                  include: {
-                    slotsOfAppointment: {
-                      include: { user: { select: { id: true } } },
+          // Update the webinar instance status if provided in the validated data
+          let updatedWebinar = webinarToUpdate;
+          if (updatedWebinar) {
+            const webinarUpdateData: Prisma.WebinarUpdateInput = {};
+
+            // Only update status if it was present in validatedData
+            if (status !== undefined) {
+              webinarUpdateData.status = status;
+            }
+
+            // #628 — shrinking below the people already in the room would
+            // silently strand paying registrants. Checked inside the tx (the
+            // old guard ran before it and left a TOCTOU window).
+            if (maxParticipants !== undefined) {
+              const appointmentWithSlots = updatedWebinar.appointment
+                ? await tx.appointment.findUnique({
+                    where: { id: updatedWebinar.appointment.id },
+                    include: {
+                      slotsOfAppointment: {
+                        include: { user: { select: { id: true } } },
+                      },
+                    },
+                  })
+                : null;
+              const consultantUserId = existingPlan.consultantProfile?.userId;
+              const enrolledCount = countWebinarParticipants(
+                appointmentWithSlots,
+                consultantUserId ? [consultantUserId] : [],
+              );
+              if (maxParticipants < enrolledCount) {
+                throw new CapacityBelowEnrollmentError(
+                  capacityBelowRegisteredMessage(
+                    maxParticipants,
+                    enrolledCount,
+                  ),
+                );
+              }
+              webinarUpdateData.maxParticipants = maxParticipants;
+            }
+
+            if (Object.keys(webinarUpdateData).length > 0) {
+              updatedWebinar = await tx.webinar.update({
+                where: { id: updatedWebinar.id },
+                data: webinarUpdateData,
+                include: {
+                  webinarPlan: {
+                    include: {
+                      consultantProfile: true,
+                      topics: true,
                     },
                   },
-                })
-              : null;
-            const consultantUserId = existingPlan.consultantProfile?.userId;
-            const enrolledCount = countWebinarParticipants(
-              appointmentWithSlots,
-              consultantUserId ? [consultantUserId] : [],
-            );
-            if (maxParticipants < enrolledCount) {
-              throw new CapacityBelowEnrollmentError(
-                capacityBelowRegisteredMessage(maxParticipants, enrolledCount),
-              );
+                  appointment: {
+                    include: {
+                      slotsOfAppointment: {
+                        include: {
+                          user: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              });
             }
-            webinarUpdateData.maxParticipants = maxParticipants;
-          }
 
-          if (Object.keys(webinarUpdateData).length > 0) {
-            updatedWebinar = await tx.webinar.update({
+            // 8. Replace the appointment's live slot run (#1071) when times change.
+            if (startTime && endTime) {
+              const appointment = updatedWebinar.appointment;
+
+              // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
+              // is already committed to; co-hosts aren't slot participants, so no
+              // other guard catches their double-booking. Throws → 409 below.
+              await assertCollaboratorsAvailable(tx, {
+                planType: "WEBINAR",
+                planId: id,
+                startsAt: startTime,
+                endsAt: endTime,
+                excludeAppointmentId: appointment?.id ?? null,
+              });
+
+              // Validate here (→ 400 in catch) instead of letting
+              // buildContiguousSlotAtoms throw a generic Error (→ 500). TypeError
+              // also satisfies Sonar's "use TypeError for type checks" hint.
+              if (
+                typeof effectiveDurationForSlots !== "number" ||
+                !Number.isFinite(effectiveDurationForSlots) ||
+                effectiveDurationForSlots <= 0
+              ) {
+                throw new TypeError(
+                  "Invalid duration for rewriting contiguous slot run.",
+                );
+              }
+              // Prefer the PATCH-requested owner when transferring the plan so
+              // rewritten atoms land on the new consultant's calendar (and
+              // slot_no_confirmed_overlap protects the right profile).
+              const ownerProfileId =
+                consultantProfileId ?? existingPlan.consultantProfileId;
+              if (!ownerProfileId) {
+                throw new Error(
+                  "Webinar plan is missing consultantProfileId; cannot rewrite slots.",
+                );
+              }
+
+              if (appointment) {
+                console.log("Replacing contiguous slot run (#1071):", {
+                  appointmentId: appointment.id,
+                  startTime: startTime.toISOString(),
+                  endTime: endTime.toISOString(),
+                  durationInHours: effectiveDurationForSlots,
+                });
+
+                await replaceContiguousSlotRun(tx, {
+                  appointmentId: appointment.id,
+                  startsAt: startTime,
+                  durationInHours: effectiveDurationForSlots,
+                  consultantProfileId: ownerProfileId,
+                  isTentative: false,
+                });
+              } else {
+                console.log("Creating new appointment + contiguous slot run");
+
+                await tx.appointment.create({
+                  data: {
+                    webinar: { connect: { id: updatedWebinar.id } },
+                    appointmentType: "WEBINAR",
+                    slotsOfAppointment: {
+                      create: buildContiguousSlotAtoms({
+                        startsAt: startTime,
+                        durationInHours: effectiveDurationForSlots,
+                        consultantProfileId: ownerProfileId,
+                        isTentative: false,
+                      }),
+                    },
+                  },
+                });
+              }
+            }
+
+            // Retrieve the fully updated webinar after all changes
+            updatedWebinar = await tx.webinar.findUnique({
               where: { id: updatedWebinar.id },
-              data: webinarUpdateData,
               include: {
                 webinarPlan: {
                   include: {
@@ -795,113 +902,18 @@ export async function PATCH(request: NextRequest) {
             });
           }
 
-          // 8. Replace the appointment's live slot run (#1071) when times change.
-          if (startTime && endTime) {
-            const appointment = updatedWebinar.appointment;
-
-            // AE-2 (#784) — block (re)scheduling onto a time any ACCEPTED co-host
-            // is already committed to; co-hosts aren't slot participants, so no
-            // other guard catches their double-booking. Throws → 409 below.
-            await assertCollaboratorsAvailable(tx, {
-              planType: "WEBINAR",
-              planId: id,
-              startsAt: startTime,
-              endsAt: endTime,
-              excludeAppointmentId: appointment?.id ?? null,
-            });
-
-            // Validate here (→ 400 in catch) instead of letting
-            // buildContiguousSlotAtoms throw a generic Error (→ 500). TypeError
-            // also satisfies Sonar's "use TypeError for type checks" hint.
-            if (
-              typeof effectiveDurationForSlots !== "number" ||
-              !Number.isFinite(effectiveDurationForSlots) ||
-              effectiveDurationForSlots <= 0
-            ) {
-              throw new TypeError(
-                "Invalid duration for rewriting contiguous slot run.",
-              );
-            }
-            // Prefer the PATCH-requested owner when transferring the plan so
-            // rewritten atoms land on the new consultant's calendar (and
-            // slot_no_confirmed_overlap protects the right profile).
-            const ownerProfileId =
-              consultantProfileId ?? existingPlan.consultantProfileId;
-            if (!ownerProfileId) {
-              throw new Error(
-                "Webinar plan is missing consultantProfileId; cannot rewrite slots.",
-              );
-            }
-
-            if (appointment) {
-              console.log("Replacing contiguous slot run (#1071):", {
-                appointmentId: appointment.id,
-                startTime: startTime.toISOString(),
-                endTime: endTime.toISOString(),
-                durationInHours: effectiveDurationForSlots,
-              });
-
-              await replaceContiguousSlotRun(tx, {
-                appointmentId: appointment.id,
-                startsAt: startTime,
-                durationInHours: effectiveDurationForSlots,
-                consultantProfileId: ownerProfileId,
-                isTentative: false,
-              });
-            } else {
-              console.log("Creating new appointment + contiguous slot run");
-
-              await tx.appointment.create({
-                data: {
-                  webinar: { connect: { id: updatedWebinar.id } },
-                  appointmentType: "WEBINAR",
-                  slotsOfAppointment: {
-                    create: buildContiguousSlotAtoms({
-                      startsAt: startTime,
-                      durationInHours: effectiveDurationForSlots,
-                      consultantProfileId: ownerProfileId,
-                      isTentative: false,
-                    }),
-                  },
-                },
-              });
-            }
-          }
-
-          // Retrieve the fully updated webinar after all changes
-          updatedWebinar = await tx.webinar.findUnique({
-            where: { id: updatedWebinar.id },
-            include: {
-              webinarPlan: {
-                include: {
-                  consultantProfile: true,
-                  topics: true,
-                },
-              },
-              appointment: {
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        }
-
-        // Return the results
-        return {
-          webinarPlan: updatedWebinarPlan,
-          webinar: updatedWebinar,
-        };
-      },
-      {
-        timeout: 10000, // 10 second timeout
-        maxWait: 5000, // 5 second max wait
-        isolationLevel: "Serializable", // Highest isolation level
-      },
+          // Return the results
+          return {
+            webinarPlan: updatedWebinarPlan,
+            webinar: updatedWebinar,
+          };
+        },
+        {
+          timeout: 10000, // 10 second timeout
+          maxWait: 5000, // 5 second max wait
+          isolationLevel: "Serializable", // Highest isolation level
+        },
+      ),
     );
 
     console.log(

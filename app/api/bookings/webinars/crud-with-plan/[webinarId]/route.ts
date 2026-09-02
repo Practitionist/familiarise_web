@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -30,74 +31,78 @@ export async function DELETE(
     console.log(`Attempting to delete webinar instance with ID: ${webinarId}`);
 
     // Start transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // 1. Find the webinar instance, get plan ID, title, and owner info
-        const webinarInstance = await tx.webinar.findUnique({
-          where: { id: webinarId },
-          select: {
-            webinarPlanId: true,
-            webinarPlan: {
-              select: {
-                title: true,
-                consultantProfile: {
-                  select: { userId: true },
+    const result = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // 1. Find the webinar instance, get plan ID, title, and owner info
+          const webinarInstance = await tx.webinar.findUnique({
+            where: { id: webinarId },
+            select: {
+              webinarPlanId: true,
+              webinarPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true },
+                  },
                 },
               },
             },
-          },
-        });
+          });
 
-        if (!webinarInstance) {
-          throw new Error(`Webinar instance with ID ${webinarId} not found.`);
-        }
+          if (!webinarInstance) {
+            throw new Error(`Webinar instance with ID ${webinarId} not found.`);
+          }
 
-        // Verify ownership - user must own this webinar
-        if (
-          !webinarInstance.webinarPlan.consultantProfile ||
-          webinarInstance.webinarPlan.consultantProfile.userId !==
-            session.user.id
-        ) {
-          throw new Error("You do not have permission to delete this webinar");
-        }
+          // Verify ownership - user must own this webinar
+          if (
+            !webinarInstance.webinarPlan.consultantProfile ||
+            webinarInstance.webinarPlan.consultantProfile.userId !==
+              session.user.id
+          ) {
+            throw new Error(
+              "You do not have permission to delete this webinar",
+            );
+          }
 
-        const webinarPlanId = webinarInstance.webinarPlanId;
-        const eventTitle = webinarInstance.webinarPlan.title; // Store the title
-        console.log(
-          `Found webinar plan ID: ${webinarPlanId} (Title: "${eventTitle}") for instance ${webinarId}`,
-        );
-
-        // 2. Delete the webinar instance
-        console.log(`Deleting webinar instance: ${webinarId}`);
-        await tx.webinar.delete({ where: { id: webinarId } });
-
-        // 3. Check if other instances use the same plan
-        const remainingInstancesCount = await tx.webinar.count({
-          where: { webinarPlanId: webinarPlanId },
-        });
-
-        let planWasDeleted = false; // Flag to know if plan deletion happened
-        if (remainingInstancesCount === 0) {
-          // 4. Delete the plan if needed
+          const webinarPlanId = webinarInstance.webinarPlanId;
+          const eventTitle = webinarInstance.webinarPlan.title; // Store the title
           console.log(
-            `Deleting webinar plan: ${webinarPlanId} as no other instances exist`,
+            `Found webinar plan ID: ${webinarPlanId} (Title: "${eventTitle}") for instance ${webinarId}`,
           );
-          await tx.webinarPlan.delete({ where: { id: webinarPlanId } });
-          planWasDeleted = true;
-        } else {
-          console.log(
-            `Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
-          );
-        }
 
-        // Return title and whether plan was deleted
-        return { eventTitle, planWasDeleted };
-      },
-      {
-        maxWait: 15000,
-        timeout: 30000,
-        isolationLevel: "Serializable",
-      },
+          // 2. Delete the webinar instance
+          console.log(`Deleting webinar instance: ${webinarId}`);
+          await tx.webinar.delete({ where: { id: webinarId } });
+
+          // 3. Check if other instances use the same plan
+          const remainingInstancesCount = await tx.webinar.count({
+            where: { webinarPlanId: webinarPlanId },
+          });
+
+          let planWasDeleted = false; // Flag to know if plan deletion happened
+          if (remainingInstancesCount === 0) {
+            // 4. Delete the plan if needed
+            console.log(
+              `Deleting webinar plan: ${webinarPlanId} as no other instances exist`,
+            );
+            await tx.webinarPlan.delete({ where: { id: webinarPlanId } });
+            planWasDeleted = true;
+          } else {
+            console.log(
+              `Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
+            );
+          }
+
+          // Return title and whether plan was deleted
+          return { eventTitle, planWasDeleted };
+        },
+        {
+          maxWait: 15000,
+          timeout: 30000,
+          isolationLevel: "Serializable",
+        },
+      ),
     );
 
     console.log("Webinar and potentially plan deleted successfully:", result);
