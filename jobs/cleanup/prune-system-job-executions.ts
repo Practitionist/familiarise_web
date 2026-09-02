@@ -8,6 +8,8 @@
 
 import "dotenv/config";
 
+import fs from "node:fs";
+
 import {
   pruneSystemJobExecutions,
   disconnectDatabase,
@@ -24,8 +26,6 @@ function outputToGitHubActions(result: SystemJobExecutionPruneResult): void {
   const lines = [`pruned=${result.pruned}`, `stranded=${result.stranded}`].join(
     "\n",
   );
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("fs") as typeof import("fs");
   fs.appendFileSync(outputFile, lines + "\n");
 }
 

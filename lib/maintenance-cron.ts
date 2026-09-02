@@ -53,6 +53,10 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "timeout-member-overages",
   "advance-program-cycles",
   "expire-contracts",
+  // Registers IRNs with the government portal and writes the resulting IRP
+  // state onto the invoice. It moves no money, but a half-deployed payload
+  // becomes a statutory record that can only be cancelled for 24 hours.
+  "irp-uploader",
 ]);
 
 /** The maintenance phases that can stop a job. */

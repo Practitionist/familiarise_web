@@ -11,7 +11,10 @@ import { cleanupRoute } from "@/lib/cron/cleanup-route";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 
 export const { GET, POST } = cleanupRoute({
-  job: "reconcile-refunds",
+  // Must be the canonical cron job name: `assertNotInMaintenance` keys the
+  // DEGRADED branch on FINANCIAL_JOB_NAMES membership, and "reconcile-refunds"
+  // is not a member, so this financial job would have run through DEGRADED.
+  job: "reconcile-pending-refunds",
   run: () => reconcilePendingRefunds(),
   summarize: (r) => ({
     totalProcessed: r.totalProcessed,

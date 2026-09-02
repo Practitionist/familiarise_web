@@ -7,7 +7,7 @@
  * Schedule: Every 30 minutes (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
 
 export const { GET, POST } = cleanupRoute({
@@ -19,7 +19,7 @@ export const { GET, POST } = cleanupRoute({
     succeededCount: r.succeededCount,
     failedCount: r.failedCount,
   }),
-  // Return 207 if succeeded payments found (needs attention)
-  status: (r) => (r.succeededCount > 0 ? 207 : r.success ? 200 : 500),
+  // 207 when succeeded payments were reconciled and the run itself was clean.
+  status: (r) => statusFor(r, r.succeededCount > 0),
   failureMessage: "Failed to reconcile payment status",
 });

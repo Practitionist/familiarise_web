@@ -40,6 +40,15 @@ const RETENTION_DAYS = 90;
  */
 const STRANDED_HOURS = 6;
 
+/**
+ * Rows deleted per statement. The trail gains a row per job per run — several
+ * thousand a day at the current fleet size — so the first run after this ships
+ * faces the whole pre-retention backlog at once. One unbounded `DELETE` over
+ * that backlog is a single long-running statement holding row locks on a table
+ * every cron run writes to; a bounded loop keeps each statement short.
+ */
+const DELETE_BATCH_SIZE = 5_000;
+
 /** Rows created before this are past retention and get deleted. */
 export function retentionCutoff(now: Date): Date {
   return new Date(now.getTime() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
@@ -84,17 +93,32 @@ async function pruneSystemJobExecutionsUnlocked(): Promise<SystemJobExecutionPru
     },
   });
 
-  const deleted = await prisma.systemJobExecution.deleteMany({
-    where: { startedAt: { lt: retention } },
-  });
+  let pruned = 0;
+  for (;;) {
+    const doomed = await prisma.systemJobExecution.findMany({
+      where: { startedAt: { lt: retention } },
+      select: { id: true },
+      take: DELETE_BATCH_SIZE,
+    });
+    if (doomed.length === 0) break;
+
+    const deleted = await prisma.systemJobExecution.deleteMany({
+      where: { id: { in: doomed.map((row) => row.id) } },
+    });
+    pruned += deleted.count;
+
+    // A batch that selected rows but deleted none means a concurrent run took
+    // them; without this the loop would re-select the same page forever.
+    if (deleted.count === 0 || doomed.length < DELETE_BATCH_SIZE) break;
+  }
 
   console.log(
-    `[prune-system-job-executions] stranded=${closed.count} pruned=${deleted.count} ` +
+    `[prune-system-job-executions] stranded=${closed.count} pruned=${pruned} ` +
       `retentionCutoff=${retention.toISOString()} strandedCutoff=${stranded.toISOString()}`,
   );
 
   return {
-    pruned: deleted.count,
+    pruned,
     stranded: closed.count,
     retentionCutoff: retention.toISOString(),
     strandedCutoff: stranded.toISOString(),

@@ -37,7 +37,7 @@ import {
   resolveProgramCycle,
 } from "@/lib/enterprise/cycle-engine";
 import { Prisma } from "@prisma/client";
-import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
+import { BILLABLE_ORG_STATUSES, isBillable } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -144,27 +144,37 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
             }
             const liveContract = await tx.contract.findUnique({
               where: { id: a.program.contract.id },
-              select: { status: true, autoRenew: true, effectiveTo: true },
+              select: {
+                status: true,
+                autoRenew: true,
+                effectiveTo: true,
+                // CR #1324 — org billability was a scan-time filter only, so an
+                // org suspended or deactivated between the scan and this claim
+                // still got a fresh successor cycle minted under it. Re-read it
+                // here with the contract facts and let a non-billable org take
+                // the same CLOSE path a deleted contract takes.
+                organization: { select: { status: true } },
+              },
             });
-            // Contract deleted between scan and claim ⇒ CLOSE (never roll
-            // under a contract that no longer exists).
-            // Contract deleted between scan and claim ⇒ CLOSE via the engine's own
-            // decision table (jobs may not carry free-form audit-action literals).
-            const effectiveDecision = liveContract
-              ? decideCycleTransition({
-                  successorPeriodStart: successorStart,
-                  successorPeriodEnd: successorEnd,
-                  contractStatus: liveContract.status,
-                  contractAutoRenew: liveContract.autoRenew,
-                  contractEffectiveTo: liveContract.effectiveTo,
-                })
-              : decideCycleTransition({
-                  successorPeriodStart: successorStart,
-                  successorPeriodEnd: successorEnd,
-                  contractStatus: "EXPIRED",
-                  contractAutoRenew: false,
-                  contractEffectiveTo: null,
-                });
+            // Contract deleted, or its org no longer billable, between scan and
+            // claim ⇒ CLOSE via the engine's own decision table (jobs may not
+            // carry free-form audit-action literals).
+            const effectiveDecision =
+              liveContract && isBillable(liveContract.organization.status)
+                ? decideCycleTransition({
+                    successorPeriodStart: successorStart,
+                    successorPeriodEnd: successorEnd,
+                    contractStatus: liveContract.status,
+                    contractAutoRenew: liveContract.autoRenew,
+                    contractEffectiveTo: liveContract.effectiveTo,
+                  })
+                : decideCycleTransition({
+                    successorPeriodStart: successorStart,
+                    successorPeriodEnd: successorEnd,
+                    contractStatus: "EXPIRED",
+                    contractAutoRenew: false,
+                    contractEffectiveTo: null,
+                  });
             if (effectiveDecision.action === "CLOSE") {
               // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
               const claim = await tx.programAssignment.updateMany({

@@ -7,7 +7,7 @@
  * Schedule: Every 6 hours (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
 export const { GET, POST } = cleanupRoute({
@@ -20,7 +20,7 @@ export const { GET, POST } = cleanupRoute({
     failedCount: r.failedCount,
     discrepanciesCount: r.discrepancies.length,
   }),
-  // Return 207 if discrepancies found (partial success/needs attention)
-  status: (r) => (r.discrepancies.length > 0 ? 207 : r.success ? 200 : 500),
+  // 207 when discrepancies were found and the run itself was clean.
+  status: (r) => statusFor(r, r.discrepancies.length > 0),
   failureMessage: "Failed to reconcile payout status",
 });

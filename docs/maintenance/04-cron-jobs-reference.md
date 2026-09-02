@@ -113,12 +113,12 @@ Organisation billing runs on its own cycle engine, and these jobs advance it. Th
 
 These jobs exist because a statute or a regulator says they must, and their deadlines are external. Skipping one for a maintenance window is cheap; skipping one for a week is not.
 
-| Workflow                                                                | Schedule (UTC) | Entrypoint                                      | Lock | Financial | Mutates                                                                          | During maintenance |
-| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------- | ---- | --------- | -------------------------------------------------------------------------------- | ------------------ |
-| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`   | `jobs/compliance/consent-retention-sweeper.ts`  | open | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE     |
-| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`   | `jobs/compliance/databreach-deadline-alerts.ts` | open | no        | Reads only; emails the DPDP officer inbox                                        | Skips: OFFLINE     |
-| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`   | `jobs/compliance/irp-uploader.ts`               | open | no        | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | Skips: OFFLINE     |
-| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`   | `jobs/compliance/msme-payment-alerts.ts`        | open | no        | Reads only; emails the finance inbox                                             | Skips: OFFLINE     |
+| Workflow                                                                | Schedule (UTC) | Entrypoint                                      | Lock   | Financial | Mutates                                                                          | During maintenance       |
+| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- | ------------------------ |
+| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`   | `jobs/compliance/consent-retention-sweeper.ts`  | open   | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE           |
+| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`   | `jobs/compliance/databreach-deadline-alerts.ts` | open   | no        | Reads only; emails the DPDP officer inbox                                        | Skips: OFFLINE           |
+| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`   | `jobs/compliance/irp-uploader.ts`               | closed | yes       | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | Skips: OFFLINE, DEGRADED |
+| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`   | `jobs/compliance/msme-payment-alerts.ts`        | open   | no        | Reads only; emails the finance inbox                                             | Skips: OFFLINE           |
 
 ## Stream and recordings
 
@@ -163,7 +163,7 @@ The long tail: janitors, sweepers, retry drains and the watchdog. Individually n
 
 ## Jobs that ignore maintenance mode
 
-Three of the 67 scheduled jobs never call `abortIfMaintenance()`. It used to be twelve, and the twelve included `dunning`, `advance-program-cycles`, `auto-renew-contracts`, `expire-contracts`, `timeout-member-overages`, `release-pending-trust-earnings` and `wallet-low-balance` — jobs that move money or rewrite the org entitlement state the checkout resolver reads. All of those now carry the guard, and the six that move money joined `FINANCIAL_JOB_NAMES` at the same time, so they exit on DEGRADED as well as OFFLINE. `auto-renew-contracts` and `expire-contracts` were additionally flipped from fail-open to fail-closed locks, because a financial job that keeps running while Redis is unreachable is exactly the window in which two runners both believe they hold the lock.
+Three of the 67 scheduled jobs never call `abortIfMaintenance()`. It used to be twelve, and the twelve included six jobs that move money or rewrite the org entitlement state the checkout resolver reads — `dunning`, `advance-program-cycles`, `auto-renew-contracts`, `expire-contracts`, `timeout-member-overages` and `release-pending-trust-earnings` — as well as `wallet-low-balance`, which only flags a low wallet and sends the alert. All of them now carry the guard. The six that move money joined `FINANCIAL_JOB_NAMES` at the same time, so they exit on DEGRADED as well as OFFLINE; `wallet-low-balance` did not, so it exits on OFFLINE only. `auto-renew-contracts` and `expire-contracts` were additionally flipped from fail-open to fail-closed locks, because a financial job that keeps running while Redis is unreachable is exactly the window in which two runners both believe they hold the lock.
 
 The three that remain are deliberate.
 
@@ -208,7 +208,7 @@ The second closes that gap from the other side. Every locked run refreshes `cron
 }
 ```
 
-`stale` turns true once the key is older than six hours, and is `null` before the fleet has ever written one or when Redis is not configured. When the probe itself fails, `stale` is the string `"unknown"` and a `probeError: true` field appears alongside it. Those two cases used to be indistinguishable: an unreadable Redis returned exactly the same body as a fleet that had never run, so a monitor watching the field could not tell an outage from a cold start. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
+`stale` turns true once the key is older than six hours, and is `null` before the fleet has ever written one, when Redis is not configured, or when the stored timestamp will not parse — the last of those is a heartbeat we cannot date, which the probe treats exactly like one that was never written rather than guessing at an age. When the probe itself fails, `stale` is the string `"unknown"` and a `probeError: true` field appears alongside it. Those two cases used to be indistinguishable: an unreadable Redis returned exactly the same body as a fleet that had never run, so a monitor watching the field could not tell an outage from a cold start. Because this is an ordinary HTTP field, an external uptime monitor can watch it with no dependency on GitHub at all. Both the heartbeat write and this probe are fail-open: neither may ever be the reason a job fails or a health check errors.
 
 ## Keeping this page true
 

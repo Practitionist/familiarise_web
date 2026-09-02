@@ -60,13 +60,16 @@ const SELLER = (() => {
   };
 })();
 
-// #476 — entry-level cron lock; fail-open (repeat-safe side effects).
+// #476 — entry-level cron lock, fail-closed: an IRN is a statutory object
+// registered with the government and cancellable only inside a 24-hour window,
+// so two runners both believing they hold the lock while Redis is unreachable
+// is the one outcome this job may never risk.
 export async function runIrpUploader(): Promise<{
   processed: number;
   failed: number;
   skipped: number;
 }> {
-  return withCronLock("irp-uploader", { failMode: "open" }, () =>
+  return withCronLock("irp-uploader", { failMode: "closed" }, () =>
     runIrpUploaderUnlocked(),
   );
 }

@@ -8,7 +8,7 @@
  * Schedule: Every 6 hours (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
 import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
 
 export const { GET, POST } = cleanupRoute({
@@ -21,7 +21,8 @@ export const { GET, POST } = cleanupRoute({
     alreadyPaidCount: r.alreadyPaidCount,
     errorCount: r.errorCount,
   }),
-  // Return appropriate status based on critical cases
-  status: (r) => (r.alreadyPaidCount > 0 ? 207 : r.success ? 200 : 500),
+  // 207 when a dispute was already paid out and the run itself was clean; a
+  // failed run must not hide behind the 2xx that flag used to win.
+  status: (r) => statusFor(r, r.alreadyPaidCount > 0),
   failureMessage: "Failed to handle lost disputes",
 });

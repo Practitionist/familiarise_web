@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -5,6 +6,37 @@ import {
   assertNotInMaintenance,
   MaintenanceActiveError,
 } from "@/lib/maintenance-cron";
+
+/**
+ * The one result→status mapping the whole cohort shares. Failure is tested
+ * FIRST on purpose: the previous per-route ternaries asked "is anything
+ * flagged?" before "did the run succeed?", so a run that both failed and found
+ * a flagged row answered 207 — a 2xx, which reads as healthy to anything
+ * watching the status. That is the same masking PM-34 removed from the refund
+ * cascade.
+ *
+ * @param needsAttention A route-specific counter that means "succeeded, but an
+ *   operator has to look" — a discrepancy, a double booking, a dispute that was
+ *   already paid.
+ */
+export function statusFor(
+  result: { success?: boolean },
+  needsAttention = false,
+): number {
+  if (result.success === false) return 500;
+  return needsAttention ? 207 : 200;
+}
+
+/**
+ * Constant-time bearer comparison. Digesting first keeps both operands the
+ * same fixed length, so neither the secret's length nor its matching prefix is
+ * observable through response timing.
+ */
+function bearerMatches(authHeader: string | null, cronSecret: string): boolean {
+  if (!authHeader) return false;
+  const sha = (v: string) => createHash("sha256").update(v).digest();
+  return timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`));
+}
 
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
@@ -24,7 +56,7 @@ export function cleanupRoute<T extends object>(opts: {
   run: (req: NextRequest) => Promise<T>;
   /** What to log on finish; defaults to the whole result. */
   summarize?: (result: T) => Record<string, unknown>;
-  /** Defaults to `result.success === false ? 500 : 200`. */
+  /** Defaults to {@link statusFor} with no needs-attention flag. */
   status?: (result: T) => number;
   failureMessage?: string;
   /** Extra `message` field on the 401 body, for routes that carry one. */
@@ -42,7 +74,7 @@ export function cleanupRoute<T extends object>(opts: {
       const cronSecret =
         process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
-      if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+      if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
         console.warn(`Unauthorized ${job} attempt`);
         return NextResponse.json(
           unauthorizedMessage
@@ -68,9 +100,7 @@ export function cleanupRoute<T extends object>(opts: {
 
       const responseStatus = status
         ? status(result)
-        : (result as { success?: boolean }).success === false
-          ? 500
-          : 200;
+        : statusFor(result as { success?: boolean });
       return NextResponse.json(result, { status: responseStatus });
     } catch (error) {
       // #476 — concurrent invocation (schedule overlap / manual re-run)
@@ -84,13 +114,15 @@ export function cleanupRoute<T extends object>(opts: {
           { status: error.httpStatus },
         );
       }
+      // The exception text stays in Sentry and the server log. It used to be
+      // echoed to the caller as `details`, which on these 36 endpoints means
+      // Prisma query fragments, table and column names, gateway payloads and
+      // payout identifiers — an internal leak the `app/api/**` contract
+      // forbids, and one the cron caller has no use for anyway.
       Sentry.captureException(error, { tags: { subsystem: "cron", job } });
       console.error(`Error in ${job}:`, error);
       return NextResponse.json(
-        {
-          error: failureMessage ?? `Failed to run ${job}`,
-          details: error instanceof Error ? error.message : String(error),
-        },
+        { error: failureMessage ?? `Failed to run ${job}` },
         { status: 500 },
       );
     }

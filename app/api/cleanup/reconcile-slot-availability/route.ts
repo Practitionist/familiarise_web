@@ -7,7 +7,7 @@
  * Schedule: Hourly (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
 import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
 
 export const { GET, POST } = cleanupRoute({
@@ -17,7 +17,7 @@ export const { GET, POST } = cleanupRoute({
     tentativeFlagsCleared: r.tentativeFlagsCleared,
     doubleBookingsDetected: r.doubleBookingsDetected,
   }),
-  // Return 207 if double bookings detected (needs attention); 500 on errors.
-  status: (r) => (r.doubleBookingsDetected > 0 ? 207 : r.success ? 200 : 500),
+  // 207 when double bookings were detected and the run itself was clean.
+  status: (r) => statusFor(r, r.doubleBookingsDetected > 0),
   failureMessage: "Failed to reconcile slot availability",
 });
