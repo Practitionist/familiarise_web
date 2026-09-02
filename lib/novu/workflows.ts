@@ -11,6 +11,11 @@
 export const NOVU_WORKFLOWS = {
   // Appointment lifecycle
   APPOINTMENT_BOOKED: "appointment-booked",
+  // #1206 — the consultant allocated only the sessions that fit. Distinct from
+  // APPOINTMENT_BOOKED because "you are booked" and "4 of your 24 sessions are
+  // booked" are different promises, and only the second one needs to say what
+  // happens to the remainder.
+  APPOINTMENT_PARTIALLY_SCHEDULED: "appointment-partially-scheduled",
   APPOINTMENT_CANCELLED: "appointment-cancelled",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
@@ -182,6 +187,19 @@ export type AppointmentPayload = NotificationScope & {
   planTitle: string;
   dateTime?: string;
   dashboardUrl: string;
+};
+
+/**
+ * #1206 — only SOME of the plan's sessions have times yet. The consultant was
+ * shown the shortfall and chose to place what fits, so the consultee has to be
+ * told the same thing: a bare "you're booked" on a 4-of-24 schedule reads as a
+ * complete booking and they would never learn otherwise. The counts are whole
+ * sessions, the unit both parties reason in.
+ */
+export type AppointmentPartiallyScheduledPayload = AppointmentPayload & {
+  placedSessions: number;
+  requiredSessions: number;
+  unplacedSessions: number;
 };
 
 export type AppointmentCancelledPayload = AppointmentPayload & {
@@ -410,7 +428,12 @@ export type DocumentUploadedPayload = NotificationScope & {
 export type DocumentReviewedPayload = NotificationScope & {
   appointmentId: string;
   documentId: string;
-  reviewStatus: "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
+  reviewStatus:
+    | "PENDING"
+    | "IN_REVIEW"
+    | "APPROVED"
+    | "REJECTED"
+    | "NEEDS_REVISION";
   reviewNotes?: string;
   originalName: string;
   consultantName: string;

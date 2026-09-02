@@ -78,6 +78,7 @@ import {
   AllocationValidationError,
   AllocationNotFoundError,
   AllocationConflictError,
+  SlotShortageError,
 } from "./errors";
 import {
   recordBookingUtilization,
@@ -89,7 +90,10 @@ import {
   CollaboratorUnavailableError,
 } from "@/lib/collaborators/availability";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
-import { notifyAppointmentBooked } from "@/lib/novu";
+import {
+  notifyAppointmentBooked,
+  notifyAppointmentPartiallyScheduled,
+} from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 
@@ -138,10 +142,14 @@ export class SlotAllocationService {
       // accept-proposal). Fire-and-forget: a Novu outage must never fail an
       // allocation.
       if (result.success) {
-        void this.notifyAllocationPlaced(
-          request.eventType,
-          request.eventId,
-        ).catch(() => {});
+        void this.notifyAllocationPlaced(request.eventType, request.eventId, {
+          // #1206 — tell the consultee HOW MANY sessions are scheduled and
+          // that the rest follow, rather than a bare "you're booked".
+          partial: result.partial === true,
+          placedSessions: result.placedSessions,
+          requiredSessions: result.requiredSessions,
+          unplacedSessions: result.unplacedSessions,
+        }).catch(() => {});
       }
       return result;
     } catch (error) {
@@ -169,6 +177,14 @@ export class SlotAllocationService {
         error: error instanceof Error ? error.message : "Allocation failed",
         errorCode,
         httpStatus,
+        // #1206 — a shortage refusal carries the count the client needs to
+        // offer "allocate N now, the rest when availability opens".
+        ...(error instanceof SlotShortageError
+          ? {
+              placeableSessions: error.placeableSessions,
+              requiredSessions: error.requiredSessions,
+            }
+          : {}),
       };
     }
   }
@@ -188,6 +204,7 @@ export class SlotAllocationService {
           request.idempotencyKey,
           request.initialAllocation,
           request.expectedTentativeSlotCount,
+          request.allowPartial,
         );
 
       case "manual":
@@ -237,9 +254,22 @@ export class SlotAllocationService {
   private static async notifyAllocationPlaced(
     eventType: EventType,
     eventId: string,
+    /**
+     * #1206 — when only some of the plan's sessions were placed, the consultee
+     * must be told how many are scheduled and what happens to the rest.
+     */
+    partial?: {
+      partial: boolean;
+      placedSessions?: number;
+      requiredSessions?: number;
+      unplacedSessions?: number;
+    },
   ): Promise<void> {
     let context: {
       userIds: string[];
+      // #1206 — the partial notice goes to these only; the consultant was
+      // already shown the shortfall and confirmed it.
+      consulteeUserIds: string[];
       consultantName: string;
       consulteeName: string;
       planTitle: string;
@@ -283,6 +313,7 @@ export class SlotAllocationService {
           row.consultationPlan.consultantProfile.user.id,
           row.requestedBy.user.id,
         ].filter(Boolean),
+        consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
         consultantName:
           row.consultationPlan.consultantProfile.user.name || "Consultant",
         consulteeName: row.requestedBy.user.name || "Consultee",
@@ -326,6 +357,7 @@ export class SlotAllocationService {
           row.subscriptionPlan.consultantProfile.user.id,
           row.requestedBy.user.id,
         ].filter(Boolean),
+        consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
         consultantName:
           row.subscriptionPlan.consultantProfile.user.name || "Consultant",
         consulteeName: row.requestedBy.user.name || "Consultee",
@@ -376,6 +408,7 @@ export class SlotAllocationService {
       userMap.delete(hostUser.id);
       context = {
         userIds: [hostUser.id, ...userMap.keys()],
+        consulteeUserIds: [...userMap.keys()],
         consultantName: hostUser.name || "Consultant",
         consulteeName:
           userMap.size === 1
@@ -433,6 +466,7 @@ export class SlotAllocationService {
       userMap.delete(host.id);
       context = {
         userIds: [host.id, ...userMap.keys()],
+        consulteeUserIds: [...userMap.keys()],
         consultantName: host.name || "Consultant",
         consulteeName:
           userMap.size === 1
@@ -447,7 +481,7 @@ export class SlotAllocationService {
 
     if (!context || context.userIds.length === 0) return;
 
-    void notifyAppointmentBooked(context.userIds, {
+    const payload = {
       ...notificationScope(context.organizationId),
       appointmentId: context.appointmentId,
       dateTime: context.firstStart?.toISOString(),
@@ -456,7 +490,21 @@ export class SlotAllocationService {
       consulteeName: context.consulteeName,
       planTitle: context.planTitle,
       dashboardUrl: notificationHref(context.organizationId, "appointments"),
-    });
+    };
+
+    void notifyAppointmentBooked(context.userIds, payload);
+
+    // #1206 — a second, separate notice rather than a flag on the booking one:
+    // the times that WERE placed are a real booking and read as one, and the
+    // thing the consultee has to be told is what happened to the rest.
+    if (partial?.partial && context.consulteeUserIds.length > 0) {
+      void notifyAppointmentPartiallyScheduled(context.consulteeUserIds, {
+        ...payload,
+        placedSessions: partial.placedSessions ?? 0,
+        requiredSessions: partial.requiredSessions ?? 0,
+        unplacedSessions: partial.unplacedSessions ?? 0,
+      });
+    }
   }
 
   /**
@@ -997,6 +1045,13 @@ export class SlotAllocationService {
     idempotencyKey?: string,
     initialAllocation?: boolean,
     expectedTentativeSlotCount?: number,
+    /**
+     * #1206 — place every session that fits and leave the rest for the hourly
+     * retry sweep. Only recurring events can be partial; a consultation or
+     * webinar is one session, so `findAvailableSlots` reports 0 placeable and
+     * the flag changes nothing.
+     */
+    allowPartial = false,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -1227,6 +1282,10 @@ export class SlotAllocationService {
         consultantProfileId,
         preference,
         eventId, // #1194 — names the event in the row-truncation warning
+        // #1206 — never on a reschedule: its tentative rows ARE the sessions
+        // being moved, and placing fewer would delete the remainder outright
+        // instead of leaving it pending.
+        allowPartial && isRecurringEventType(eventType) && !isReschedule,
       );
 
       // Validate (read-only; runs out-of-txn under the locks)
@@ -1246,6 +1305,15 @@ export class SlotAllocationService {
           `Validation failed: ${validation.errors.join("; ")}`,
         );
       }
+
+      // #1206 — whole sessions, the unit the consultant and the consultee both
+      // read. `findAvailableSlots` only ever emits complete sessions, so both
+      // divisions are exact. A partial run leaves the request APPROVED with
+      // fewer sessions than the plan; the shortfall is derived here and at
+      // read time, never stored.
+      const placedSessions = Math.floor(selectedSlots.length / slotsPerCall);
+      const requestedSessions = Math.ceil(requiredSlots / slotsPerCall);
+      const partialPlacement = placedSessions < requestedSessions;
 
       // SHORT write-only transaction. The heavy reads above no longer hold a
       // connection, so this can start promptly; an explicit maxWait still
@@ -1364,6 +1432,16 @@ export class SlotAllocationService {
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
+            // #1206 — the counts the toast, the consultee notice and the
+            // hourly retry sweep all read.
+            ...(partialPlacement
+              ? {
+                  partial: true,
+                  placedSessions,
+                  requiredSessions: requestedSessions,
+                  unplacedSessions: requestedSessions - placedSessions,
+                }
+              : {}),
           };
         },
         {
@@ -2477,6 +2555,9 @@ export class SlotAllocationService {
     preference?: AllocationPreference,
     // #1194 — identifies the walk in the truncation warning below.
     eventId?: string,
+    // #1206 — return what fits instead of throwing SLOT_SHORTAGE. Only the
+    // consultant, having been shown the shortfall, can turn this on.
+    allowPartial = false,
   ): Promise<Date[]> {
     const walk: AllocationWalkContext = {
       eventType,
@@ -2669,9 +2750,12 @@ export class SlotAllocationService {
       );
       if (singleSession) return singleSession;
 
-      throw new AllocationValidationError(
+      // One session, so nothing is placeable short of the whole thing —
+      // placeableSessions 0 tells the client not to offer a partial schedule.
+      throw new SlotShortageError(
         `No ${slotsPerCall} consecutive slots available for ${eventType}`,
-        "SLOT_SHORTAGE",
+        0,
+        1,
       );
     }
 
@@ -2945,9 +3029,25 @@ export class SlotAllocationService {
           "PERIOD_ENDED",
         );
       }
-      throw new AllocationValidationError(
+      // #1206 — whole SESSIONS, which is the unit the consultant reasons in
+      // and the only unit a partial schedule can be measured in. The sweep
+      // only ever places complete sessions, so this division is exact.
+      const placeableSessions = Math.floor(selectedSlots.length / slotsPerCall);
+      const requiredSessions = Math.ceil(totalSlotsNeeded / slotsPerCall);
+
+      // The consultant said "place what fits and follow up with the rest".
+      // A paid subscription whose window cannot hold every session used to be
+      // simply unallocatable — nothing was scheduled at all.
+      if (allowPartial && placeableSessions > 0) {
+        return selectedSlots
+          .slice(0, placeableSessions * slotsPerCall)
+          .sort((a, b) => a.getTime() - b.getTime());
+      }
+
+      throw new SlotShortageError(
         `Could only find ${selectedSlots.length} of ${totalSlotsNeeded} required slots`,
-        "SLOT_SHORTAGE",
+        placeableSessions,
+        requiredSessions,
       );
     }
 

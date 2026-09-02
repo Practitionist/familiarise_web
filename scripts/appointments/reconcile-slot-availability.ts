@@ -269,8 +269,13 @@ async function detectDoubleBookings(): Promise<{
 
     for (const slot of confirmedSlots) {
       // FIX #625: Resolve consultant from all 5 appointment types
-      const { consultation, subscription, webinar, class: classEvent, trialSession } =
-        slot.appointment;
+      const {
+        consultation,
+        subscription,
+        webinar,
+        class: classEvent,
+        trialSession,
+      } = slot.appointment;
 
       const consultantProfile =
         consultation?.consultationPlan.consultantProfile ||
@@ -362,8 +367,10 @@ async function detectDoubleBookings(): Promise<{
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function reconcileSlotAvailability(): Promise<SlotReconciliationResult> {
-  return withCronLock("reconcile-slot-availability", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcileSlotAvailabilityUnlocked(),
+  return withCronLock(
+    "reconcile-slot-availability",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcileSlotAvailabilityUnlocked(),
   );
 }
 
@@ -379,6 +386,17 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
   // Detect double bookings
   const doubleBookingResult = await detectDoubleBookings();
   allErrors.push(...doubleBookingResult.errors);
+
+  // #1206 follow-up — re-attempt the sessions a partial allocation left
+  // unplaced, once the consultant publishes more availability. Deliberately
+  // NOT done here yet: `autoAllocate` has no top-up mode. A recurring event
+  // with confirmed-but-incomplete sessions and no tentative rows is neither a
+  // reschedule nor an in-progress reallocation, so re-running it would delete
+  // every confirmed appointment (payments and all) and re-plan from scratch.
+  // The sweep needs a "place only the missing N, preserve the rest" path in
+  // SlotAllocationService first, plus a notification suppressor so a no-change
+  // run does not page the consultee hourly. Until then the consultant
+  // re-allocates from the request's Allocate Slots page.
 
   // Summary
   console.log("\n📊 Slot Availability Reconciliation Summary:");
