@@ -194,7 +194,9 @@ export async function POST(req: NextRequest) {
           // TODO(#872): restore the local wall-clock + IANA-zone source of truth when
           // non-IST consultants onboard; DST is parked post-MVP (IST-only at launch).
 
-          const newWeeklySlot = await tx.slotOfAvailabilityWeekly.create({
+          // Not the response payload: the coalesce below can fold this row
+          // away, so the covering row is what the client is answered with.
+          await tx.slotOfAvailabilityWeekly.create({
             data: {
               consultantProfileId,
               startDay,
@@ -202,19 +204,6 @@ export async function POST(req: NextRequest) {
               startTimeUtc,
               endTimeUtc,
               utcOffsetMinutes,
-            },
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  user: {
-                    select: {
-                      name: true,
-                      email: true,
-                    },
-                  },
-                },
-              },
             },
           });
 
@@ -226,12 +215,15 @@ export async function POST(req: NextRequest) {
             startTimeUtc,
             endTimeUtc,
           });
-          return NextResponse.json(
-            { data: covering ?? newWeeklySlot },
-            { status: 201 },
-          );
+          return NextResponse.json({ data: covering }, { status: 201 });
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          // The defaults are sized for one statement; this body is a read, a
+          // write and a whole-set rewrite behind PG_POOL_MAX=1.
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
       ),
     );
   } catch (error) {

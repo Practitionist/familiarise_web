@@ -69,10 +69,11 @@ async function applyWeeklySlotEdit(
             )
           : 0;
 
+        // No `include`: the coalesce below can fold this row away, so the
+        // covering row — not this one — is what the client is answered with.
         const updatedSlot = await tx.slotOfAvailabilityWeekly.update({
           where: { id },
           data: { ...next, utcOffsetMinutes },
-          include: { consultantProfile: true },
         });
 
         const covering = await coalesceAndResolve(
@@ -85,12 +86,16 @@ async function applyWeeklySlotEdit(
             endTimeUtc: updatedSlot.endTimeUtc,
           },
         );
-        return NextResponse.json(
-          { data: covering ?? updatedSlot },
-          { status: 200 },
-        );
+        return NextResponse.json({ data: covering }, { status: 200 });
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // Prisma's 2s/5s defaults are for a single statement; this body is an
+        // overlap read, a write and a whole-set rewrite, and PG_POOL_MAX=1
+        // serialises connection acquisition on the deploy.
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 }

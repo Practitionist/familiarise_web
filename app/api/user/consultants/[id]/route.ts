@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
@@ -466,14 +467,30 @@ export async function PUT(
         // Delete existing then create new, atomically — a failure between the
         // two halves would leave the consultant with no availability at all.
         // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
-        await prisma.$transaction([
-          prisma.slotOfAvailabilityWeekly.deleteMany({
-            where: { consultantProfileId: id },
-          }),
-          prisma.slotOfAvailabilityWeekly.createMany({
-            data: mergeAdjacentWeeklyRows(weeklySlotData),
-          }),
-        ]);
+        //
+        // Serializable, like the per-row slot routes: at Read Committed a
+        // second replacement running concurrently takes its snapshot before
+        // the first commits, so its delete misses the rows the first inserted
+        // and both sets survive — overlapping availability, which every
+        // downstream reader assumes cannot exist.
+        const mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData);
+        await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await tx.slotOfAvailabilityWeekly.deleteMany({
+                where: { consultantProfileId: id },
+              });
+              await tx.slotOfAvailabilityWeekly.createMany({
+                data: mergedWeekly,
+              });
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              maxWait: 10_000,
+              timeout: 15_000,
+            },
+          ),
+        );
       } else {
         // No weekly slots submitted — clear existing
         await prisma.slotOfAvailabilityWeekly.deleteMany({
@@ -526,16 +543,27 @@ export async function PUT(
           }
         }
 
-        // Delete existing then create new, atomically — see the weekly arm.
+        // Delete existing then create new, atomically and Serializably — see
+        // the weekly arm for both reasons.
         // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
-        await prisma.$transaction([
-          prisma.slotOfAvailabilityCustom.deleteMany({
-            where: { consultantProfileId: id },
-          }),
-          prisma.slotOfAvailabilityCustom.createMany({
-            data: mergeAdjacentCustomRows(customSlotData),
-          }),
-        ]);
+        const mergedCustom = mergeAdjacentCustomRows(customSlotData);
+        await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await tx.slotOfAvailabilityCustom.deleteMany({
+                where: { consultantProfileId: id },
+              });
+              await tx.slotOfAvailabilityCustom.createMany({
+                data: mergedCustom,
+              });
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              maxWait: 10_000,
+              timeout: 15_000,
+            },
+          ),
+        );
       } else {
         // No custom slots submitted — clear existing
         await prisma.slotOfAvailabilityCustom.deleteMany({

@@ -174,24 +174,13 @@ export async function POST(req: NextRequest) {
             );
           }
 
-          const newCustomSlot = await tx.slotOfAvailabilityCustom.create({
+          // Not the response payload: the coalesce below can fold this row
+          // away, so the covering row is what the client is answered with.
+          await tx.slotOfAvailabilityCustom.create({
             data: {
               consultantProfileId,
               startsAt: startTime,
               endsAt: endTime,
-            },
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  user: {
-                    select: {
-                      name: true,
-                      email: true,
-                    },
-                  },
-                },
-              },
             },
           });
 
@@ -203,12 +192,15 @@ export async function POST(req: NextRequest) {
             consultantProfileId,
             { startsAt: startTime, endsAt: endTime },
           );
-          return NextResponse.json(
-            { data: covering ?? newCustomSlot },
-            { status: 201 },
-          );
+          return NextResponse.json({ data: covering }, { status: 201 });
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          // The defaults are sized for one statement; this body is a read, a
+          // write and a whole-set rewrite behind PG_POOL_MAX=1.
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
       ),
     );
   } catch (error) {

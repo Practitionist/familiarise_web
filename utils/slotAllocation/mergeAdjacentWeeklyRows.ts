@@ -129,6 +129,11 @@ export async function coalesceConsultantWeeklyRows(
  * endTimeUtc < startTimeUtc, so a same-day row would otherwise satisfy
  * `startTimeUtc <= 1320 AND endTimeUtc >= 120` and answer for an edit that was
  * never its own. The ordering makes the answer deterministic either way.
+ *
+ * A miss throws rather than returning null: the fold only ever extends the row
+ * holding the written window, so nothing covering it means the rewrite dropped
+ * it. The caller's only alternative is to answer with the pre-coalesce row,
+ * whose id this same transaction may have just deleted.
  */
 export async function coalesceAndResolve<
   Db extends Pick<Tx, "slotOfAvailabilityWeekly">,
@@ -143,7 +148,7 @@ export async function coalesceAndResolve<
   },
 ) {
   await coalesceConsultantWeeklyRows(db, consultantProfileId);
-  return db.slotOfAvailabilityWeekly.findFirst({
+  const covering = await db.slotOfAvailabilityWeekly.findFirst({
     where: {
       consultantProfileId,
       startDay: window.startDay,
@@ -158,6 +163,12 @@ export async function coalesceAndResolve<
       },
     },
   });
+  if (!covering) {
+    throw new Error(
+      `coalesceAndResolve: no weekly row covers the saved window for consultant ${consultantProfileId}`,
+    );
+  }
+  return covering;
 }
 
 /**
@@ -246,13 +257,14 @@ export async function coalesceConsultantCustomRows(
 
 /**
  * After a single custom-row create/update: fold touching rows and return the
- * row that now covers the written window.
+ * row that now covers the written window. A miss throws, for the reason the
+ * weekly twin gives.
  */
 export async function coalesceAndResolveCustom<
   Db extends Pick<Tx, "slotOfAvailabilityCustom">,
 >(db: Db, consultantProfileId: string, window: CustomRowShape) {
   await coalesceConsultantCustomRows(db, consultantProfileId);
-  return db.slotOfAvailabilityCustom.findFirst({
+  const covering = await db.slotOfAvailabilityCustom.findFirst({
     where: {
       consultantProfileId,
       startsAt: { lte: window.startsAt },
@@ -265,4 +277,10 @@ export async function coalesceAndResolveCustom<
       },
     },
   });
+  if (!covering) {
+    throw new Error(
+      `coalesceAndResolveCustom: no custom row covers the saved window for consultant ${consultantProfileId}`,
+    );
+  }
+  return covering;
 }
