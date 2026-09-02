@@ -75,7 +75,13 @@ export const ALLOCATION_APPROVABLE_FROM: AppointmentStatus[] = [
 export async function transitionConsultationRequest(
   tx: Pick<Tx, "consultation">,
   args: {
-    where: { id: string };
+    /**
+     * Always one row, by id. Extra predicates are the doctrine's own idiom: a
+     * condition that must still hold at write time belongs in this WHERE, not
+     * in a read-then-write ahead of it (the stale-consultation sweep excludes
+     * a request whose payment succeeded after the cohort read this way).
+     */
+    where: Prisma.ConsultationWhereInput & { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.ConsultationUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */

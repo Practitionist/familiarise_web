@@ -19,7 +19,11 @@
  */
 
 import prisma from "../../lib/prisma";
-import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
+import {
+  AppointmentStatus,
+  PaymentStatus,
+  SlotCompletionStatus,
+} from "@prisma/client";
 import {
   transitionConsultationRequest,
   transitionSlotCompletion,
@@ -81,7 +85,7 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
             {
               payment: {
                 every: {
-                  paymentStatus: { not: "SUCCEEDED" },
+                  paymentStatus: { not: PaymentStatus.SUCCEEDED },
                 },
               },
             },
@@ -141,8 +145,20 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
           // CAS (#1319): the cohort is APPROVED / APPROVED_PENDING_PAYMENT; a
           // request that was paid or scheduled since the read matches zero
           // rows and is skipped, never cancelled.
+          //
+          // Status alone is not enough. `reconcile-payment-status` flips a
+          // stale Stripe payment to SUCCEEDED without touching the request, so
+          // a capture recovered between the cohort read and this write leaves
+          // the status at APPROVED_PENDING_PAYMENT — cancelling it would take
+          // the money and release the slots. The read's payment filter is
+          // repeated here so it is re-evaluated by the UPDATE itself.
           await transitionConsultationRequest(tx, {
-            where: { id: consultation.id },
+            where: {
+              id: consultation.id,
+              appointment: {
+                payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+              },
+            },
             to: AppointmentStatus.CANCELLED,
             fromIn: [
               AppointmentStatus.APPROVED,
@@ -173,7 +189,9 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
         consultationsCancelled++;
       } catch (error) {
         if (error instanceof IllegalTransitionError) {
-          console.log(`   ⏭️ Skipped — status changed since the sweep read`);
+          console.log(
+            `   ⏭️ Skipped — status changed, or the payment succeeded, since the sweep read`,
+          );
           continue;
         }
         const msg = `Failed to cancel consultation ${consultation.id}: ${error}`;

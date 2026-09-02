@@ -42,7 +42,10 @@ async function cancelRequestsAndReleaseSlots(
 ): Promise<{ cancelled: number; skipped: number; slotsCancelled: number }> {
   const outcome = { cancelled: 0, skipped: 0, slotsCancelled: 0 };
   for (const id of ids) {
-    await prisma.$transaction(async (tx) => {
+    // The counters are the caller's report of what is now true in the database,
+    // so they are only moved once the transaction has committed — incrementing
+    // them inside the callback would keep counting a rolled-back cancellation.
+    const committed = await prisma.$transaction(async (tx) => {
       try {
         if (kind === "consultation") {
           await transitionConsultationRequest(tx, {
@@ -59,11 +62,9 @@ async function cancelRequestsAndReleaseSlots(
         }
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
-        outcome.skipped++;
-        return;
+        return { cancelled: false as const, slotsCancelled: 0 };
       }
-      outcome.cancelled++;
-      outcome.slotsCancelled += await transitionSlotCompletion(tx, {
+      const slotsCancelled = await transitionSlotCompletion(tx, {
         where: {
           appointment:
             kind === "consultation"
@@ -75,7 +76,15 @@ async function cancelRequestsAndReleaseSlots(
         data: { deletedAt: new Date() },
         allowZero: true,
       });
+      return { cancelled: true as const, slotsCancelled };
     });
+
+    if (!committed.cancelled) {
+      outcome.skipped++;
+      continue;
+    }
+    outcome.cancelled++;
+    outcome.slotsCancelled += committed.slotsCancelled;
   }
   return outcome;
 }
