@@ -87,6 +87,8 @@ flowchart TD
 
 ## Changelog: 2026-09-02 — wave 5
 
+The wave-5 train (#1319) reconciles the original booking and maintenance audit briefs against everything that shipped in waves 1–4 and closes the residuals that survived. Each PR appends its own bullets here.
+
 ### PR 1 — CAS and delete sweep (`fix/booking-cas-and-delete-sweep`)
 
 - The abandoned-payment sweep no longer deletes a consultation or subscription whose hold lapsed. Deleting the request cascaded the Appointment and every Payment row under it, which was the #1074 class in a second location. The request now moves to EXPIRED through the CAS helper, the slots are cancelled and tombstoned by status, and the money rows stay readable for support.
@@ -137,8 +139,6 @@ The first CodeRabbit review of the pull request produced seven further changes, 
 - `advance-program-cycles` filtered non-billable organizations out of its candidate scan but never re-read that fact inside the claiming transaction, so an organization suspended or deactivated between the scan and the claim still got a fresh successor cycle minted under it. The in-transaction re-read that already covers the program and the contract now covers the organization too, and a non-billable one takes the same CLOSE path a deleted contract takes.
 - The `SystemJobExecution` retention delete runs in bounded batches of five thousand rather than as one unbounded statement, so the first run after this ships does not hold row locks on a table every cron run writes to for the length of the whole backlog.
 
----
-
 ### PR 6 — booking lifecycle tail (`fix/booking-lifecycle-tail`)
 
 The tail of the booking lifecycle audit: the places where a surface told the customer something that was not true, and the places where two concurrent requests each believed they were the only one.
@@ -178,6 +178,7 @@ Part of #1319. This PR makes an abandoned checkout release its slot by definitio
 
 **Redis health is probed once per two seconds per instance.** `checkRedisHealth(force)` caches its PING so a booking no longer pays one probe per atom; `/api/health` passes `force` to keep its own reading live.
 
+<<<<<<< HEAD
 ### PR 11 — booking docs refresh and dead-code sweep (`docs/booking-wave-5`)
 
 Part of #1319. This PR carries no runtime changes; it brings the booking docs back in sync with the mechanisms the rest of wave 5 shipped, and clears a handful of confirmed-dead exports and stale TODOs.
@@ -199,6 +200,16 @@ Part of #1319. This PR carries no runtime changes; it brings the booking docs ba
 The Stream video-join outage (#1270) — video calls had been dead on production for 17 days — was fixed starting with PR #1271, which restored authorless call creation, synced call membership before naming participants, and closed a leaked-capture path; the PRs that followed it (#1272-#1287, #1297 onward) hardened the surrounding surface: call types the app never uses were made unusable, end-call was revoked from every non-host participant, the shared circuit breaker stopped retrying calls that could never succeed, dormant DM channels freeze and unfreeze correctly, `queryChannels` now pages at Stream's real 30-row cap, and the Stream cron fleet's runs became visible. No-show detection now corroborates against Stream's own attendance record instead of trusting the booking alone, and the recording pipeline's storage access was decoupled from the transfer step so a partially delivered session is still visible to the reconciler.
 
 Two infrastructure fixes landed alongside it: a shared SQL sidecar splitter now breaks on every line terminator instead of only `\n` (closing two SonarQube criticals), and `.coderabbit.yaml` was repaired after a bad field had been silently failing the whole config closed.
+=======
+### PR 7 — money parity and the earnings healer (`fix/booking-money-parity-tests`)
+
+- The checkout amount derivation — list price, then discount, then GST on the discounted base, then referral credits against the tax-inclusive total — moved out of `calculateAmountAndValidate`'s Prisma transaction into `lib/payments/pricing/derive-checkout-amount.ts`. It had never been importable, so `__tests__/payments/checkout-price-parity.test.ts` transcribed the sequence by hand and said so in its own header; the suite now imports the real function, which means a change to the server's sequencing, rounding, discount cap or credit floor fails the parity check rather than passing against a stale copy. The credit balance still resolves lazily through a caller-supplied callback, so an order below the redemption floor keeps that read out of the checkout transaction exactly as before, and the suite gains the international arm it never had.
+- The cancel route and its preview both computed the refund amount inline — the notice tier, the frozen snapshot policy, the per-session proration from #1006 and the clamp to the remaining refundable balance — in two files with two sets of comments explaining the same reasoning. That sequence is now `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts` and both routes call it. Because a shared function only guarantees so much when each caller still supplies its own inputs, `__tests__/payments/refund-preview-parity.test.ts` drives the real GET and the real POST over one database stub and asserts that the amount the buyer was quoted is the amount `refundBookingPayment` is asked for, across a matrix of snapshot tiers, notice windows, paid amounts, proration and prior partial refunds.
+- The earnings sweep in `scripts/earnings/sync-payment-earnings.ts` no longer forgets old money. Settlement for an org-funded checkout runs after the checkout transaction commits, so a failure there leaves a consultant unaccrued, and this sweep was the only repair — but it looked back only thirty days, past which a payment left the cohort silently and was never accrued at all. The age window is gone and the run is bounded instead at five hundred payments, oldest first. Payments the sweep can never heal, meaning a booking that resolves no consultant, now escalate through `recordSystemError` under category `PAYMENT` once per payment per day rather than being skipped into a log; payments with no appointment at all are deliberately left to `alert-orphaned-payments`, whose cohort legitimately includes the overage side-charge.
+- The organization billing page gained a read-only Receivables tab, closing a residual from the #1169 audit. The `ORG_RECEIVABLE` ledger account has recorded what a sponsored organization owes since #771, but nothing showed it to the organization, so a charge that had not yet been rolled into an invoice was invisible to the people responsible for paying it. The read is `lib/data/org-receivables.ts`, called from the server page under the same `billing.read` and `canSponsor` gate the billing API uses; its totals are computed over the whole account rather than the page of rows displayed. Nothing on the tab can be edited, because the ledger is append-only and a correction is a counter-posting, and per ADR 20 the rows name their source identifiers and carry no session content.
+
+---
+>>>>>>> origin/dev
 
 ## Changelog: 2026-08-14 — documentation refresh
 
