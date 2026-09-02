@@ -1,4 +1,5 @@
 import "server-only";
+import { mergeAdjacentWeeklyRows } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -185,8 +186,10 @@ async function syncAvailabilitySlots(
         }
       }
 
+      // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
+      // storage matches the window the customer is shown and can book.
       await tx.slotOfAvailabilityWeekly.createMany({
-        data: weeklySlotsToCreate.map((slot) => ({
+        data: mergeAdjacentWeeklyRows(weeklySlotsToCreate).map((slot) => ({
           startDay: slot.startDay,
           startTimeUtc: slot.startTimeUtc,
           endDay: slot.endDay,
@@ -708,10 +711,7 @@ async function maybeSubmitConsultantVerification(
     );
     return undefined;
   } catch (verificationError) {
-    console.error(
-      "Failed to create verification request:",
-      verificationError,
-    );
+    console.error("Failed to create verification request:", verificationError);
     return {
       warning:
         "Your profile was saved but verification submission failed. Please contact support.",

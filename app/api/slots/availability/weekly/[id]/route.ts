@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { coalesceAndResolve } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { Prisma, DayOfWeek } from "@prisma/client";
 import {
@@ -33,7 +34,10 @@ export async function GET(
     return NextResponse.json({ data: weeklySlot }, { status: 200 });
   } catch (error) {
     console.error("Error fetching weekly slot:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching the weekly slot" },
       { status: 500 },
@@ -194,10 +198,26 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json({ data: updatedSlot }, { status: 200 });
+    // #1320 — fold adjacent rows after the edit and answer with the covering row.
+    const covering = await coalesceAndResolve(
+      prisma,
+      updatedSlot.consultantProfileId,
+      {
+        startDay: updatedSlot.startDay,
+        startTimeUtc: updatedSlot.startTimeUtc,
+        endTimeUtc: updatedSlot.endTimeUtc,
+      },
+    );
+    return NextResponse.json(
+      { data: covering ?? updatedSlot },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error updating weekly slot:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(
@@ -357,10 +377,26 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({ data: updatedSlot }, { status: 200 });
+    // #1320 — fold adjacent rows after the edit and answer with the covering row.
+    const covering = await coalesceAndResolve(
+      prisma,
+      updatedSlot.consultantProfileId,
+      {
+        startDay: updatedSlot.startDay,
+        startTimeUtc: updatedSlot.startTimeUtc,
+        endTimeUtc: updatedSlot.endTimeUtc,
+      },
+    );
+    return NextResponse.json(
+      { data: covering ?? updatedSlot },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error partially updating weekly slot:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(
@@ -425,7 +461,10 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting weekly slot:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
         return NextResponse.json(

@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { mergeAdjacentWeeklyRows } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
@@ -158,10 +159,11 @@ export async function GET(
     // consultant detail page. Privileged viewers (the consultant
     // themselves + ADMIN) see everything; the public include narrows
     // to PUBLIC + ORG_AND_PUBLIC.
-    const planVisibilityFilter: { visibility: { in: OrgPlanVisibility[] } } | undefined =
-      isPrivilegedAccess
-        ? undefined
-        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+    const planVisibilityFilter:
+      | { visibility: { in: OrgPlanVisibility[] } }
+      | undefined = isPrivilegedAccess
+      ? undefined
+      : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
 
     // Fetch consultant with appropriate user data
     const consultant = await prisma.consultantProfile.findUnique({
@@ -249,7 +251,10 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.GET]", error });
   }
 }
@@ -398,9 +403,7 @@ export async function PUT(
 
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => {
-            const startTimeUtc = dateToMinuteUtc(
-              new Date(slot.startsAt),
-            );
+            const startTimeUtc = dateToMinuteUtc(new Date(slot.startsAt));
             const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
             return {
               consultantProfileId: id,
@@ -461,8 +464,9 @@ export async function PUT(
         await prisma.slotOfAvailabilityWeekly.deleteMany({
           where: { consultantProfileId: id },
         });
+        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
         await prisma.slotOfAvailabilityWeekly.createMany({
-          data: weeklySlotData,
+          data: mergeAdjacentWeeklyRows(weeklySlotData),
         });
       } else {
         // No weekly slots submitted — clear existing
@@ -570,7 +574,10 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.PUT]", error });
   }
 }
@@ -677,7 +684,10 @@ export async function DELETE(
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Consultant.DELETE]", error });
   }
 }
