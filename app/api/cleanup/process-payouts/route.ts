@@ -7,74 +7,28 @@
  * Schedule: Weekly on Mondays at 9:00 PM UTC (via GitHub Actions or external cron)
  */
 
-import * as Sentry from "@sentry/nextjs";
-import {
-  assertNotInMaintenance,
-  MaintenanceActiveError,
-} from "@/lib/maintenance-cron";
-import { NextRequest, NextResponse } from "next/server";
+import { cleanupRoute } from "@/lib/cron/cleanup-route";
 import { processApprovedPayouts } from "@/lib/payments/payouts";
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  try {
-    // Verify cron secret to prevent unauthorized access
-    const authHeader = req.headers.get("authorization");
-    const cronSecret =
-      process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      console.warn("Unauthorized payout processing attempt");
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    // The cron core is shared with the jobs/** entrypoint, which exits on
-    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
-    await assertNotInMaintenance("process-payouts");
-
-    console.log("🔄 Starting payout processing via API...");
-    Sentry.logger.info("cron:process-payouts started");
-
+export const { GET, POST } = cleanupRoute({
+  job: "process-payouts",
+  run: async () => {
     const results = await processApprovedPayouts();
-
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
-    console.log(
-      `✅ Payout processing completed: ${succeeded} succeeded, ${failed} failed`,
-    );
-    Sentry.logger.info("cron:process-payouts finished", {
-      succeeded,
-      failed,
-      processed: results.length,
-    });
-
-    return NextResponse.json({
+    return {
       success: failed === 0,
       processed: results.length,
       succeeded,
       failed,
       results,
-    });
-  } catch (error) {
-    if (error instanceof MaintenanceActiveError) {
-      return NextResponse.json(
-        { error: error.message, phase: error.phase },
-        { status: error.httpStatus },
-      );
-    }
-    console.error("Error in payout processing:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "cron", job: "process-payouts" },
-    });
-    return NextResponse.json(
-      {
-        error: "Failed to process payouts",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    );
-  }
-}
-
-// Also support POST for manual triggering
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  return GET(req);
-}
+    };
+  },
+  summarize: (r) => ({
+    succeeded: r.succeeded,
+    failed: r.failed,
+    processed: r.processed,
+  }),
+  status: () => 200,
+  failureMessage: "Failed to process payouts",
+});

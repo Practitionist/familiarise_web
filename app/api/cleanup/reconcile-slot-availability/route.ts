@@ -7,77 +7,17 @@
  * Schedule: Hourly (via GitHub Actions or external cron)
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { cleanupRoute } from "@/lib/cron/cleanup-route";
 import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
-import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
-import {
-  assertNotInMaintenance,
-  MaintenanceActiveError,
-} from "@/lib/maintenance-cron";
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  try {
-    // Verify cron secret to prevent unauthorized access
-    const authHeader = req.headers.get("authorization");
-    const cronSecret =
-      process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      console.warn("Unauthorized slot reconciliation attempt");
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    // The cron core is shared with the jobs/** entrypoint, which exits on
-    // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
-    await assertNotInMaintenance("reconcile-slot-availability");
-
-    console.log("🔄 Starting slot availability reconciliation via API...");
-    Sentry.logger.info("cron:reconcile-slot-availability started");
-
-    const result = await reconcileSlotAvailability();
-
-    console.log("✅ Slot availability reconciliation completed:", {
-      tentativeFlagsCleared: result.tentativeFlagsCleared,
-      doubleBookingsDetected: result.doubleBookingsDetected,
-    });
-    Sentry.logger.info("cron:reconcile-slot-availability finished", {
-      tentativeFlagsCleared: result.tentativeFlagsCleared,
-      doubleBookingsDetected: result.doubleBookingsDetected,
-    });
-
-    // Return 207 if double bookings detected (needs attention)
-    // Return 500 if errors occurred
-    const status =
-      result.doubleBookingsDetected > 0 ? 207 : result.success ? 200 : 500;
-
-    return NextResponse.json(result, { status });
-  } catch (error) {
-    // #476 — concurrent invocation (schedule overlap / manual re-run)
-    // skips with a 409 instead of double-running.
-    if (error instanceof CronLockHeldError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof MaintenanceActiveError) {
-      return NextResponse.json(
-        { error: error.message, phase: error.phase },
-        { status: error.httpStatus },
-      );
-    }
-    console.error("Error in slot reconciliation:", error);
-    Sentry.captureException(error, {
-      tags: { subsystem: "cron", job: "reconcile-slot-availability" },
-    });
-    return NextResponse.json(
-      {
-        error: "Failed to reconcile slot availability",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    );
-  }
-}
-
-// Also support POST for manual triggering
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  return GET(req);
-}
+export const { GET, POST } = cleanupRoute({
+  job: "reconcile-slot-availability",
+  run: () => reconcileSlotAvailability(),
+  summarize: (r) => ({
+    tentativeFlagsCleared: r.tentativeFlagsCleared,
+    doubleBookingsDetected: r.doubleBookingsDetected,
+  }),
+  // Return 207 if double bookings detected (needs attention); 500 on errors.
+  status: (r) => (r.doubleBookingsDetected > 0 ? 207 : r.success ? 200 : 500),
+  failureMessage: "Failed to reconcile slot availability",
+});
