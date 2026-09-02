@@ -91,6 +91,14 @@ jest.mock("../../lib/payments/index", () => ({
     mockCreatePaymentIntent(...(a as [])),
 }));
 
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  APPROVAL_LOCK_TTL_MS: 45_000,
+  lockConsultationApproval: jest.fn(async () => ({ key: "k", token: "t" })),
+  lockSubscriptionApproval: jest.fn(async () => ({ key: "k", token: "t" })),
+  lockTrialApproval: jest.fn(async () => ({ key: "k", token: "t" })),
+  unlockApproval: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   acquireLock: jest.fn(async () => "lock-token"),

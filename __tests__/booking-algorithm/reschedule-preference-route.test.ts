@@ -29,6 +29,19 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+}));
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: jest.fn(
+    async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  BookingLockUnavailableError: class extends Error {},
+  AppointmentBusyError: class extends Error {},
+}));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
 jest.mock("../../lib/activity/log-activity", () => ({
   logActivity: jest.fn().mockResolvedValue(undefined),

@@ -85,6 +85,28 @@ flowchart TD
 
 ---
 
+## Changelog: 2026-09-02 — wave 5
+
+### PR 3 — hold expiry and locks (`fix/booking-hold-expiry-and-locks`)
+
+Part of #1319. This PR makes an abandoned checkout release its slot by definition rather than by cron, and retires every lock budget that could not finish inside a Netlify function.
+
+**Hold expiry is a predicate, not a sweep outcome.** A PENDING direct-checkout appointment whose every payment row is dead (marked EXPIRED, or past `Payment.expiresAt`) no longer counts as occupancy. `isOccupiedByLiveAppointment` frees it, and its SQL twin `buildDeadHoldFilter(now)` is applied as a `NOT` inside the checkout, trial-accept and consultee-conflict queries, so the grid, the allocator, `/validate` and checkout agree the instant the thirty-minute hold lapses instead of when `cleanup-abandoned-payments` next runs. An appointment with zero payment rows still blocks, and a REQUEST_SUBMITTED request still blocks until it is decided; only the direct-checkout hold expires. The "max three pending attempts per slot" branch in `validateSlotAvailability` has been unreachable since #1169 PR 2 made any live hold block at step 1, so it is deleted.
+
+**Lock budgets fit the function ceiling.** Every request-path acquisition now uses `REQUEST_PATH_RETRY_CONFIG` (five attempts, about seven seconds worst case). The previous default retried for up to 204 seconds against a 26-second function ceiling, so a contended request-for-approval, trial accept, allocation or approval lost as a 504 rather than a 409. The approval lock TTL is 45 seconds (`APPROVAL_LOCK_TTL_MS`), above the 30-second approval transaction timeout it used to equal exactly. `lockAppointment` goes through `acquireGuarded` (fails closed on a Redis outage, 30-second grant) and is exposed as `withAppointmentLock`; `isAppointmentLocked` had no caller and is gone.
+
+**Cancel and reschedule are rate-limited and serialized.** Both routes apply `eventMutationLimiter` after the session check and run their transaction under the appointment lock. A lock outage answers 503 and contention answers 423; neither is a 500 any more. The trial PATCH route gets the same limiter.
+
+**One lock name per approval atom.** The approval-payment mint used a private `lock:approval_payment:<id>` key through the single-shot `lib/redis` `acquireLock`, a second name for the same approve-this-request atom the approval routes lock under `consultation-approval:` and `subscription-approval:`. It now takes those locks, plus a new `trial-approval:<id>` for the pay-link arm, through the guarded path, so a breaker-open Redis and a held lock are distinguishable.
+
+**Checkout renews its slot grant on every retry attempt.** One renewal before the Serializable loop could not cover four 25-second attempts against a 60-second CONSULTATION grant, so the lock lapsed mid-payment on a retried checkout. The grant is now renewed at the top of every `withSerializableRetry` attempt with a TTL sized to one attempt plus slack (the larger of the type's TTL and 35 seconds). Lost ownership aborts the attempt with the existing "already in progress" error, which the route maps to 409. An exhausted P2034 retry budget in `app/api/checkout/route.ts` is a 409 `SERIALIZATION_CONFLICT` that tells the customer the card was not charged.
+
+**Ten Serializable transactions retry on P2034.** Both approval routes, the four crud-with-plan routes, the org payout writer, and the collaborator invite and revenue-share updates ran Serializable transactions without `withSerializableRetry`, so a serialization failure surfaced as a 500. Each callback was audited before wrapping and contains only in-transaction writes and console logging.
+
+**The org funding context is re-asserted under the lock.** The org gate chain (organization status and `canSponsor`, the caller's ACTIVE membership, the ACTIVE program assignment inside its period and contract window, the dunning suspension, and the DPDP session-booking consent) ran before the locks and never again, so a change between the gate and the write was still sponsored. `revalidateInsideLock` now receives the resolved organization, membership and assignment ids and re-checks each by id inside its transaction; the invoice credit limit was already re-checked inside the Serializable booking transaction and is unchanged.
+
+**Redis health is probed once per two seconds per instance.** `checkRedisHealth(force)` caches its PING so a booking no longer pays one probe per atom; `/api/health` passes `force` to keep its own reading live.
+
 ## Changelog: 2026-08-14 — documentation refresh
 
 Docs-only pass shipped as the final PR of the #1169 booking + maintenance productionization train, closing the long-standing booking-docs drift item #1013. No code changed in this entry.
