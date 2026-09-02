@@ -14,6 +14,7 @@ import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
+  type ApprovalLock,
   lockSubscriptionApproval,
   renewApprovalLock,
   unlockApproval,
@@ -433,7 +434,7 @@ export async function PATCH(
     );
 
     // LAYER 1: Distributed lock (only for APPROVED status changes)
-    let lock;
+    let lock: ApprovalLock | null = null;
     if (status === AppointmentStatus.APPROVED) {
       try {
         lock = await lockSubscriptionApproval(
