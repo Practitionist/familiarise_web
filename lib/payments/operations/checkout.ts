@@ -59,7 +59,10 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
-import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import {
+  deriveCheckoutAmount,
+  type CheckoutDiscountInput,
+} from "@/lib/payments/pricing/derive-checkout-amount";
 import {
   createEarningsFromPayment,
   type AppointmentType,
@@ -74,10 +77,7 @@ import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
-import {
-  determineTax,
-  appointmentTypeToServiceType,
-} from "@/lib/payments/tax/tax-engine";
+import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import {
   validatePlanCurrency,
   validateDiscountCurrency,
@@ -713,12 +713,9 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
-    // Capture original plan price before any discounts/credits
-    // This is used for consultant earnings — discounts are platform-funded, not consultant-funded
-    const originalAmount = amount;
-
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
+    let appliedDiscount: CheckoutDiscountInput | null = null;
     if (validatedData.discountCode) {
       const discount = await tx.discountCode.findUnique({
         where: { code: validatedData.discountCode.toUpperCase().trim() },
@@ -758,28 +755,11 @@ export async function calculateAmountAndValidate(
           );
         }
 
-        // Calculate discounted amount with maxDiscount cap
-        if (discount.discountType === "PERCENTAGE") {
-          // Guard: discountValue must be 1–100 for PERCENTAGE (data integrity check)
-          if (discount.discountValue < 1 || discount.discountValue > 100) {
-            throw new Error(
-              `Invalid discount code: percentage value must be between 1 and 100, got ${discount.discountValue}`,
-            );
-          }
-          let discountAmount = Math.round(
-            amount * (discount.discountValue / 100),
-          );
-          // Apply maxDiscount cap if set
-          if (
-            discount.maxDiscount !== null &&
-            discountAmount > discount.maxDiscount
-          ) {
-            discountAmount = discount.maxDiscount;
-          }
-          amount = amount - discountAmount;
-        } else if (discount.discountType === "FIXED_AMOUNT") {
-          amount = Math.max(0, amount - discount.discountValue);
-        }
+        appliedDiscount = {
+          discountType: discount.discountType,
+          discountValue: discount.discountValue,
+          maxDiscount: discount.maxDiscount,
+        };
 
         // NOTE: currentUses increment is done in the payment transaction
         // to ensure count only increases when payment is successfully created
@@ -792,34 +772,26 @@ export async function calculateAmountAndValidate(
     // Validate plan currency (MVP: all plans must be INR)
     validatePlanCurrency(currency);
 
-    // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
-    // Zero-rate GST for international buyers (export of services is zero-rated under IGST Act §2(6))
-    // BUG FIX: Previously used `currency !== "INR"` which never triggered since all plans default to INR.
-    // Now uses buyer country detection for correct tax jurisdiction determination.
-    const isInternational = buyerCountry !== "IN";
-    const taxDetermination = determineTax({
-      baseAmountPaise: amount,
+    // #1319 — list price, then discount, then GST on the discounted base, then
+    // referral credits against the tax-inclusive total. That sequence is now a
+    // single pure function the parity suite imports instead of transcribing.
+    // The credit balance is still read lazily, only once the order clears the
+    // redemption floor, so orders that cannot spend a credit keep it out of the
+    // transaction's read set.
+    const derived = await deriveCheckoutAmount({
+      basePaise: amount,
       buyerCountry,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
+      discount: appliedDiscount,
+      useReferralCredits: validatedData.useReferralCredits === true,
+      resolveAvailableCreditsPaise: async () =>
+        (await getUserCredits(userId, tx)).totalAvailable,
     });
-    const taxAmount = taxDetermination.taxAmount;
-    amount = amount + taxAmount;
-
-    // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
-    // Both credits and amount are now in paise — no conversion needed
-    // #880 — credits redeem only when the order is ₹500+ so a credit never
-    // exceeds the value of the booking it discounts.
-    let creditsApplied = 0;
-    if (
-      validatedData.useReferralCredits &&
-      amount >= MIN_CREDIT_REDEMPTION_PAISE
-    ) {
-      const { totalAvailable } = await getUserCredits(userId, tx);
-      if (totalAvailable > 0) {
-        creditsApplied = Math.min(totalAvailable, amount);
-        amount = amount - creditsApplied;
-      }
-    }
+    // Original plan price before any discounts/credits, used for consultant
+    // earnings — discounts are platform-funded, not consultant-funded.
+    const { originalAmount, taxAmount, creditsApplied, isInternational } =
+      derived;
+    amount = derived.amount;
 
     // Guard: reject amounts in the 1-99 paise range (> ₹0 but < ₹1).
     // Razorpay requires a minimum order value of ₹1 (100 paise). An amount of exactly 0
