@@ -17,9 +17,7 @@ import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards"
 import { Currency, PaymentGateway, PaymentStatus } from "@prisma/client";
 import { createPaymentIntent } from "../index";
 import {
-  lockConsultationApproval,
-  lockSubscriptionApproval,
-  lockTrialApproval,
+  lockApprovalPaymentMint,
   unlockApproval,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
@@ -106,23 +104,30 @@ export async function createApprovalPaymentIntent(
     throw new Error("trialId required for TRIAL appointment type");
   }
 
-  // H3 FIX / #1319: one namespace per atom. The approve-this-request atom
-  // already had a name (`consultation-approval:` / `subscription-approval:`);
-  // minting the pay-link under a private `lock:approval_payment:` key meant
-  // two names for one atom, i.e. no lock at all between the two. Trials get
-  // their own sibling name. These acquisitions are guarded (health probe +
-  // breaker, bounded retries) rather than the single unguarded SET NX before.
-  const lock: ApprovalLock = params.consultationId
-    ? await lockConsultationApproval(
-        params.consultationId,
-        APPROVAL_PAYMENT_LOCK_TTL,
-      )
-    : params.subscriptionId
-      ? await lockSubscriptionApproval(
-          params.subscriptionId,
-          APPROVAL_PAYMENT_LOCK_TTL,
-        )
-      : await lockTrialApproval(params.trialId!, APPROVAL_PAYMENT_LOCK_TTL);
+  // #1319 — the mint is its own guarded atom, nested under the approval lock
+  // the routes still hold while they call this (see lockApprovalPaymentMint).
+  // Keyed by appointmentType, the validated discriminator, not by whichever
+  // id happens to be set.
+  const mintTargetId = (() => {
+    switch (params.appointmentType) {
+      case "CONSULTATION":
+        return params.consultationId;
+      case "SUBSCRIPTION":
+        return params.subscriptionId;
+      case "TRIAL":
+        return params.trialId;
+    }
+  })();
+  if (!mintTargetId) {
+    throw new Error(
+      `${params.appointmentType} approval payment requires its request id`,
+    );
+  }
+  const lock: ApprovalLock = await lockApprovalPaymentMint(
+    params.appointmentType,
+    mintTargetId,
+    APPROVAL_PAYMENT_LOCK_TTL,
+  );
 
   try {
     // FIX Issue #7 / #1181 — duplicate-payment guard, now live for every

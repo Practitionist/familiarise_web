@@ -72,13 +72,20 @@ export function isOccupiedByLiveAppointment(
   // #873 — free the slot only when EVERY payment row is dead; a later active
   // retry row can still be live even if payment[0] lapsed. A row is dead when
   // the sweep already marked it EXPIRED or its window has passed.
+  // A row is dead when the sweep marked it EXPIRED, the gateway FAILED it, or
+  // it is still PENDING past its window. Never by the clock alone: a
+  // SUCCEEDED row keeps its expiresAt, and its request can sit in PENDING
+  // until the confirmation write lands (#1319 review).
   const payments = appointment.payment ?? [];
   const allPaymentsDead =
     payments.length > 0 &&
     payments.every(
       (p) =>
         p.paymentStatus === PaymentStatus.EXPIRED ||
-        (!!p.expiresAt && new Date(p.expiresAt) < now),
+        p.paymentStatus === PaymentStatus.FAILED ||
+        (p.paymentStatus === PaymentStatus.PENDING &&
+          !!p.expiresAt &&
+          new Date(p.expiresAt) < now),
     );
 
   if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {

@@ -29,10 +29,23 @@ describe("isOccupiedByLiveAppointment — direct-checkout hold expiry", () => {
 
   it.each([
     ["all payments EXPIRED", [{ paymentStatus: "EXPIRED" }], false],
-    ["all payments past expiresAt", [{ expiresAt: PAST }], false],
+    ["a FAILED payment", [{ paymentStatus: "FAILED" }], false],
+    [
+      "a PENDING payment past expiresAt",
+      [{ paymentStatus: "PENDING", expiresAt: PAST }],
+      false,
+    ],
     [
       "one payment still live",
-      [{ expiresAt: PAST }, { expiresAt: FUTURE }],
+      [
+        { paymentStatus: "PENDING", expiresAt: PAST },
+        { paymentStatus: "PENDING", expiresAt: FUTURE },
+      ],
+      true,
+    ],
+    [
+      "a SUCCEEDED payment past expiresAt (confirmation not landed yet)",
+      [{ paymentStatus: "SUCCEEDED", expiresAt: PAST }],
       true,
     ],
     ["zero payment rows", [], true],
@@ -78,9 +91,12 @@ describe("buildDeadHoldFilter — the SQL twin", () => {
       expect(payment.every.OR).toEqual(
         expect.arrayContaining([
           { paymentStatus: "EXPIRED" },
-          { expiresAt: { lt: NOW } },
+          { paymentStatus: "FAILED" },
+          { paymentStatus: "PENDING", expiresAt: { lt: NOW } },
         ]),
       );
+      // The clock alone never kills a row.
+      expect(payment.every.OR).not.toContainEqual({ expiresAt: { lt: NOW } });
     }
     const serialized = JSON.stringify(filter);
     expect(serialized).toContain('"bookingSource":"DIRECT_CHECKOUT"');
@@ -90,17 +106,29 @@ describe("buildDeadHoldFilter — the SQL twin", () => {
 
 describe("lock budgets and names (source pins)", () => {
   it("request paths use the bounded retry config, not the 204 s default", () => {
+    // Source pins, not imports: the lock module loads @upstash/redis, whose
+    // ESM build jest cannot parse without a transform the suites don't carry.
     const src = read("utils/appointmentlock.ts");
-    expect(src).toMatch(/REQUEST_PATH_RETRY_CONFIG/);
-    expect(src).toMatch(/APPROVAL_LOCK_TTL_MS = 45_000/);
+    expect(src).toMatch(/APPROVAL_LOCK_TTL_MS = 45_?000/);
+    expect(src).toMatch(
+      /REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = \{[\s\S]{0,200}?retryCount: [1-5],/,
+    );
     expect(src).not.toMatch(/export (async )?function isAppointmentLocked/);
   });
 
-  it("the approval-payment mint locks under the approval atoms, not a private name", () => {
+  it("the pay-link mint is its own guarded atom, nested under the approval lock", () => {
+    // The approval routes mint while holding consultation-approval:<id>, so
+    // the mint must NOT take that key (it would contend with its caller).
     const src = read("lib/payments/operations/approval-payment.ts");
-    expect(src).toMatch(/lockConsultationApproval\(/);
-    expect(src).toMatch(/lockTrialApproval\(/);
+    expect(src).toMatch(/lockApprovalPaymentMint\(/);
+    expect(src).not.toMatch(
+      /lockConsultationApproval\(|lockSubscriptionApproval\(/,
+    );
     expect(src).not.toMatch(/from "@\/lib\/redis"/);
+    const locks = read("utils/appointmentlock.ts");
+    expect(locks).toContain(
+      "approval-payment-mint:${kind.toLowerCase()}:${id}",
+    );
   });
 
   it("checkout renews the slot grant inside every Serializable attempt", () => {

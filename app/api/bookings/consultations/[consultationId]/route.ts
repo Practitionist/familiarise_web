@@ -13,7 +13,9 @@ import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import {
   APPROVAL_LOCK_TTL_MS,
+  ApprovalLockLostError,
   lockConsultationApproval,
+  renewApprovalLock,
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
@@ -484,8 +486,11 @@ export async function PATCH(
 
     try {
       // LAYER 2: Serializable transaction with idempotency checks
-      const result = await withSerializableRetry(() =>
-        prisma.$transaction(
+      const result = await withSerializableRetry(async () => {
+        // #1319 — re-grant the approval lock for this attempt; the retry loop
+        // outlived the fixed grant.
+        await renewApprovalLock(lock);
+        return prisma.$transaction(
           async (tx) => {
             // Fetch current state inside transaction
             const currentConsultation = await tx.consultation.findUnique({
@@ -671,8 +676,8 @@ export async function PATCH(
             maxWait: 10000, // 10 seconds
             timeout: 30000, // 30 seconds
           },
-        ),
-      );
+        );
+      });
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
@@ -877,6 +882,12 @@ export async function PATCH(
       }
     }
   } catch (error) {
+    if (error instanceof ApprovalLockLostError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json(
         { error: error.message, code: error.code },

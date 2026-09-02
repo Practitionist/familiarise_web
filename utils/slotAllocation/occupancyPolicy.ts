@@ -185,7 +185,10 @@ export function buildDeadHoldFilter(now: Date): Prisma.AppointmentWhereInput {
       every: {
         OR: [
           { paymentStatus: PaymentStatus.EXPIRED },
-          { expiresAt: { lt: now } },
+          { paymentStatus: PaymentStatus.FAILED },
+          // Clock-dead only while still PENDING: a SUCCEEDED row keeps its
+          // expiresAt and must never free the slot it paid for.
+          { paymentStatus: PaymentStatus.PENDING, expiresAt: { lt: now } },
         ],
       },
     },

@@ -219,6 +219,8 @@ export async function POST(req: NextRequest) {
           error:
             "The booking system is briefly busy and your card was not charged. Please try again in a moment.",
           errorType: "SERIALIZATION_CONFLICT",
+          retryAfter: 2,
+          yourCardWasNotCharged: true,
           timestamp: new Date().toISOString(),
         },
         { status: 409 },

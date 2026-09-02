@@ -849,6 +849,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
+  // #1319 — the same throttle as PATCH: this path reaches the refund gateway.
+  const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (limited) return limited;
 
   const { trialId } = await context.params;
 

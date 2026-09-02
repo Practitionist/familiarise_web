@@ -111,7 +111,7 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
 // contention as a 504, never as the structured 409 the client can retry.
 // Request paths use this bounded budget (~7 s); DEFAULT stays only for
 // callers that genuinely run outside a request.
-const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
+export const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
   ...DEFAULT_RETRY_CONFIG,
   retryCount: 5,
 };
@@ -477,22 +477,26 @@ export async function lockSubscriptionApproval(
 }
 
 /**
- * #1319 — minting a trial pay-link is its own atom (not a slot write), and it
- * used to lock under a private `lock:approval_payment:` name in
- * approval-payment.ts — a second name for the approve-this-request atom.
- * One namespace per atom: the trial approval lock lives here with its siblings.
+ * #1319 — the pay-link MINT is its own atom, nested under the approval atom.
+ * The approval routes mint while they still hold `consultation-approval:` /
+ * `subscription-approval:`, so minting under those keys would contend with
+ * the caller itself; resend paths mint with no approval lock at all. The old
+ * private `lock:approval_payment:` name in approval-payment.ts was this atom
+ * under an unguarded single-shot SET NX; it lives here now, guarded.
+ * Lock order: approval → mint, never the reverse.
  */
-export async function lockTrialApproval(
-  trialId: string,
+export async function lockApprovalPaymentMint(
+  kind: "CONSULTATION" | "SUBSCRIPTION" | "TRIAL",
+  id: string,
   ttl: number = DEFAULT_LOCK_TTL,
 ): Promise<ApprovalLock> {
-  const key = `trial-approval:${trialId}`;
+  const key = `approval-payment-mint:${kind.toLowerCase()}:${id}`;
   try {
-    return await acquireGuarded(key, ttl, "trial-approval");
+    return await acquireGuarded(key, ttl, "approval-payment-mint");
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) throw error;
     throw new Error(
-      "Lock contention: Another approval is in progress for this trial. Please try again.",
+      "Lock contention: a payment link is already being created for this request. Please try again.",
     );
   }
 }
@@ -503,6 +507,33 @@ export async function lockTrialApproval(
  */
 export async function unlockApproval(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
+}
+
+/** The approval grant lapsed mid-retry; the caller must not keep writing. */
+export class ApprovalLockLostError extends Error {
+  readonly code = "APPROVAL_LOCK_LOST";
+  readonly httpStatus = 409;
+  constructor(key: string) {
+    super(
+      "This request is being processed by another action. Please refresh and try again.",
+    );
+    this.name = "ApprovalLockLostError";
+    this.key = key;
+  }
+  readonly key: string;
+}
+
+/**
+ * #1319 — re-grant the approval lock for one more Serializable attempt. Four
+ * attempts of up to 40 s each outlive a fixed 45 s grant, and a lapsed grant
+ * lets a second approval run the post-commit mint concurrently.
+ */
+export async function renewApprovalLock(
+  lock: ApprovalLock | null | undefined,
+  ttl: number = APPROVAL_LOCK_TTL_MS,
+): Promise<void> {
+  if (!lock) return;
+  if (!(await extendLock(lock, ttl))) throw new ApprovalLockLostError(lock.key);
 }
 
 // ============================================================================
@@ -806,7 +837,7 @@ export async function unlockEventCheckout(lock: ApprovalLock): Promise<void> {
 // ============================================================================
 
 /** Cancel/reschedule hold a 25 s transaction; the grant must outlive it. */
-export const APPOINTMENT_LOCK_TTL_MS = 30_000;
+export const APPOINTMENT_LOCK_TTL_MS = 75_000; // reschedule tx 60 s + maxWait; cancel 40 s
 
 export class AppointmentBusyError extends Error {
   readonly httpStatus = 423 as const;
