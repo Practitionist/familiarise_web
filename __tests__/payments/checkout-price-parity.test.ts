@@ -102,7 +102,7 @@ function clientAmount(input: ServerInputs): Amounts {
         ? input.discount.value
         : input.discount?.type === "PERCENTAGE" && input.discount.maxDiscount
           ? Math.min(
-              Math.round(input.basePaise * (input.discount.value / 100)),
+              Math.round((input.basePaise * input.discount.value) / 100),
               input.discount.maxDiscount,
             )
           : undefined,

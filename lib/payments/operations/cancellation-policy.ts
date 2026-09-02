@@ -160,20 +160,24 @@ export function quoteBookingRefund(
   );
 
   const isProratable = input.isSubscription && input.slotsTotal > 0;
+  // Integer paise in BigInt: the products can leave the safe-integer range
+  // long before the amounts stop being real money (repo rule for lib/payments).
   const proratedBasePaise = isProratable
-    ? Math.floor(
-        (input.grossPaise * input.sessionsRemaining) / input.slotsTotal,
+    ? Number(
+        (BigInt(input.grossPaise) * BigInt(input.sessionsRemaining)) /
+          BigInt(input.slotsTotal),
       )
     : input.grossPaise;
+  // refundPct may carry two decimals; scale by 100 so the division is exact.
+  const refundBeforeClamp = Number(
+    (BigInt(proratedBasePaise) * BigInt(Math.round(refundPct * 100))) / 10_000n,
+  );
 
   return {
     refundPct,
     noticeHours,
     proratedBasePaise,
     prorated: isProratable && input.sessionsRemaining < input.slotsTotal,
-    refundPaise: Math.min(
-      Math.floor((proratedBasePaise * refundPct) / 100),
-      input.refundablePaise,
-    ),
+    refundPaise: Math.min(refundBeforeClamp, input.refundablePaise),
   };
 }

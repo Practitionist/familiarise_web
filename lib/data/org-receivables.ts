@@ -23,6 +23,7 @@
 import type { LedgerTransactionKind, OrgInvoiceStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -92,33 +93,38 @@ export async function getOrgReceivables(
 
   // Totals come from the database rather than the page of rows below: the page
   // is capped, and a total computed over a capped page is a wrong total.
-  const [byDirection, totalPostings, entries] = await Promise.all([
-    prisma.ledgerEntry.groupBy({
-      by: ["direction"],
-      where: { accountId },
-      _sum: { amountPaise: true },
-    }),
-    prisma.ledgerEntry.count({ where: { accountId } }),
-    prisma.ledgerEntry.findMany({
-      where: { accountId },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-      select: {
-        id: true,
-        direction: true,
-        amountPaise: true,
-        createdAt: true,
-        transaction: {
-          select: {
-            kind: true,
-            description: true,
-            paymentId: true,
-            invoiceId: true,
+  // One snapshot: a counter-posting committed between separate reads would
+  // make the totals and the page disagree.
+  const [byDirection, totalPostings, entries] = await prisma.$transaction(
+    [
+      prisma.ledgerEntry.groupBy({
+        by: ["direction"],
+        where: { accountId },
+        _sum: { amountPaise: true },
+      }),
+      prisma.ledgerEntry.count({ where: { accountId } }),
+      prisma.ledgerEntry.findMany({
+        where: { accountId },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        select: {
+          id: true,
+          direction: true,
+          amountPaise: true,
+          createdAt: true,
+          transaction: {
+            select: {
+              kind: true,
+              description: true,
+              paymentId: true,
+              invoiceId: true,
+            },
           },
         },
-      },
-    }),
-  ]);
+      }),
+    ],
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
 
   const accruedPaise = sumPaise(
     byDirection.find((r) => r.direction === "DEBIT")?._sum.amountPaise,

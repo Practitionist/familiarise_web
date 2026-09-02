@@ -103,11 +103,22 @@ async function pageUnaccruablePayments(
   if (candidates.length === 0) return 0;
 
   const keys = candidates.map((p) => unaccruedAlertKey(p.id, now));
-  const alreadyPaged = await prisma.systemEvent.findMany({
-    where: { correlationId: { in: keys } },
-    select: { correlationId: true },
-  });
-  const seen = new Set(alreadyPaged.map((e) => e.correlationId));
+  // Best-effort throughout: the sweep's money repair must never fail because
+  // its alerting could not read or write.
+  let seen: Set<string | null>;
+  try {
+    const alreadyPaged = await prisma.systemEvent.findMany({
+      where: { correlationId: { in: keys } },
+      select: { correlationId: true },
+    });
+    seen = new Set(alreadyPaged.map((e) => e.correlationId));
+  } catch (err) {
+    console.error(
+      "[sync-payment-earnings] dedupe lookup failed; skipping paging this run:",
+      err,
+    );
+    return 0;
+  }
 
   let paged = 0;
   for (const payment of candidates) {
@@ -133,13 +144,16 @@ async function pageUnaccruablePayments(
         ageHours,
       },
       correlationId: key,
-    }).catch((err) => {
-      console.error(
-        `[sync-payment-earnings] failed to page for ${payment.id}:`,
-        err,
-      );
-    });
-    paged++;
+    })
+      .then(() => {
+        paged++;
+      })
+      .catch((err) => {
+        console.error(
+          `[sync-payment-earnings] failed to page for ${payment.id}:`,
+          err,
+        );
+      });
   }
   return paged;
 }

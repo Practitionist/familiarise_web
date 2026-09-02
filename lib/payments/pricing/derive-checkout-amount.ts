@@ -81,6 +81,18 @@ export function computeDiscountPaise(
 ): number {
   if (!discount) return 0;
 
+  // A negative value or cap would RAISE the price above the list price.
+  if (
+    discount.discountValue < 0 ||
+    (discount.maxDiscount !== null &&
+      discount.maxDiscount !== undefined &&
+      discount.maxDiscount < 0)
+  ) {
+    throw new Error(
+      `Invalid discount code: negative value or cap (${discount.discountValue}, ${discount.maxDiscount ?? "no cap"})`,
+    );
+  }
+
   if (discount.discountType === "PERCENTAGE") {
     // Data-integrity check on the stored code, not on user input.
     if (discount.discountValue < 1 || discount.discountValue > 100) {
@@ -88,7 +100,9 @@ export function computeDiscountPaise(
         `Invalid discount code: percentage value must be between 1 and 100, got ${discount.discountValue}`,
       );
     }
-    const raw = Math.round(basePaise * (discount.discountValue / 100));
+    // Multiply first: the integer product divides exactly to a half-paise
+    // boundary, where `value / 100` as a float can land on either side.
+    const raw = Math.round((basePaise * discount.discountValue) / 100);
     const cap = discount.maxDiscount;
     return cap !== null && cap !== undefined && raw > cap ? cap : raw;
   }

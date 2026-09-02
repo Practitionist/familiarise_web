@@ -29,6 +29,9 @@ const mockInvoiceFindMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // Array-form $transaction: the read model takes its three account reads
+    // from one snapshot; the mock just runs the already-built promises.
+    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     ledgerAccount: {
       findUnique: (...a: unknown[]) => mockLedgerAccountFindUnique(...a),
     },
