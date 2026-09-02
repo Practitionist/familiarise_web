@@ -37,6 +37,9 @@ export interface AllocationRequest {
   initialAllocation?: boolean;
   /** #1012 — reschedule stale-tab precondition. */
   expectedTentativeSlotCount?: number;
+  /** #1206 — the consultant's explicit "place what fits now". Only ever sent
+   * on the second attempt, after the server has said how many sessions fit. */
+  allowPartial?: boolean;
 }
 
 /** What the allocate endpoints actually return in `data`: the created (or
@@ -54,6 +57,14 @@ export interface AllocationResponse {
   errorCode?: string;
   /** HTTP status of the failed response — 409 means "allocated elsewhere". */
   httpStatus?: number;
+  /** #1206 — set on success when fewer sessions were placed than the plan
+   * requires, and on a SLOT_SHORTAGE refusal (`placeableSessions`) to say how
+   * many a partial attempt would place. Counts are whole sessions. */
+  partial?: boolean;
+  placedSessions?: number;
+  requiredSessions?: number;
+  unplacedSessions?: number;
+  placeableSessions?: number;
 }
 
 export interface AllocationCallOptions {
@@ -65,6 +76,8 @@ export interface AllocationCallOptions {
   /** Sent as the Idempotency-Key header; the server replays the original
    * batch for a repeated key instead of double-booking (#837). */
   idempotencyKey?: string;
+  /** #1206 — allocate the sessions that fit instead of refusing them all. */
+  allowPartial?: boolean;
 }
 
 export interface ValidationResponse {
@@ -136,12 +149,19 @@ export class AllocationService {
           error: data.error || fallbackError,
           errorCode: data.errorCode,
           httpStatus: response.status,
+          // #1206 — a shortage the consultant can still act on.
+          placeableSessions: data.placeableSessions,
+          requiredSessions: data.requiredSessions,
         };
       }
 
       return {
         success: true,
         data: data.data,
+        partial: data.partial,
+        placedSessions: data.placedSessions,
+        requiredSessions: data.requiredSessions,
+        unplacedSessions: data.unplacedSessions,
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);
@@ -191,7 +211,10 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating consultation slots:", error);
-      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+      });
       return {
         success: false,
         error:
@@ -234,7 +257,10 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating subscription slots:", error);
-      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+      });
       return {
         success: false,
         error:
@@ -273,6 +299,7 @@ export class AllocationService {
       useRequestedSlots: allocationOptions?.useRequestedSlots,
       initialAllocation: allocationOptions?.initialAllocation,
       expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
+      allowPartial: allocationOptions?.allowPartial,
     };
 
     const paths = {
@@ -332,7 +359,10 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating class slots:", error);
-      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+      });
       return {
         success: false,
         error:
@@ -375,7 +405,10 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error validating webinar slots:", error);
-      reportSentryError(error, { subsystem: "scheduling", op: "slot-allocation" });
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "slot-allocation",
+      });
       return {
         success: false,
         error:

@@ -387,6 +387,17 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
   const doubleBookingResult = await detectDoubleBookings();
   allErrors.push(...doubleBookingResult.errors);
 
+  // #1206 follow-up — re-attempt the sessions a partial allocation left
+  // unplaced, once the consultant publishes more availability. Deliberately
+  // NOT done here yet: `autoAllocate` has no top-up mode. A recurring event
+  // with confirmed-but-incomplete sessions and no tentative rows is neither a
+  // reschedule nor an in-progress reallocation, so re-running it would delete
+  // every confirmed appointment (payments and all) and re-plan from scratch.
+  // The sweep needs a "place only the missing N, preserve the rest" path in
+  // SlotAllocationService first, plus a notification suppressor so a no-change
+  // run does not page the consultee hourly. Until then the consultant
+  // re-allocates from the request's Allocate Slots page.
+
   // #1319 A9 — the only reader of the shadow participant table until the
   // reader flip: report divergence from the slot↔user join, never repair it.
   await logParticipantDrift();

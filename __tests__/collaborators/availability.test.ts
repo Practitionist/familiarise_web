@@ -109,7 +109,9 @@ describe("assertCollaboratorsAvailable", () => {
       excludeAppointmentId: "appt-self",
     });
     const where = db.slotOfAppointment.findFirst.mock.calls[0][0].where;
-    expect(where.appointmentId).toEqual({ not: "appt-self" });
+    // #1319 — the guard now excludes a set (a class allocation carries every
+    // session of the event), so a single exclusion is a one-element notIn.
+    expect(where.appointmentId).toEqual({ notIn: ["appt-self"] });
     expect(where.isTentative).toBe(false);
   });
 });
