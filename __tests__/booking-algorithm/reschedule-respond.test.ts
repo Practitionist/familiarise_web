@@ -25,7 +25,11 @@ const mockGetSession = jest.fn();
 const mockHasActiveDispute = jest.fn();
 
 const txStub = {
-  rescheduleRequest: { updateMany: jest.fn() },
+  rescheduleRequest: {
+    updateMany: jest.fn(),
+    findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+  },
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // Present so a decline that wrote slots would be caught rather than silently
   // passing: "the released slots stay released" is the contract.
   slotOfAppointment: { updateMany: jest.fn() },
@@ -152,10 +156,7 @@ describe("accept re-validates through the allocator before anything is written",
       eventType: "consultation",
       eventId: "cons-1",
       mode: "manual",
-      slots: [
-        "2026-09-01T10:00:00.000Z",
-        "2026-09-08T10:00:00.000Z",
-      ],
+      slots: ["2026-09-01T10:00:00.000Z", "2026-09-08T10:00:00.000Z"],
       // Day-sharded keys would let two concurrent confirmations pass a
       // per-week cap on stale counts.
       wideLock: true,
