@@ -55,9 +55,15 @@ export function isWriteBlockedInDegraded(
 
 ---
 
-## 2. Cron Job Maintenance Guard
+## 2. Cron Job Maintenance Guard ✅ IMPLEMENTED (completed 2026-09-02)
 
 **Problem**: All 27 cron jobs bypass middleware entirely. They connect directly to PostgreSQL and have no awareness of maintenance mode.
+
+**Update (wave-5 sweep, `fix/maintenance-and-cron-coverage`)**: This item was marked done below on the strength of the original `lib/maintenance-cron.ts` utility, but the guard had not actually reached the whole fleet: 13 scheduled jobs, including six that move money or rewrite org entitlement state (`dunning`, `advance-program-cycles`, `auto-renew-contracts`, `expire-contracts`, `timeout-member-overages`, `release-pending-trust-earnings`, plus `wallet-low-balance`), never called `abortIfMaintenance()`. The wave-5 sweep added the call to all 13, added the six financial ones to `FINANCIAL_JOB_NAMES` so they also exit on DEGRADED, and flipped `auto-renew-contracts` and `expire-contracts` from fail-open to fail-closed locks. Every job under `jobs/**` now calls the guard; the three that remain unguarded (`cleanup-empty-folders`, `cron-heartbeat`, `stream-webhook-drift`) are read-only or storage-only scripts with no database connection to protect, and are enumerated in [the cron jobs reference](./04-cron-jobs-reference.md#jobs-that-ignore-maintenance-mode).
+
+The same sweep closed a second hole the guard never covered: the HTTP twins under `app/api/cleanup/*` import these job cores directly, so an authenticated ops trigger could run a job straight through an OFFLINE window with no check at all. `abortIfMaintenance()` cannot be reused there because its `process.exit(0)` would take the whole Next.js instance down with the request, so those routes now call `assertNotInMaintenance()`, which throws a `MaintenanceActiveError` the route handler answers with a 503 instead of exiting.
+
+Finally, the DEGRADED write-block matcher from item 1 below was widened at the same time: it now matches by path prefix instead of exact segment equality, and covers the gaps that prefix matching exposed — the `/api/organizations/*` money routes, request-for-approval, availability writes, and reschedule respond/withdraw. The `/api/slots/appointments` pattern that used to appear in that list was removed as a no-op, since no route matches it.
 
 **Proposed Change**: Create a shared utility that every cron job calls at startup to check maintenance state.
 
@@ -299,14 +305,14 @@ File: `scripts/cleanup/reconcile-document-storage.ts`
 
 ## Implementation Priority Order
 
-| #   | Improvement                                        | Priority | Status  |
-| --- | -------------------------------------------------- | -------- | ------- |
-| 2   | Cron job maintenance guard                         | CRITICAL | ✅ Done |
-| 1   | DEGRADED write-blocking                            | HIGH     | ✅ Done |
-| 3   | Webhook DB health check (Stripe/Razorpay) | HIGH     | ✅ Done |
-| A   | Admin system-jobs DEGRADED blocking                | MEDIUM   | ✅ Done |
-| B   | Stream.io webhook DB health check                  | MEDIUM   | ✅ Done |
-| C   | `reconcile-document-storage` storage probe         | MEDIUM   | ✅ Done |
-| 4   | UI maintenance guard hook                          | MEDIUM   | ✅ Done |
-| 5   | Admin pre-flight API                               | MEDIUM   | ✅ Done |
-| 6   | Scheduled maintenance                              | LOW      | Pending |
+| #   | Improvement                                | Priority | Status  |
+| --- | ------------------------------------------ | -------- | ------- |
+| 2   | Cron job maintenance guard                 | CRITICAL | ✅ Done |
+| 1   | DEGRADED write-blocking                    | HIGH     | ✅ Done |
+| 3   | Webhook DB health check (Stripe/Razorpay)  | HIGH     | ✅ Done |
+| A   | Admin system-jobs DEGRADED blocking        | MEDIUM   | ✅ Done |
+| B   | Stream.io webhook DB health check          | MEDIUM   | ✅ Done |
+| C   | `reconcile-document-storage` storage probe | MEDIUM   | ✅ Done |
+| 4   | UI maintenance guard hook                  | MEDIUM   | ✅ Done |
+| 5   | Admin pre-flight API                       | MEDIUM   | ✅ Done |
+| 6   | Scheduled maintenance                      | LOW      | Pending |
