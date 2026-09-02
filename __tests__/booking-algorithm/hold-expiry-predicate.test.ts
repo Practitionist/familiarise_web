@@ -150,4 +150,16 @@ describe("lock budgets and names (source pins)", () => {
       expect(src).toMatch(/withAppointmentLock\(appointmentId, \(\) =>/);
     }
   });
+
+  // Two accepts that both read PENDING serialise on the consultee lock, but
+  // with different slots neither trips the availability check — without the
+  // claim the second created a second appointment and repointed the trial at
+  // it, stranding the first slot hold (CodeRabbit round 2).
+  it("the trial scheduling transition claims the status it read", () => {
+    const src = read("app/api/trials/[trialId]/route.ts");
+    expect(src).toMatch(
+      /tx\.trialSession\.updateMany\(\{\s*where: \{ id: trialId, status: existingTrial\.status \},/,
+    );
+    expect(src).toMatch(/throw new TrialStateChangedError\(\)/);
+  });
 });

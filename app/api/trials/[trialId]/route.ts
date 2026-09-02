@@ -147,6 +147,21 @@ class TrialSlotUnavailableError extends Error {
   }
 }
 
+// #1319 review — the scheduling transition read `existingTrial.status` on the
+// global client, outside the transaction that acts on it. Two accepts that both
+// saw PENDING serialise on the consultee lock but pick DIFFERENT slots, so
+// neither trips the availability check: the second created a second appointment
+// and overwrote TrialSession.appointmentId, stranding the first one's slot hold
+// with nothing pointing at it. Thrown when the CAS claim matches no row.
+class TrialStateChangedError extends Error {
+  constructor() {
+    super(
+      "This trial was already updated by another request. Refresh and try again.",
+    );
+    this.name = "TrialStateChangedError";
+  }
+}
+
 /**
  * Validates that a time slot is still available for BOTH participants.
  * Runs on the scheduling transaction's client — never the global one — so the
@@ -435,6 +450,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               throw new TrialSlotUnavailableError();
             }
 
+            // Claim the status this request read, before creating anything
+            // against it — the WHERE clause is the state machine, so a
+            // concurrent accept that already moved the trial matches zero rows
+            // and rolls the whole attempt back (see TrialStateChangedError).
+            const claimed = await tx.trialSession.updateMany({
+              where: { id: trialId, status: existingTrial.status },
+              data: {
+                status: requiresPayment
+                  ? TrialSessionStatus.AWAITING_PAYMENT
+                  : TrialSessionStatus.SCHEDULED,
+              },
+            });
+            if (claimed.count === 0) {
+              throw new TrialStateChangedError();
+            }
+
             // Create an appointment for the trial
             const appointment = await tx.appointment.create({
               data: {
@@ -603,6 +634,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               },
               { status: 409 },
             );
+          }
+          // A lost CAS claim is the same class of answer — the caller acted on
+          // a state that has since moved — but it is not the slot that went.
+          if (error instanceof TrialStateChangedError) {
+            return NextResponse.json({ error: error.message }, { status: 409 });
           }
           throw error;
         } finally {
