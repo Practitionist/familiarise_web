@@ -2986,6 +2986,25 @@ export async function handleCheckout(
                 paymentId: payment.id,
                 engagementsConsumed: engagementsForCap,
                 priceAtBookingPaise: amount,
+                // PR-1e (G3) — the helper's set-diff idempotency guard only
+                // arms itself when the caller NAMES the appointments. Omitting
+                // them left every checkout debit unguarded, so a replay against
+                // the same Payment (retried webhook, resumed order) incremented
+                // the meter a second time. CONSULTATION/WEBINAR are one
+                // engagement on the appointment just created; CLASS meters one
+                // per class session, which is exactly the set
+                // handleClassCheckout counted.
+                appointmentIds:
+                  validatedData.appointmentType === "CLASS"
+                    ? (
+                        await tx.appointment.findMany({
+                          where: { classId: validatedData.eventId },
+                          select: { id: true },
+                        })
+                      ).map((a) => a.id)
+                    : createdAppointment
+                      ? [createdAppointment.id]
+                      : [],
               });
             } catch (err) {
               if (err instanceof ProgramAssignmentLimitError) {
