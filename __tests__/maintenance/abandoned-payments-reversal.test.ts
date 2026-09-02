@@ -8,10 +8,11 @@
  * The sweep used to DELETE the request, which cascaded the Appointment and
  * every Payment under it (#1074 class). It now soft-cancels: the request moves
  * to EXPIRED through the CAS helper, the slots are tombstoned by status, and
- * the money rows stay readable. Two things are pinned here: no delete member
+ * the money rows stay readable. Three things are pinned here: no delete member
  * exists on the mock (a surviving delete path throws a TypeError rather than
- * passing), and the referral-credit reversal still runs before the rows are
- * expired, inside the same transaction.
+ * passing), the referral-credit reversal still runs before the rows are
+ * expired inside the same transaction, and a CAS miss escapes that transaction
+ * so the reversal rolls back with it instead of committing on a paid booking.
  */
 
 const order: string[] = [];
@@ -67,9 +68,11 @@ import prisma from "../../lib/prisma";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
 import { cleanupAbandonedPayments } from "../../scripts/payments/cleanup-abandoned-payments";
 import { REQUEST_ALLOWED_FROM } from "../../lib/booking/transitions";
+import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
 const db = prisma as unknown as {
   appointment: { findMany: jest.Mock };
+  $transaction: jest.Mock;
   __tx: {
     payment: {
       findUnique: jest.Mock;
@@ -162,8 +165,14 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
   it("never deletes: the request is EXPIRED through the CAS, slots and appointment are tombstoned", async () => {
     await cleanupAbandonedPayments();
 
+    // The cohort's money predicate is re-evaluated by the UPDATE itself: a
+    // capture that landed since the read matches zero rows.
     expect(tx.consultation.updateMany).toHaveBeenCalledWith({
-      where: { id: "cons_1", status: { in: REQUEST_ALLOWED_FROM.EXPIRED } },
+      where: {
+        id: "cons_1",
+        appointment: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+        status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
+      },
       data: { status: "EXPIRED" },
     });
     expect(tx.slotOfAppointment.updateMany).toHaveBeenCalledWith(
@@ -233,6 +242,23 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
     expect(tx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
     expect(tx.appointment.updateMany).not.toHaveBeenCalled();
     expect(result.errorCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(result.cleanedCount).toBe(0);
+  });
+
+  it("lets the CAS miss escape the transaction so the credit restoration rolls back", async () => {
+    // Swallowing IllegalTransitionError inside the callback would COMMIT the
+    // payment expiry and the credit reversal that ran before the CAS — credits
+    // handed back on a booking whose capture landed mid-transaction. The
+    // rejection is what makes Prisma roll the whole unit back.
+    tx.consultation.updateMany.mockResolvedValue({ count: 0 });
+
+    await cleanupAbandonedPayments();
+
+    expect(mockReverse).toHaveBeenCalledWith("pay_1", tx);
+    await expect(db.$transaction.mock.results[0].value).rejects.toThrow(
+      IllegalTransitionError,
+    );
   });
 
   it("still frees the slot when the credit reversal fails", async () => {

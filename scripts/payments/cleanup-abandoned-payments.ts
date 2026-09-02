@@ -309,6 +309,9 @@ async function releaseGroupSeats(
  * the request cascaded the Appointment and with it every Payment (EXPIRED
  * intents, credit usage, a late capture's target). The slot is freed by status,
  * not absence.
+ *
+ * A CAS miss throws out of the caller's transaction on purpose: the payment
+ * expiry and the credit restoration that ran ahead of it must roll back with it.
  */
 async function expireRequestAndReleaseSlots(
   tx: Pick<
@@ -316,7 +319,7 @@ async function expireRequestAndReleaseSlots(
     "slotOfAppointment" | "appointment" | "consultation" | "subscription"
   >,
   appointment: AbandonedAppointment,
-): Promise<"cleaned" | "skipped"> {
+): Promise<void> {
   const kind = appointment.consultation ? "consultation" : "subscription";
   const confirmedSlots = await tx.slotOfAppointment.count({
     where: {
@@ -341,29 +344,39 @@ async function expireRequestAndReleaseSlots(
     console.log(
       `🗑️ Released ${released} tentative slot(s) for ${kind} appointment: ${appointment.id}`,
     );
-    return "cleaned";
+    return;
   }
 
-  try {
-    if (appointment.consultation) {
-      await transitionConsultationRequest(tx, {
-        where: { id: appointment.consultation.id },
-        to: AppointmentStatus.EXPIRED,
-      });
-    } else if (appointment.subscription) {
-      await transitionSubscriptionRequest(tx, {
-        where: { id: appointment.subscription.id },
-        to: AppointmentStatus.EXPIRED,
-      });
-    }
-  } catch (error) {
-    // Raced a capture or an approval: the row moved out of the expirable set
-    // since the cohort read. Leave it alone.
-    if (!(error instanceof IllegalTransitionError)) throw error;
-    console.log(
-      `⏭️ Skipped appointment ${appointment.id} — status changed since the sweep read`,
-    );
-    return "skipped";
+  // The cohort's money predicate is repeated in the CAS WHERE, like the
+  // approval and stale-pending arms. Status alone is not enough: the include
+  // above only carries PENDING rows, and `reconcile-payment-status` flips a
+  // recovered capture to SUCCEEDED without moving the request — so a sibling
+  // or freshly-succeeded payment is invisible to a read-then-write. Re-checked
+  // by the UPDATE itself, a paid booking matches zero rows and is skipped.
+  if (appointment.consultation) {
+    await transitionConsultationRequest(tx, {
+      where: {
+        id: appointment.consultation.id,
+        appointment: {
+          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+        },
+      },
+      to: AppointmentStatus.EXPIRED,
+    });
+  } else if (appointment.subscription) {
+    // Subscription→Appointment is to-many (one per session), so the predicate
+    // is "no appointment under this subscription carries a succeeded payment".
+    await transitionSubscriptionRequest(tx, {
+      where: {
+        id: appointment.subscription.id,
+        appointments: {
+          none: {
+            payment: { some: { paymentStatus: PaymentStatus.SUCCEEDED } },
+          },
+        },
+      },
+      to: AppointmentStatus.EXPIRED,
+    });
   }
 
   await transitionSlotCompletion(tx, {
@@ -380,33 +393,49 @@ async function expireRequestAndReleaseSlots(
   console.log(
     `🗑️ Expired abandoned ${kind} appointment (soft): ${appointment.id}`,
   );
-  return "cleaned";
 }
 
 /**
  * One appointment, one transaction: skip a capture that landed mid-sweep,
  * expire its payments, hand back the referral credits, then release the hold —
  * group seats for an event, request slots for a consultation or subscription.
+ *
+ * The CAS miss is caught OUTSIDE the transaction (the stale-pending sweep's
+ * shape). Swallowing it inside would resolve the callback and commit the
+ * payment expiry and credit restoration that ran before it, handing credits
+ * back on a booking whose capture landed mid-transaction. Letting it escape
+ * makes Prisma roll the whole unit back; only then is it counted as skipped.
  */
 async function cleanupAbandonedAppointment(
   appointment: AbandonedAppointment,
   errors: string[],
 ): Promise<"cleaned" | "skipped"> {
-  return prisma.$transaction(async (tx) => {
-    if (await anyPaymentSucceeded(tx, appointment)) return "skipped" as const;
+  try {
+    return await prisma.$transaction(async (tx) => {
+      if (await anyPaymentSucceeded(tx, appointment)) return "skipped" as const;
 
-    await expirePendingPayments(tx, appointment.payment, errors);
-    await restoreReferralCredits(tx, appointment.payment);
+      await expirePendingPayments(tx, appointment.payment, errors);
+      await restoreReferralCredits(tx, appointment.payment);
 
-    if (appointment.webinar || appointment.class) {
-      await releaseGroupSeats(tx, appointment);
+      if (appointment.webinar || appointment.class) {
+        await releaseGroupSeats(tx, appointment);
+        return "cleaned" as const;
+      }
+      if (appointment.consultation || appointment.subscription) {
+        await expireRequestAndReleaseSlots(tx, appointment);
+      }
       return "cleaned" as const;
-    }
-    if (appointment.consultation || appointment.subscription) {
-      return expireRequestAndReleaseSlots(tx, appointment);
-    }
-    return "cleaned" as const;
-  });
+    });
+  } catch (error) {
+    // Raced a capture or an approval: the row moved out of the expirable set,
+    // or its payment succeeded, since the cohort read. The transaction is
+    // rolled back by the time this runs — nothing above it was committed.
+    if (!(error instanceof IllegalTransitionError)) throw error;
+    console.log(
+      `⏭️ Skipped appointment ${appointment.id} — status changed, or the payment succeeded, since the sweep read`,
+    );
+    return "skipped";
+  }
 }
 
 /**

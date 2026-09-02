@@ -102,7 +102,9 @@ export async function transitionConsultationRequest(
 export async function transitionSubscriptionRequest(
   tx: Pick<Tx, "subscription">,
   args: {
-    where: { id: string };
+    /** Same idiom as the consultation helper: extra predicates that must still
+     * hold at write time belong in this WHERE, not in a read ahead of it. */
+    where: Prisma.SubscriptionWhereInput & { id: string };
     to: AppointmentStatus;
     data?: Omit<Prisma.SubscriptionUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges (overage-transitions idiom). */
