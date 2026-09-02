@@ -1,5 +1,7 @@
 # Payment Processing & Webhooks
 
+> **Superseded (2026-09-03):** this document dates to November 2025 and describes an architecture this codebase no longer has — webhooks that create appointments directly from payment-intent metadata (`createAppointmentFromWebhook`), and a failure path that `delete`s appointments and slots outright. The current checkout path is payment-first with a pre-acquired interval-atom lock and CAS status transitions, and cancellation is always a soft status write, never a row deletion. For what the code actually does today, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) (ADR B6, B7, B11) and the wave-5 entries in [`docs/booking/05-troubleshooting-and-changelog.md`](../../booking/05-troubleshooting-and-changelog.md). The rest of this file is kept for historical context only; do not cite its file:line references or its deletion-based cleanup flow as current behavior.
+
 > **Navigation:** [Overview & Consultation](./01-overview-and-consultation.md) | [Webinar & Class](./02-webinar-and-class.md) | **Payment Processing** | [Edge Cases](./04-edge-cases.md) | [Status Flows](./05-status-flows.md)
 
 ## Table of Contents
@@ -143,10 +145,10 @@ The API categorizes errors for client-side handling:
 ```typescript
 // utils/appointmentlock.ts lines 59-64
 export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
-  CONSULTATION: 60_000,   //  60 s — single-slot write + gateway round-trip
-  SUBSCRIPTION: 120_000,  // 120 s — same as WEBINAR
-  WEBINAR:      120_000,  // 120 s — may write N seats
-  CLASS:        300_000,  // 300 s — N sessions × M slots
+  CONSULTATION: 60_000, //  60 s — single-slot write + gateway round-trip
+  SUBSCRIPTION: 120_000, // 120 s — same as WEBINAR
+  WEBINAR: 120_000, // 120 s — may write N seats
+  CLASS: 300_000, // 300 s — N sessions × M slots
 };
 ```
 
@@ -673,8 +675,8 @@ async function createAppointmentFromWebhook(
     appointmentType,
     planId,
     eventId,
-    startsAt,    // renamed from `slotStartTimeInUTC`; normalizeLegacySlotKeys() handles in-flight orders
-    endsAt,      // renamed from `slotEndTimeInUTC`
+    startsAt, // renamed from `slotStartTimeInUTC`; normalizeLegacySlotKeys() handles in-flight orders
+    endsAt, // renamed from `slotEndTimeInUTC`
     notes,
   } = metadata;
 
@@ -759,13 +761,13 @@ async function confirmExistingAppointment(
   if (appointment?.consultation) {
     await tx.consultation.update({
       where: { id: appointment.consultation.id },
-      data: { status: AppointmentStatus.APPROVED },  // field renamed from `requestStatus`
+      data: { status: AppointmentStatus.APPROVED }, // field renamed from `requestStatus`
     });
   }
   if (appointment?.subscription) {
     await tx.subscription.update({
       where: { id: appointment.subscription.id },
-      data: { status: AppointmentStatus.APPROVED },   // field renamed from `requestStatus`
+      data: { status: AppointmentStatus.APPROVED }, // field renamed from `requestStatus`
     });
   }
   if (appointment?.webinar) {
@@ -1094,9 +1096,9 @@ stateDiagram-v2
 
 Two separate expiration windows exist — do not conflate them:
 
-| TTL | What it governs | Value | Source |
-|-----|----------------|-------|--------|
-| `Payment.expiresAt` | Gateway checkout session lifetime — the window in which the user must complete payment | **30 minutes** | `lib/payments/operations/checkout.ts` line ≈ 2307 |
+| TTL                        | What it governs                                                                             | Value                                            | Source                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
+| `Payment.expiresAt`        | Gateway checkout session lifetime — the window in which the user must complete payment      | **30 minutes**                                   | `lib/payments/operations/checkout.ts` line ≈ 2307               |
 | `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-slots.ts` line 28, #833 |
 
 The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-slots` job is a separate belt-and-braces sweep running every 2 hours.
@@ -1581,8 +1583,8 @@ If server crashes during payment, metadata enables full recovery:
 const metadata = {
   appointmentType: "CONSULTATION",
   planId: "plan-123",
-  startsAt: "2025-11-07T10:00:00Z",   // renamed from `slotStartTimeInUTC`
-  endsAt: "2025-11-07T11:00:00Z",     // renamed from `slotEndTimeInUTC`
+  startsAt: "2025-11-07T10:00:00Z", // renamed from `slotStartTimeInUTC`
+  endsAt: "2025-11-07T11:00:00Z", // renamed from `slotEndTimeInUTC`
   notes: "Follow-up consultation",
   userId: "user-456",
   consulteeProfileId: "profile-789",

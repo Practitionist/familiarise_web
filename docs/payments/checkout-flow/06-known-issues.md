@@ -5,6 +5,8 @@
 > **Branch:** `fix/payment-algorithm-2b`
 > **Status:** Issues identified, fixes implemented
 
+> **Superseded (2026-09-03):** every issue below was fixed on the `fix/payment-algorithm-2b` branch that shipped in November 2025, and the locking/validation code it fixed has since been replaced outright — by the interval-atom `slot-booking:` locks in `utils/appointmentlock.ts`, the CAS transitions in `lib/booking/transitions.ts`, and the bounded request-path retry budgets (`REQUEST_PATH_RETRY_CONFIG`, `CHECKOUT_WAIT_RETRY_CONFIG`). None of the fixes described here describe current code. For the current mechanisms, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) and [`docs/booking/15-checklist.md`](../../booking/15-checklist.md). Kept for historical context only.
+
 ---
 
 ## Table of Contents
@@ -144,8 +146,8 @@ T=35s    User A's transaction commits → DOUBLE BOOKING
 
 export async function lockSlotBooking(
   consultantProfileId: string,
-  startsAt: string,           // renamed from `slotStartTimeInUTC`
-  ttl: number = 60000,        // ← Increased from 15000 to 60000
+  startsAt: string, // renamed from `slotStartTimeInUTC`
+  ttl: number = 60000, // ← Increased from 15000 to 60000
 ): Promise<ApprovalLock> {
   const key = `slot-booking:${consultantProfileId}:${startsAt}`;
   try {
@@ -408,7 +410,7 @@ export async function handleSubscriptionCheckout(
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
-      status: { in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED] },  // field+enum renamed from `requestStatus`/AppointmentStatus
+      status: { in: [AppointmentStatus.PENDING, AppointmentStatus.APPROVED] }, // field+enum renamed from `requestStatus`/AppointmentStatus
       OR: [
         {
           AND: [
@@ -430,7 +432,7 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      status: skipPayment                              // renamed from `requestStatus`; AppointmentStatus was AppointmentStatus
+      status: skipPayment // renamed from `requestStatus`; AppointmentStatus was AppointmentStatus
         ? AppointmentStatus.APPROVED
         : AppointmentStatus.PENDING,
       requestedById: consulteeProfileId,
