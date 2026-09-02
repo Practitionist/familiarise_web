@@ -219,8 +219,9 @@ async function expirePendingPayments(
     try {
       await cancelPaymentIntent(payment.paymentIntent, payment.paymentGateway);
 
-      await tx.payment.update({
-        where: { id: payment.id },
+      // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
+      await tx.payment.updateMany({
+        where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
         data: { paymentStatus: PaymentStatus.EXPIRED },
       });
     } catch (paymentError) {
@@ -562,8 +563,17 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
           // REJECTED reads as "the consultant declined" on every surface, and
           // the CAS keeps a capture that raced this sweep from being clobbered.
           try {
+            // The cohort read's payment filter is repeated in the UPDATE's
+            // WHERE: a capture that landed since the read (Stripe reconcile
+            // flips the payment without touching the request) makes this
+            // match zero rows instead of expiring a paid booking.
             await transitionConsultationRequest(tx, {
-              where: { id: consultation.id },
+              where: {
+                id: consultation.id,
+                appointment: {
+                  payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+                },
+              },
               to: AppointmentStatus.EXPIRED,
               fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
             });
@@ -595,8 +605,10 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
           // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
           if (consultation.appointment?.payment) {
             for (const payment of consultation.appointment.payment) {
-              await tx.payment.update({
-                where: { id: payment.id },
+              // Conditional: only a still-PENDING row expires; a capture that
+              // raced this write keeps its SUCCEEDED status.
+              await tx.payment.updateMany({
+                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
                 data: { paymentStatus: PaymentStatus.EXPIRED },
               });
             }
