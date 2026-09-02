@@ -32,6 +32,7 @@ import {
   isRecurringEventType,
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
+import { countHalfHourAtoms } from "@/lib/appointments/contiguous-slot-run";
 import {
   matchesPreferredDays,
   maxPreferenceScore,
@@ -1882,16 +1883,28 @@ export class SlotAllocationService {
             );
           }
 
-          // Verify appointment slots match requested slots
-          const existingSlotCount = existingAppointments.reduce(
-            (sum, appointment) => sum + appointment.slotsOfAppointment.length,
+          // Verify the appointments COVER exactly the requested half-hour atoms.
+          //
+          // #1319 — this compared row count to atom count, which are the same
+          // number only for an appointment already stored the canonical way
+          // (#1071). 76 of 87 production consultations are a single 60-minute
+          // row, so a one-hour booking offered two atoms and answered "1", and
+          // approving it was impossible: the message read "Found 1 slots but 2
+          // requested" and the consultant had no action that could fix it.
+          const existingAtomCount = existingAppointments.reduce(
+            (sum, appointment) =>
+              sum +
+              appointment.slotsOfAppointment.reduce(
+                (atoms, slot) => atoms + countHalfHourAtoms(slot),
+                0,
+              ),
             0,
           );
 
-          if (existingSlotCount !== requestedSlots.length) {
+          if (existingAtomCount !== requestedSlots.length) {
             throw new AllocationValidationError(
-              `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-                `but ${requestedSlots.length} requested slots. ` +
+              `Appointment mismatch: the existing appointments cover ${existingAtomCount} ` +
+                `half-hour atoms but ${requestedSlots.length} were requested. ` +
                 `The appointments may have been modified. Please review and try again.`,
             );
           }
