@@ -6,6 +6,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import {
   findUncoveredAtom,
+  loadPublishedCoverage,
   windowAtoms,
 } from "@/utils/slotAllocation/availabilityCoverage";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -948,16 +949,10 @@ export async function validateSlotAvailability(
     }
 
     const atoms = windowAtoms(slotStart, slotEnd);
-    const weeklyRows = await tx.slotOfAvailabilityWeekly.findMany({
-      where: { consultantProfileId: profileId },
-    });
-    const customRows = await tx.slotOfAvailabilityCustom.findMany({
-      where: {
-        consultantProfileId: profileId,
-        startsAt: { lt: slotEnd },
-        endsAt: { gt: slotStart },
-      },
-    });
+    // ScheduleType is exclusive, so only the consultant's active arm publishes
+    // availability; the loader hands back [] for the dormant one (#1320).
+    const { scheduleType, weeklyRows, customRows } =
+      await loadPublishedCoverage(tx, profileId, slotStart, slotEnd);
     const uncovered = findUncoveredAtom(atoms, weeklyRows, customRows);
 
     if (uncovered) {
@@ -966,6 +961,7 @@ export async function validateSlotAvailability(
         JSON.stringify({
           event: "slot_validation_failed",
           reason: "atom_outside_published_availability",
+          scheduleType,
           uncoveredAtomStart: uncovered.start.toISOString(),
           candidateDay: uncovered.day,
           candidateMinutes: uncovered.minutes,

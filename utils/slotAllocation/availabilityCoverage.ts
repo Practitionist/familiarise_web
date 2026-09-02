@@ -1,3 +1,4 @@
+import type { Tx } from "@/lib/prisma";
 import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 /**
@@ -66,4 +67,60 @@ export function findUncoveredAtom(
     if (!inCustom) return atom;
   }
   return null;
+}
+
+/**
+ * The rows that actually publish availability for one consultant over
+ * [start, end). ScheduleType is exclusive — a consultant is WEEKLY xor CUSTOM —
+ * so the inactive arm contributes nothing, exactly as the expert-page
+ * allocation route already filters it. Reading the dormant arm would let a
+ * stale row from a consultant's previous schedule mode cover an atom no
+ * surface offers.
+ */
+export interface PublishedCoverage {
+  scheduleType: "WEEKLY" | "CUSTOM" | null;
+  weeklyRows: WeeklyCoverageRow[];
+  customRows: CustomCoverageRow[];
+}
+
+export async function loadPublishedCoverage(
+  db: Pick<
+    Tx,
+    | "consultantProfile"
+    | "slotOfAvailabilityWeekly"
+    | "slotOfAvailabilityCustom"
+  >,
+  consultantProfileId: string,
+  start: Date,
+  end: Date,
+): Promise<PublishedCoverage> {
+  const profile = await db.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: { scheduleType: true },
+  });
+  const scheduleType = profile?.scheduleType ?? null;
+  const weeklyRows =
+    scheduleType === "WEEKLY"
+      ? await db.slotOfAvailabilityWeekly.findMany({
+          where: { consultantProfileId },
+          select: {
+            startDay: true,
+            startTimeUtc: true,
+            endTimeUtc: true,
+            utcOffsetMinutes: true,
+          },
+        })
+      : [];
+  const customRows =
+    scheduleType === "CUSTOM"
+      ? await db.slotOfAvailabilityCustom.findMany({
+          where: {
+            consultantProfileId,
+            startsAt: { lt: end },
+            endsAt: { gt: start },
+          },
+          select: { startsAt: true, endsAt: true },
+        })
+      : [];
+  return { scheduleType, weeklyRows, customRows };
 }
