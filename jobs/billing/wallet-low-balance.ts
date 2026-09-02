@@ -8,7 +8,7 @@
  * (or a same-day re-run) can't double-notify.
  *
  * There is NO money movement here and NO WalletTopUp row is created. The
- * gateway-mandate auto-charge is a TODO(#777) for when Razorpay mandates land
+ * gateway-mandate auto-charge is a TODO(#1319) for when Razorpay mandates land
  * (that's why autoTopUpMandateId / autoTopUpAmountPaise stay unused by this
  * wave). For now we just detect, tell finance, and stamp the cooldown.
  *
@@ -78,7 +78,7 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
     });
     if (claim.count === 0) continue;
 
-    // TODO(#777): when Razorpay mandates land, charge autoTopUpMandateId for
+    // TODO(#1319): when Razorpay mandates land, charge autoTopUpMandateId for
     // autoTopUpAmountPaise here (inside a tx that writes the WalletTopUp +
     // ledger row) when autoTopUpEnabled. This wave is NOTIFY-ONLY — no money
     // moves and no WalletTopUp is created.

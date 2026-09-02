@@ -306,10 +306,6 @@ async function quoteIndividualBooking(
  * same tier function, the same linear proration and the same clamp to the
  * refundable balance. Restating any of that here would let the quote and the
  * charge drift.
- *
- * TODO(#1174): `lib/booking/org-actor` is replicated from
- * fix/reschedule-cancel-lifecycle, which introduces it for the POST route.
- * Drop this note once the two have converged on one copy.
  */
 export async function GET(
   _request: Request,

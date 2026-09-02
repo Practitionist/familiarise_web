@@ -146,7 +146,9 @@ async function patchSettings(orgId: string, payload: PatchPayload) {
 
 export function GeneralPanel({ orgId }: { orgId: string }) {
   const { isAtLeast } = useOrgRole(orgId);
-  const { allowed } = useRequireOrgAccess(orgId, { permission: "settings.manage" });
+  const { allowed } = useRequireOrgAccess(orgId, {
+    permission: "settings.manage",
+  });
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -202,7 +204,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     setGstStateCode(data.profile.taxInfo?.gstStateCode ?? "");
     setGstRegStatus(data.profile.taxInfo?.gstRegStatus ?? "UNREGISTERED");
     setMsmeStatus(data.profile.msmeInfo?.msmeStatus ?? "NONE");
-    setMsmeAgreement(data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false);
+    setMsmeAgreement(
+      data.profile.msmeInfo?.msmeWrittenAgreementOnFile ?? false,
+    );
   }, [data]);
 
   const mutation = useMutation({
@@ -254,7 +258,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     nextValue: boolean,
   ) => {
     if (!data) return;
-    const current = field === "canSponsor" ? data.profile.canSponsor : data.profile.canHost;
+    const current =
+      field === "canSponsor" ? data.profile.canSponsor : data.profile.canHost;
     if (nextValue === current) return;
     if (nextValue === false) {
       setPendingDisable(field);
@@ -308,7 +313,9 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
         msmeStatus,
         msmeWrittenAgreementOnFile: msmeAgreement,
       });
-      await queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
     } catch (err) {
       // Stale-tab conflicts route through the same dialog as the generic
       // mutation instead of a dead-end banner (CR #1240 r2).
@@ -316,7 +323,11 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
       if (code === "VERSION_CONFLICT") {
         setConflictOpen(true);
       } else {
-        setError(err instanceof Error ? err.message : "Failed to save MSME declaration");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to save MSME declaration",
+        );
       }
     } finally {
       setMsmeSaving(false);
@@ -347,14 +358,19 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
     setResubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/organizations/${orgId}/verification/resubmit`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `/api/organizations/${orgId}/verification/resubmit`,
+        {
+          method: "POST",
+        },
+      );
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
         throw new Error(b.error || "Resubmit failed");
       }
-      await queryClient.invalidateQueries({ queryKey: ["org-settings", orgId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["org-settings", orgId],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Resubmit failed");
     } finally {
@@ -474,7 +490,7 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* #779 TODO: these fields are MAINTAINER-enabled in the UI but
+            {/* #1332 TODO: these fields are MAINTAINER-enabled in the UI but
                 the org PATCH route is requireOrgOwner — a MAINTAINER save
                 gets a silent 403. RBAC redistribution (widen the API to
                 MAINTAINER for the profile subset, or disable here for
@@ -536,9 +552,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   />
                 </div>
                 <p className="text-xs text-zinc-500">
-                  Public discovery URL for the org. Changing the slug breaks
-                  any inbound links pointing to the old URL — only owners can
-                  edit.
+                  Public discovery URL for the org. Changing the slug breaks any
+                  inbound links pointing to the old URL — only owners can edit.
                 </p>
               </div>
 
@@ -592,8 +607,8 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     disabled={!isAtLeast("OWNER")}
                   />
                   <p className="text-xs text-zinc-500">
-                    India default is NET-60. Only applies when funding
-                    source is INVOICE.
+                    India default is NET-60. Only applies when funding source is
+                    INVOICE.
                   </p>
                 </div>
               </div>
@@ -709,14 +724,18 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                     <SelectItem value="NONE">
                       Not an MSME / prefer not to say
                     </SelectItem>
-                    <SelectItem value="MICRO">Micro (Udyam registered)</SelectItem>
-                    <SelectItem value="SMALL">Small (Udyam registered)</SelectItem>
+                    <SelectItem value="MICRO">
+                      Micro (Udyam registered)
+                    </SelectItem>
+                    <SelectItem value="SMALL">
+                      Small (Udyam registered)
+                    </SelectItem>
                     <SelectItem value="MEDIUM">Medium</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-zinc-500">
-                  Micro &amp; Small suppliers must be paid within 15 days
-                  (45 with a signed agreement) under the MSMED Act; declaring
+                  Micro &amp; Small suppliers must be paid within 15 days (45
+                  with a signed agreement) under the MSMED Act; declaring
                   accurately lets us schedule your payouts to that clock.
                 </p>
                 {msmeStatus !== "NONE" && (
@@ -732,7 +751,11 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
                   </div>
                 )}
                 {msmeDirty && (
-                  <Button size="sm" onClick={() => void saveMsme()} disabled={msmeSaving}>
+                  <Button
+                    size="sm"
+                    onClick={() => void saveMsme()}
+                    disabled={msmeSaving}
+                  >
                     {msmeSaving ? "Saving…" : "Save MSME declaration"}
                   </Button>
                 )}
