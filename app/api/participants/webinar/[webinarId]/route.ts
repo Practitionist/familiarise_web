@@ -1,6 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   requireApiAuth,
   isPrivileged,
@@ -136,7 +138,9 @@ export async function DELETE(
     const isOrganiser =
       isPrivileged(session.user.role) || !!session.user.consultantProfileId;
     if (!isSelfLeave && !isOrganiser) {
-      return forbiddenResponse("Only consultants can remove other participants");
+      return forbiddenResponse(
+        "Only consultants can remove other participants",
+      );
     }
 
     // Ownership check for organiser removals; self-leave only needs the event
@@ -180,44 +184,55 @@ export async function DELETE(
       }
     }
 
-    // Only the slots this user actually occupies.
-    const userSlots = await prisma.slotOfAppointment.findMany({
-      where: {
-        appointment: { webinarId },
-        user: { some: { id: userId } },
-      },
-      select: { id: true },
-    });
-
-    // #1003 — nothing to remove means nothing to refund. Without this the
-    // handler committed an empty transaction and still called the seat refund,
-    // which looks the payment up by user + event rather than by what was
-    // actually released — so repeat clicks and stale tabs each raised an ops
-    // page for a removal that never happened.
+    // #1003 — nothing to remove means nothing to refund. The refund helper
+    // looks the payment up by user + event rather than by what was actually
+    // released, so a removal that released nothing still raised an ops page.
     //
+    // The roster read used to sit OUTSIDE the write, which made that guard
+    // decorative under concurrency: a repeat click, a stale tab, or an
+    // organiser removing someone who is leaving at the same moment both read a
+    // non-empty roster and both went on to refund one paid seat twice.
+    // Re-reading inside a Serializable transaction makes the seat itself the
+    // arbiter — the loser is aborted on the row it also tried to write, and its
+    // retry sees the empty roster.
+    const removedSlots = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const userSlots = await tx.slotOfAppointment.findMany({
+            where: {
+              appointment: { webinarId },
+              user: { some: { id: userId } },
+            },
+            select: { id: true },
+          });
+          if (userSlots.length === 0) return 0;
+
+          // Sequential inside the tx: the parent row's `updatedAt` write is
+          // what raises the serialization conflict for the losing writer.
+          for (const slot of userSlots) {
+            await tx.slotOfAppointment.update({
+              where: { id: slot.id },
+              data: {
+                user: {
+                  disconnect: { id: userId },
+                },
+              },
+            });
+          }
+          return userSlots.length;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+
     // 200, not 404: DELETE is idempotent and "this person is off the roster"
     // is the requested end state either way. A 404 made the second click read
     // as a failure to the roster client, which throws on any non-ok response —
     // so it showed "Failed to remove participant" and never invalidated the
     // query, leaving the removed row on screen.
-    if (userSlots.length === 0) {
+    if (removedSlots === 0) {
       return NextResponse.json({ removed: false, refund: null });
     }
-
-    // One atomic batch — sequential awaits paid a DB round trip per slot
-    // and could partially remove a participant on mid-loop failure.
-    await prisma.$transaction(
-      userSlots.map((slot) =>
-        prisma.slotOfAppointment.update({
-          where: { id: slot.id },
-          data: {
-            user: {
-              disconnect: { id: userId },
-            },
-          },
-        }),
-      ),
-    );
 
     // #1003 — seat was paid; refund after roster commit (non-throwing).
     // #1005 — must pass initiatedBy: self-leave used to inherit organiser-fault
