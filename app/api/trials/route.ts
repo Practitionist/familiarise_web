@@ -8,6 +8,7 @@ import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /**
@@ -44,7 +45,10 @@ export async function GET(request: NextRequest) {
     // whichever profiles the caller holds (built below as an OR).
     let applyOwnershipOr = false;
     if (!isPrivileged) {
-      if (!session.user.consultantProfileId && !session.user.consulteeProfileId) {
+      if (
+        !session.user.consultantProfileId &&
+        !session.user.consulteeProfileId
+      ) {
         return NextResponse.json(
           {
             error:
@@ -287,7 +291,10 @@ export async function POST(request: NextRequest) {
     if (existingTrial) {
       if (blocksNewTrialRequest(existingTrial.status)) {
         return NextResponse.json(
-          { error: "You have already requested a trial with this consultant" },
+          {
+            error: "You have already requested a trial with this consultant",
+            code: "TRIAL_ALREADY_REQUESTED",
+          },
           { status: 409 },
         );
       }
@@ -381,45 +388,64 @@ export async function POST(request: NextRequest) {
       resolvedOrgId = organizationId;
     }
 
-    // Create the trial session
-    const trialSession = await prisma.trialSession.create({
-      data: {
-        consulteeProfileId,
-        consultantProfileId,
-        subscriptionPlanId,
-        notes,
-        status: TrialSessionStatus.PENDING,
-        organizationId: resolvedOrgId,
-      },
-      include: {
-        consulteeProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+    // Create the trial session. The pair is @@unique, and the free-the-slot
+    // delete above is a separate statement, so two concurrent requests for the
+    // same pair both pass the eligibility read and race into the insert — the
+    // loser used to surface as a 500. It is the same "already requested"
+    // answer the sequential path gives, so say so.
+    const trialSession = await prisma.trialSession
+      .create({
+        data: {
+          consulteeProfileId,
+          consultantProfileId,
+          subscriptionPlanId,
+          notes,
+          status: TrialSessionStatus.PENDING,
+          organizationId: resolvedOrgId,
+        },
+        include: {
+          consulteeProfile: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
             },
           },
-        },
-        consultantProfile: {
-          select: {
-            ...consultantPublicScalars,
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+          consultantProfile: {
+            select: {
+              ...consultantPublicScalars,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
             },
           },
+          subscriptionPlan: true,
         },
-        subscriptionPlan: true,
-      },
-    });
+      })
+      .catch((error: unknown) => {
+        if (isUniqueViolation(error)) return null;
+        throw error;
+      });
+
+    if (!trialSession) {
+      return NextResponse.json(
+        {
+          error: "You have already requested a trial with this consultant",
+          code: "TRIAL_ALREADY_REQUESTED",
+        },
+        { status: 409 },
+      );
+    }
 
     // Log the activity
     await logTrialRequested(
