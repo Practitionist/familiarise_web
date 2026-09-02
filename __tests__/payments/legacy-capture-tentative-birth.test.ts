@@ -10,7 +10,7 @@
  *   - CANCELLED/DRAFT event → guard refuses, nothing is ever confirmed; the
  *     committed ghosts are tentative (swept by #830) and Phase 2 refunds.
  *     Before this fix the legacy creators wrote CONFIRMED rows that committed
-     * even when the guard refused — refunded money + live slots on a dead
+ * even when the guard refused — refunded money + live slots on a dead
  *     calendar.
  *   - Live event → the ordinary confirm machinery flips the payer's rows,
  *     exactly like the NEW flow.

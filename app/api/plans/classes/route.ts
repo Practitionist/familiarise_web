@@ -273,14 +273,16 @@ export async function POST(request: NextRequest) {
           ? { connect: topicIds.map((id: string) => ({ id })) }
           : undefined,
         classContents: {
-          create: classContents.map((content: Prisma.ClassContentCreateWithoutClassPlanInput) => ({
-            title: content.title,
-            description: content.description,
-            contentType: content.contentType,
-            contentUrl: content.contentUrl,
-            order: content.order,
-            hoursAllotted: content.hoursAllotted,
-          })),
+          create: classContents.map(
+            (content: Prisma.ClassContentCreateWithoutClassPlanInput) => ({
+              title: content.title,
+              description: content.description,
+              contentType: content.contentType,
+              contentUrl: content.contentUrl,
+              order: content.order,
+              hoursAllotted: content.hoursAllotted,
+            }),
+          ),
         },
       },
       include: {
