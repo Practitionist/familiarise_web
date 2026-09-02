@@ -5,6 +5,7 @@
  * Handles auto, manual, and requested slot allocation.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, {
   type Tx,
@@ -106,6 +107,17 @@ const SLOT_DURATION_MS = 30 * 60 * 1000;
  * is a day of cover, which bounds the scan without truncating any real row.
  */
 const MAX_CANDIDATE_STARTS_PER_ROW = 48;
+
+/**
+ * #1194 — who is being scheduled, carried down the row walk so a truncated
+ * availability row names a consultant and an event instead of appearing as an
+ * anonymous "no slots available".
+ */
+interface AllocationWalkContext {
+  eventType: EventType;
+  eventId?: string;
+  consultantProfileId?: string;
+}
 
 /**
  * Main service for slot allocation operations
@@ -1213,6 +1225,7 @@ export class SlotAllocationService {
         consulteeUserId, // #898 — pick slots free for the consultee too
         consultantProfileId,
         preference,
+        eventId, // #1194 — names the event in the row-truncation warning
       );
 
       // Validate (read-only; runs out-of-txn under the locks)
@@ -2131,26 +2144,88 @@ export class SlotAllocationService {
   private static candidateStartsInRow(
     rowStart: Date,
     consultant: ConsultantAllocationData,
-    /** Epoch ms of this row's own end; the walk stops here (#1194). */
-    rowEndMs?: number,
+    /**
+     * Epoch ms of this row's own end; the walk stops here (#1194). Required —
+     * every live caller has the row it is walking, and the optional form was
+     * how the 48-step ceiling came to silently truncate a legitimate row.
+     */
+    rowEndMs: number,
+    walk?: AllocationWalkContext,
   ): Date[] {
     const starts: Date[] = [];
+    /** Did the ROW (its end, or the edge of availability) stop the walk? */
+    let boundedByRow = false;
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
       const candidate = new Date(rowStart.getTime() + step * SLOT_DURATION_MS);
       // Stop at the row's own end before checking availability — adjacent
       // rows would otherwise let the walk escape past its owner.
-      if (
-        rowEndMs !== undefined &&
-        candidate.getTime() + SLOT_DURATION_MS > rowEndMs
-      ) {
+      if (candidate.getTime() + SLOT_DURATION_MS > rowEndMs) {
+        boundedByRow = true;
         break;
       }
-      if (!this.isWithinAvailability(candidate, consultant)) break;
+      if (!this.isWithinAvailability(candidate, consultant)) {
+        boundedByRow = true;
+        break;
+      }
       starts.push(candidate);
     }
 
+    // #1194 — the CEILING ended the walk, not the row: a row longer than a
+    // day of cover was truncated and its tail is invisible to allocation. The
+    // walk used to exit here in silence, so an unallocatable long row looked
+    // like "no slots available". Probing the NEXT candidate keeps a row that
+    // simply ends at the 48th start from reporting a truncation it never had.
+    if (!boundedByRow) {
+      const next = new Date(
+        rowStart.getTime() + MAX_CANDIDATE_STARTS_PER_ROW * SLOT_DURATION_MS,
+      );
+      if (
+        next.getTime() + SLOT_DURATION_MS <= rowEndMs &&
+        this.isWithinAvailability(next, consultant)
+      ) {
+        this.reportRowWalkTruncated(rowStart, rowEndMs, consultant, walk);
+      }
+    }
+
     return starts;
+  }
+
+  /**
+   * #1194 — one breadcrumb + one structured warning per truncated row, so a
+   * SLOT_SHORTAGE that was really a scan ceiling is attributable to a
+   * consultant and an event instead of being indistinguishable from a genuinely
+   * full calendar.
+   */
+  private static reportRowWalkTruncated(
+    rowStart: Date,
+    rowEndMs: number,
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): void {
+    const detail = {
+      rowStart: rowStart.toISOString(),
+      rowEnd: new Date(rowEndMs).toISOString(),
+      cap: MAX_CANDIDATE_STARTS_PER_ROW,
+      consultantUserId: consultant.userId,
+      consultantProfileId: walk?.consultantProfileId ?? null,
+      eventType: walk?.eventType ?? null,
+      eventId: walk?.eventId ?? null,
+    };
+    try {
+      Sentry.addBreadcrumb({
+        category: "scheduling",
+        message: "allocation: availability row hit the candidate-start ceiling",
+        level: "warning",
+        data: detail,
+      });
+    } catch {
+      // Telemetry must never fail an allocation.
+    }
+    console.warn(
+      "[allocation] availability row truncated at MAX_CANDIDATE_STARTS_PER_ROW",
+      detail,
+    );
   }
 
   /**
@@ -2210,8 +2285,9 @@ export class SlotAllocationService {
       schedulingTimezone?: string;
     },
     /** Epoch ms of this row's own end (#1194). */
-    rowEndMs?: number,
+    rowEndMs: number,
     preference?: AllocationPreference,
+    walk?: AllocationWalkContext,
   ): { block: Date[]; score: number } | null {
     const { now, startDate, endDate, schedulingTimezone } = bounds;
     const rowDayKey = SlotCalculationService.dayKey(
@@ -2225,6 +2301,7 @@ export class SlotAllocationService {
       rowStart,
       consultant,
       rowEndMs,
+      walk,
     )) {
       // The whole session must fit, not just its first slot: the validator
       // rejects any slot whose end passes endDate, so testing the start alone
@@ -2292,6 +2369,7 @@ export class SlotAllocationService {
     sortedCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"],
     schedulingTimezone?: string,
     preference?: AllocationPreference,
+    walk?: AllocationWalkContext,
   ): Date[] | null {
     const maxWeeksToSearch = eventType === "consultation" ? 8 : 4;
     const maxScore = maxPreferenceScore(preference);
@@ -2334,6 +2412,7 @@ export class SlotAllocationService {
         rowStart,
         consultant,
         rowEndMs,
+        walk,
       )) {
         if (candidateStart < now) continue;
 
@@ -2395,7 +2474,14 @@ export class SlotAllocationService {
     // #1065 — how the consultee would like the replacement placed. Scores
     // candidates; absent (or all-null) leaves selection exactly as it was.
     preference?: AllocationPreference,
+    // #1194 — identifies the walk in the truncation warning below.
+    eventId?: string,
   ): Promise<Date[]> {
+    const walk: AllocationWalkContext = {
+      eventType,
+      eventId,
+      consultantProfileId,
+    };
     // Only FUTURE occupancy can collide with a candidate: buildConsecutiveBlock
     // rejects any candidate start before `now`, so a slot that has already
     // ended can never block a placement. Bounding the read to live intervals
@@ -2578,6 +2664,7 @@ export class SlotAllocationService {
         sortedCustom,
         config.schedulingTimezone,
         preference,
+        walk,
       );
       if (singleSession) return singleSession;
 
@@ -2753,6 +2840,7 @@ export class SlotAllocationService {
           },
           rowEndMs,
           preference,
+          walk,
         );
         if (!candidate) continue;
         // LOAD-BEARING: discarding a placeable block here is only safe because
