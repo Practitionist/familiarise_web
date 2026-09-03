@@ -33,8 +33,10 @@ export interface OrphanedConfirmationResult {
 export async function reconcileOrphanedConfirmations(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedConfirmationResult> {
-  return withCronLock("reconcile-orphaned-confirmations", { failMode: "closed" }, () =>
-    reconcileOrphanedConfirmationsUnlocked(opts),
+  return withCronLock(
+    "reconcile-orphaned-confirmations",
+    { failMode: "closed" },
+    () => reconcileOrphanedConfirmationsUnlocked(opts),
   );
 }
 
@@ -71,11 +73,22 @@ async function reconcileOrphanedConfirmationsUnlocked(
               orphan.userId,
             );
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
         ),
       );
+      // Live holds only: the tentative sweeps release by status now, so a
+      // released row keeps isTentative and an unfiltered count would report a
+      // successful re-drive as still blocked.
       const remaining = await prisma.slotOfAppointment.count({
-        where: { appointmentId: orphan.appointmentId!, isTentative: true },
+        where: {
+          appointmentId: orphan.appointmentId!,
+          isTentative: true,
+          deletedAt: null,
+        },
       });
       if (remaining === 0) {
         confirmed += 1;
