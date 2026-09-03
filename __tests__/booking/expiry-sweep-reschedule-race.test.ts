@@ -187,7 +187,10 @@ describe("expiry sweep × live reschedule proposals", () => {
       count: 1,
     });
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
-      { id: "apt-stale", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
+      {
+        id: "apt-stale",
+        payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }],
+      },
     ]);
     refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
 

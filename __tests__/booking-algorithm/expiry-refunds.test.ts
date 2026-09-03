@@ -9,7 +9,8 @@ import "./setup";
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,
-  refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...(a as [never])),
+  refundBookingPayment: (...a: unknown[]) =>
+    refundBookingPayment(...(a as [never])),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -55,11 +56,13 @@ describe("expiry sweep refunds (PR 2c)", () => {
         consultantProfile: { user: { name: "Consultant", email: "" } },
       },
     };
-    ((prisma.subscription.findMany as unknown) as jest.Mock)
-              .mockResolvedValueOnce([richRow]) // PENDING cohort
+    (prisma.subscription.findMany as unknown as jest.Mock)
+      .mockResolvedValueOnce([richRow]) // PENDING cohort
       .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
-    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-    ((prisma.appointment.findMany as unknown) as jest.Mock).mockResolvedValue([
+    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+    (prisma.appointment.findMany as unknown as jest.Mock).mockResolvedValue([
       {
         id: "apt-1",
         payment: [
@@ -85,8 +88,8 @@ describe("expiry sweep refunds (PR 2c)", () => {
   });
 
   it("counts a front-door refusal as a failure without stalling the sweep", async () => {
-    ((prisma.subscription.findMany as unknown) as jest.Mock)
-            .mockResolvedValueOnce([
+    (prisma.subscription.findMany as unknown as jest.Mock)
+      .mockResolvedValueOnce([
         {
           id: "sub-1",
           requestedAt: new Date("2026-01-01"),
@@ -97,8 +100,10 @@ describe("expiry sweep refunds (PR 2c)", () => {
         },
       ])
       .mockResolvedValueOnce([]);
-    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-    ((prisma.appointment.findMany as unknown) as jest.Mock).mockResolvedValue([
+    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+    (prisma.appointment.findMany as unknown as jest.Mock).mockResolvedValue([
       { id: "apt-1", payment: [{ id: "pay1", paymentStatus: "SUCCEEDED" }] },
     ]);
     refundBookingPayment.mockRejectedValue(
@@ -114,19 +119,25 @@ describe("expiry sweep refunds (PR 2c)", () => {
 
   it("drains the immortal APPROVED-unallocated cohort (zero live confirmed slots)", async () => {
     // First findMany call = PENDING subs (none); second = APPROVED cohort.
-    ((prisma.subscription.findMany as unknown) as jest.Mock)
-            .mockResolvedValueOnce([])
+    (prisma.subscription.findMany as unknown as jest.Mock)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: "sub-immortal" }]);
-    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-    ((prisma.appointment.findMany as unknown) as jest.Mock).mockResolvedValue([
-      { id: "placeholder", payment: [{ id: "pay-paid", paymentStatus: "SUCCEEDED" }] },
+    (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
+      count: 1,
+    });
+    (prisma.appointment.findMany as unknown as jest.Mock).mockResolvedValue([
+      {
+        id: "placeholder",
+        payment: [{ id: "pay-paid", paymentStatus: "SUCCEEDED" }],
+      },
     ]);
     refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
 
     const result = await expireStaleRequests();
 
     // Cohort filter: APPROVED + stale + zero confirmed slots.
-    const cohortCall = (prisma.subscription.findMany as jest.Mock).mock.calls[1][0];
+    const cohortCall = (prisma.subscription.findMany as jest.Mock).mock
+      .calls[1][0];
     expect(cohortCall.where.status).toBe(AppointmentStatus.APPROVED);
     expect(JSON.stringify(cohortCall.where.NOT)).toContain("isTentative");
     // The transition guard rides the WHERE.

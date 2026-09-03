@@ -33,8 +33,10 @@ export interface OrphanedConfirmationResult {
 export async function reconcileOrphanedConfirmations(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedConfirmationResult> {
-  return withCronLock("reconcile-orphaned-confirmations", { failMode: "closed" }, () =>
-    reconcileOrphanedConfirmationsUnlocked(opts),
+  return withCronLock(
+    "reconcile-orphaned-confirmations",
+    { failMode: "closed" },
+    () => reconcileOrphanedConfirmationsUnlocked(opts),
   );
 }
 
@@ -71,7 +73,11 @@ async function reconcileOrphanedConfirmationsUnlocked(
               orphan.userId,
             );
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
         ),
       );
       const remaining = await prisma.slotOfAppointment.count({

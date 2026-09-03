@@ -307,7 +307,12 @@ async function expirePendingSubscriptions(): Promise<{
     const refunds = await refundPaymentsForExpired("subscription", staleIds);
     errors.push(...refunds.failureMsgs);
 
-    return { expired: result.count, issued: refunds.issued, failures: refunds.failures, errors };
+    return {
+      expired: result.count,
+      issued: refunds.issued,
+      failures: refunds.failures,
+      errors,
+    };
   } catch (error) {
     const msg = `Failed to expire subscriptions: ${error}`;
     console.error(`❌ ${msg}`);
@@ -398,7 +403,8 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
       select: { id: true },
     });
 
-    if (stale.length === 0) return { expired: 0, issued: 0, failures: 0, errors };
+    if (stale.length === 0)
+      return { expired: 0, issued: 0, failures: 0, errors };
 
     console.log(
       `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
@@ -409,12 +415,19 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
       where: { id: { in: staleIds }, status: AppointmentStatus.APPROVED },
       data: { status: AppointmentStatus.EXPIRED },
     });
-    console.log(`✅ Expired ${result.count} APPROVED-unallocated subscriptions`);
+    console.log(
+      `✅ Expired ${result.count} APPROVED-unallocated subscriptions`,
+    );
 
     const refunds = await refundPaymentsForExpired("subscription", staleIds);
     errors.push(...refunds.failureMsgs);
 
-    return { expired: result.count, issued: refunds.issued, failures: refunds.failures, errors };
+    return {
+      expired: result.count,
+      issued: refunds.issued,
+      failures: refunds.failures,
+      errors,
+    };
   } catch (error) {
     const msg = `Failed to expire APPROVED-unallocated subscriptions: ${error}`;
     console.error(`❌ ${msg}`);
@@ -524,8 +537,7 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // forever (no sweep cohort covered them). This pass deletes tentative-
   // RESCHEDULED slots past the threshold so the calendar frees up. The
   // parent stays APPROVED (it has confirmed sessions); only the ghosts go.
-  const staleRescheduledReleased =
-    await releaseStaleRescheduledSlots();
+  const staleRescheduledReleased = await releaseStaleRescheduledSlots();
   allErrors.push(...staleRescheduledReleased.errors);
 
   // Expire APPROVED_PENDING_PAYMENT requests
