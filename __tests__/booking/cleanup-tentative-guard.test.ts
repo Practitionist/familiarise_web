@@ -71,9 +71,11 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
           id: { in: ["slot-1"] },
           isTentative: true,
           deletedAt: null,
-          appointment: {
+          // The parent-status guards ride alongside (wave 6); the money
+          // predicate is what this pin protects.
+          appointment: expect.objectContaining({
             payment: { none: { paymentStatus: "SUCCEEDED" } },
-          },
+          }),
           // The from-set is the optimistic lock. UNVERIFIED belongs in it:
           // auto-complete stamps a past SCHEDULED slot UNVERIFIED without
           // excluding tentative rows, so most 24h-old holds are already
