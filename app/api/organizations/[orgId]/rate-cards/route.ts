@@ -11,6 +11,10 @@
  * now()`. This preserves the historical split each earning was settled
  * against — see `OrganizationEarnings.platformBpsApplied`.
  *
+ * #1335 — a card scoped to a contract, planType or planId is only selected at
+ * settlement when `RATE_CARD_SCOPED_RESOLUTION=on`; off (the default), the org
+ * default card settles instead. Creation is unaffected either way.
+ *
  * Query params on GET:
  *   scope=current|all           (default current — live cards only)
  *   planType=CONSULTATION|CLASS|WEBINAR|SUBSCRIPTION
