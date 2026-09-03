@@ -1278,6 +1278,14 @@ describe("Cancel Route Handler - POST", () => {
 describe("cleanupTentativeSlots", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // #1319 wave 6 — the sweep releases holds inside prisma.$transaction so
+    // the tombstone and its history rows land together; hand the callback the
+    // same mocked client so the per-model mocks below keep applying.
+    (prisma.$transaction as jest.Mock).mockImplementation((arg: unknown) =>
+      typeof arg === "function"
+        ? (arg as (tx: typeof prisma) => unknown)(prisma)
+        : Promise.all(arg as Promise<unknown>[]),
+    );
   });
 
   it("should return success with 0 slots when none are stale", async () => {

@@ -10,17 +10,24 @@
  * being released. The release itself is a soft cancel, so the row survives.
  */
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const client: Record<string, unknown> = {
     slotOfAppointment: {
       findMany: jest.fn(),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     $disconnect: jest.fn(),
-  },
-}));
+  };
+  // #1319 wave 6 — the release runs inside $transaction so the tombstone and
+  // its history rows land together; the callback gets the same mocked client.
+  client.$transaction = jest.fn((arg: unknown) =>
+    typeof arg === "function"
+      ? (arg as (tx: unknown) => unknown)(client)
+      : Promise.all(arg as Promise<unknown>[]),
+  );
+  return { __esModule: true, default: client };
+});
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_j: string, _o: unknown, fn: () => unknown) => fn()),
   CronLockHeldError: class CronLockHeldError extends Error {},
