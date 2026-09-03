@@ -404,6 +404,28 @@ const TOP_UP_SCAN_LIMIT = 200;
 // keep the scan bounded while still reaching past them.
 const TOP_UP_SCAN_PAGES = 3;
 
+/**
+ * Cursor pagination arguments with an explicit type, so the query result's
+ * inferred type does not depend on the cursor the previous page produced
+ * (TS7022 otherwise flags the row variable as referencing itself).
+ */
+/**
+ * The next page's cursor, through a declared return type: assigning
+ * `rows[rows.length - 1].id` directly makes the loop's control-flow narrowing
+ * of `cursor` depend on the query result's type, which depends on `cursor`
+ * (TS7022).
+ */
+function nextCursor(rows: ReadonlyArray<{ id: string }>): string | undefined {
+  return rows.length > 0 ? rows[rows.length - 1].id : undefined;
+}
+
+function pageArgs(cursor: string | undefined): {
+  skip?: number;
+  cursor?: { id: string };
+} {
+  return cursor ? { skip: 1, cursor: { id: cursor } } : {};
+}
+
 /** One recurring event that is short of sessions, with what the sweep needs. */
 interface TopUpCandidate {
   eventType: "subscription" | "class";
@@ -512,7 +534,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       },
       orderBy: { updatedAt: "asc" },
       take: TOP_UP_SCAN_LIMIT,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      ...pageArgs(cursor),
     });
 
     for (const subscription of subscriptions) {
@@ -537,7 +559,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       });
     }
     if (subscriptions.length < TOP_UP_SCAN_LIMIT) break;
-    cursor = subscriptions[subscriptions.length - 1].id;
+    cursor = nextCursor(subscriptions);
   }
 
   cursor = undefined;
@@ -597,7 +619,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       },
       orderBy: { updatedAt: "asc" },
       take: TOP_UP_SCAN_LIMIT,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      ...pageArgs(cursor),
     });
 
     for (const classRun of classes) {
@@ -630,7 +652,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       });
     }
     if (classes.length < TOP_UP_SCAN_LIMIT) break;
-    cursor = classes[classes.length - 1].id;
+    cursor = nextCursor(classes);
   }
 
   return candidates;
