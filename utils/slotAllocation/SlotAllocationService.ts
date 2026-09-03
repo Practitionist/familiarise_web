@@ -1267,11 +1267,26 @@ export class SlotAllocationService {
       // narrowly: a reschedule's tentative rows ARE the sessions being moved,
       // a single-session event has nothing to top up, and an event with no
       // confirmed sessions is an ordinary fresh allocation already.
-      const isTopUp =
-        topUp === true &&
-        !isReschedule &&
-        isRecurringEventType(eventType) &&
-        existingNonTentativeSlotCount > 0;
+      // A top-up that cannot apply is refused, never downgraded: the caller
+      // asked to preserve, and the ordinary path deletes and re-plans.
+      if (topUp === true) {
+        if (!isRecurringEventType(eventType)) {
+          throw new AllocationValidationError(
+            "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
+          );
+        }
+        if (isReschedule) {
+          throw new AllocationValidationError(
+            "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
+          );
+        }
+        if (existingNonTentativeSlotCount === 0) {
+          throw new AllocationValidationError(
+            "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
+          );
+        }
+      }
+      const isTopUp = topUp === true;
 
       // 1 Appointment = 1 session, the same identity the reschedule branch
       // below counts on. Counted by appointment rather than by dividing the
@@ -1292,18 +1307,22 @@ export class SlotAllocationService {
        * `placedSessions` is this run's placements, hence 0; the notification
        * suppressor fires on `noChange` before any template can read it.
        */
-      const topUpNoChange = (): AllocationResult => ({
-        success: true,
-        appointments: [],
-        partial: true,
-        noChange: true,
-        placedSessions: 0,
-        requiredSessions: topUpPlanSessions,
-        unplacedSessions: Math.max(
+      const topUpNoChange = (): AllocationResult => {
+        const unplacedSessions = Math.max(
           topUpPlanSessions - existingConfirmedSessionCount,
           0,
-        ),
-      });
+        );
+        return {
+          success: true,
+          appointments: [],
+          // Derived from the shortfall, so a whole plan never reads as partial.
+          partial: unplacedSessions > 0,
+          noChange: true,
+          placedSessions: 0,
+          requiredSessions: topUpPlanSessions,
+          unplacedSessions,
+        };
+      };
 
       // Guard: reject re-allocation when event is already fully scheduled.
       // Applies to all event types (webinar, class, subscription) to prevent

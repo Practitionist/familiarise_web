@@ -266,7 +266,8 @@ describe("#1206 top-up allocation", () => {
 
     expect(result.success).toBe(true);
     expect(result.noChange).toBe(true);
-    expect(result.partial).toBe(true);
+    // Derived from the shortfall: a whole plan is not partial.
+    expect(result.partial).toBe(false);
     expect(result.placedSessions).toBe(0);
     expect(result.requiredSessions).toBe(4);
     expect(result.unplacedSessions).toBe(0);

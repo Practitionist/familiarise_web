@@ -399,6 +399,10 @@ const TOP_UP_MAX_EVENTS_PER_RUN = 25;
 const TOP_UP_TIME_BUDGET_MS = 60_000;
 /** Ceiling on the candidate READ, which is cheap per row but not free. */
 const TOP_UP_SCAN_LIMIT = 200;
+// Pages walked per run in `updatedAt` order. Complete events never move, so
+// the oldest rows are mostly complete plans the JS check skips; three pages
+// keep the scan bounded while still reaching past them.
+const TOP_UP_SCAN_PAGES = 3;
 
 /** One recurring event that is short of sessions, with what the sweep needs. */
 interface TopUpCandidate {
@@ -420,14 +424,6 @@ interface TopUpCandidate {
  * Sessions already confirmed on an event, counted the way the allocator counts
  * them: one Appointment is one session.
  */
-function countConfirmedSessions(
-  appointments: { slotsOfAppointment: { isTentative: boolean }[] }[],
-): number {
-  return appointments.filter((appointment) =>
-    appointment.slotsOfAppointment.some((slot) => !slot.isTentative),
-  ).length;
-}
-
 /**
  * Whole sessions the plan owes, or null when the configuration cannot answer
  * (a class saved without a scheduling window, say). A candidate we cannot size
@@ -460,146 +456,181 @@ function requiredSessionsFor(
 async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
   const candidates: TopUpCandidate[] = [];
 
-  const subscriptions = await prisma.subscription.findMany({
-    where: {
-      status: AppointmentStatus.APPROVED,
-      deletedAt: null,
-      // Nothing can be placed in a window that has closed.
-      schedulingPeriodEndsAt: { gt: now },
-      appointments: {
-        some: {
-          slotsOfAppointment: { some: { isTentative: false, deletedAt: null } },
-        },
-      },
-      NOT: {
+  let cursor: string | undefined;
+  for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
+    const subscriptions = await prisma.subscription.findMany({
+      where: {
+        status: AppointmentStatus.APPROVED,
+        deletedAt: null,
+        // Nothing can be placed in a window that has closed.
+        schedulingPeriodEndsAt: { gt: now },
         appointments: {
           some: {
+            deletedAt: null,
             slotsOfAppointment: {
-              some: { isTentative: true, deletedAt: null },
+              some: { isTentative: false, deletedAt: null },
+            },
+          },
+        },
+        NOT: {
+          appointments: {
+            some: {
+              deletedAt: null,
+              slotsOfAppointment: {
+                some: { isTentative: true, deletedAt: null },
+              },
             },
           },
         },
       },
-    },
-    select: {
-      id: true,
-      updatedAt: true,
-      schedulingPeriodStartsAt: true,
-      schedulingPeriodEndsAt: true,
-      subscriptionPlan: {
-        select: {
-          consultantProfileId: true,
-          durationInMonths: true,
-          sessionsPerWeek: true,
-          sessionDurationInHours: true,
-          totalSessions: true,
-        },
-      },
-      appointments: {
-        select: {
-          slotsOfAppointment: {
-            where: { deletedAt: null },
-            select: { isTentative: true },
+      select: {
+        id: true,
+        updatedAt: true,
+        schedulingPeriodStartsAt: true,
+        schedulingPeriodEndsAt: true,
+        subscriptionPlan: {
+          select: {
+            consultantProfileId: true,
+            durationInMonths: true,
+            sessionsPerWeek: true,
+            sessionDurationInHours: true,
+            totalSessions: true,
           },
         },
+        // Only live appointments that hold a confirmed slot come back, and only
+        // their ids: the count IS the confirmed-session count (1 appointment =
+        // 1 session), so no slot rows travel.
+        appointments: {
+          where: {
+            deletedAt: null,
+            slotsOfAppointment: {
+              some: { isTentative: false, deletedAt: null },
+            },
+          },
+          select: { id: true },
+        },
       },
-    },
-    take: TOP_UP_SCAN_LIMIT,
-  });
+      orderBy: { updatedAt: "asc" },
+      take: TOP_UP_SCAN_LIMIT,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
 
-  for (const subscription of subscriptions) {
-    const plan = subscription.subscriptionPlan;
-    const required = requiredSessionsFor("subscription", {
-      durationInMonths: plan.durationInMonths,
-      sessionsPerWeek: plan.sessionsPerWeek,
-      sessionDurationInHours: plan.sessionDurationInHours,
-      totalSessions: plan.totalSessions,
-      schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
-      schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
-    });
-    const confirmed = countConfirmedSessions(subscription.appointments);
-    if (required === null || confirmed >= required) continue;
-    candidates.push({
-      eventType: "subscription",
-      eventId: subscription.id,
-      consultantProfileId: plan.consultantProfileId,
-      updatedAt: subscription.updatedAt,
-      confirmedSessions: confirmed,
-      requiredSessions: required,
-    });
+    for (const subscription of subscriptions) {
+      const plan = subscription.subscriptionPlan;
+      const required = requiredSessionsFor("subscription", {
+        durationInMonths: plan.durationInMonths,
+        sessionsPerWeek: plan.sessionsPerWeek,
+        sessionDurationInHours: plan.sessionDurationInHours,
+        totalSessions: plan.totalSessions,
+        schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+        schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+      });
+      const confirmed = subscription.appointments.length;
+      if (required === null || confirmed >= required) continue;
+      candidates.push({
+        eventType: "subscription",
+        eventId: subscription.id,
+        consultantProfileId: plan.consultantProfileId,
+        updatedAt: subscription.updatedAt,
+        confirmedSessions: confirmed,
+        requiredSessions: required,
+      });
+    }
+    if (subscriptions.length < TOP_UP_SCAN_LIMIT) break;
+    cursor = subscriptions[subscriptions.length - 1].id;
   }
 
-  const classes = await prisma.class.findMany({
-    where: {
-      // A class has no request to approve; SCHEDULED/IN_PROGRESS is the
-      // occupancy policy's equivalent of an APPROVED request.
-      status: { in: [...OCCUPIED_EVENT_STATUSES] },
-      deletedAt: null,
-      schedulingPeriodEndsAt: { gt: now },
-      appointments: {
-        some: {
-          slotsOfAppointment: { some: { isTentative: false, deletedAt: null } },
-        },
-      },
-      NOT: {
+  cursor = undefined;
+  for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
+    const classes = await prisma.class.findMany({
+      where: {
+        // A class has no request to approve; SCHEDULED/IN_PROGRESS is the
+        // occupancy policy's equivalent of an APPROVED request.
+        status: { in: [...OCCUPIED_EVENT_STATUSES] },
+        deletedAt: null,
+        schedulingPeriodEndsAt: { gt: now },
         appointments: {
           some: {
+            deletedAt: null,
             slotsOfAppointment: {
-              some: { isTentative: true, deletedAt: null },
+              some: { isTentative: false, deletedAt: null },
+            },
+          },
+        },
+        NOT: {
+          appointments: {
+            some: {
+              deletedAt: null,
+              slotsOfAppointment: {
+                some: { isTentative: true, deletedAt: null },
+              },
             },
           },
         },
       },
-    },
-    select: {
-      id: true,
-      updatedAt: true,
-      schedulingPeriodStartsAt: true,
-      schedulingPeriodEndsAt: true,
-      classPlan: {
-        select: {
-          consultantProfileId: true,
-          durationInMonths: true,
-          sessionsPerWeek: true,
-          sessionDurationInHours: true,
-          totalSessions: true,
-        },
-      },
-      appointments: {
-        select: {
-          slotsOfAppointment: {
-            where: { deletedAt: null },
-            select: { isTentative: true },
+      select: {
+        id: true,
+        updatedAt: true,
+        schedulingPeriodStartsAt: true,
+        schedulingPeriodEndsAt: true,
+        classPlan: {
+          select: {
+            consultantProfileId: true,
+            durationInMonths: true,
+            sessionsPerWeek: true,
+            sessionDurationInHours: true,
+            totalSessions: true,
           },
         },
+        // Only live appointments that hold a confirmed slot come back, and only
+        // their ids: the count IS the confirmed-session count (1 appointment =
+        // 1 session), so no slot rows travel.
+        appointments: {
+          where: {
+            deletedAt: null,
+            slotsOfAppointment: {
+              some: { isTentative: false, deletedAt: null },
+            },
+          },
+          select: { id: true },
+        },
       },
-    },
-    take: TOP_UP_SCAN_LIMIT,
-  });
+      orderBy: { updatedAt: "asc" },
+      take: TOP_UP_SCAN_LIMIT,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
 
-  for (const classRun of classes) {
-    const plan = classRun.classPlan;
-    const required = requiredSessionsFor("class", {
-      durationInMonths: plan.durationInMonths,
-      sessionsPerWeek: plan.sessionsPerWeek,
-      sessionDurationInHours: plan.sessionDurationInHours,
-      totalSessions: plan.totalSessions,
-      schedulingPeriodStartsAt: classRun.schedulingPeriodStartsAt ?? undefined,
-      schedulingPeriodEndsAt: classRun.schedulingPeriodEndsAt ?? undefined,
-    });
-    const confirmed = countConfirmedSessions(classRun.appointments);
-    // `ClassPlan.consultantProfileId` is nullable; a plan with no consultant
-    // has no availability to search and the allocator would answer NOT_FOUND.
-    if (required === null || confirmed >= required || !plan.consultantProfileId)
-      continue;
-    candidates.push({
-      eventType: "class",
-      eventId: classRun.id,
-      consultantProfileId: plan.consultantProfileId,
-      updatedAt: classRun.updatedAt,
-      confirmedSessions: confirmed,
-      requiredSessions: required,
-    });
+    for (const classRun of classes) {
+      const plan = classRun.classPlan;
+      const required = requiredSessionsFor("class", {
+        durationInMonths: plan.durationInMonths,
+        sessionsPerWeek: plan.sessionsPerWeek,
+        sessionDurationInHours: plan.sessionDurationInHours,
+        totalSessions: plan.totalSessions,
+        schedulingPeriodStartsAt:
+          classRun.schedulingPeriodStartsAt ?? undefined,
+        schedulingPeriodEndsAt: classRun.schedulingPeriodEndsAt ?? undefined,
+      });
+      const confirmed = classRun.appointments.length;
+      // `ClassPlan.consultantProfileId` is nullable; a plan with no consultant
+      // has no availability to search and the allocator would answer NOT_FOUND.
+      if (
+        required === null ||
+        confirmed >= required ||
+        !plan.consultantProfileId
+      )
+        continue;
+      candidates.push({
+        eventType: "class",
+        eventId: classRun.id,
+        consultantProfileId: plan.consultantProfileId,
+        updatedAt: classRun.updatedAt,
+        confirmedSessions: confirmed,
+        requiredSessions: required,
+      });
+    }
+    if (classes.length < TOP_UP_SCAN_LIMIT) break;
+    cursor = classes[classes.length - 1].id;
   }
 
   return candidates;
@@ -716,6 +747,11 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         allowPartial: true,
       });
 
+      // Every outcome advances the event's `updatedAt`, which is the attempt
+      // marker: a no-change or failed event rotates to the tail of the
+      // `updatedAt` order and is re-tried only after the consultant's
+      // availability moves again, instead of heading the list every hour.
+      await touchTopUpMarker(candidate);
       if (!result.success) {
         summary.failed++;
         console.log(
@@ -740,6 +776,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
       console.error(
         `❌ Top-up failed for ${candidate.eventType} ${candidate.eventId}: ${error}`,
       );
+      await touchTopUpMarker(candidate).catch(() => undefined);
     }
   }
 
@@ -751,6 +788,23 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+/**
+ * Bumps the event's `updatedAt` without touching anything else. Not a status
+ * write, so it does not go through the CAS helpers; it exists only so the
+ * `updatedAt` order rotates attempted events to the tail.
+ */
+async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
+  const data = { updatedAt: new Date() };
+  if (candidate.eventType === "subscription") {
+    await prisma.subscription.update({
+      where: { id: candidate.eventId },
+      data,
+    });
+  } else {
+    await prisma.class.update({ where: { id: candidate.eventId }, data });
+  }
+}
+
 export async function reconcileSlotAvailability(): Promise<SlotReconciliationResult> {
   return withCronLock(
     "reconcile-slot-availability",
