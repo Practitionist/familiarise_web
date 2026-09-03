@@ -43,6 +43,8 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { buildContiguousSlotAtomsForWindow } from "@/lib/appointments/contiguous-slot-run";
+import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   buildDeadHoldFilter,
@@ -59,7 +61,10 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
-import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import {
+  deriveCheckoutAmount,
+  type CheckoutDiscountInput,
+} from "@/lib/payments/pricing/derive-checkout-amount";
 import {
   createEarningsFromPayment,
   type AppointmentType,
@@ -74,10 +79,7 @@ import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
 } from "@/lib/api/organizations/program-helpers";
-import {
-  determineTax,
-  appointmentTypeToServiceType,
-} from "@/lib/payments/tax/tax-engine";
+import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import {
   validatePlanCurrency,
   validateDiscountCurrency,
@@ -713,12 +715,9 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
-    // Capture original plan price before any discounts/credits
-    // This is used for consultant earnings — discounts are platform-funded, not consultant-funded
-    const originalAmount = amount;
-
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
+    let appliedDiscount: CheckoutDiscountInput | null = null;
     if (validatedData.discountCode) {
       const discount = await tx.discountCode.findUnique({
         where: { code: validatedData.discountCode.toUpperCase().trim() },
@@ -758,28 +757,11 @@ export async function calculateAmountAndValidate(
           );
         }
 
-        // Calculate discounted amount with maxDiscount cap
-        if (discount.discountType === "PERCENTAGE") {
-          // Guard: discountValue must be 1–100 for PERCENTAGE (data integrity check)
-          if (discount.discountValue < 1 || discount.discountValue > 100) {
-            throw new Error(
-              `Invalid discount code: percentage value must be between 1 and 100, got ${discount.discountValue}`,
-            );
-          }
-          let discountAmount = Math.round(
-            amount * (discount.discountValue / 100),
-          );
-          // Apply maxDiscount cap if set
-          if (
-            discount.maxDiscount !== null &&
-            discountAmount > discount.maxDiscount
-          ) {
-            discountAmount = discount.maxDiscount;
-          }
-          amount = amount - discountAmount;
-        } else if (discount.discountType === "FIXED_AMOUNT") {
-          amount = Math.max(0, amount - discount.discountValue);
-        }
+        appliedDiscount = {
+          discountType: discount.discountType,
+          discountValue: discount.discountValue,
+          maxDiscount: discount.maxDiscount,
+        };
 
         // NOTE: currentUses increment is done in the payment transaction
         // to ensure count only increases when payment is successfully created
@@ -792,34 +774,26 @@ export async function calculateAmountAndValidate(
     // Validate plan currency (MVP: all plans must be INR)
     validatePlanCurrency(currency);
 
-    // Calculate GST on the discounted price (tax-exclusive: plan.price + 18% GST)
-    // Zero-rate GST for international buyers (export of services is zero-rated under IGST Act §2(6))
-    // BUG FIX: Previously used `currency !== "INR"` which never triggered since all plans default to INR.
-    // Now uses buyer country detection for correct tax jurisdiction determination.
-    const isInternational = buyerCountry !== "IN";
-    const taxDetermination = determineTax({
-      baseAmountPaise: amount,
+    // #1319 — list price, then discount, then GST on the discounted base, then
+    // referral credits against the tax-inclusive total. That sequence is now a
+    // single pure function the parity suite imports instead of transcribing.
+    // The credit balance is still read lazily, only once the order clears the
+    // redemption floor, so orders that cannot spend a credit keep it out of the
+    // transaction's read set.
+    const derived = await deriveCheckoutAmount({
+      basePaise: amount,
       buyerCountry,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
+      discount: appliedDiscount,
+      useReferralCredits: validatedData.useReferralCredits === true,
+      resolveAvailableCreditsPaise: async () =>
+        (await getUserCredits(userId, tx)).totalAvailable,
     });
-    const taxAmount = taxDetermination.taxAmount;
-    amount = amount + taxAmount;
-
-    // Apply referral credits AFTER tax (credits act as a payment method, not a trade discount)
-    // Both credits and amount are now in paise — no conversion needed
-    // #880 — credits redeem only when the order is ₹500+ so a credit never
-    // exceeds the value of the booking it discounts.
-    let creditsApplied = 0;
-    if (
-      validatedData.useReferralCredits &&
-      amount >= MIN_CREDIT_REDEMPTION_PAISE
-    ) {
-      const { totalAvailable } = await getUserCredits(userId, tx);
-      if (totalAvailable > 0) {
-        creditsApplied = Math.min(totalAvailable, amount);
-        amount = amount - creditsApplied;
-      }
-    }
+    // Original plan price before any discounts/credits, used for consultant
+    // earnings — discounts are platform-funded, not consultant-funded.
+    const { originalAmount, taxAmount, creditsApplied, isInternational } =
+      derived;
+    amount = derived.amount;
 
     // Guard: reject amounts in the 1-99 paise range (> ₹0 but < ₹1).
     // Razorpay requires a minimum order value of ₹1 (100 paise). An amount of exactly 0
@@ -1867,23 +1841,20 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // Create appointment with 30-min slot chunks (consistent with SlotAllocationService).
-  // Each SlotOfAppointment is exactly 30 minutes so conflict detection works correctly.
-  // Both consultant and consultee are connected so the user-scoped conflict filter works.
-  const SLOT_MS = 30 * 60 * 1000;
-  const startTime = new Date(data.startsAt!);
-  const endTime = new Date(data.endsAt!);
-  const slotChunks: { startsAt: Date; endsAt: Date }[] = [];
-  let cur = new Date(startTime);
-  while (cur < endTime) {
-    slotChunks.push({
-      startsAt: new Date(cur),
-      endsAt: new Date(cur.getTime() + SLOT_MS),
-    });
-    cur = new Date(cur.getTime() + SLOT_MS);
-  }
-  if (slotChunks.length === 0)
-    throw new Error("Invalid slot: start must be before end");
+  // N x 30-minute atoms, both parties on every one (#1071 / ADR B1). Half-hour
+  // rows are what conflict detection compares against, and the consultant has
+  // to be connected or the user-scoped filter in validateNoConflicts
+  // (`user.some.id === consultantUserId`) cannot see the booking at all.
+  // #1319 — shared with the webhook capture fallback, which had drifted to one
+  // oversized row carrying only the buyer.
+  const slotAtoms = buildContiguousSlotAtomsForWindow({
+    startsAt: new Date(data.startsAt!),
+    endsAt: new Date(data.endsAt!),
+    // #440 — denormalized for the DB-level overlap guard.
+    consultantProfileId: plan.consultantProfileId,
+    isTentative: !skipPayment,
+    userIds: [consultantUserId, consulteeUserId],
+  });
 
   const appointment = await tx.appointment.create({
     data: {
@@ -1894,22 +1865,7 @@ export async function handleConsultationCheckout(
       cancellationPolicySnapshot: JSON.parse(
         JSON.stringify(resolveCancellationPolicySnapshot()),
       ),
-      slotsOfAppointment: {
-        create: slotChunks.map((chunk) => ({
-          startsAt: chunk.startsAt,
-          endsAt: chunk.endsAt,
-          isTentative: !skipPayment,
-          // #440 — denormalized for the DB-level overlap guard.
-          consultantProfileId: plan.consultantProfileId,
-          // Connect BOTH consultant and consultee so the user-scoped conflict
-          // filter in validateNoConflicts (user.some.id === consultantUserId)
-          // can see this slot. dev branch only connected the consultee, which
-          // left the slot invisible to auto/manual allocation conflict checks.
-          user: {
-            connect: [{ id: consultantUserId }, { id: consulteeUserId }],
-          },
-        })),
-      },
+      slotsOfAppointment: { create: slotAtoms },
     },
   });
   // #1319 A9 — shadow participant rows, same tx as the slot connects.
@@ -2183,14 +2139,10 @@ export async function handleWebinarCheckout(
   // Webinar participants attend the entire session, so they must be
   // connected to every SlotOfAppointment (not given a new duplicate slot).
   if (appointment && appointment.slotsOfAppointment.length > 0) {
-    for (const slot of appointment.slotsOfAppointment) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          user: { connect: { id: userId } },
-        },
-      });
-    }
+    await connectAttendeeToEventSlots(tx, {
+      appointments: [appointment],
+      userId,
+    });
     // #1319 A9 — one participant row per seat holder.
     await recordParticipants(
       tx,
@@ -2279,18 +2231,12 @@ export async function handleClassCheckout(
   // Link user to ALL existing slots of ALL class appointments (sessions).
   // Class participants attend every session, so they must be connected to
   // every existing SlotOfAppointment (not given duplicate slots).
-  let linkedSlotCount = 0;
+  const linkedSlotCount = await connectAttendeeToEventSlots(tx, {
+    appointments: classInstance.appointments,
+    userId,
+  });
+  // #1319 A9 — one participant row per session the buyer is enrolled in.
   for (const appointment of classInstance.appointments) {
-    for (const slot of appointment.slotsOfAppointment) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: {
-          user: { connect: { id: userId } },
-        },
-      });
-      linkedSlotCount++;
-    }
-    // #1319 A9 — one participant row per session the buyer is enrolled in.
     await recordParticipants(
       tx,
       appointment.id,
@@ -3159,6 +3105,25 @@ export async function handleCheckout(
                   paymentId: payment.id,
                   engagementsConsumed: engagementsForCap,
                   priceAtBookingPaise: amount,
+                  // PR-1e (G3) — the helper's set-diff idempotency guard only
+                  // arms itself when the caller NAMES the appointments.
+                  // Omitting them left every checkout debit unguarded, so a
+                  // replay against the same Payment (retried webhook, resumed
+                  // order) incremented the meter a second time.
+                  // CONSULTATION/WEBINAR are one engagement on the appointment
+                  // just created; CLASS meters one per class session, which is
+                  // exactly the set handleClassCheckout counted.
+                  appointmentIds:
+                    validatedData.appointmentType === "CLASS"
+                      ? (
+                          await tx.appointment.findMany({
+                            where: { classId: validatedData.eventId },
+                            select: { id: true },
+                          })
+                        ).map((a) => a.id)
+                      : createdAppointment
+                        ? [createdAppointment.id]
+                        : [],
                 });
               } catch (err) {
                 if (err instanceof ProgramAssignmentLimitError) {
