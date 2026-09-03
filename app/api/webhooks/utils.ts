@@ -630,9 +630,14 @@ export async function handleRefundCreated(
     // could never match it. The refund then deferred and was re-driven for up
     // to a week against a payment that had been captured all along. Now the id
     // the webhook actually carries is itself a key.
+    //
+    // Deliberately NOT filtered on `deletedAt: null`: the lookup this replaced
+    // was a `findUnique` on `paymentIntent`, which reached soft-deleted rows
+    // too. A Payment soft-deleted after capture still owes its refund event a
+    // hearing — excluding it would defer the webhook and give up on it after
+    // 168h, which is a money outcome, not a tidier query.
     const payment = await tx.payment.findFirst({
       where: {
-        deletedAt: null,
         OR: [
           { paymentIntent: paymentIntentId },
           ...(providerPaymentId
@@ -1245,10 +1250,12 @@ export async function handleDisputeCreated(
         // persists. The second key is what keeps a dispute linkable when that
         // gateway fetch fails — until now such a failure meant no link at all,
         // a CRITICAL_DISPUTE_UNLINKED page, and disputed earnings left payable
-        // until the six-hourly reconcile cron noticed.
+        // until the six-hourly reconcile cron noticed. As on the refund path,
+        // no `deletedAt` filter: this replaced a `findUnique` that reached
+        // soft-deleted rows, and a chargeback against one still has to be
+        // recorded and still has to hold the earnings.
         const payment = await tx.payment.findFirst({
           where: {
-            deletedAt: null,
             OR: [
               ...(resolvedPaymentIntent
                 ? [{ paymentIntent: resolvedPaymentIntent }]
