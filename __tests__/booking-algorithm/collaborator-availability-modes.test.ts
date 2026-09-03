@@ -320,7 +320,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     expect(result.success).toBe(true);
     const where = mockTx.slotOfAppointment.findFirst.mock.calls[0][0].where as {
       OR: { startsAt: { lt: Date }; endsAt: { gt: Date } }[];
-      isTentative: boolean;
+      isTentative?: boolean;
     };
     // Two contiguous atoms collapse to a single 09:00-10:00 range.
     expect(where.OR).toHaveLength(1);
@@ -328,7 +328,8 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       "2025-01-06T10:00:00.000Z",
     );
     expect(where.OR[0].endsAt.gt.toISOString()).toBe(MON_0900);
-    expect(where.isTentative).toBe(false);
+    // #1319 — occupancy, not the tentative flag, decides what blocks a co-host.
+    expect(where.isTentative).toBeUndefined();
   });
 });
 
