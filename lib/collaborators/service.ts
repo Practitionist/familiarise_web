@@ -75,7 +75,7 @@ function asPlanRole(planType: PlanType, role: string): CollaboratorRole | null {
 // #768 lockdown #12 — capability booleans, set from invite input. Default
 // false so an unspecified permission is never silently granted.
 // Enforced: canSeeAttendees (participant-roster GET).
-// TODO #768 — enforce canApprovePayment / canViewAnalytics / canEditEvent
+// TODO #1319 — enforce canApprovePayment / canViewAnalytics / canEditEvent
 // once collaborator-facing payment-approval, analytics, and event-edit
 // surfaces exist; today they have no endpoint to gate, so only the SET lands.
 export interface CollaboratorPermissions {
@@ -884,19 +884,6 @@ async function validateRevenueSharesTx(
   const currentTotal = collabs.reduce((sum, c) => sum + c.revenueShareBps, 0);
 
   return currentTotal + pctToBps(newShare) <= MAX_COLLAB_BPS;
-}
-
-/**
- * Validate that total revenue shares don't exceed 90% (host keeps min 10%).
- * Public wrapper that uses the global prisma client.
- */
-export async function validateRevenueShares(
-  planType: PlanType,
-  planId: string,
-  newShare: number,
-  excludeId?: string,
-): Promise<boolean> {
-  return validateRevenueSharesTx(prisma, planType, planId, newShare, excludeId);
 }
 
 /**

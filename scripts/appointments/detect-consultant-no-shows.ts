@@ -616,7 +616,7 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
     }
   }
 
-  // TODO(#471): subscriptions are multi-session — a single-session consultant
+  // TODO(#1319): subscriptions are multi-session — a single-session consultant
   // no-show is a partial refund of one session out of N, not a whole-booking
   // cancel. Deferred pending per-session refund design; consultations (the
   // single-session exclusive case) are handled above.
