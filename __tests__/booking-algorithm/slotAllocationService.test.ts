@@ -78,6 +78,9 @@ import {
   makeWeeklyAvailabilitySlot,
   makeCustomAvailabilitySlot,
 } from "./__mocks__/booking.mockData";
+// Mocked above; imported (not require()d) so the lock-scope pin below stays
+// free of a require-style import.
+import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmentlock";
 
 // ─── Mock Transaction Factory ───────────────────────────────────────────────
 
@@ -2664,6 +2667,28 @@ describe("Manual allocation - distributed lock", () => {
     );
     // Lock should have been released in finally block
     expect(unlockAutoAllocate).toHaveBeenCalled();
+  });
+
+  /**
+   * #1319 — the day shard is narrower than the weekly cap it has to hold. Two
+   * manual allocations on different days of one week took different keys and
+   * each cleared sessionsPerWeek on a stale count; #440's GiST constraint sees
+   * overlap, never a count. Every weekly-capped type takes the wide key.
+   */
+  it("takes the consultant-wide lock when a weekly cap applies", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
+
+    await SlotAllocationService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(mockLockAutoAllocate).toHaveBeenCalledWith(
+      "consultant-profile-1",
+      undefined,
+    );
   });
 
   it("should release lock even when transaction fails", async () => {

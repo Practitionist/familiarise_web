@@ -1224,8 +1224,9 @@ export class SlotAllocationService {
       // create them that way), so the flag was never true for a consultation
       // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
       // "not allocated yet" condition. This matters most across modes: auto
-      // takes a consultant-wide lock and manual a day-sharded one (#860), so
-      // two tabs are only serialized by the in-txn advisory lock this gates.
+      // takes a consultant-wide lock and a cap-less manual one a day-sharded
+      // key (#860, narrowed by #1319), so two tabs are only serialized by the
+      // in-txn advisory lock this gates.
       const isFreshAllocation =
         initialAllocation === true || existingNonTentativeSlotCount === 0;
 
@@ -1577,20 +1578,32 @@ export class SlotAllocationService {
     // can both pass validateNoConflicts() and create duplicate appointments.
     // #860 — shard the lock by the earliest target day so allocations for
     // different days don't serialize; same-day (the actual duplicate risk)
-    // still shares the key. #440's GiST constraint backstops cross-day overlap.
+    // still shares the key.
     //
-    // wideLock opts out of the sharding: the caller is placing times nobody
-    // picked per-day, so parallel same-consultant allocations could each pass
-    // the per-week cap check on a stale count. GiST cannot see a cap, only an
-    // overlap.
-    const lockScope = wideLock
-      ? undefined
-      : slotStrings
-          .map((s) => new Date(s))
-          .filter((d) => !Number.isNaN(d.getTime()))
-          .sort((a, b) => a.getTime() - b.getTime())[0]
-          ?.toISOString()
-          .slice(0, 10);
+    // #440's `slot_no_confirmed_overlap` GiST constraint backstops only what it
+    // is keyed on: two confirmed slots of one consultant covering the same
+    // instant. It cannot see a COUNT, so it is no backstop for a weekly cap —
+    // and the sessions that race that cap sit on different days, so they never
+    // overlap and the constraint stays silent.
+    //
+    // #1319 — the shard is therefore only safe for a cap-less placement. The
+    // recurring types are exactly the ones whose validator enforces
+    // sessionsPerWeek (subscription via SubscriptionValidationService, class via
+    // the [WEEKLY_LIMIT] check), and a week spans days: two manual allocations
+    // on different days of one week would take different keys and each clear the
+    // cap on a count the other has not committed yet. They take the
+    // consultant-wide key whatever wideLock says; wideLock stays the explicit
+    // opt-out for callers placing times nobody picked per-day.
+    const hasWeeklyCap = isRecurringEventType(eventType);
+    const lockScope =
+      wideLock || hasWeeklyCap
+        ? undefined
+        : slotStrings
+            .map((s) => new Date(s))
+            .filter((d) => !Number.isNaN(d.getTime()))
+            .sort((a, b) => a.getTime() - b.getTime())[0]
+            ?.toISOString()
+            .slice(0, 10);
     const lock = await lockAutoAllocate(consultantProfileId, lockScope);
     // #898 follow-up — serialize on the consultee too (consultant → consultee
     // lock order) so one person can't be booked with two consultants at once.
@@ -1716,8 +1729,9 @@ export class SlotAllocationService {
       // create them that way), so the flag was never true for a consultation
       // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
       // "not allocated yet" condition. This matters most across modes: auto
-      // takes a consultant-wide lock and manual a day-sharded one (#860), so
-      // two tabs are only serialized by the in-txn advisory lock this gates.
+      // takes a consultant-wide lock and a cap-less manual one a day-sharded
+      // key (#860, narrowed by #1319), so two tabs are only serialized by the
+      // in-txn advisory lock this gates.
       const isFreshAllocation =
         initialAllocation === true || existingNonTentativeSlotCount === 0;
 
