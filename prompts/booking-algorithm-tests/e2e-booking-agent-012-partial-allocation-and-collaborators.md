@@ -53,8 +53,10 @@ The co-host guard is `SlotAllocationService.assertCollaboratorsFree`, which
 calls `assertCollaboratorsAvailableForWindows`
 (`lib/collaborators/availability.ts`). It short-circuits for anything that is
 not a webinar or class, considers only collaborators whose status is
-`ACCEPTED`, and overlaps on a half-open interval against live, non-tentative,
-non-tombstoned slots.
+`ACCEPTED`, and overlaps on a half-open interval against live, non-tombstoned
+slots. Live is the shared occupancy predicate as of #1319, not the tentative
+flag, so a co-host who is mid-checkout counts as busy while their payment
+window is open and stops counting once the hold is dead.
 
 ---
 

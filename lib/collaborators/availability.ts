@@ -1,5 +1,9 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import {
+  buildDeadHoldFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/slotAllocation/occupancyPolicy";
 
 /**
  * AE-2 (#784) — collaborator double-booking guard.
@@ -79,9 +83,10 @@ function mergeWindows(windows: CollaboratorWindow[]): CollaboratorWindow[] {
 
 /**
  * Throws CollaboratorUnavailableError if any ACCEPTED co-host on the plan has a
- * confirmed commitment overlapping ANY of `windows`. No-op when the plan has no
- * accepted collaborators. Run inside the scheduling transaction so the read is
- * consistent with the slot write that follows.
+ * live commitment overlapping ANY of `windows` — confirmed sessions and live
+ * holds alike (#1319). No-op when the plan has no accepted collaborators. Run
+ * inside the scheduling transaction so the read is consistent with the slot
+ * write that follows.
  *
  * The multi-window form exists for CLASS, whose "time commit" is N sessions at
  * once; checking them one call at a time would be N round-trips on the common
@@ -119,9 +124,21 @@ export async function assertCollaboratorsAvailableForWindows(
 
   const excluded = (excludeAppointmentIds ?? []).filter(Boolean);
 
-  // A confirmed, non-soft-deleted slot overlapping the window. deletedAt:null on
-  // both the slot and its appointment keeps cancelled/soft-deleted bookings from
+  // #1319 — one instant for every probe below, so the fast path and the
+  // per-co-host resolution classify holds against the same clock.
+  const now = new Date();
+
+  // A live, non-soft-deleted slot overlapping the window. deletedAt:null on both
+  // the slot and its appointment keeps cancelled/soft-deleted bookings from
   // surfacing as phantom clashes.
+  //
+  // #1319 — this filtered on `isTentative: false`, which hid a co-host's live
+  // PENDING direct-checkout hold from the guard while checkout, the allocator
+  // and the availability grid all counted that same hold as occupying. An
+  // allocation could therefore commit a co-host onto a minute checkout would
+  // refuse. Occupancy is now the subsystem-wide predicate: an appointment in an
+  // occupying state, minus the dead holds (approved-unpaid or direct-checkout
+  // PENDING whose every payment is EXPIRED/FAILED or clock-expired).
   const overlapWhere = (
     appointment: Prisma.AppointmentWhereInput,
   ): Prisma.SlotOfAppointmentWhereInput => ({
@@ -130,10 +147,15 @@ export async function assertCollaboratorsAvailableForWindows(
       startsAt: { lt: w.endsAt },
       endsAt: { gt: w.startsAt },
     })),
-    isTentative: false,
     deletedAt: null,
     ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
-    appointment: { deletedAt: null, ...appointment },
+    appointment: {
+      deletedAt: null,
+      OR: buildOccupiedAppointmentFilter(),
+      NOT: buildDeadHoldFilter(now),
+      // Nested so the commitment clauses keep an OR of their own.
+      AND: [appointment],
+    },
   });
 
   // Fast path: one query asking whether ANY co-host clashes — no N+1 on the
