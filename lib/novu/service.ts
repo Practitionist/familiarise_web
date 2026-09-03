@@ -10,6 +10,7 @@ import { getNovuClient, isNovuConfigured } from "./client";
 import {
   NOVU_WORKFLOWS,
   type AppointmentPayload,
+  type AppointmentPartiallyScheduledPayload,
   type AppointmentCancelledPayload,
   type AppointmentRescheduledPayload,
   type PaymentSuccessPayload,
@@ -229,6 +230,22 @@ export async function notifyAppointmentBooked(
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
+    userIds,
+    payload,
+  );
+}
+
+/**
+ * #1206 — sent to the CONSULTEE only. The consultant already knows: they were
+ * shown "only N of M fit" and confirmed it. This is the half of that exchange
+ * the consultee never saw.
+ */
+export async function notifyAppointmentPartiallyScheduled(
+  userIds: string[],
+  payload: AppointmentPartiallyScheduledPayload,
+) {
+  return triggerForMultiple(
+    NOVU_WORKFLOWS.APPOINTMENT_PARTIALLY_SCHEDULED,
     userIds,
     payload,
   );

@@ -74,6 +74,16 @@ export const allocationRequestSchema = z
       })
       .optional(),
 
+    // #1206 — the consultant's explicit "place what fits now, the rest when
+    // availability opens". Default false: a partial schedule is never chosen
+    // on the consultee's behalf, only after the shortfall has been shown.
+    allowPartial: z
+      .boolean({
+        invalid_type_error: "'allowPartial' must be a boolean",
+      })
+      .optional()
+      .default(false),
+
     slots: z
       .array(
         z.string().datetime({
