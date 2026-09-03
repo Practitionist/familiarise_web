@@ -155,8 +155,11 @@ Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `SlotAllocationService.assertCollaboratorsFree` calls
 `assertCollaboratorsAvailableForWindows` (`lib/collaborators/availability.ts`)
 from all three paths, short-circuits for anything that is not a webinar or
-class, checks only `ACCEPTED` collaborators against live non-tentative slots on
-a half-open overlap, and throws `CollaboratorUnavailableError` → 409
-`COLLABORATOR_UNAVAILABLE`. It was previously reachable from one route only, so
+class, checks only `ACCEPTED` collaborators against live slots on a half-open
+overlap, and throws `CollaboratorUnavailableError` → 409
+`COLLABORATOR_UNAVAILABLE`. As of #1319 "live" means the shared occupancy
+predicate rather than the tentative flag: the slot's appointment must be in an
+occupying state and must not be a dead hold, so a co-host's live checkout hold
+blocks an allocation even though its slot is still tentative. It was previously reachable from one route only, so
 a class scheduled through the allocator could land on a time a co-host was
 already busy (AE-2, #784).
