@@ -23,6 +23,7 @@ import {
   WebinarStatus,
   ClassStatus,
   AppointmentStatus,
+  SlotCompletionStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
@@ -32,6 +33,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
+  transitionSlotCompletion,
   transitionTrialSession,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -597,55 +599,62 @@ async function completeIndividualSlots(): Promise<{
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
+  // Doctrine rule 1: the completion column had no CAS here, and the WHERE
+  // reached rows it has no business touching. A tentative hold is an unpaid
+  // reservation, not a session, so a past-dated one was being stamped
+  // UNVERIFIED and thereby put out of reach of the sweeps that free it; a
+  // tombstoned row was being re-stamped after it had already been released.
+  // Both guards ride the CAS WHERE alongside the from-set.
+  const liveHeldSlot = {
+    endsAt: { lt: bufferTime },
+    isTentative: false,
+    deletedAt: null,
+  };
+  // The from-set is SCHEDULED only, narrower than the maps' defaults: this
+  // cron is a fallback for a missed webhook and must never lift a slot a
+  // human parked at UNVERIFIED or pulled back from COMPLETED.
+  const fromScheduled = [SlotCompletionStatus.SCHEDULED];
+
   try {
     // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
     // Note: completedAt = cron run time (not session endedAt). Real-time
     // completion via webhooks (session-handlers.ts) uses the actual endedAt.
     // This cron is a fallback for missed webhooks, so the cron timestamp
     // represents "when the system acknowledged completion."
-    const completedResult = await prisma.slotOfAppointment.updateMany({
-      where: {
-        completionStatus: "SCHEDULED",
-        endsAt: { lt: bufferTime },
-        meetingSession: { endedAt: { not: null } },
-      },
-      data: { completionStatus: "COMPLETED", completedAt: new Date() },
+    const completedCount = await transitionSlotCompletion(prisma, {
+      where: { ...liveHeldSlot, meetingSession: { endedAt: { not: null } } },
+      to: SlotCompletionStatus.COMPLETED,
+      data: { completedAt: new Date() },
+      fromIn: fromScheduled,
+      allowZero: true,
     });
 
     // Slots past buffer WITHOUT MeetingSession → UNVERIFIED
-    const unverifiedResult = await prisma.slotOfAppointment.updateMany({
-      where: {
-        completionStatus: "SCHEDULED",
-        endsAt: { lt: bufferTime },
-        meetingSession: null,
-      },
-      data: { completionStatus: "UNVERIFIED" },
+    const unverifiedCount = await transitionSlotCompletion(prisma, {
+      where: { ...liveHeldSlot, meetingSession: null },
+      to: SlotCompletionStatus.UNVERIFIED,
+      fromIn: fromScheduled,
+      allowZero: true,
     });
 
     // Slots with MeetingSession but no endedAt (orphaned sessions — call
     // started but webhook never fired) → UNVERIFIED
-    const orphanedResult = await prisma.slotOfAppointment.updateMany({
-      where: {
-        completionStatus: "SCHEDULED",
-        endsAt: { lt: bufferTime },
-        meetingSession: { endedAt: null },
-      },
-      data: { completionStatus: "UNVERIFIED" },
+    const orphanedCount = await transitionSlotCompletion(prisma, {
+      where: { ...liveHeldSlot, meetingSession: { endedAt: null } },
+      to: SlotCompletionStatus.UNVERIFIED,
+      fromIn: fromScheduled,
+      allowZero: true,
     });
 
-    if (
-      completedResult.count > 0 ||
-      unverifiedResult.count > 0 ||
-      orphanedResult.count > 0
-    ) {
+    if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {
       console.log(
-        `   Slot-level: ${completedResult.count} completed, ${unverifiedResult.count + orphanedResult.count} unverified (${orphanedResult.count} orphaned)`,
+        `   Slot-level: ${completedCount} completed, ${unverifiedCount + orphanedCount} unverified (${orphanedCount} orphaned)`,
       );
     }
 
     return {
-      completed: completedResult.count,
-      unverified: unverifiedResult.count + orphanedResult.count,
+      completed: completedCount,
+      unverified: unverifiedCount + orphanedCount,
       errors,
     };
   } catch (error) {

@@ -58,6 +58,12 @@ const PENDING_EXPIRATION_DAYS = 30;
 // Also expire APPROVED_PENDING_PAYMENT after 7 days
 const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 
+// Per-run cap, same shape as cleanup-tentative-slots' MAX_SLOTS_PER_RUN: the
+// lapsed pay-link arm now expires one request per transaction instead of one
+// bulk statement, so an unbounded cohort times the function out before it
+// pages. Oldest-first, so consecutive hourly runs drain a backlog.
+const MAX_REQUESTS_PER_RUN = 500;
+
 export interface ExpireStaleRequestsResult {
   success: boolean;
   consultationsExpired: number;
@@ -464,6 +470,19 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
   }
 }
 
+function warnIfCapped(kind: "consultation" | "subscription", read: number) {
+  if (read < MAX_REQUESTS_PER_RUN) return;
+  console.warn(
+    JSON.stringify({
+      event: "expire_payment_pending_capped",
+      kind,
+      cap: MAX_REQUESTS_PER_RUN,
+      note: "backlog exceeds one run; the next scheduled run continues",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
 /**
  * Expire requests stuck in APPROVED_PENDING_PAYMENT.
  *
@@ -502,6 +521,8 @@ async function expirePaymentPendingRequests(): Promise<{
 
   try {
     const staleConsultations = await prisma.consultation.findMany({
+      take: MAX_REQUESTS_PER_RUN,
+      orderBy: { updatedAt: "asc" },
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
@@ -509,6 +530,7 @@ async function expirePaymentPendingRequests(): Promise<{
       },
       select: { id: true },
     });
+    warnIfCapped("consultation", staleConsultations.length);
 
     let consultationsExpired = 0;
     let consultationsSkipped = 0;
@@ -537,6 +559,8 @@ async function expirePaymentPendingRequests(): Promise<{
     );
 
     const staleSubscriptions = await prisma.subscription.findMany({
+      take: MAX_REQUESTS_PER_RUN,
+      orderBy: { updatedAt: "asc" },
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
@@ -544,6 +568,7 @@ async function expirePaymentPendingRequests(): Promise<{
       },
       select: { id: true },
     });
+    warnIfCapped("subscription", staleSubscriptions.length);
 
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
