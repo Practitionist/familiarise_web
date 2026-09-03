@@ -246,6 +246,7 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
 }
 
 async function runCheckoutCreator(): Promise<SlotAtom[]> {
+  const historyCreate = jest.fn().mockResolvedValue({});
   const checkoutAppointmentCreate = jest
     .fn()
     .mockResolvedValue({ id: "appt-2" });
@@ -271,6 +272,8 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
       createMany: jest.fn().mockResolvedValue({ count: 2 }),
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
     },
+    // #1333 — the handler opens the timeline in the same tx as the create.
+    bookingStatusHistory: { create: historyCreate },
   } as unknown as Tx;
 
   await handleConsultationCheckout(
@@ -287,6 +290,20 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
   );
 
   expect(checkoutAppointmentCreate).toHaveBeenCalledTimes(1);
+  // #1333 — the opening timeline row is written by the handler itself, in the
+  // same tx, naming the appointment it just created and the buyer as actor.
+  expect(historyCreate).toHaveBeenCalledTimes(1);
+  expect(historyCreate.mock.calls[0][0].data).toEqual(
+    expect.objectContaining({
+      entity: "CONSULTATION",
+      entityId: "cons-2",
+      fromStatus: "CREATED",
+      toStatus: "PENDING",
+      appointmentId: "appt-2",
+      actorUserId: CONSULTEE_USER,
+      organizationId: null,
+    }),
+  );
   return nestedAtoms(checkoutAppointmentCreate);
 }
 

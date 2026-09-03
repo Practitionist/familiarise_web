@@ -50,7 +50,14 @@ edge, and narrowing is safer: automated completion from a Stream webhook passes
 UNVERIFIED. As of wave 5 (#1322, ADR A12) each helper also appends one
 `BookingStatusHistory` row in the same transaction, reading the from-status
 before the CAS, so a lost race logs a stale from-status but never a wrong
-state.
+state. Wave 6 (#1333) widened that same pre-read to fetch the owning
+appointment, so `appointmentId` is stamped without a caller supplying it, and
+added `appendCreationHistory` — the one row that is not a transition, written
+from the literal `"CREATED"` in the same transaction as the create, because a
+booking that has never moved still needs a timeline. The three creation call
+sites are `app/api/slots/request-for-approval` and the consultation and
+subscription checkout handlers; the capture webhook's legacy creators do not
+write it yet.
 
 ## 2. Nothing that a Payment points at is ever deleted
 
