@@ -39,10 +39,7 @@ export const apiErrorSchema = z.object({
  * or when the `error` field is absent — both happen when the server
  * crashes before the route handler can serialise its own error envelope.
  */
-export function errorMessageFromBody(
-  raw: unknown,
-  fallback: string,
-): string {
+export function errorMessageFromBody(raw: unknown, fallback: string): string {
   const parsed = apiErrorSchema.safeParse(raw);
   return parsed.success && parsed.data.error ? parsed.data.error : fallback;
 }
@@ -121,9 +118,7 @@ export async function parseJsonResponse<S extends z.ZodTypeAny>(
       .slice(0, 3)
       .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
       .join("; ");
-    throw new Error(
-      `Server response did not match expected shape (${issues})`,
-    );
+    throw new Error(`Server response did not match expected shape (${issues})`);
   }
   return parsed.data;
 }

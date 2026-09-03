@@ -66,7 +66,10 @@ export async function tokenProvider(userId: string): Promise<string> {
     streamLogger.error("Failed to generate video token", error, {
       userId: validatedUserId,
     });
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     throw error;
   }
 }
@@ -97,7 +100,10 @@ export async function chatTokenProvider(userId: string): Promise<string> {
     streamLogger.error("Failed to generate chat token", error, {
       userId: validatedUserId,
     });
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     throw error;
   }
 }

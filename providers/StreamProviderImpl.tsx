@@ -169,14 +169,15 @@ const StreamProviderImpl = ({
         return type === "chat" ? cache.chatToken! : cache.videoToken!;
       }
 
-      const existing = type === "chat" ? tokenPromiseRef.current.chat : tokenPromiseRef.current.video;
+      const existing =
+        type === "chat"
+          ? tokenPromiseRef.current.chat
+          : tokenPromiseRef.current.video;
       if (existing) return existing;
 
       // Generate new token
       const request =
-        type === "chat"
-          ? chatTokenProvider(userId)
-          : tokenProvider(userId);
+        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId);
       if (type === "chat") tokenPromiseRef.current.chat = request;
       else tokenPromiseRef.current.video = request;
 
@@ -198,15 +199,17 @@ const StreamProviderImpl = ({
       // fails; left unattached that is an unhandled rejection on every failed
       // mint. The catch swallows exactly that derived rejection — the original
       // still propagates to `return request` callers.
-      void request.finally(() => {
-        if (tokenPromiseRef.current.userId !== userId) return;
-        if (type === "chat" && tokenPromiseRef.current.chat === request) {
-          delete tokenPromiseRef.current.chat;
-        }
-        if (type === "video" && tokenPromiseRef.current.video === request) {
-          delete tokenPromiseRef.current.video;
-        }
-      }).catch(() => {});
+      void request
+        .finally(() => {
+          if (tokenPromiseRef.current.userId !== userId) return;
+          if (type === "chat" && tokenPromiseRef.current.chat === request) {
+            delete tokenPromiseRef.current.chat;
+          }
+          if (type === "video" && tokenPromiseRef.current.video === request) {
+            delete tokenPromiseRef.current.video;
+          }
+        })
+        .catch(() => {});
 
       return request;
     },

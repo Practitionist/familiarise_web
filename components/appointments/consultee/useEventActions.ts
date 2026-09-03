@@ -197,9 +197,7 @@ export function useEventActions({
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: Object.keys(payload).length
-          ? JSON.stringify(payload)
-          : undefined,
+        body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 
       const data = await response.json();

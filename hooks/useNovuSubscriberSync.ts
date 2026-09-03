@@ -30,7 +30,9 @@ export function useNovuSubscriberSync() {
             ? (error as { httpStatus?: number }).httpStatus
             : undefined;
         const expected =
-          typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+          typeof httpStatus === "number" &&
+          httpStatus >= 400 &&
+          httpStatus < 500;
         // React Query retries this (retry: 1); a failed sync just delays
         // the subscriber row, nothing user-visible breaks. A 5xx/network
         // fault is still worth alerting on even though retry papers over it.
