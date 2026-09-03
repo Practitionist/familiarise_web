@@ -100,6 +100,9 @@ export async function PATCH(
         // #1206 — only the consultant (or a privileged caller) may decide to
         // schedule fewer sessions than the plan sold.
         allowPartial: body.allowPartial === true && canOverride,
+        // #1206 — top up the sessions an earlier partial allocation left
+        // unplaced instead of deleting the confirmed ones and re-planning.
+        topUp: body.topUp === true && canOverride,
       });
 
       const duration = Date.now() - startTime;
@@ -147,6 +150,9 @@ export async function PATCH(
         placedSessions: result.placedSessions,
         requiredSessions: result.requiredSessions,
         unplacedSessions: result.unplacedSessions,
+        // #1206 — a top-up that wrote nothing. Lets the caller tell "already
+        // complete / still no room" from "sessions were added".
+        noChange: result.noChange,
       });
     } catch (validationError) {
       const duration = Date.now() - startTime;
