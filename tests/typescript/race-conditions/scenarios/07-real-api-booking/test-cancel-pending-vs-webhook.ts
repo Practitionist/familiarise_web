@@ -125,6 +125,7 @@ async function run() {
       isTentative: true,
       completionStatus: true,
       completedAt: true,
+      deletedAt: true,
       consultantProfileId: true,
       user: { select: { id: true } },
     },
@@ -137,7 +138,9 @@ async function run() {
   });
   await prisma.slotOfAppointment.updateMany({
     where: { appointmentId: appointment.id },
-    data: { isTentative: true },
+    // The cancel path frees the hold by status now, so the arm has to clear
+    // the tombstone as well as the tentative flag.
+    data: { isTentative: true, completionStatus: "SCHEDULED", deletedAt: null },
   });
 
   const session = await loginAs(requester.email!);
@@ -223,7 +226,11 @@ async function run() {
       });
 
       const tentativeLeft = await prisma.slotOfAppointment.count({
-        where: { appointmentId: appointment.id, isTentative: true },
+        where: {
+          appointmentId: appointment.id,
+          isTentative: true,
+          deletedAt: null,
+        },
       });
       const parent = await prisma.consultation.findUniqueOrThrow({
         where: { id: consultation.id },
@@ -251,7 +258,7 @@ async function run() {
         });
         if (cancelWon) {
           check(
-            "leg1/C: late capture left no half-confirmed booking (slots deleted, parent CANCELLED)",
+            "leg1/C: late capture left no half-confirmed booking (slots released, parent CANCELLED)",
             confirmed === 0 && parent.status === "CANCELLED",
             { confirmed, parent },
           );
@@ -293,7 +300,11 @@ async function run() {
           consultantProfileId: slot.consultantProfileId,
           user: { connect: slot.user.map((u) => ({ id: u.id })) },
         },
-        update: { isTentative: true },
+        update: {
+          isTentative: true,
+          completionStatus: "SCHEDULED",
+          deletedAt: null,
+        },
       });
     }
 
@@ -362,6 +373,7 @@ async function run() {
           isTentative: slot.isTentative,
           completionStatus: slot.completionStatus,
           completedAt: slot.completedAt,
+          deletedAt: slot.deletedAt,
           consultantProfileId: slot.consultantProfileId,
           user: { connect: slot.user.map((u) => ({ id: u.id })) },
         },
@@ -369,6 +381,7 @@ async function run() {
           isTentative: slot.isTentative,
           completionStatus: slot.completionStatus,
           completedAt: slot.completedAt,
+          deletedAt: slot.deletedAt,
         },
       });
     }
