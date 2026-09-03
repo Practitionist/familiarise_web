@@ -37,6 +37,10 @@ graph TD
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
 - **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
 
+## Reading the audit trail
+
+Every guarded status transition appends one `BookingStatusHistory` row inside the same transaction as the state change, and the reschedule proposals raised against a booking are kept as `RescheduleRequest` rows. Those two tables together are the booking's audit trail, and the way to read them is `getBookingTimeline` in [`lib/data/booking-history.ts`](../../lib/data/booking-history.ts), which merges both sources into a single newest-first list of status edges, actors and reasons. It resolves the trail through the polymorphic `entityId` column rather than through the nullable `appointmentId`, because no writer populates the latter today, and that is what makes the slot and reschedule rows visible. The surface over it is `GET /api/staff/appointments/[appointmentId]/timeline`, which renders in the operator appointment detail modal on the staff and admin appointments pages. Reading it requires ADMIN or STAFF: ADR 20 gives organization roles no per-session drill-in, so the read model's scope parameter accepts only the privileged `all` kind and refuses anything else.
+
 ## Source Code Map
 
 ### Backend Services (`utils/slotAllocation/`)
@@ -121,6 +125,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | Understand org-sponsored bookings      | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                       |
 | **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
 | **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
+| Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 

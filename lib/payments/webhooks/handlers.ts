@@ -8,7 +8,10 @@ import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
-import { setParticipantStatus } from "@/lib/booking/participants";
+import {
+  recordParticipants,
+  setParticipantStatus,
+} from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -27,6 +30,11 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import {
+  assertSingleContiguousLiveRun,
+  buildContiguousSlotAtomsForWindow,
+} from "@/lib/appointments/contiguous-slot-run";
+import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import {
@@ -1354,7 +1362,9 @@ async function createAppointmentFromWebhook(
 
 async function createConsultation(tx: Tx, data: ConsultationData) {
   // #440 — the include rides the create so the overlap-guard column comes
-  // back without a second query inside the webhook transaction.
+  // back without a second query inside the webhook transaction. #1319 adds
+  // the consultant's user id: the conflict filter this row has to be visible
+  // to matches on `user.some.id`, not on the profile.
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: data.planId,
@@ -1364,33 +1374,66 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       bookingSource: "DIRECT_CHECKOUT",
     },
     include: {
-      consultationPlan: { select: { consultantProfileId: true } },
+      consultationPlan: {
+        select: {
+          consultantProfileId: true,
+          consultantProfile: { select: { userId: true } },
+        },
+      },
     },
   });
 
-  return await tx.appointment.create({
+  const consultantUserId =
+    consultation.consultationPlan.consultantProfile?.userId;
+  if (!consultantUserId) {
+    // Without it the row is invisible to the consultant-scoped conflict filter
+    // and the allocator will happily double-book on top of it. A capture that
+    // cannot produce a correct booking must fail loudly, not quietly commit a
+    // half-connected one — the caller's CRITICAL alert exists for this.
+    throw new Error(
+      "Consultation plan has no consultant user; cannot create booking",
+    );
+  }
+
+  // #1071 / ADR B1 — the identical call handleConsultationCheckout makes.
+  // This path used to mint ONE row spanning the whole session with only the
+  // buyer attached: not an atom run, and unseen by conflict detection.
+  const slotAtoms = buildContiguousSlotAtomsForWindow({
+    startsAt: new Date(data.startsAt),
+    endsAt: new Date(data.endsAt),
+    consultantProfileId: consultation.consultationPlan.consultantProfileId,
+    // Checkout births `!skipPayment` and the capture webhook flips it false.
+    // This creator only runs AFTER capture, so confirmed is the same end state
+    // by a shorter road — confirmExistingAppointment re-flips it either way.
+    isTentative: false,
+    userIds: [consultantUserId, data.userId],
+  });
+
+  const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
-      slotsOfAppointment: {
-        create: {
-          startsAt: new Date(data.startsAt),
-          endsAt: new Date(data.endsAt),
-          isTentative: false,
-          consultantProfileId:
-            consultation.consultationPlan.consultantProfileId,
-          user: { connect: { id: data.userId } },
-        },
-      },
-      // #1319 A9 — legacy-shape capture creates the appointment itself.
+      slotsOfAppointment: { create: slotAtoms },
+      // #1319 A9 — legacy-shape capture creates the appointment itself, so the
+      // participant rows are born here rather than flipped by the confirm path.
+      // One row per user the atoms connect: the consultant attends too.
       participants: {
-        create: { userId: data.userId, role: "CONSULTEE", status: "CONFIRMED" },
+        create: [
+          { userId: consultantUserId, role: "CONSULTANT", status: "CONFIRMED" },
+          { userId: data.userId, role: "CONSULTEE", status: "CONFIRMED" },
+        ],
       },
     },
     include: {
       slotsOfAppointment: true,
     },
   });
+
+  // #1071 — assert before the transaction commits, not after a reader trips
+  // over it. Free: the rows are already in hand from the create's include.
+  assertSingleContiguousLiveRun(appointment.slotsOfAppointment);
+
+  return appointment;
 }
 
 async function createSubscription(tx: Tx, data: SubscriptionData) {
@@ -1435,34 +1478,21 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
     },
   });
 
-  // Build appointment data conditionally based on scheduling approach
-  const appointmentData: Prisma.AppointmentUncheckedCreateInput = {
-    appointmentType: AppointmentsType.SUBSCRIPTION,
-    subscriptionId: subscription.id,
-  };
-
-  // Only add slots if NOT a scheduling period request
-  if (!isSchedulingPeriodRequest && data.startsAt && data.endsAt) {
-    appointmentData.slotsOfAppointment = {
-      create: {
-        // HOIf/#1202 — LEGACY creators now birth TENTATIVE rows. Birthed
-        // confirmed, a capture landing on a CANCELLED/DRAFT booking committed
-        // real slots the B2 guard could only refund AROUND — ghost confirmed
-        // slots blocking a dead calendar. Tentative births flip via the
-        // ordinary confirm machinery on success and sweep as orphans on
-        // terminal capture (#830).
-        isTentative: true,
-        // #440 — same overlap-guard population as the consultation twin;
-        // a NULL here would bypass the exclusion constraint's scope.
-        consultantProfileId: plan.consultantProfileId,
-        user: { connect: { id: data.userId } },
-      } as unknown as Prisma.SlotOfAppointmentUncheckedCreateWithoutAppointmentInput,
-    };
-  }
-
-  // Single appointment creation call
+  // #1319 — a slotless placeholder, which is what handleSubscriptionCheckout
+  // has always produced: a subscription's sessions are allocated later by the
+  // consultant from the Requests tab, so there is no time here to chunk.
+  //
+  // This used to branch on `!isSchedulingPeriodRequest && startsAt && endsAt`
+  // and write one seat row — a row with no `startsAt` and no `endsAt`, which
+  // are NOT NULL with no default. The `as unknown as` cast was what let it
+  // compile; at runtime the branch could only ever throw and take the whole
+  // capture transaction down with it. Matching the checkout counterpart
+  // removes the divergence and the dead branch in one move.
   return await tx.appointment.create({
-    data: appointmentData,
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscriptionId: subscription.id,
+    },
     include: {
       slotsOfAppointment: true,
     },
@@ -1482,20 +1512,29 @@ async function createWebinar(tx: Tx, data: EventData) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  // Use the master slot's times — guaranteed to exist after validation above.
-  // HOIf/#1202 — tentative birth (see the subscription creator above): the
-  // payer's seat only becomes confirmed when the event-state guard in
-  // confirmExistingAppointment succeeds; capacity recounts are
-  // tentative-inclusive so nothing else changes.
-  await tx.slotOfAppointment.create({
-    data: {
-      appointmentId: webinar.appointment.id,
-      startsAt: masterSlot.startsAt,
-      endsAt: masterSlot.endsAt,
-      isTentative: true,
-      user: { connect: { id: data.userId } },
-    },
+  // #1319 — register the payer against the consultant's existing slots, which
+  // is what handleWebinarCheckout does. The seat row this used to mint carried
+  // no `consultantProfileId` and duplicated the master slot's window, so a
+  // webinar's occupancy grew by a full session for every ticket sold and the
+  // atom run gained a second, parallel row nobody could group with it.
+  await connectAttendeeToEventSlots(tx, {
+    appointments: [webinar.appointment],
+    userId: data.userId,
   });
+
+  // #1319 A9 — the seat row is gone, but the seat is not: record the payer
+  // against the event's own appointment, the same edge handleWebinarCheckout
+  // writes, in the same HELD state. Born CONFIRMED it would outlive its own
+  // guard: `confirmExistingAppointment` runs AFTER this and its B2 CAS refuses
+  // a capture landing on a cancelled webinar, but this transaction commits
+  // either way — leaving a confirmed seat on a dead event that Phase 2 has
+  // already refunded. HELD is promoted by the CAS or by nothing.
+  await recordParticipants(
+    tx,
+    webinar.appointment.id,
+    [{ userId: data.userId, role: "CONSULTEE" }],
+    { status: "HELD" },
+  );
 
   const createdAppointment = await tx.appointment.findUnique({
     where: { id: webinar.appointment.id },
@@ -1510,28 +1549,56 @@ async function createWebinar(tx: Tx, data: EventData) {
 async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
-    include: { classPlan: true },
-  });
-  if (!classInstance) throw new Error("Class not found");
-
-  const appointment = await tx.appointment.create({
-    data: {
-      appointmentType: AppointmentsType.CLASS,
-      classId: classInstance.id,
-      slotsOfAppointment: {
-        create: {
-          // HOIf/#1202 — tentative birth (see createWebinar).
-          isTentative: true,
-          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
-          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
-          user: { connect: { id: data.userId } },
-        },
+    include: {
+      appointments: {
+        include: { slotsOfAppointment: { select: { id: true } } },
       },
     },
   });
+  if (!classInstance) throw new Error("Class not found");
+
+  // #1319 — enrol the payer into the sessions that already exist, exactly as
+  // handleClassCheckout does. This used to CREATE an appointment per buyer,
+  // holding one seat row spanning `schedulingPeriodStartsAt` to
+  // `schedulingPeriodEndsAt` — months wide, with no `consultantProfileId`.
+  // Worse than a bad row shape: a class's Appointments ARE its sessions, so
+  // every enrolment added a phantom session to the class, inflating the
+  // session count that capacity, the "fully scheduled" enrolment gate and the
+  // consultee's timeline all read.
+  // A session Appointment with no slots is an unscheduled session: connecting
+  // to it links the payer to nothing. Refusing on `appointments.length` alone
+  // let that case through and still recorded a paid seat, so the buyer was
+  // enrolled in a class with no time on the calendar.
+  const scheduledSessions = classInstance.appointments.filter(
+    (appointment) => appointment.slotsOfAppointment.length > 0,
+  );
+  const [firstAppointment] = scheduledSessions;
+  if (!firstAppointment) {
+    // Same refusal createWebinar makes for an unscheduled event: there is
+    // nothing to enrol into, and inventing a placeholder is what caused this.
+    throw new Error("Class has not been scheduled. Cannot create booking.");
+  }
+
+  await connectAttendeeToEventSlots(tx, {
+    appointments: scheduledSessions,
+    userId: data.userId,
+  });
+
+  // #1319 A9 — one participant row per scheduled session, matching
+  // handleClassCheckout. HELD for the same reason as the webinar arm: the B2
+  // CAS in confirmExistingAppointment, not this creator, decides whether a
+  // capture on a terminal class is allowed to confirm anything.
+  for (const appointment of scheduledSessions) {
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId: data.userId, role: "CONSULTEE" }],
+      { status: "HELD" },
+    );
+  }
 
   const createdAppointment = await tx.appointment.findUnique({
-    where: { id: appointment.id },
+    where: { id: firstAppointment.id },
     include: { slotsOfAppointment: true },
   });
   if (!createdAppointment) {
