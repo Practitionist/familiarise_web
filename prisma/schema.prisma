@@ -3995,11 +3995,11 @@ model Appointment {
   appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
 
-  // Reserved dedupe surface for allocation retries (client double-submit,
-  // webhook redelivery): a batch will stamp its first appointment with the
-  // originating idempotency key so a replay trips @unique (P2002 → 409) instead
-  // of double-booking. Nullable by design — only real keys dedupe, NULLs don't
-  // collide. Column frozen now (schema gate); wiring tracked in #837.
+  // Dedupe surface for allocation retries (client double-submit, webhook
+  // redelivery): the allocate routes read the Idempotency-Key header and
+  // SlotAllocationService stamps it on the batch's first appointment, so a
+  // replay trips @unique (P2002 → 409) instead of double-booking. Nullable by
+  // design — only real keys dedupe, NULLs don't collide. #1373.
   allocationIdempotencyKey String? @unique
 
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
