@@ -63,6 +63,7 @@ import { computeTdsForPayout } from "@/lib/compliance/tds";
 import {
   getFYDateRange,
   getIndianFinancialYear,
+  getIndianFYQuarter,
   recordOrgTDSDeduction,
   recordOrgTdsReversal,
 } from "@/lib/payments/tax/tds-service";
@@ -426,13 +427,16 @@ export async function createOrgPayoutBatch(
                 netPayoutPaise: netPayout,
                 tdsSectionApplied: tds.tdsSection,
                 tdsAmountPaise: tds.tdsAmountPaise,
-                // #1354 — pin the rate and the FY at BATCH time. The TDSRecord
-                // is written at COMPLETED, which can be a different fiscal year
-                // (a March batch settling in April) and a different effective
-                // rate; re-deriving there would file a row that disagrees with
-                // the amount actually withheld here. `tdsRate` is a decimal
+                // #1354 — the RATE is pinned here because this is the rate
+                // actually withheld from the disbursement; rate cards are
+                // effective-dated, so re-deriving it at completion could file a
+                // row that disagrees with the money. `tdsRate` is a decimal
                 // fraction (0.10 = 10%) and always present on a computation.
                 tdsRateAppliedBps: Math.round(tds.tdsRate * 10_000),
+                // The PERIOD is a different question, and this column is only
+                // the batch-time audit stamp of when the batch was built. The
+                // TDSRecord dates itself at the completion instant instead —
+                // see markOrgPayoutCompleted.
                 tdsFinancialYear: getIndianFinancialYear(),
                 dtaaRateApplied:
                   tds.dtaaRateApplied !== null
@@ -1077,10 +1081,10 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         organizationId: true,
         netPayoutPaise: true,
         tdsAmountPaise: true,
-        // #1354 — the three columns the completion-time TDSRecord files under,
-        // pinned at batch time (see createOrgPayoutBatch).
+        // #1354 — the rate and section the completion-time TDSRecord files
+        // under, both pinned at batch time (see createOrgPayoutBatch). The
+        // period is NOT read from the payout; see below.
         tdsRateAppliedBps: true,
-        tdsFinancialYear: true,
         tdsSectionApplied: true,
         currency: true,
         organization: { select: { name: true } },
@@ -1161,7 +1165,14 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         where: { orgPayoutId: payoutId, isReversal: false },
       });
 
-      const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
+      // #1354 — TDS on a payout is dated at PAYMENT, so both halves of the
+      // period come from the completion instant. Taking the year from the
+      // batch-time stamp and the quarter from "now" is how a late-March batch
+      // that settles in April files FY 2025-26 quarter 1, a period that does
+      // not exist. `OrganizationPayout.tdsFinancialYear` stays what it is: an
+      // audit stamp of when the batch was built.
+      const financialYear = getIndianFinancialYear();
+      const quarter = getIndianFYQuarter();
       const { start, end } = getFYDateRange(financialYear);
       // The return reports the GROSS amount credited, not the cash that left:
       // net + withheld, over every other COMPLETED payout to this org in the FY
@@ -1188,6 +1199,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         tdsRateBps: payout.tdsRateAppliedBps,
         cumulativeAmountCredited,
         orgPayoutId: payoutId,
+        quarter,
         tdsSection: payout.tdsSectionApplied ?? undefined,
         db: tx,
       });
@@ -1262,8 +1274,9 @@ async function markOrgPayoutFailedInternal(
     });
 
     // #1354 — defensive: a PROCESSING→FAILED payout never disbursed, so it
-    // never withheld. Nothing should have written a deduction row yet (that
-    // happens only at COMPLETED), but if one exists it must not reach the
+    // never withheld. Nothing should have written a deduction row yet, because
+    // that happens only at COMPLETED, but if one somehow exists it must not
+    // reach the quarterly return, so delete it here.
     // The tdsAmountPaise/tdsRateAppliedBps/tdsFinancialYear columns are
     // deliberately LEFT SET (the consultant rail clears its equivalents): they
     // are the batch-time record of what was computed, and markOrgPayoutReversed

@@ -433,11 +433,18 @@ export async function recordOrgTDSDeduction(params: {
   tdsRateBps: number;
   cumulativeAmountCredited: number;
   orgPayoutId: string;
+  /**
+   * Fiscal quarter the deduction is dated in. Callers that already know the
+   * instant the withholding happened MUST pass it together with the matching
+   * `financialYear`: deriving one from the caller and the other from "now"
+   * yields impossible periods such as FY 2025-26 Q1.
+   */
+  quarter?: number;
   /** #776 — statutory section applied, for the return's line classification. */
   tdsSection?: string;
   db?: Tx | typeof prisma;
 }) {
-  const quarter = getIndianFYQuarter();
+  const quarter = params.quarter ?? getIndianFYQuarter();
   const db = params.db || prisma;
 
   return db.tDSRecord.create({
