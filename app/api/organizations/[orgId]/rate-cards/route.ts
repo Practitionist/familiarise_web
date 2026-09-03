@@ -11,6 +11,10 @@
  * now()`. This preserves the historical split each earning was settled
  * against — see `OrganizationEarnings.platformBpsApplied`.
  *
+ * #1335 — a card scoped to a contract, planType or planId is only selected at
+ * settlement when `RATE_CARD_SCOPED_RESOLUTION=on`; off (the default), the org
+ * default card settles instead. Creation is unaffected either way.
+ *
  * Query params on GET:
  *   scope=current|all           (default current — live cards only)
  *   planType=CONSULTATION|CLASS|WEBINAR|SUBSCRIPTION
@@ -202,11 +206,13 @@ export async function POST(
     return NextResponse.json({ rateCard: card }, { status: 201 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

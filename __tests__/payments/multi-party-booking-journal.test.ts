@@ -38,6 +38,9 @@ jest.mock("../../lib/collaborators/service", () => ({
 
 jest.mock("../../lib/api/organizations/rate-card", () => ({
   resolveEffectiveRateCard: jest.fn(),
+  // #1335 — settlement destructures this from the same module; a partial mock
+  // leaves it undefined and every split throws before it resolves a card.
+  isScopedRateCardResolutionEnabled: () => false,
 }));
 
 type CapturedLedgerCreate = {
@@ -78,10 +81,12 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest
         .fn()
-        .mockImplementation(async ({ data }: { data: CapturedLedgerCreate }) => {
-          capturedLedgerTxns.push(data);
-          return { id: "ltxn-" + capturedLedgerTxns.length };
-        }),
+        .mockImplementation(
+          async ({ data }: { data: CapturedLedgerCreate }) => {
+            capturedLedgerTxns.push(data);
+            return { id: "ltxn-" + capturedLedgerTxns.length };
+          },
+        ),
     },
     ledgerAccount: {
       upsert: jest
@@ -261,8 +266,16 @@ describe("#773 multi-party booking journal", () => {
     // fee 2_549, net 21_674, org absorbs the remainder 1_276.
     mockedCalculateSplit.mockResolvedValue([
       { consultantProfileId: PRIMARY_PROFILE, share: 42_501, role: "OWNER" },
-      { consultantProfileId: COLLAB_HOST_PROFILE, share: 25_499, role: "CO_HOST" },
-      { consultantProfileId: COLLAB_INDEP_PROFILE, share: 17_000, role: "CO_HOST" },
+      {
+        consultantProfileId: COLLAB_HOST_PROFILE,
+        share: 25_499,
+        role: "CO_HOST",
+      },
+      {
+        consultantProfileId: COLLAB_INDEP_PROFILE,
+        share: 17_000,
+        role: "CO_HOST",
+      },
     ]);
 
     await createEarningsFromPayment({
@@ -300,11 +313,19 @@ describe("#773 multi-party booking journal", () => {
     ).toBe(42_501);
     // Hosted collaborator: NET of ORG_ANOTHER's cut.
     expect(
-      legAmount(txn, "CREDIT", `CONSULTANT_PAYABLE|_|${COLLAB_HOST_PROFILE}|INR`),
+      legAmount(
+        txn,
+        "CREDIT",
+        `CONSULTANT_PAYABLE|_|${COLLAB_HOST_PROFILE}|INR`,
+      ),
     ).toBe(21_674);
     // Independent collaborator: full share.
     expect(
-      legAmount(txn, "CREDIT", `CONSULTANT_PAYABLE|_|${COLLAB_INDEP_PROFILE}|INR`),
+      legAmount(
+        txn,
+        "CREDIT",
+        `CONSULTANT_PAYABLE|_|${COLLAB_INDEP_PROFILE}|INR`,
+      ),
     ).toBe(17_000);
     expect(legAmount(txn, "CREDIT", `ORG_PAYABLE|${ORG_LEARNPRO}|_|INR`)).toBe(
       5_000,
@@ -352,7 +373,11 @@ describe("#773 multi-party booking journal", () => {
     // shave the pool); pool = 80_000, split 60_000 owner + 20_000 collab.
     mockedCalculateSplit.mockResolvedValue([
       { consultantProfileId: PRIMARY_PROFILE, share: 60_000, role: "OWNER" },
-      { consultantProfileId: COLLAB_INDEP_PROFILE, share: 20_000, role: "CO_HOST" },
+      {
+        consultantProfileId: COLLAB_INDEP_PROFILE,
+        share: 20_000,
+        role: "CO_HOST",
+      },
     ]);
 
     await createEarningsFromPayment({
@@ -371,7 +396,11 @@ describe("#773 multi-party booking journal", () => {
       legAmount(txn, "CREDIT", `CONSULTANT_PAYABLE|_|${PRIMARY_PROFILE}|INR`),
     ).toBe(60_000);
     expect(
-      legAmount(txn, "CREDIT", `CONSULTANT_PAYABLE|_|${COLLAB_INDEP_PROFILE}|INR`),
+      legAmount(
+        txn,
+        "CREDIT",
+        `CONSULTANT_PAYABLE|_|${COLLAB_INDEP_PROFILE}|INR`,
+      ),
     ).toBe(20_000);
     const legs = legsOf(txn);
     const debit = legs
@@ -391,7 +420,11 @@ describe("#773 multi-party booking journal", () => {
     });
     mockedCalculateSplit.mockResolvedValue([
       { consultantProfileId: PRIMARY_PROFILE, share: 59_501, role: "OWNER" },
-      { consultantProfileId: COLLAB_HOST_PROFILE, share: 25_499, role: "CO_HOST" },
+      {
+        consultantProfileId: COLLAB_HOST_PROFILE,
+        share: 25_499,
+        role: "CO_HOST",
+      },
     ]);
     // Crash-recovery shape: the journal txn survived but the earnings tx is
     // being replayed — postLedgerTxn's fast-path must dedupe on the key.
