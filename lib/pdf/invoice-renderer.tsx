@@ -20,8 +20,6 @@
  * and is no longer needed. Plain JSX is sufficient.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import React from "react";
 import {
   Document,
@@ -29,7 +27,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Font,
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type {
@@ -38,53 +35,19 @@ import type {
   IrpStatus,
   PlaceOfSupplySource,
 } from "@prisma/client";
+import {
+  StatutoryDocumentFrame,
+  statutoryStyles,
+  formatStatutoryDate,
+  taxTotalLines,
+  type StatutorySupplier,
+  type StatutoryBuyer,
+} from "./statutory-document-frame";
 
-// ============================================================================
-// Devanagari font registration (#1365)
-// ============================================================================
-
-/**
- * Helvetica, the only face the org documents use, has no Devanagari coverage:
- * a buyer whose name or address is written in Hindi or Marathi renders as
- * blank boxes on their own tax invoice. Noto Sans Devanagari is registered
- * here once, at module scope, from a copy that ships inside the deployment
- * bundle (`public/fonts/`, traced in next.config.mjs) — never fetched over the
- * network at render time, because a download the buyer is owed must not depend
- * on an outbound request from a serverless function.
- *
- * Registration is guarded rather than assumed: if the traced copy is missing
- * for any reason we fall back to Helvetica and still produce a document.
- * A Latin-script invoice looks identical either way; a Devanagari one degrades
- * to boxes instead of 500-ing.
- */
-const DEVANAGARI_FONT_DIR = path.join(process.cwd(), "public", "fonts");
-const DEVANAGARI_FILES = [
-  { file: "NotoSansDevanagari-Regular.ttf", fontWeight: 400 as const },
-  { file: "NotoSansDevanagari-Bold.ttf", fontWeight: 700 as const },
-];
-
-function registerDevanagari(): boolean {
-  try {
-    const fonts = DEVANAGARI_FILES.map(({ file, fontWeight }) => ({
-      src: path.join(DEVANAGARI_FONT_DIR, file),
-      fontWeight,
-    }));
-    // `Font.register` defers the read to render time, so existence is checked
-    // here — otherwise a missing file surfaces as a failed download, not a
-    // fallback.
-    if (!fonts.every((f) => fs.existsSync(f.src))) return false;
-    Font.register({ family: "NotoSansDevanagari", fonts });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const devanagariReady = registerDevanagari();
-
-/** The face used for buyer-supplied names and addresses on the CONSUMER
- *  documents only. `orgStyles` below is deliberately untouched. */
-export const BODY_FONT = devanagariReady ? "NotoSansDevanagari" : "Helvetica";
+// The Devanagari face used by the consumer documents is registered once in
+// ./statutory-document-frame. Re-exported here because that is where callers
+// have always imported it from.
+export { BODY_FONT } from "./statutory-document-frame";
 
 // ============================================================================
 // Shared formatting helpers
@@ -491,241 +454,66 @@ export type ConsumerInvoicePdfData = {
   /** What was supplied. Falls back to a generic consulting-services line when
    *  the booking is gone. */
   description?: string | null;
-  supplier: {
-    name: string;
-    gstin: string;
-    address: string;
-    stateCode: string;
-  };
-  buyer: {
-    name: string;
-    email: string;
-    address?: string | null;
-    stateCode?: string | null;
-  };
+  supplier: StatutorySupplier;
+  buyer: StatutoryBuyer;
 };
 
-const consumerStyles = StyleSheet.create({
-  page: { padding: 36, fontFamily: "Helvetica", fontSize: 10, color: "#222" },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderBottom: "1 solid #222",
-    paddingBottom: 12,
-    marginBottom: 18,
-  },
-  title: { fontSize: 16, fontWeight: "bold", marginBottom: 4 },
-  docNumber: { fontSize: 10, color: "#666" },
-  right: { flexDirection: "column", alignItems: "flex-end" },
-  sectionTitle: {
-    fontSize: 9,
-    fontWeight: "bold",
-    marginTop: 14,
-    marginBottom: 5,
-    textTransform: "uppercase",
-    color: "#666",
-  },
-  parties: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  party: { width: "48%" },
-  partyName: { fontSize: 11, fontWeight: "bold", marginBottom: 2 },
-  line: { fontSize: 9, color: "#444", marginBottom: 1 },
-  /** Buyer-supplied text may be Devanagari; everything else stays Helvetica. */
-  buyerText: {
-    fontSize: 9,
-    color: "#444",
-    marginBottom: 1,
-    fontFamily: BODY_FONT,
-  },
-  buyerName: {
-    fontSize: 11,
-    fontWeight: "bold",
-    marginBottom: 2,
-    fontFamily: BODY_FONT,
-  },
-  tableHeader: {
-    flexDirection: "row",
-    borderBottom: "1 solid #222",
-    paddingBottom: 4,
-    marginBottom: 4,
-  },
-  tableRow: {
-    flexDirection: "row",
-    paddingVertical: 4,
-    borderBottom: "0.5 solid #ddd",
-  },
-  cDesc: { width: "58%" },
-  cSac: { width: "18%", textAlign: "center" },
-  cAmount: { width: "24%", textAlign: "right" },
-  totalsBox: { alignSelf: "flex-end", width: "55%", marginTop: 14 },
-  totalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 2,
-  },
-  totalLabel: { fontSize: 10, color: "#444" },
-  totalValue: { fontSize: 10 },
-  grandTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTop: "1 solid #222",
-    marginTop: 6,
-    paddingTop: 6,
-  },
-  grandLabel: { fontSize: 11, fontWeight: "bold" },
-  grandValue: { fontSize: 12, fontWeight: "bold" },
-  footnote: { marginTop: 16, fontSize: 8, color: "#777" },
-  footer: {
-    position: "absolute",
-    bottom: 24,
-    left: 36,
-    right: 36,
-    borderTop: "0.5 solid #ccc",
-    paddingTop: 8,
-    fontSize: 8,
-    color: "#888",
-    textAlign: "center",
-  },
-});
+/** Rule 46 requires the place of supply on the face of the invoice, and an
+ *  officer reading a defaulted one deserves to know it was defaulted. */
+const SECTION_12_2_B_FOOTNOTE =
+  "Place of supply determined under s.12(2)(b) IGST Act (no address of the recipient on record).";
 
 export function ConsumerInvoiceDocument({
   data,
 }: {
   readonly data: ConsumerInvoicePdfData;
 }) {
-  const taxRatePercent = (data.taxRateBps / 100).toFixed(0);
-  const supplierDefaulted =
-    data.placeOfSupplySource === "SUPPLIER_DEFAULT_12_2_B";
-
   return (
     <Document>
-      <Page size="A4" style={consumerStyles.page}>
-        <View style={consumerStyles.header}>
-          <View>
-            <Text style={consumerStyles.title}>TAX INVOICE</Text>
-            <Text style={consumerStyles.docNumber}>#{data.invoiceNumber}</Text>
-          </View>
-          <View style={consumerStyles.right}>
-            <Text style={consumerStyles.partyName}>{data.supplier.name}</Text>
-            <Text style={consumerStyles.line}>
-              GSTIN: {data.supplier.gstin}
-            </Text>
-            <Text style={consumerStyles.line}>{data.supplier.address}</Text>
-            <Text style={consumerStyles.line}>
-              State code: {data.supplier.stateCode}
-            </Text>
-          </View>
-        </View>
-
-        <View style={consumerStyles.parties}>
-          <View style={consumerStyles.party}>
-            <Text style={consumerStyles.sectionTitle}>Bill to</Text>
-            <Text style={consumerStyles.buyerName}>{data.buyer.name}</Text>
-            <Text style={consumerStyles.buyerText}>{data.buyer.email}</Text>
-            {data.buyer.address ? (
-              <Text style={consumerStyles.buyerText}>{data.buyer.address}</Text>
-            ) : null}
-            {data.buyer.stateCode ? (
-              <Text style={consumerStyles.line}>
-                State code: {data.buyer.stateCode}
-              </Text>
-            ) : null}
-          </View>
-          <View style={consumerStyles.party}>
-            <Text style={consumerStyles.sectionTitle}>Details</Text>
-            <Text style={consumerStyles.line}>
-              Invoice date: {formatDateLong(data.issuedAt)}
-            </Text>
-            <Text style={consumerStyles.line}>
-              Date of supply: {formatDateLong(data.supplyDate)}
-            </Text>
-            <Text style={consumerStyles.line}>
-              Place of supply: {data.placeOfSupply ?? "—"}
-            </Text>
-            <Text style={consumerStyles.line}>Reverse charge: No</Text>
-          </View>
-        </View>
-
-        <Text style={consumerStyles.sectionTitle}>Supply</Text>
-        <View>
-          <View style={consumerStyles.tableHeader}>
-            <Text style={consumerStyles.cDesc}>Description</Text>
-            <Text style={consumerStyles.cSac}>SAC</Text>
-            <Text style={consumerStyles.cAmount}>Taxable value</Text>
-          </View>
-          <View style={consumerStyles.tableRow}>
-            <Text style={consumerStyles.cDesc}>
-              {data.description ?? "Consulting services booked on the platform"}
-            </Text>
-            <Text style={consumerStyles.cSac}>{data.sacCode}</Text>
-            <Text style={consumerStyles.cAmount}>
-              {formatMoneyIntl(data.taxableValuePaise, data.currency)}
-            </Text>
-          </View>
-        </View>
-
-        <View style={consumerStyles.totalsBox}>
-          <View style={consumerStyles.totalRow}>
-            <Text style={consumerStyles.totalLabel}>Taxable value</Text>
-            <Text style={consumerStyles.totalValue}>
-              {formatMoneyIntl(data.taxableValuePaise, data.currency)}
-            </Text>
-          </View>
-          {data.igstPaise > 0 && (
-            <View style={consumerStyles.totalRow}>
-              <Text style={consumerStyles.totalLabel}>
-                IGST @ {taxRatePercent}%
-              </Text>
-              <Text style={consumerStyles.totalValue}>
-                {formatMoneyIntl(data.igstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-          {data.cgstPaise > 0 && (
-            <View style={consumerStyles.totalRow}>
-              <Text style={consumerStyles.totalLabel}>
-                CGST @ {(data.taxRateBps / 200).toFixed(0)}%
-              </Text>
-              <Text style={consumerStyles.totalValue}>
-                {formatMoneyIntl(data.cgstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-          {data.sgstPaise > 0 && (
-            <View style={consumerStyles.totalRow}>
-              <Text style={consumerStyles.totalLabel}>
-                SGST @ {(data.taxRateBps / 200).toFixed(0)}%
-              </Text>
-              <Text style={consumerStyles.totalValue}>
-                {formatMoneyIntl(data.sgstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-          <View style={consumerStyles.grandTotal}>
-            <Text style={consumerStyles.grandLabel}>Total</Text>
-            <Text style={consumerStyles.grandValue}>
-              {formatMoneyIntl(data.totalPaise, data.currency)}
-            </Text>
-          </View>
-        </View>
-
-        {supplierDefaulted && (
-          <Text style={consumerStyles.footnote}>
-            Place of supply determined under s.12(2)(b) IGST Act (no address of
-            the recipient on record).
-          </Text>
-        )}
-
-        <View style={consumerStyles.footer} fixed>
-          <Text>
-            System-generated tax invoice — does not require a signature per
-            Notification No. 61/2020-Central Tax. {data.supplier.name} · GSTIN{" "}
-            {data.supplier.gstin}
-          </Text>
-        </View>
+      <Page size="A4" style={statutoryStyles.page}>
+        <StatutoryDocumentFrame
+          title="TAX INVOICE"
+          documentNumber={data.invoiceNumber}
+          currency={data.currency}
+          supplier={data.supplier}
+          buyer={data.buyer}
+          buyerHeading="Bill to"
+          details={[
+            {
+              label: "Invoice date",
+              value: formatStatutoryDate(data.issuedAt),
+            },
+            {
+              label: "Date of supply",
+              value: formatStatutoryDate(data.supplyDate),
+            },
+            { label: "Place of supply", value: data.placeOfSupply ?? "—" },
+            { label: "Reverse charge", value: "No" },
+          ]}
+          itemsHeading="Supply"
+          codeHeading="SAC"
+          items={[
+            {
+              description:
+                data.description ??
+                "Consulting services booked on the platform",
+              code: data.sacCode,
+              amountPaise: data.taxableValuePaise,
+            },
+          ]}
+          totals={[
+            { label: "Taxable value", paise: data.taxableValuePaise },
+            ...taxTotalLines(data),
+          ]}
+          grandTotalLabel="Total"
+          grandTotalPaise={data.totalPaise}
+          footnote={
+            data.placeOfSupplySource === "SUPPLIER_DEFAULT_12_2_B"
+              ? SECTION_12_2_B_FOOTNOTE
+              : null
+          }
+          footer={`System-generated tax invoice — does not require a signature per Notification No. 61/2020-Central Tax. ${data.supplier.name} · GSTIN ${data.supplier.gstin}`}
+        />
       </Page>
     </Document>
   );

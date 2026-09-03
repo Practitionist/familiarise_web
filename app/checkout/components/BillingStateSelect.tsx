@@ -16,6 +16,8 @@
  * pre-filled next time.
  */
 
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -69,4 +71,53 @@ export function BillingStateSelect({
       </p>
     </div>
   );
+}
+
+export interface UseBillingStateResult {
+  /** The 2-digit numeric code, or null for the statutory default. */
+  value: string | null;
+  onChange: (stateCode: string | null) => void;
+  /**
+   * Spread straight into a checkout POST body. Omits the key entirely when no
+   * state is on record, because the API treats an absent field and an explicit
+   * null identically and `undefined` is what the shared `createCheckoutData`
+   * helper expects for "not answered".
+   */
+  bodyField: { consumerStateCode?: string };
+}
+
+/**
+ * Owns the billing-state answer for one checkout page: the local value, the
+ * pre-fill from the buyer's remembered profile state, and the body field the
+ * page sends.
+ *
+ * Every checkout page needs exactly this, and had grown its own copy of it.
+ * The pre-fill needs the latch: the checkout context resolves after first
+ * paint, so without one, a buyer who answers before it lands would have their
+ * answer overwritten by the stored value a moment later.
+ *
+ * @param initial the remembered state from the checkout context, if any.
+ */
+export function useBillingState(
+  initial?: string | null,
+): UseBillingStateResult {
+  const [value, setValue] = useState<string | null>(null);
+  const [answered, setAnswered] = useState(false);
+
+  useEffect(() => {
+    if (answered) return;
+    setValue(initial ?? null);
+  }, [initial, answered]);
+
+  const onChange = useCallback((stateCode: string | null) => {
+    setAnswered(true);
+    setValue(stateCode);
+  }, []);
+
+  const bodyField = useMemo(
+    () => (value ? { consumerStateCode: value } : {}),
+    [value],
+  );
+
+  return { value, onChange, bodyField };
 }

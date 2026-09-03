@@ -21,7 +21,8 @@
  * the renderer package out of lib/payments entirely.
  */
 
-import type { Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
+import { reportSentryError } from "@/lib/observability/report";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
@@ -435,4 +436,50 @@ export async function mintConsumerCreditNote(
   });
 
   return { consumerCreditNoteId: created.id };
+}
+
+/**
+ * Mint the tax invoice for a confirmed payment, swallowing every failure.
+ *
+ * Both confirmation paths — the capture webhook and checkout's instant-confirm
+ * branch — need exactly this behaviour, and it is the behaviour that matters
+ * most: a booking the buyer has already paid for must never roll back because
+ * a document could not be produced. Failures are reported at warning level and
+ * the monthly outward-supplies register re-attempts anything that was missed,
+ * so a lost mint is a delay rather than a lost document.
+ *
+ * The locator accepts either identifier because the webhook already holds the
+ * row id while checkout only knows the gateway intent it just created; the
+ * lookup is inside the guard for the same reason the mint is.
+ */
+export async function mintConsumerInvoiceBestEffort(
+  locator: { paymentId: string } | { paymentIntent: string },
+): Promise<{ consumerInvoiceId: string | null }> {
+  try {
+    let paymentId: string;
+    if ("paymentId" in locator) {
+      paymentId = locator.paymentId;
+    } else {
+      const committed = await prisma.payment.findUnique({
+        where: { paymentIntent: locator.paymentIntent },
+        select: { id: true },
+      });
+      if (!committed) return { consumerInvoiceId: null };
+      paymentId = committed.id;
+    }
+    return await prisma.$transaction((tx) =>
+      mintConsumerInvoice(tx, { paymentId }),
+    );
+  } catch (invoiceError) {
+    reportSentryError(invoiceError, {
+      subsystem: "payments",
+      level: "warning",
+    });
+    console.error(
+      "⚠️ Failed to mint the consumer tax invoice:",
+      JSON.stringify(locator),
+      invoiceError,
+    );
+    return { consumerInvoiceId: null };
+  }
 }

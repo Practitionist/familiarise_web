@@ -24,10 +24,16 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { Currency } from "@prisma/client";
-// #1365 — the consumer documents render buyer-supplied names and addresses,
-// which Helvetica cannot draw in Devanagari. Registration lives in the invoice
-// renderer so both document families share one registration.
-import { BODY_FONT } from "./invoice-renderer";
+// #1365 — the consumer documents share their page furniture, their Devanagari
+// registration and their formatting with the consumer tax invoice.
+import {
+  StatutoryDocumentFrame,
+  statutoryStyles,
+  formatStatutoryDate,
+  taxTotalLines,
+  type StatutorySupplier,
+  type StatutoryBuyer,
+} from "./statutory-document-frame";
 
 export type CreditNotePdfData = {
   creditNoteNumber: string;
@@ -278,18 +284,8 @@ export type ConsumerCreditNotePdfData = {
   originalInvoiceDate: Date;
   placeOfSupply: string | null;
   sacCode: string;
-  supplier: {
-    name: string;
-    gstin: string;
-    address: string;
-    stateCode: string;
-  };
-  buyer: {
-    name: string;
-    email: string;
-    address?: string | null;
-    stateCode?: string | null;
-  };
+  supplier: StatutorySupplier;
+  buyer: StatutoryBuyer;
 };
 
 export function ConsumerCreditNoteDocument({
@@ -299,104 +295,50 @@ export function ConsumerCreditNoteDocument({
 }) {
   return (
     <Document>
-      <Page size="A4" style={styles.page}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.title}>Tax Credit Note</Text>
-            <Text style={styles.subtitle}>
-              Issued under Section 34 of the CGST Act, 2017
-              {data.reason ? ` — ${data.reason}` : ""}
-            </Text>
-          </View>
-          <View style={{ alignItems: "flex-end" }}>
-            <Text style={{ fontWeight: "bold" }}>{data.creditNoteNumber}</Text>
-            <Text>Date: {fmt(data.issuedAt)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.box}>
-          <Text style={styles.sectionTitle}>Supplier</Text>
-          <Text>{data.supplier.name}</Text>
-          <Text>GSTIN: {data.supplier.gstin}</Text>
-          <Text>{data.supplier.address}</Text>
-          <Text>State code: {data.supplier.stateCode}</Text>
-          <Text style={styles.sectionTitle}>Recipient</Text>
-          {/* Buyer-supplied text may be Devanagari; Helvetica has no coverage. */}
-          <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.name}</Text>
-          <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.email}</Text>
-          {data.buyer.address ? (
-            <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.address}</Text>
-          ) : null}
-          {data.buyer.stateCode ? (
-            <Text>State code: {data.buyer.stateCode}</Text>
-          ) : null}
-        </View>
-
-        <Text style={styles.sectionTitle}>
-          Original document reference — Sec 34(1)
-        </Text>
-        <View style={styles.box}>
-          <Kv label="Invoice number" value={data.originalInvoiceNumber} />
-          <Kv label="Invoice date" value={fmt(data.originalInvoiceDate)} />
-          <Kv label="Place of supply" value={data.placeOfSupply ?? "—"} />
-          <Kv label="SAC" value={data.sacCode} />
-        </View>
-
-        <Text style={styles.sectionTitle}>Adjustment</Text>
-        <View>
-          <View style={styles.tableHeader}>
-            <Text style={styles.colDesc}>Description</Text>
-            <Text style={styles.colNum}>Amount</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.colDesc}>Taxable value reduced</Text>
-            <Text style={styles.colNum}>
-              {formatMoney(data.taxableValuePaise, data.currency)}
-            </Text>
-          </View>
-          {data.igstPaise > 0 && (
-            <View style={styles.row}>
-              <Text style={styles.colDesc}>IGST reversed</Text>
-              <Text style={styles.colNum}>
-                {formatMoney(data.igstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-          {data.cgstPaise > 0 && (
-            <View style={styles.row}>
-              <Text style={styles.colDesc}>CGST reversed</Text>
-              <Text style={styles.colNum}>
-                {formatMoney(data.cgstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-          {data.sgstPaise > 0 && (
-            <View style={styles.row}>
-              <Text style={styles.colDesc}>SGST reversed</Text>
-              <Text style={styles.colNum}>
-                {formatMoney(data.sgstPaise, data.currency)}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.totalsRow}>
-          <View style={styles.totalsBox}>
-            <View style={styles.totalLine}>
-              <Text>Total credit to recipient</Text>
-              <Text style={styles.grandTotal}>
-                {formatMoney(data.totalPaise, data.currency)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <Text style={styles.footer}>
-          System-generated credit note — does not require a signature per
-          Notification No. 61/2020-Central Tax. This document reduces the
-          supplier&apos;s output tax liability corresponding to the referenced
-          invoice.
-        </Text>
+      <Page size="A4" style={statutoryStyles.page}>
+        <StatutoryDocumentFrame
+          title="TAX CREDIT NOTE"
+          subtitle={`Issued under Section 34 of the CGST Act, 2017${
+            data.reason ? ` — ${data.reason}` : ""
+          }`}
+          documentNumber={data.creditNoteNumber}
+          currency={data.currency}
+          supplier={data.supplier}
+          buyer={data.buyer}
+          buyerHeading="Recipient"
+          details={[
+            {
+              label: "Credit note date",
+              value: formatStatutoryDate(data.issuedAt),
+            },
+            // s.34(1)(a) — the original document must be identified on the note.
+            { label: "Original invoice", value: data.originalInvoiceNumber },
+            {
+              label: "Invoice date",
+              value: formatStatutoryDate(data.originalInvoiceDate),
+            },
+            { label: "Place of supply", value: data.placeOfSupply ?? "—" },
+          ]}
+          itemsHeading="Adjustment"
+          codeHeading="SAC"
+          items={[
+            {
+              description: "Taxable value reduced",
+              code: data.sacCode,
+              amountPaise: data.taxableValuePaise,
+            },
+          ]}
+          totals={[
+            { label: "Taxable value reduced", paise: data.taxableValuePaise },
+            ...taxTotalLines(data).map((line) => ({
+              ...line,
+              label: `${line.label} reversed`,
+            })),
+          ]}
+          grandTotalLabel="Total credit to recipient"
+          grandTotalPaise={data.totalPaise}
+          footer="System-generated credit note — does not require a signature per Notification No. 61/2020-Central Tax. This document reduces the supplier's output tax liability corresponding to the referenced invoice."
+        />
       </Page>
     </Document>
   );

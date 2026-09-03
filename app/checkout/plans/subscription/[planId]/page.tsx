@@ -21,7 +21,10 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { BillingStateSelect } from "@/app/checkout/components/BillingStateSelect";
+import {
+  BillingStateSelect,
+  useBillingState,
+} from "@/app/checkout/components/BillingStateSelect";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -99,15 +102,9 @@ export default function SubscriptionCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
-  // #1365 — GST place of supply. `null` is the statutory s.12(2)(b) default,
-  // so this never blocks checkout; it is pre-filled from the profile once the
-  // checkout context loads and the buyer has not answered on this page yet.
-  const [billingStateCode, setBillingStateCode] = useState<string | null>(null);
-  const [billingStateTouched, setBillingStateTouched] = useState(false);
-  useEffect(() => {
-    if (billingStateTouched) return;
-    setBillingStateCode(checkoutTaxContext.billingStateCode);
-  }, [checkoutTaxContext.billingStateCode, billingStateTouched]);
+  // #1365 — GST place of supply. Blank is the statutory s.12(2)(b) default, so
+  // this never blocks checkout.
+  const billingState = useBillingState(checkoutTaxContext.billingStateCode);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
@@ -311,7 +308,7 @@ export default function SubscriptionCheckoutPage({
             ? false
             : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
-          consumerStateCode: billingStateCode ?? undefined,
+          ...billingState.bodyField,
         });
 
         // Make API call - backend decides dev vs prod flow
@@ -386,7 +383,7 @@ export default function SubscriptionCheckoutPage({
       appliedDiscount,
       useReferralCredits,
       selectedOrganizationId,
-      billingStateCode,
+      billingState.bodyField,
       effectiveSearchParams,
       currency,
       handleApiError,
@@ -670,11 +667,8 @@ export default function SubscriptionCheckoutPage({
         />
         <Separator className="bg-border" />
         <BillingStateSelect
-          value={billingStateCode}
-          onChange={(code) => {
-            setBillingStateTouched(true);
-            setBillingStateCode(code);
-          }}
+          value={billingState.value}
+          onChange={billingState.onChange}
         />
         <Separator className="bg-border" />
         <div className="grid gap-4">
@@ -912,7 +906,7 @@ export default function SubscriptionCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
-                            consumerStateCode: billingStateCode ?? undefined,
+                            ...billingState.bodyField,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -936,7 +930,7 @@ export default function SubscriptionCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
-                            consumerStateCode: billingStateCode ?? undefined,
+                            ...billingState.bodyField,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}

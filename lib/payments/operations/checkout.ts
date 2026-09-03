@@ -89,7 +89,7 @@ import {
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
-import { mintConsumerInvoice } from "@/lib/payments/billing/consumer-invoice";
+import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -3697,28 +3697,9 @@ export async function handleCheckout(
         // #1365 — these payments never see a capture webhook, so the tax
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
-        try {
-          const committedPayment = await prisma.payment.findUnique({
-            where: { paymentIntent: paymentResponse!.id },
-            select: { id: true },
-          });
-          if (committedPayment) {
-            await prisma.$transaction((tx) =>
-              mintConsumerInvoice(tx, { paymentId: committedPayment.id }),
-            );
-          }
-        } catch (invoiceError) {
-          // A document is never worth failing a confirmed booking for; the
-          // monthly register export heals anything missed.
-          reportSentryError(invoiceError, {
-            subsystem: "payments",
-            level: "warning",
-          });
-          console.error(
-            `⚠️ Failed to mint the consumer tax invoice for ${paymentResponse!.id}:`,
-            invoiceError,
-          );
-        }
+        await mintConsumerInvoiceBestEffort({
+          paymentIntent: paymentResponse!.id,
+        });
 
         // FIX #437: Consultant qualifying action (receiving first paid booking)
         try {
