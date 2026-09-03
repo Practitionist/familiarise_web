@@ -11,11 +11,12 @@
  *   - assertPaymentLegsSumToAmount — hard-throwing sibling for tests +
  *     reconciliation jobs.
  *
- * The invariant: `sum(legs.amountPaise) === Payment.amount`. LICENSE
- * legs intentionally carry zero amount (cost absorbed at contract time)
- * and are still part of the sum. Referral-credit flows mix a CARD leg
- * (post-credit gateway charge) with a REFERRAL_CREDIT leg (the credit
- * value) whose sum equals Payment.amount (post-credit).
+ * The invariant: `sum(non-reversal, non-REFERRAL_CREDIT legs.amountPaise)
+ * === Payment.amount`. LICENSE legs intentionally carry zero amount (cost
+ * absorbed at contract time) and are still part of the sum. REFERRAL_CREDIT
+ * legs are not: `Payment.amount` is the gateway charge and the credit has
+ * already been netted out of it, so a credit-funded checkout has its CARD leg
+ * alone equal to `Payment.amount` (#1347).
  */
 
 import {
@@ -53,18 +54,35 @@ describe("checkPaymentLegsSumToAmount", () => {
     ).toBeNull();
   });
 
-  it("returns null when CARD + REFERRAL_CREDIT legs sum to Payment.amount", () => {
-    // Post-credit scenario: gateway charged 100 paise, credits covered
-    // 50, Payment.amount = 150 (pre-credit total).
+  it("returns null when the CARD leg alone matches a credit-funded Payment.amount", () => {
+    // #1347 — gateway charged 100 paise, credits covered 50, so
+    // Payment.amount is the post-credit 100. The REFERRAL_CREDIT leg records
+    // the platform's 50 but is excluded from the funding sum.
     expect(
       checkPaymentLegsSumToAmount({
-        paymentAmountPaise: 150,
+        paymentAmountPaise: 100,
         legs: [
           { source: "CARD", amountPaise: 100 },
           { source: "REFERRAL_CREDIT", amountPaise: 50 },
         ],
       }),
     ).toBeNull();
+  });
+
+  it("still reports drift when a REFERRAL_CREDIT leg sits beside a CARD leg that misses the amount", () => {
+    // Excluding the credit must not blind the check to the funding it does
+    // cover: the card is short by 20 and that is real drift.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 100,
+      legs: [
+        { source: "CARD", amountPaise: 80 },
+        { source: "REFERRAL_CREDIT", amountPaise: 50 },
+      ],
+    });
+    expect(mismatch).not.toBeNull();
+    expect(mismatch?.reason).toBe("FUNDING_SUM_DRIFT");
+    expect(mismatch?.legSumPaise).toBe(80);
+    expect(mismatch?.deltaPaise).toBe(-20);
   });
 
   it("returns a mismatch payload when legs sum is less than the amount", () => {
@@ -83,7 +101,7 @@ describe("checkPaymentLegsSumToAmount", () => {
       paymentAmountPaise: 100,
       legs: [
         { source: "CARD", amountPaise: 80 },
-        { source: "REFERRAL_CREDIT", amountPaise: 40 },
+        { source: "WALLET", amountPaise: 40 },
       ],
     });
     expect(mismatch?.deltaPaise).toBe(20);

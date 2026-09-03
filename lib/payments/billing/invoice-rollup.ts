@@ -16,6 +16,7 @@
  */
 import prisma from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
 import { transitionOverage } from "./overage-transitions";
 
@@ -232,11 +233,33 @@ export async function rollupOrgInvoiceAccruals(params: {
     for (const ev of overageEvents) {
       // #775 — PENDING → ACCRUED: now on an issued invoice. The invoice-paid
       // ledger handler flips ACCRUED → CHARGED on payment.
-      await transitionOverage(tx, { id: ev.id }, "ACCRUED", {
+      const moved = await transitionOverage(tx, { id: ev.id }, "ACCRUED", {
         settledAt,
         invoiceLineItemId:
           lineItemByPaymentId.get(ev.bookingUtilization.paymentId) ?? null,
       });
+
+      // #1357 7.4 (inverse) — the allowed-from guard IS the filter, so an
+      // event that is no longer PENDING silently does not move and the
+      // discarded count was the only evidence. Its marginal is already inside
+      // this invoice's line amounts, so an unsettled event gets re-billed by
+      // the next rollup. The invoice still commits — the money is on it and
+      // refusing to issue would strand the whole cycle — but the orphan is
+      // recorded for a human.
+      if (moved === 0) {
+        void recordSystemError({
+          organizationId,
+          category: "OVERAGE",
+          summary: `OverageEvent ${ev.id} did not move to ACCRUED while rolling up invoice ${invoice.id} — its marginal is billed on that invoice but the event stays unsettled and the next rollup will bill it again`,
+          err: new Error("OVERAGE_ACCRUAL_TRANSITION_NOOP"),
+          context: {
+            overageEventId: ev.id,
+            invoiceId: invoice.id,
+            invoiceNumber,
+            paymentId: ev.bookingUtilization.paymentId,
+          },
+        }).catch(() => {});
+      }
     }
 
     return {

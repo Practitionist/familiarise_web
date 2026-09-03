@@ -156,16 +156,20 @@ export function isReversalLegSource(
 }
 
 /**
- * Per-payment invariant: `sum(non-reversal legs.amountPaise) === Payment.amount`.
+ * Per-payment funding identity:
+ * `Σ(non-reversal, non-REFERRAL_CREDIT legs.amountPaise) === Payment.amount`.
+ *
+ * #1347 — `Payment.amount` is the gateway charge (after discounts + tax −
+ * credits), so a REFERRAL_CREDIT leg is value the platform has ALREADY netted
+ * out of `amount`; summing it back in double-counts the credit and every
+ * credit-funded checkout dies at COMMIT on the DB constraint. The credit leg
+ * still exists — it is the `PLATFORM_PROMO` debit in the booking journal — it
+ * just is not part of the funding that has to add up to `amount`.
  *
  * `LICENSE` legs intentionally carry `amountPaise = 0` (the cost is
  * absorbed at contract time) — they're still part of the sum and the
  * math holds. For org-sponsored flows a single non-zero leg (WALLET or
- * INVOICE_ACCRUAL) equals `Payment.amount`. For B2C card flows with
- * referral credits applied the CARD leg carries the post-credit gateway
- * charge and the REFERRAL_CREDIT leg carries the credit value; together
- * they sum to `Payment.amount` (which is post-credit per the field-
- * level comment on `Payment.amount`).
+ * INVOICE_ACCRUAL) equals `Payment.amount`.
  *
  * #786 — `*_REVERSAL` legs are negative refund counter-entries. They are
  * excluded from the funding sum (originals stay immutable and still sum to
@@ -206,7 +210,11 @@ export function checkPaymentLegsSumToAmount(args: {
     return null;
   }
 
-  const legSum = originals.reduce((acc, leg) => acc + leg.amountPaise, 0);
+  // #1347 — the credit is platform-funded and already netted out of
+  // Payment.amount; counting it here would demand it twice over.
+  const legSum = originals
+    .filter((l) => l.source !== "REFERRAL_CREDIT")
+    .reduce((acc, leg) => acc + leg.amountPaise, 0);
   if (legSum !== args.paymentAmountPaise) {
     return {
       paymentAmountPaise: args.paymentAmountPaise,

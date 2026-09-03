@@ -4898,7 +4898,9 @@ model Payment {
 
   // Stackable funding. A Payment may be split across multiple sources
   // — e.g. ₹500 referral credit + ₹1,500 card. When `legs.length > 0`,
-  // sum(legs.amountPaise) MUST equal `amount`. Single-source checkouts
+  // sum(legs.amountPaise) over non-reversal, non-REFERRAL_CREDIT legs MUST
+  // equal `amount` — the credit is already netted out of it (#1347).
+  // Single-source checkouts
   // leave `legs` empty (back-compat: old Payments had no legs and worked
   // off `amount` + `paymentMethod` alone).
   legs PaymentLeg[]
@@ -4954,8 +4956,11 @@ model Payment {
 //   { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCreditUsage.id> }
 //   { source: WALLET,          amountPaise: 100000, sourceRef: <ProgramAssignment.id> }
 //
-// Invariant: sum(non-reversal legs.amountPaise) == Payment.amount when legs
-// are present (LICENSE legs contribute 0 so they don't skew the total).
+// Invariant: sum(non-reversal, non-REFERRAL_CREDIT legs.amountPaise) ==
+// Payment.amount when legs are present (LICENSE legs contribute 0 so they
+// don't skew the total). REFERRAL_CREDIT is excluded because Payment.amount
+// is already the post-credit gateway charge, so counting the leg would demand
+// the same credit twice (#1347).
 // *_REVERSAL legs are negative refund counter-entries netting against their
 // original sibling — |reversal| never exceeds the original (#786).
 model PaymentLeg {

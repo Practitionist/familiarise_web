@@ -1,9 +1,9 @@
 -- #1020-4 / C-02 — PaymentLeg funding-sum invariant, enforced by the DATABASE.
 --
 -- `lib/payments/payment-legs.ts::checkPaymentLegsSumToAmount` defines the
--- invariant: sum of non-reversal legs === Payment.amount, and every
--- *_REVERSAL leg is negative and never exceeds its original sibling in
--- magnitude. Checkout logs drift warn-only (a surprise 500 on the hot path
+-- invariant: sum of non-reversal, non-REFERRAL_CREDIT legs === Payment.amount,
+-- and every *_REVERSAL leg is negative and never exceeds its original sibling
+-- in magnitude. Checkout logs drift warn-only (a surprise 500 on the hot path
 -- blocks real bookings); reconcilers assert it after the fact. Both are
 -- detection. This trigger makes the imbalance UNCOMMITTABLE — the same
 -- posture ledger-triggers.sql already gives the journal — so no writer
@@ -12,6 +12,9 @@
 -- Semantics mirror checkPaymentLegsSumToAmount EXACTLY:
 --   * funding sum  = Σ amountPaise over legs whose source does not end in
 --     `_REVERSAL` (LICENSE's intentional 0-value legs are part of the sum)
+--   * REFERRAL_CREDIT is EXCLUDED from that sum (#1347): Payment.amount is the
+--     gateway charge and the credit is already netted out of it, so counting
+--     the leg would demand the credit twice and fail every credit checkout
 --   * reversal leg = must be negative; |reversal| ≤ Σ its original siblings
 --
 -- DEFERRABLE INITIALLY DEFERRED: fires at COMMIT, so multi-statement writes
@@ -34,7 +37,8 @@ BEGIN
   SELECT COALESCE(SUM("amountPaise"), 0) INTO v_funding_sum
   FROM "PaymentLeg"
   WHERE "paymentId" = p_payment_id
-    AND RIGHT("source"::text, 9) <> '_REVERSAL';
+    AND RIGHT("source"::text, 9) <> '_REVERSAL'
+    AND "source"::text <> 'REFERRAL_CREDIT';
 
   IF v_funding_sum <> v_amount THEN
     RAISE EXCEPTION 'payment_legs_sum_to_amount violated for payment %: legs sum to % but Payment.amount is %',
