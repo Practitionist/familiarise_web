@@ -18,6 +18,7 @@ import {
   appendCreationHistory,
   transitionTrialSession,
 } from "@/lib/booking/transitions";
+import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -30,7 +31,6 @@ import {
   AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
-import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   EventFullError,
@@ -401,6 +401,9 @@ export class PaymentIntentManager {
     isMockPayment?: boolean;
   }) {
     try {
+      // Imported at call time so the checkout bundle does not evaluate the
+      // Razorpay core (and its #1219 test-key guard) at module load.
+      const { createPaymentIntent } = await import("../index");
       const paymentResponse = await createPaymentIntent(params);
 
       // Evict oldest entries first (Map iterates in insertion order) so a
@@ -438,6 +441,10 @@ export class PaymentIntentManager {
     } catch (error) {
       console.error("Payment intent creation failed:", error);
       reportSentryError(error, { subsystem: "payments" });
+      // A typed gateway error (the #1219 test-key guard, an UNKNOWN_GATEWAY)
+      // keeps its code so the route can answer with the right status; only
+      // untyped failures are flattened into the retry-later message.
+      if (error instanceof PaymentError) throw error;
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -452,6 +459,7 @@ export class PaymentIntentManager {
     reason: string = "Database operation failed",
   ) {
     try {
+      const { cancelPaymentIntent } = await import("../index");
       await cancelPaymentIntent(intentId, reason);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
@@ -2826,6 +2834,8 @@ export async function handleCheckout(
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
         reportSentryError(paymentError, { subsystem: "payments" });
+        // Typed gateway errors keep their code for the route's classifier.
+        if (paymentError instanceof PaymentError) throw paymentError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );

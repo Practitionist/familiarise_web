@@ -133,6 +133,15 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
     errorType: ErrorTypes.PAYMENT_CONFIG,
     userMessage: "Payment gateway configuration error. Please contact support.",
   },
+  // The #1219 posture guard: a Razorpay TEST key under NODE_ENV=production.
+  // Reaches the route as a typed PaymentError now that the gateway loads at
+  // call time; it is a configuration fault, never "try again later".
+  {
+    patterns: ["RAZORPAY_TEST_KEY_IN_PRODUCTION", "Razorpay TEST key"],
+    errorType: ErrorTypes.PAYMENT_CONFIG,
+    userMessage:
+      "Payments are not available right now. Please contact support.",
+  },
   {
     patterns: ["Prisma", "database"],
     errorType: ErrorTypes.DATABASE,
@@ -240,7 +249,10 @@ export function logClassifiedError(
   if (result.isBusinessError) {
     console.warn(`[${tag}] Business rule blocked: ${result.errorMessage}`);
   } else {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error(`[${tag}] Unexpected error:`, error);
   }
 }

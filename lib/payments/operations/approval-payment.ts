@@ -21,7 +21,6 @@ import {
   PaymentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
-import { createPaymentIntent } from "../index";
 import {
   lockApprovalPaymentMint,
   unlockApproval,
@@ -225,7 +224,9 @@ export async function createApprovalPaymentIntent(
     // Build metadata for webhook processing
     const metadata = buildApprovalMetadata(params);
 
-    // Create payment intent with gateway
+    // Create payment intent with gateway. Imported here, not at module load:
+    // the barrel evaluates the Razorpay core and its #1219 test-key guard.
+    const { createPaymentIntent } = await import("../index");
     const paymentResponse = await createPaymentIntent({
       amount,
       currency,
