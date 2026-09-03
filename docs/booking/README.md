@@ -5,8 +5,8 @@ The booking system handles slot allocation and validation for all five event typ
 ```mermaid
 graph TD
     subgraph Frontend
-        A[useSlotAllocation Hook] --> B[allocationService API Client]
-        C[useCalendarData Hook] --> D[UnifiedCalendar]
+        A[useSlotAllocation Hook] --> B[AllocationService API Client]
+        C[useCalendarData Hook] --> D[UnifiedCalendar / SlotPicker]
     end
 
     subgraph "API Layer"
@@ -58,21 +58,36 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `validationSchemas.ts` | allocationRequestSchema, validationRequestSchema, eventIdSchema, formatZodError helper |
 
-### Frontend Hooks (`app/dashboard/consultant/[consultantId]/(features)/shared/hooks/`)
+Auto-allocation itself has no client-side engine: the client submits `isAuto: true` and the server (`utils/slotAllocation/`, preference scoring in `preferenceScoring.ts`) picks the slots. The client-side allocation code below pre-validates and submits only the manual and requested modes; the old client-side auto-allocator (strategies, scoring, week distribution) was deleted once it stopped serving anything but a test oracle.
 
-| File                           | Purpose                                                                                |
-| ------------------------------ | -------------------------------------------------------------------------------------- |
-| `useSlotAllocation.ts`         | Central hook: toggleSlot, event-specific blocking, auto-expansion, weekly distribution |
-| `useCalendarData.ts`           | Calendar data sync: server-calculated bookingStatus, getSlotStatusForInterval          |
-| `useSubscriptionValidation.ts` | Subscription-specific frontend validation                                              |
+### Frontend Hooks (`hooks/scheduling/`)
 
-### Frontend Utilities (`app/dashboard/consultant/[consultantId]/(features)/shared/utils/`)
+| File                    | Purpose                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `useSlotAllocation.ts`  | Central hook for the Allocate Slots calendar: manual/requested submission, event-specific blocking, weekly distribution |
+| `useCalendarData.ts`    | Calendar data sync: fetch, polling (`availabilityPolling.ts`), server-calculated slot status                            |
+| `useInFlightGuard.ts`   | Runs at most one instance of an async action at a time, keyed by string — guards double-click races on join/allocate    |
+| `useLazyJoinMeeting.ts` | Lazy-loads and joins a Stream call from a slot/appointment, built on `useInFlightGuard`                                 |
 
-| File                      | Purpose                                                                           |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| `allocationService.ts`    | API client wrapper for all allocation/validation endpoints                        |
-| `allocationAlgorithms.ts` | Preference-based auto allocation with time/day scoring                            |
-| `calendarUtils.ts`        | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay |
+### Frontend Utilities (`lib/scheduling/`)
+
+| File                         | Purpose                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `allocationService.ts`       | API client wrapper for the allocation/validation endpoints                                              |
+| `allocationAlgorithms.ts`    | Client-side pre-validation + submission for manual and requested allocation modes only (no auto engine) |
+| `allocationMessages.ts`      | Single catalog of user-facing allocation messages, bucketed by the event's scheduling timezone          |
+| `availabilityPolling.ts`     | Pure poll-decision logic for the availability heatmap (60s interval; polling, not push, by design)      |
+| `calendarUtils.ts`           | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay                       |
+| `schedulingTimezone.ts`      | Resolves the scheduling timezone stamped on a Subscription/Class, from the consultant's `User.timezone` |
+| `slotSelectionValidation.ts` | Pure client-side selection rules for the Allocate Slots calendar, unit-testable apart from the hook     |
+| `slot-status-tokens.ts`      | Single colour vocabulary for slot availability states, shared by every calendar/grid surface            |
+| `slot-picker-focus.ts`       | Where the slot picker should be scrolled/focused when it opens, for every surface that places slots     |
+| `slot-picker-subject.ts`     | Turns one appointment into what the reschedule page's slot picker needs                                 |
+| `manage-timings-subject.ts`  | Turns a consultation/subscription/webinar/class into what the "manage timings" page needs               |
+
+### Frontend Components (`components/scheduling/`)
+
+`UnifiedCalendar.tsx` (wrapped by `SafeUnifiedCalendar.tsx` for lazy-loading and error handling) is the shared week-grid calendar; `SlotPicker.tsx` and `SlotStatusLegend.tsx` build on it, and `slot-picker-policy.ts` describes the four surfaces that place slots on a consultant's calendar as data rather than as boolean props.
 
 ### API Routes (`app/api/bookings/`)
 
@@ -138,5 +153,7 @@ Then reference these as needed:
 
 - **Payments**: [../payments/README.md](../payments/README.md) -- Payment architecture, checkout flows, refunds, payouts
 - **Notifications**: [../notifications/README.md](../notifications/README.md) -- Novu workflows triggered by booking events
+- **Agent-run booking test corpus**: `prompts/booking-algorithm-tests/` -- the E2E prompt corpus that exercises this subsystem; scenario prompts and the harness that runs them
+- **Booking-specific Claude Code skills**: `.claude/skills/booking-*` -- doctrine and workflow skills for agents working in this subsystem
 - **Distributed Locking**: [../upstash/redis/locking/00_README.md](../upstash/redis/locking/00_README.md) -- Redis locking deep dive
 - **Cron Setup**: [../guides/cron-setup.md](../guides/cron-setup.md) -- Deployment-specific cron configuration
