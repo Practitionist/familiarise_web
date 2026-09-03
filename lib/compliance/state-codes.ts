@@ -117,11 +117,11 @@ export const STATE_NUMERIC_TO_NAME: Record<string, string> = {
 /**
  * The picker's options, ordered by state code. The sort is explicit because
  * `Object.entries` returns canonical integer-like keys ("26", "27") before the
- * zero-padded ones ("01"), and a plain codepoint comparison — not
- * `localeCompare`, whose collation is ICU-dependent — keeps the order the same
- * on every runtime.
+ * zero-padded ones ("01"). Every key here is a two-digit numeral, so ordering
+ * them numerically is exact and gives the same result on every runtime —
+ * unlike `localeCompare`, whose collation is ICU-dependent.
  */
 export const GST_STATE_OPTIONS: ReadonlyArray<{ code: string; name: string }> =
   Object.entries(STATE_NUMERIC_TO_NAME)
     .map(([code, name]) => ({ code, name }))
-    .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+    .sort((a, b) => Number(a.code) - Number(b.code));

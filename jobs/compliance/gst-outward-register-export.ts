@@ -31,57 +31,41 @@ import {
   type OutwardRegisterRow,
 } from "@/lib/compliance/gst-outward-register";
 import { mintConsumerInvoice } from "@/lib/payments/billing/consumer-invoice";
+import {
+  previousIstCalendarMonthStart,
+  nextMonthStart,
+  parseIsoDateOverride,
+} from "@/lib/compliance/ist-period";
 
 /** Statuses that mean the org invoice was never actually issued to a buyer, so
  *  it is not an outward supply for the period. */
 const UNISSUED_ORG_INVOICE_STATUSES = ["DRAFT", "VOID", "CANCELLED"] as const;
 
-/**
- * Parse a `YYYY-MM-DD` override into a UTC instant, rejecting anything else.
- * A silently-misparsed boundary would export the wrong month and the error
- * would only surface at filing time.
- */
-function parsePeriodOverride(raw: string, envName: string): Date {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    throw new Error(`${envName} must be a YYYY-MM-DD date; got "${raw}"`);
-  }
-  const parsed = new Date(`${raw}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`${envName} is not a real date; got "${raw}"`);
-  }
-  return parsed;
-}
-
 function resolvePeriod(): { periodStart: Date; periodEnd: Date } {
   const startRaw = process.env.GST_REGISTER_PERIOD_START;
   const endRaw = process.env.GST_REGISTER_PERIOD_END;
   if (startRaw && endRaw) {
-    const periodStart = parsePeriodOverride(
+    const periodStart = parseIsoDateOverride(
       startRaw,
       "GST_REGISTER_PERIOD_START",
     );
-    const periodEnd = parsePeriodOverride(endRaw, "GST_REGISTER_PERIOD_END");
+    const periodEnd = parseIsoDateOverride(endRaw, "GST_REGISTER_PERIOD_END");
     if (periodEnd <= periodStart) {
-      throw new Error(
+      throw new RangeError(
         "GST_REGISTER_PERIOD_END must be after GST_REGISTER_PERIOD_START",
       );
     }
     return { periodStart, periodEnd };
   }
   if (startRaw || endRaw) {
-    throw new Error(
+    throw new TypeError(
       "GST_REGISTER_PERIOD_START and GST_REGISTER_PERIOD_END must be set together",
     );
   }
-  // Default: the previous calendar month, reckoned in IST.
-  const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  const periodStart = new Date(
-    Date.UTC(nowIst.getUTCFullYear(), nowIst.getUTCMonth() - 1, 1),
-  );
-  const periodEnd = new Date(
-    Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + 1, 1),
-  );
-  return { periodStart, periodEnd };
+  // Default: the previous calendar month, reckoned in IST. Shared with the
+  // GSTR-8 draft export so the two never drift apart on the boundary.
+  const periodStart = previousIstCalendarMonthStart();
+  return { periodStart, periodEnd: nextMonthStart(periodStart) };
 }
 
 /**

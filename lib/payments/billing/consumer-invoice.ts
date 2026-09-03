@@ -164,6 +164,20 @@ const ORG_FUNDED_LEG_SOURCES = new Set([
   "OVERAGE_INVOICE_ACCRUAL",
 ]);
 
+/**
+ * Which record supplied the buyer's state. Recorded on the invoice because a
+ * state defaulted under s.12(2)(b) is indistinguishable from a declared
+ * home-state supply once it has been written down.
+ */
+function resolvePlaceOfSupplySource(
+  declaredStateCode: string | null,
+  profileStateCode: string | null,
+): PlaceOfSupplySource {
+  if (declaredStateCode) return "DECLARED_AT_CHECKOUT";
+  if (profileStateCode) return "PROFILE_ON_RECORD";
+  return "SUPPLIER_DEFAULT_12_2_B";
+}
+
 let supplierUnconfiguredLogged = false;
 
 /**
@@ -220,11 +234,8 @@ export async function mintConsumerInvoice(
     },
   });
 
-  if (
-    !payment ||
-    payment.deletedAt !== null ||
-    payment.paymentStatus !== "SUCCEEDED"
-  ) {
+  if (!payment) return { consumerInvoiceId: null };
+  if (payment.deletedAt !== null || payment.paymentStatus !== "SUCCEEDED") {
     return { consumerInvoiceId: null };
   }
 
@@ -280,11 +291,10 @@ export async function mintConsumerInvoice(
 
   // The derivation only knows whether it HAD a buyer state; which record it
   // came from is this function's knowledge.
-  const placeOfSupplySource: PlaceOfSupplySource = declaredStateCode
-    ? "DECLARED_AT_CHECKOUT"
-    : profileStateCode
-      ? "PROFILE_ON_RECORD"
-      : "SUPPLIER_DEFAULT_12_2_B";
+  const placeOfSupplySource = resolvePlaceOfSupplySource(
+    declaredStateCode,
+    profileStateCode,
+  );
 
   const issuedAt = new Date();
   const { invoiceNumber, fiscalYear } = await generateConsumerInvoiceNumber(
@@ -294,7 +304,7 @@ export async function mintConsumerInvoice(
 
   const buyerAddress =
     [payment.user.address, payment.user.city]
-      .filter((part): part is string => Boolean(part && part.trim()))
+      .filter((part): part is string => Boolean(part?.trim()))
       .join(", ") || null;
 
   const created = await tx.consumerInvoice.create({
@@ -361,8 +371,8 @@ export async function mintConsumerCreditNote(
     disputeId?: string;
   },
 ): Promise<{ consumerCreditNoteId: string | null }> {
-  if (!params.refundId === !params.disputeId) {
-    throw new Error(
+  if (Boolean(params.refundId) === Boolean(params.disputeId)) {
+    throw new TypeError(
       "mintConsumerCreditNote: exactly one of refundId/disputeId must be set",
     );
   }

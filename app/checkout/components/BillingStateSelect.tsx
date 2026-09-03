@@ -41,7 +41,7 @@ export function BillingStateSelect({
   value,
   onChange,
   disabled,
-}: BillingStateSelectProps) {
+}: Readonly<BillingStateSelectProps>) {
   return (
     <div className="grid gap-2">
       <Label htmlFor="billing-state">Billing state (for GST)</Label>

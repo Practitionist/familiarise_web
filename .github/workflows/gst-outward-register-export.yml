@@ -50,11 +50,14 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies without lifecycle scripts
+        # S6505 — no arbitrary lifecycle scripts during install; the one
+        # artifact generation we need (Prisma client) is invoked explicitly
+        # from our pinned devDependency right after.
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Export the outward-supplies register
         env:
@@ -62,7 +65,9 @@ jobs:
           # interpolated straight into a shell command (S7630).
           GST_REGISTER_PERIOD_START: ${{ inputs.period_start }}
           GST_REGISTER_PERIOD_END: ${{ inputs.period_end }}
-        run: npx --yes tsx@4.23.1 jobs/compliance/gst-outward-register-export.ts
+        # S8543/S6505 — run the locally-installed binary directly; no
+        # on-demand package resolution at execution time.
+        run: node_modules/.bin/tsx jobs/compliance/gst-outward-register-export.ts
 
       - name: Upload the register CSV
         if: always()
