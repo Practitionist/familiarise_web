@@ -706,9 +706,18 @@ describe("Requested slot allocation", () => {
         },
       }),
     );
-    // Only 1 slot in DB appointment, but 2 requested
+    // One 30-minute row in the DB appointment, but 2 atoms requested.
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "apt-1", slotsOfAppointment: [{ id: "s1" }] },
+      {
+        id: "apt-1",
+        slotsOfAppointment: [
+          {
+            id: "s1",
+            startsAt: new Date("2025-01-06T10:00:00Z"),
+            endsAt: new Date("2025-01-06T10:30:00Z"),
+          },
+        ],
+      },
     ]);
 
     const result = await SlotAllocationService.allocate({
@@ -719,8 +728,48 @@ describe("Requested slot allocation", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Appointment mismatch");
-    expect(result.error).toContain("1 slots in appointments");
-    expect(result.error).toContain("2 requested slots");
+    expect(result.error).toContain("cover 1 half-hour atoms");
+    expect(result.error).toContain("2 were requested");
+  });
+
+  // #1319 — the gate counts COVERED atoms, not rows. A legacy 60-minute row
+  // (76 of 87 production consultations) covers the two atoms the consultee
+  // requested, so approval must not be refused as a "mismatch".
+  it("accepts a legacy 60-minute row as the two atoms it covers", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        appointment: {
+          slotsOfAppointment: [
+            { startsAt: new Date("2025-01-06T10:00:00Z") },
+            { startsAt: new Date("2025-01-06T10:30:00Z") },
+          ],
+        },
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "apt-1",
+        slotsOfAppointment: [
+          {
+            id: "s1",
+            startsAt: new Date("2025-01-06T10:00:00Z"),
+            endsAt: new Date("2025-01-06T11:00:00Z"),
+          },
+        ],
+      },
+    ]);
+
+    const result = await SlotAllocationService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "requested",
+    });
+
+    // Asserting success, not merely the absence of one error string: the
+    // negative form passes for any other failure and proves nothing about the
+    // legacy row being accepted.
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 
   it("should return error when validation fails for requested slots", async () => {
