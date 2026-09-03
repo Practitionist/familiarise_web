@@ -1524,12 +1524,16 @@ async function createWebinar(tx: Tx, data: EventData) {
 
   // #1319 A9 — the seat row is gone, but the seat is not: record the payer
   // against the event's own appointment, the same edge handleWebinarCheckout
-  // writes. CONFIRMED because this creator only runs after capture.
+  // writes, in the same HELD state. Born CONFIRMED it would outlive its own
+  // guard: `confirmExistingAppointment` runs AFTER this and its B2 CAS refuses
+  // a capture landing on a cancelled webinar, but this transaction commits
+  // either way — leaving a confirmed seat on a dead event that Phase 2 has
+  // already refunded. HELD is promoted by the CAS or by nothing.
   await recordParticipants(
     tx,
     webinar.appointment.id,
     [{ userId: data.userId, role: "CONSULTEE" }],
-    { status: "CONFIRMED" },
+    { status: "HELD" },
   );
 
   const createdAppointment = await tx.appointment.findUnique({
@@ -1561,7 +1565,14 @@ async function createClass(tx: Tx, data: EventData) {
   // every enrolment added a phantom session to the class, inflating the
   // session count that capacity, the "fully scheduled" enrolment gate and the
   // consultee's timeline all read.
-  const [firstAppointment] = classInstance.appointments;
+  // A session Appointment with no slots is an unscheduled session: connecting
+  // to it links the payer to nothing. Refusing on `appointments.length` alone
+  // let that case through and still recorded a paid seat, so the buyer was
+  // enrolled in a class with no time on the calendar.
+  const scheduledSessions = classInstance.appointments.filter(
+    (appointment) => appointment.slotsOfAppointment.length > 0,
+  );
+  const [firstAppointment] = scheduledSessions;
   if (!firstAppointment) {
     // Same refusal createWebinar makes for an unscheduled event: there is
     // nothing to enrol into, and inventing a placeholder is what caused this.
@@ -1569,17 +1580,20 @@ async function createClass(tx: Tx, data: EventData) {
   }
 
   await connectAttendeeToEventSlots(tx, {
-    appointments: classInstance.appointments,
+    appointments: scheduledSessions,
     userId: data.userId,
   });
 
-  // #1319 A9 — one participant row per session, matching handleClassCheckout.
-  for (const appointment of classInstance.appointments) {
+  // #1319 A9 — one participant row per scheduled session, matching
+  // handleClassCheckout. HELD for the same reason as the webinar arm: the B2
+  // CAS in confirmExistingAppointment, not this creator, decides whether a
+  // capture on a terminal class is allowed to confirm anything.
+  for (const appointment of scheduledSessions) {
     await recordParticipants(
       tx,
       appointment.id,
       [{ userId: data.userId, role: "CONSULTEE" }],
-      { status: "CONFIRMED" },
+      { status: "HELD" },
     );
   }
 

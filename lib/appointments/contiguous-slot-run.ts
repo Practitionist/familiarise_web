@@ -127,6 +127,26 @@ export function countHalfHourAtoms(slot: {
 }
 
 /**
+ * The half-hour atom STARTS a stored row covers.
+ *
+ * #1319 — the mirror of {@link countHalfHourAtoms}. A reader that hands one
+ * `startsAt` per stored row to the validator describes a legacy 60-minute row
+ * as a single atom, so it disagrees with every count derived from coverage
+ * (`getSlotsPerCall`, the approval gate) about the same booking.
+ */
+export function halfHourAtomStarts(slot: {
+  startsAt: Date | string;
+  endsAt: Date | string;
+}): Date[] {
+  const start = new Date(slot.startsAt);
+  const atomCount = countHalfHourAtoms(slot);
+  return Array.from(
+    { length: atomCount },
+    (_, i) => new Date(start.getTime() + i * SLOT_DURATION_MS),
+  );
+}
+
+/**
  * Live slots on one appointment must form exactly one contiguous run.
  * Throws when the invariant is violated (write-time assert for #1071).
  */

@@ -765,7 +765,11 @@ describe("Requested slot allocation", () => {
       mode: "requested",
     });
 
-    expect(result.error ?? "").not.toContain("Appointment mismatch");
+    // Asserting success, not merely the absence of one error string: the
+    // negative form passes for any other failure and proves nothing about the
+    // legacy row being accepted.
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
   });
 
   it("should return error when validation fails for requested slots", async () => {

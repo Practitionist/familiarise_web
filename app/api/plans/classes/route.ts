@@ -274,6 +274,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // `body` is untyped JSON and the required-field check above never asked for
+    // `classContents`, so a request that omitted it threw inside the mapper
+    // below and the caller was told 500 for a malformed request. Absent means
+    // no curriculum rows; present-but-not-a-list is the client's error.
+    if (classContents !== undefined && !Array.isArray(classContents)) {
+      return NextResponse.json(
+        { error: "classContents must be an array" },
+        { status: 400 },
+      );
+    }
+
     const newClassPlan = await prisma.classPlan.create({
       data: {
         title,
@@ -296,7 +307,7 @@ export async function POST(request: NextRequest) {
           ? { connect: topicIds.map((id: string) => ({ id })) }
           : undefined,
         classContents: {
-          create: classContents.map(
+          create: (classContents ?? []).map(
             (content: Prisma.ClassContentCreateWithoutClassPlanInput) => ({
               title: content.title,
               description: content.description,

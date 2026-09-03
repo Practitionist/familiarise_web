@@ -34,7 +34,10 @@ import {
   isRecurringEventType,
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
-import { countHalfHourAtoms } from "@/lib/appointments/contiguous-slot-run";
+import {
+  countHalfHourAtoms,
+  halfHourAtomStarts,
+} from "@/lib/appointments/contiguous-slot-run";
 import {
   matchesPreferredDays,
   maxPreferenceScore,
@@ -2117,6 +2120,10 @@ export class SlotAllocationService {
           // row, so a one-hour booking offered two atoms and answered "1", and
           // approving it was impossible: the message read "Found 1 slots but 2
           // requested" and the consultant had no action that could fix it.
+          //
+          // Both sides are atom COVERAGE now: `fetchEventData` expands each
+          // stored row into the atom starts it covers, so normalising only the
+          // left side would have swapped one mismatch for its mirror image.
           const existingAtomCount = existingAppointments.reduce(
             (sum, appointment) =>
               sum +
@@ -4163,8 +4170,12 @@ export class SlotAllocationService {
           durationInHours: event.consultationPlan?.durationInHours,
         };
         consulteeUserId = event.requestedBy?.user?.id;
-        requestedSlots = event.appointment?.slotsOfAppointment?.map(
-          (s) => new Date(s.startsAt),
+        // #1319 — atom STARTS, not one entry per row. The approval gate counts
+        // covered half-hour atoms and `validateConsultation` compares against
+        // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
+        // slot answered "1" to both questions and could never be approved.
+        requestedSlots = event.appointment?.slotsOfAppointment?.flatMap((s) =>
+          halfHourAtomStarts(s),
         );
         // #768 — preserve org tag across reschedule (delete+recreate).
         organizationId = event.appointment?.organizationId ?? null;
@@ -4200,8 +4211,9 @@ export class SlotAllocationService {
           schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
         consulteeUserId = event.requestedBy?.user?.id;
+        // #1319 — same coverage rule as the consultation arm above.
         requestedSlots = event.appointments?.flatMap((app) =>
-          app.slotsOfAppointment.map((s) => new Date(s.startsAt)),
+          app.slotsOfAppointment.flatMap((s) => halfHourAtomStarts(s)),
         );
         // #768 — placeholder Appointment from checkout carries the org
         // tag. New lazy-allocated slots inherit it.

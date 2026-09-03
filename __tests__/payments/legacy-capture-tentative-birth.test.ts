@@ -43,6 +43,8 @@ const appointmentFindUnique = jest.fn(() =>
 );
 const classFindUnique = jest.fn();
 const classUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
+const participantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
 const paymentFindUnique = jest.fn();
 const paymentUpdate = jest.fn().mockResolvedValue({});
 const txStub = {
@@ -54,8 +56,8 @@ const txStub = {
   },
   // #1319 A9 — the creators shadow-write participant rows in the same tx.
   appointmentParticipant: {
-    createMany: jest.fn().mockResolvedValue({ count: 1 }),
-    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    createMany: participantCreateMany,
+    updateMany: participantUpdateMany,
   },
   appointment: { create: appointmentCreate, findUnique: appointmentFindUnique },
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
@@ -241,6 +243,15 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
     expect(refundPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "pay1", initiatedByUserId: null }),
     );
+    // The seat row commits with the transaction even when the guard refuses,
+    // so it must be born HELD: a CONFIRMED row would outlive the refund as a
+    // paid-looking seat on a dead class.
+    expect(participantCreateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [expect.objectContaining({ userId: "user-1", status: "HELD" })],
+      }),
+    );
+    expect(participantUpdateMany).not.toHaveBeenCalled();
   });
 
   it("confirms the payer's rows when the class is LIVE", async () => {
