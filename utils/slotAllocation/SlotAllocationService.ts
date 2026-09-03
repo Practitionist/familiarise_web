@@ -35,6 +35,10 @@ import {
 } from "./types";
 import { SlotCalculationService } from "./SlotCalculationService";
 import {
+  countHalfHourAtoms,
+  halfHourAtomStarts,
+} from "@/lib/appointments/contiguous-slot-run";
+import {
   matchesPreferredDays,
   maxPreferenceScore,
   scoreCandidateStart,
@@ -2108,16 +2112,32 @@ export class SlotAllocationService {
             );
           }
 
-          // Verify appointment slots match requested slots
-          const existingSlotCount = existingAppointments.reduce(
-            (sum, appointment) => sum + appointment.slotsOfAppointment.length,
+          // Verify the appointments COVER exactly the requested half-hour atoms.
+          //
+          // #1319 — this compared row count to atom count, which are the same
+          // number only for an appointment already stored the canonical way
+          // (#1071). 76 of 87 production consultations are a single 60-minute
+          // row, so a one-hour booking offered two atoms and answered "1", and
+          // approving it was impossible: the message read "Found 1 slots but 2
+          // requested" and the consultant had no action that could fix it.
+          //
+          // Both sides are atom COVERAGE now: `fetchEventData` expands each
+          // stored row into the atom starts it covers, so normalising only the
+          // left side would have swapped one mismatch for its mirror image.
+          const existingAtomCount = existingAppointments.reduce(
+            (sum, appointment) =>
+              sum +
+              appointment.slotsOfAppointment.reduce(
+                (atoms, slot) => atoms + countHalfHourAtoms(slot),
+                0,
+              ),
             0,
           );
 
-          if (existingSlotCount !== requestedSlots.length) {
+          if (existingAtomCount !== requestedSlots.length) {
             throw new AllocationValidationError(
-              `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-                `but ${requestedSlots.length} requested slots. ` +
+              `Appointment mismatch: the existing appointments cover ${existingAtomCount} ` +
+                `half-hour atoms but ${requestedSlots.length} were requested. ` +
                 `The appointments may have been modified. Please review and try again.`,
             );
           }
@@ -4150,8 +4170,12 @@ export class SlotAllocationService {
           durationInHours: event.consultationPlan?.durationInHours,
         };
         consulteeUserId = event.requestedBy?.user?.id;
-        requestedSlots = event.appointment?.slotsOfAppointment?.map(
-          (s) => new Date(s.startsAt),
+        // #1319 — atom STARTS, not one entry per row. The approval gate counts
+        // covered half-hour atoms and `validateConsultation` compares against
+        // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
+        // slot answered "1" to both questions and could never be approved.
+        requestedSlots = event.appointment?.slotsOfAppointment?.flatMap((s) =>
+          halfHourAtomStarts(s),
         );
         // #768 — preserve org tag across reschedule (delete+recreate).
         organizationId = event.appointment?.organizationId ?? null;
@@ -4187,8 +4211,9 @@ export class SlotAllocationService {
           schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
         consulteeUserId = event.requestedBy?.user?.id;
+        // #1319 — same coverage rule as the consultation arm above.
         requestedSlots = event.appointments?.flatMap((app) =>
-          app.slotsOfAppointment.map((s) => new Date(s.startsAt)),
+          app.slotsOfAppointment.flatMap((s) => halfHourAtomStarts(s)),
         );
         // #768 — placeholder Appointment from checkout carries the org
         // tag. New lazy-allocated slots inherit it.
