@@ -275,6 +275,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     throw err;
   }
 
+  // The gateway barrel is loaded here, BEFORE the reservation. Its module-load
+  // guard (#1219) is deterministic, so a throw here must not leave a PENDING
+  // placeholder that keeps reducing the refundable balance for the length of
+  // the reconciler's grace period.
+  const { createRefund } = await import("@/lib/payments");
+
   // PHASE 1 — reserve. Create the Refund row in PENDING with a `pending_`
   // placeholder id inside a Serializable tx: the balance re-check and the
   // reservation are atomic, so racing refunds can't oversubscribe, and the
@@ -383,7 +389,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // the gateway. Mirrors actions/maintenance/freeze-appointments.ts.
   let gateway: Awaited<ReturnType<typeof createGatewayRefund>>;
   try {
-    const { createRefund } = await import("@/lib/payments");
     gateway = await createRefund({
       paymentIntentId: payment.paymentIntent,
       amount: requested,
