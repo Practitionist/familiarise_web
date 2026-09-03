@@ -2,16 +2,17 @@
 
 ## Novu Workflows Overview
 
-All 27 workflow IDs are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant. Each ID must match its counterpart in the Novu dashboard.
+All 28 workflow IDs are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant. Each ID must match its counterpart in the Novu dashboard.
 
 ```mermaid
 graph TD
-    subgraph "Appointment (5)"
+    subgraph "Appointment (6)"
         W1[appointment-booked]
         W2[appointment-cancelled]
         W3[appointment-rescheduled]
         W4[appointment-reminder]
         W5[appointment-completed]
+        W5b[appointment-partially-scheduled]
     end
 
     subgraph "Payment (4)"
@@ -69,13 +70,16 @@ graph TD
 
 ### Appointment Lifecycle
 
-| Workflow ID               | Trigger Function                                   | Recipients   | Payload Type                    |
-| ------------------------- | -------------------------------------------------- | ------------ | ------------------------------- |
-| `appointment-booked`      | `notifyAppointmentBooked(userIds[], payload)`      | Both parties | `AppointmentPayload`            |
-| `appointment-cancelled`   | `notifyAppointmentCancelled(userIds[], payload)`   | Both parties | `AppointmentCancelledPayload`   |
-| `appointment-rescheduled` | `notifyAppointmentRescheduled(userIds[], payload)` | Both parties | `AppointmentRescheduledPayload` |
-| `appointment-reminder`    | _(cron job)_                                       | Both parties | `AppointmentPayload`            |
-| `appointment-completed`   | `notifyAppointmentCompleted(userIds[], payload)`   | Both parties | `AppointmentPayload`            |
+| Workflow ID                       | Trigger Function                                          | Recipients     | Payload Type                           |
+| --------------------------------- | --------------------------------------------------------- | -------------- | -------------------------------------- |
+| `appointment-booked`              | `notifyAppointmentBooked(userIds[], payload)`             | Both parties   | `AppointmentPayload`                   |
+| `appointment-cancelled`           | `notifyAppointmentCancelled(userIds[], payload)`          | Both parties   | `AppointmentCancelledPayload`          |
+| `appointment-rescheduled`         | `notifyAppointmentRescheduled(userIds[], payload)`        | Both parties   | `AppointmentRescheduledPayload`        |
+| `appointment-reminder`            | _(cron job)_                                              | Both parties   | `AppointmentPayload`                   |
+| `appointment-completed`           | `notifyAppointmentCompleted(userIds[], payload)`          | Both parties   | `AppointmentPayload`                   |
+| `appointment-partially-scheduled` | `notifyAppointmentPartiallyScheduled(userIds[], payload)` | Consultee only | `AppointmentPartiallyScheduledPayload` |
+
+The last of these is the only appointment workflow addressed to one party. It fires alongside `appointment-booked` when a consultant accepts a partial allocation (#1206), because the sessions that were placed are a real booking and already read as one; what the consultee would otherwise never learn is that the rest of the plan has no times yet. Its payload extends `AppointmentPayload` with `placedSessions`, `requiredSessions` and `unplacedSessions`, all whole sessions, all derived at the moment of allocation and none of them stored. Like every other workflow here, the definition must be created in the Novu dashboard under exactly that slug in each environment before the feature is released; the trigger is fire-and-forget, so a missing definition costs the notification silently rather than failing the allocation.
 
 ```mermaid
 sequenceDiagram

@@ -9,10 +9,7 @@ import {
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
-import {
-  computeRefundPct,
-  parsePolicySnapshot,
-} from "@/lib/payments/operations/cancellation-policy";
+import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -245,44 +242,30 @@ async function quoteIndividualBooking(
     (!!actor.consultantProfileId && roles.consultantUserId === actor.id) ||
     (isPrivilegedUser && actor.id !== roles.consulteeUserId);
 
-  // A booking that was never scheduled has no session to give notice on, so it
-  // sits in the top tier rather than the "already started" floor.
-  const nextSessionHours = ctx.hoursUntilNextSession ?? -1;
-  const noticeHours =
-    ctx.slotsTotal === 0 ? Number.POSITIVE_INFINITY : nextSessionHours;
-  const refundPct = computeRefundPct(
-    parsePolicySnapshot(ctx.policySnapshot),
-    noticeHours,
+  // #1319 — the notice tier, the proration and the clamp are the POST route's
+  // own code now, not a restatement of it. An unpaid booking quotes off zeros,
+  // which the clamp turns into zero.
+  const quote = quoteBookingRefund({
+    policySnapshot: ctx.policySnapshot,
+    hoursUntilNextSession: ctx.hoursUntilNextSession,
+    slotsTotal: ctx.slotsTotal,
+    sessionsRemaining: ctx.sessionsRemaining,
+    isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
-  );
-
-  const grossPaise = ctx.paidPayment?.amountPaise ?? 0;
-  // #1006 — the refundable base is the undelivered share of the plan price.
-  // The denominator is `slotsTotal`, every session the plan ever held time
-  // for, because that is what the POST route divides by (#1174). Summing
-  // completed + live instead drops every terminal-but-not-completed session
-  // out of the plan, and the quote then promises more than the cancel pays.
-  const isProratable = !!appointment.subscriptionId && ctx.slotsTotal > 0;
-  const proratedBasePaise = isProratable
-    ? Math.floor((grossPaise * ctx.sessionsRemaining) / ctx.slotsTotal)
-    : grossPaise;
-  const estimatedRefundPaise = ctx.paidPayment
-    ? Math.min(
-        Math.floor((proratedBasePaise * refundPct) / 100),
-        ctx.paidPayment.refundablePaise,
-      )
-    : 0;
+    grossPaise: ctx.paidPayment?.amountPaise ?? 0,
+    refundablePaise: ctx.paidPayment?.refundablePaise ?? 0,
+  });
 
   return {
-    refundPct,
-    estimatedRefundPaise,
+    refundPct: quote.refundPct,
+    estimatedRefundPaise: quote.refundPaise,
     currency: bookingPayment?.currency ?? "INR",
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     // Only true when proration actually moves the number — an untouched
     // subscription refunds off the whole price, like every other booking.
     // Keyed on the same two numbers the base is: any session that is no
     // longer live has already shrunk the quote, whether or not it COMPLETED.
-    prorated: isProratable && ctx.sessionsRemaining < ctx.slotsTotal,
+    prorated: quote.prorated,
     // Which rail the money comes back on, which is the sentence the dialog
     // actually needs. `free_` alone was not enough: a wallet-, invoice- or
     // licence-funded learner was told their card would be credited in 5–7

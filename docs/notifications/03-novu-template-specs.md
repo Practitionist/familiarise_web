@@ -1336,6 +1336,7 @@ These need Dashboard configuration after Tier 1 is done:
 
 - `appointment-rescheduled` — AppointmentRescheduledPayload
 - `appointment-completed` — AppointmentPayload
+- `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload
 - `payout-processed` — PayoutPayload
 - `collaborator-invited` — CollaboratorInvitedPayload
