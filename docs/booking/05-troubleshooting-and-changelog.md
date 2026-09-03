@@ -255,7 +255,6 @@ Part of #1319. This PR makes the polled availability grid cheap when nothing has
 **The calendar hook echoes the tag back and treats 304 as "unchanged".** `useCalendarData` keeps the last response's ETag in a ref and `AllocationService.fetchAvailabilitySlots` sends it as `If-None-Match`, except on the post-allocation refetch, which has just mutated and wants the body regardless. A 304 returns early without calling `setState`, so an unchanged poll no longer re-renders every cell in the grid. Sending a conditional header makes `fetch` treat the request as `no-store` per the Fetch specification, so the browser's own thirty-second freshness shortcut no longer short-circuits it; that is the trade, and it buys a client that never repaints from a body the browser may have evicted.
 
 **One defect was found while measuring and deliberately not fixed here.** Both occupancy branches select only `payment.expiresAt`, while `isOccupiedByLiveAppointment` reads `paymentStatus` and `bookingSource`, so the route's expired-hold handling is inert and a lapsed hold paints busy until the sweep tidies it. That is a correctness bug rather than a performance one and belongs in its own change; it means the clock fold is, for now, defensive rather than load-bearing.
-=======
 
 ## Changelog: 2026-08-14 — documentation refresh
 
