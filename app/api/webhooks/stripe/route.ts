@@ -176,7 +176,9 @@ export async function POST(req: NextRequest) {
               // this rail yet; what it changes now is the not-found case, which
               // stopped silently ACKing (#813/#812 calls that permanent death)
               // and now 5xxs so Stripe re-delivers.
-              latestRefund.charge || refundEvent.id,
+              typeof latestRefund.charge === "string"
+                ? latestRefund.charge
+                : (latestRefund.charge?.id ?? refundEvent.id),
             );
           }
           break;
