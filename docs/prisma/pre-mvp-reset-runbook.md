@@ -13,12 +13,17 @@ Run every step from the repository root with `DATABASE_URL` pointing at the targ
 1. **Capture the two phantom columns.** `ConsultantReview.isAnonymous` and `AppointmentFeedback.slotOfAppointmentId` exist in the database but not in the schema, and the push in step 3 drops them. Nothing in application code reads either, so this is insurance rather than a migration.
 
    ```sh
-   psql "$DATABASE_URL" -f prisma/sql/one-off/2026-09-02-capture-phantom-columns.sql
+   psql "$DIRECT_URL" -At -c '\copy (SELECT "id", "isAnonymous" FROM "ConsultantReview" WHERE "isAnonymous" IS NOT NULL) TO capture-consultant-review-is-anonymous.csv CSV HEADER'
+   psql "$DIRECT_URL" -At -c '\copy (SELECT "id", "slotOfAppointmentId" FROM "AppointmentFeedback" WHERE "slotOfAppointmentId" IS NOT NULL) TO capture-appointment-feedback-slot.csv CSV HEADER'
+
+   Capture to FILES, not to tables. The 2026-09-03 additive push proved that `prisma db push` drops every table the Prisma schema does not know, so the `_phantom_*` tables that `prisma/sql/one-off/2026-09-02-capture-phantom-columns.sql` creates are removed by the very push they were meant to survive (the rows were recovered from the pre-push `pg_dump` afterwards). Keep the two CSV files with the backup from step 2.
    ```
+
+1b. **Duplicate rows that block the new unique keys.** The push adds `AppointmentFeedback (appointmentId, userId)` and `ConsultantReview (appointmentId, consulteeProfileId)` unique keys; a duplicate pair fails the whole push mid-way. Check first with `SELECT "appointmentId", "userId", count(*) FROM "AppointmentFeedback" GROUP BY 1, 2 HAVING count(*) > 1` (and the review twin) and remove the extras deliberately (on 2026-09-03 the only pair was two QA rows from a per-slot feedback test).
 
 2. **Snapshot.** Take a database backup through the Supabase dashboard or `pg_dump`, and record the backup identifier in the reset ticket.
 
-3. **Push the schema and apply the sidecars.** `npm run db:push` is chained as push, then sidecars, then the assertion, so a schema push can no longer silently leave `slot_no_confirmed_overlap` and the money CHECK constraints behind.
+3. **Push the schema and apply the sidecars.** `npm run db:push` is chained as push, then sidecars, then the assertion. Because `prisma db push` refuses in non-interactive mode when a statement drops data, run `npx prisma db push --accept-data-loss` yourself first when the diff contains the phantom-column drops, then `npm run db:sidecars && npm run db:assert-sidecars`; Prisma 7 has no `--skip-generate` flag, so a schema push can no longer silently leave `slot_no_confirmed_overlap` and the money CHECK constraints behind.
 
    ```sh
    npm run db:push

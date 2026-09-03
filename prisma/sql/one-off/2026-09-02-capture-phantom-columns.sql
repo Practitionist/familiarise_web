@@ -6,7 +6,11 @@
 -- replaces the capture with the current values, so an earlier capture can never
 -- shadow a later edit) and a no-op on a database that already lacks the columns.
 --
--- Applied: not yet (reset runbook step 1, docs/prisma/pre-mvp-reset-runbook.md).
+-- SUPERSEDED 2026-09-03: `prisma db push` drops tables the schema does not know,
+-- so these capture tables are removed by the push they precede. The runbook now
+-- captures to CSV files with `\copy` instead; this file is kept as history.
+-- Applied once on 2026-09-03 and dropped by the same day's push (rows recovered
+-- from the pre-push pg_dump).
 
 DO $$
 BEGIN
