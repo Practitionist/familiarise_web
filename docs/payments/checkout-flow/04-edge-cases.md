@@ -940,25 +940,25 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 
 **Race Condition Protection:**
 
-- Consultation: `/lib/payments/operations/checkout.ts:196-248`
+- Consultation: `/lib/payments/operations/checkout.ts`
 - Subscription: Same protection mechanism
-- Class enrollment check: `/lib/payments/operations/checkout.ts:675-678`
+- Class enrollment check: `/lib/payments/operations/checkout.ts`
 
 **Capacity Counting:**
 
-- Webinar: `/lib/payments/operations/checkout.ts:595-597`
-- Class: `/lib/payments/operations/checkout.ts:647-656` (unique user counting)
+- Webinar: `/lib/payments/operations/checkout.ts`
+- Class: `/lib/payments/operations/checkout.ts` (unique user counting)
 
 **Session Calculations:**
 
-- Subscription: `/lib/payments/operations/checkout.ts:512-514`
-- Class: `/app/api/bookings/classes/crud-with-plan/route.ts:162-164`
+- Subscription: `/lib/payments/operations/checkout.ts`
+- Class: `/app/api/bookings/classes/crud-with-plan/route.ts`
 
 **Error Handling:**
 
-- Checkout API: `/app/api/checkout/route.ts:28-83`
-- Stripe errors: `/lib/payments/core/stripe.ts:449-482`
-- Razorpay errors: `/lib/payments/core/razorpay.ts:299-336`
+- Checkout API: `/app/api/checkout/route.ts`
+- Stripe errors: `/lib/payments/core/stripe.ts`
+- Razorpay errors: `/lib/payments/core/razorpay.ts`
 
 ### 9.3 Database Schema Locations
 

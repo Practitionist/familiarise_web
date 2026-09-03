@@ -48,7 +48,7 @@ This document details all identified issues in the payment and checkout system's
 ### Issue #1: Validation Before Lock (Race Window)
 
 **Severity:** Critical
-**Location:** `lib/payments/operations/checkout.ts:1101-1109`
+**Location:** `lib/payments/operations/checkout.ts`
 
 #### Problem Description
 
@@ -100,7 +100,7 @@ console.log(
 ### Issue #2: Lock TTL Too Short
 
 **Severity:** Critical
-**Location:** `lib/payments/operations/checkout.ts:576` and `utils/appointmentlock.ts`
+**Location:** `lib/payments/operations/checkout.ts` and `utils/appointmentlock.ts`
 
 #### Problem Description
 
@@ -227,7 +227,7 @@ export async function extendLock(
 ### Issue #3: Non-Atomic Lock Release
 
 **Severity:** Critical
-**Location:** `utils/appointmentlock.ts:151-156`
+**Location:** `utils/appointmentlock.ts`
 
 #### Problem Description
 
@@ -340,7 +340,7 @@ async function releaseLock(lock: ApprovalLock): Promise<void> {
 ### Issue #4: Subscription Tentative Appointment Bypass
 
 **Severity:** Critical
-**Location:** `lib/payments/operations/checkout.ts:1166-1175`
+**Location:** `lib/payments/operations/checkout.ts`
 
 #### Problem Description
 
@@ -490,7 +490,7 @@ case "SUBSCRIPTION": {
 ### Issue #5: Event Lock Granularity Too Coarse
 
 **Severity:** Critical
-**Location:** `utils/appointmentlock.ts:285-298`
+**Location:** `utils/appointmentlock.ts`
 
 #### Problem Description
 
@@ -660,7 +660,7 @@ export async function confirmEventSlot(
 ### Issue #6: Payment Intent Expiration Mismatch
 
 **Severity:** High
-**Location:** `lib/payments/operations/checkout.ts:1219` vs `jobs/cleanup-abandoned-payments.ts`
+**Location:** `lib/payments/operations/checkout.ts` vs `jobs/cleanup-abandoned-payments.ts`
 
 #### Problem Description
 
@@ -694,7 +694,7 @@ Add 5-minute buffer to cleanup job:
 ### Issue #8: Webhook Metadata Validation Silent Failures
 
 **Severity:** High
-**Location:** `lib/payments/webhooks/handlers.ts:127-143`
+**Location:** `lib/payments/webhooks/handlers.ts`
 
 #### Problem Description
 
@@ -764,7 +764,7 @@ console.error(
 ### Issue #10: Cleanup Job Race with Payment Completion
 
 **Severity:** High
-**Location:** `jobs/cleanup-abandoned-payments.ts:169-259`
+**Location:** `jobs/cleanup-abandoned-payments.ts`
 
 #### Problem Description
 
@@ -932,7 +932,7 @@ export async function checkRedisHealth(): Promise<boolean> {
 ### Issue #11: Hardcoded Slot Duration
 
 **Severity:** Medium
-**Location:** `utils/slotAllocation/SlotValidationService.ts:169`
+**Location:** `utils/slotAllocation/SlotValidationService.ts`
 
 #### Problem Description
 
