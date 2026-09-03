@@ -244,6 +244,20 @@ async function run() {
         check("leg1/A: tentative slots released", tentativeLeft === 0, {
           tentativeLeft,
         });
+        // Released by status, never by delete: every slot of the cancelled
+        // booking is still stored, CANCELLED and tombstoned.
+        const releasedSlots = await prisma.slotOfAppointment.findMany({
+          where: { appointmentId: appointment.id },
+          select: { completionStatus: true, deletedAt: true },
+        });
+        check(
+          "leg1/A: released slots are stored as CANCELLED tombstones",
+          releasedSlots.length > 0 &&
+            releasedSlots.every(
+              (s) => s.completionStatus === "CANCELLED" && s.deletedAt !== null,
+            ),
+          releasedSlots,
+        );
         check(
           "leg1/A: parent CANCELLED",
           parent.status === "CANCELLED",

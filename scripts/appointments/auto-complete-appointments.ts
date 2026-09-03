@@ -616,36 +616,49 @@ async function completeIndividualSlots(): Promise<{
   const fromScheduled = [SlotCompletionStatus.SCHEDULED];
 
   try {
-    // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
-    // Note: completedAt = cron run time (not session endedAt). Real-time
-    // completion via webhooks (session-handlers.ts) uses the actual endedAt.
-    // This cron is a fallback for missed webhooks, so the cron timestamp
-    // represents "when the system acknowledged completion."
-    const completedCount = await transitionSlotCompletion(prisma, {
-      where: { ...liveHeldSlot, meetingSession: { endedAt: { not: null } } },
-      to: SlotCompletionStatus.COMPLETED,
-      data: { completedAt: new Date() },
-      fromIn: fromScheduled,
-      allowZero: true,
-    });
+    // One transaction for the three passes: the helper writes the status and
+    // then its history rows, and a slot must never be COMPLETED or UNVERIFIED
+    // without the audit row that says why.
+    const { completedCount, unverifiedCount, orphanedCount } =
+      await prisma.$transaction(
+        async (tx) => {
+          // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
+          // Note: completedAt = cron run time (not session endedAt). Real-time
+          // completion via webhooks (session-handlers.ts) uses the actual endedAt.
+          // This cron is a fallback for missed webhooks, so the cron timestamp
+          // represents "when the system acknowledged completion."
+          const completedCount = await transitionSlotCompletion(tx, {
+            where: {
+              ...liveHeldSlot,
+              meetingSession: { endedAt: { not: null } },
+            },
+            to: SlotCompletionStatus.COMPLETED,
+            data: { completedAt: new Date() },
+            fromIn: fromScheduled,
+            allowZero: true,
+          });
 
-    // Slots past buffer WITHOUT MeetingSession → UNVERIFIED
-    const unverifiedCount = await transitionSlotCompletion(prisma, {
-      where: { ...liveHeldSlot, meetingSession: null },
-      to: SlotCompletionStatus.UNVERIFIED,
-      fromIn: fromScheduled,
-      allowZero: true,
-    });
+          // Slots past buffer WITHOUT MeetingSession → UNVERIFIED
+          const unverifiedCount = await transitionSlotCompletion(tx, {
+            where: { ...liveHeldSlot, meetingSession: null },
+            to: SlotCompletionStatus.UNVERIFIED,
+            fromIn: fromScheduled,
+            allowZero: true,
+          });
 
-    // Slots with MeetingSession but no endedAt (orphaned sessions — call
-    // started but webhook never fired) → UNVERIFIED
-    const orphanedCount = await transitionSlotCompletion(prisma, {
-      where: { ...liveHeldSlot, meetingSession: { endedAt: null } },
-      to: SlotCompletionStatus.UNVERIFIED,
-      fromIn: fromScheduled,
-      allowZero: true,
-    });
+          // Slots with MeetingSession but no endedAt (orphaned sessions — call
+          // started but webhook never fired) → UNVERIFIED
+          const orphanedCount = await transitionSlotCompletion(tx, {
+            where: { ...liveHeldSlot, meetingSession: { endedAt: null } },
+            to: SlotCompletionStatus.UNVERIFIED,
+            fromIn: fromScheduled,
+            allowZero: true,
+          });
 
+          return { completedCount, unverifiedCount, orphanedCount };
+        },
+        { maxWait: 10_000, timeout: 30_000 },
+      );
     if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {
       console.log(
         `   Slot-level: ${completedCount} completed, ${unverifiedCount + orphanedCount} unverified (${orphanedCount} orphaned)`,

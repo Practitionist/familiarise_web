@@ -217,28 +217,80 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     // CAS soft-cancel — the row survives for support and disputes.
     // Only slots whose IDs we already confirmed are safe to release.
     if (staleTentativeSlots.length > 0) {
-      slotsReleased = await transitionSlotCompletion(prisma, {
-        where: {
-          id: { in: staleTentativeSlots.map((s) => s.id) },
-          // #829 — re-state the tentative + unpaid conditions so a slot whose
-          // capture webhook confirmed it between the findMany above and this
-          // write no longer matches (re-evaluated under the row lock). An
-          // id-only release here destroyed paid bookings.
-          isTentative: true,
-          deletedAt: null,
-          appointment: {
-            payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+      // One transaction so the tombstone and its history rows land together.
+      slotsReleased = await prisma.$transaction((tx) =>
+        transitionSlotCompletion(tx, {
+          where: {
+            id: { in: staleTentativeSlots.map((s) => s.id) },
+            // #829 — re-state the tentative + unpaid conditions so a slot whose
+            // capture webhook confirmed it between the findMany above and this
+            // write no longer matches (re-evaluated under the row lock). An
+            // id-only release here destroyed paid bookings.
+            isTentative: true,
+            deletedAt: null,
+            appointment: {
+              payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+              // The cohort's parent-status guards ride the WHERE too, re-evaluated
+              // under the row lock: a parent back under review or an event that
+              // went live between the scan and this write keeps its hold.
+              AND: [
+                {
+                  OR: [
+                    { consultation: null },
+                    {
+                      consultation: {
+                        status: {
+                          notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+                        },
+                      },
+                    },
+                  ],
+                },
+                {
+                  OR: [
+                    { subscription: null },
+                    {
+                      subscription: {
+                        status: {
+                          notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+                        },
+                      },
+                    },
+                  ],
+                },
+                {
+                  OR: [
+                    { webinar: null },
+                    {
+                      webinar: {
+                        status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
+                      },
+                    },
+                  ],
+                },
+                {
+                  OR: [
+                    { class: null },
+                    {
+                      class: {
+                        status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
           },
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
-        // auto-complete stamps a past SCHEDULED slot UNVERIFIED an hour after
-        // it ends and does not exclude tentative rows, so a 24h-old hold is
-        // usually UNVERIFIED by now. Only COMPLETED is out of reach, which is
-        // right — a session that actually happened is not a stale hold.
-        allowZero: true,
-      });
+          to: SlotCompletionStatus.CANCELLED,
+          data: { deletedAt: new Date() },
+          // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
+          // auto-complete stamps a past SCHEDULED slot UNVERIFIED an hour after
+          // it ends and does not exclude tentative rows, so a 24h-old hold is
+          // usually UNVERIFIED by now. Only COMPLETED is out of reach, which is
+          // right — a session that actually happened is not a stale hold.
+          allowZero: true,
+        }),
+      );
 
       console.log(`\n✅ Released ${slotsReleased} tentative slots`);
     }

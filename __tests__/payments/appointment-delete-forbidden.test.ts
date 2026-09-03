@@ -61,7 +61,17 @@ const SLOT_DELETE_ALLOWLIST = [
   "scripts/db/",
 ];
 
-const SLOT_DELETE = /\bslotOfAppointment\.delete(Many)?\(/;
+// Tolerates `delete (` and bracket access; Prettier normalises the former,
+// but the pin should not depend on it.
+const SLOT_DELETE =
+  /\bslotOfAppointment(?:\.delete(?:Many)?|\[["']delete(?:Many)?["']\])\s*\(/;
+// A file entry (no trailing slash) matches exactly; a directory entry matches
+// on a path boundary, so `SlotAllocationService.tsx` is not the allocator.
+function isAllowlisted(file: string): boolean {
+  return SLOT_DELETE_ALLOWLIST.some((ok) =>
+    ok.endsWith("/") ? file.startsWith(ok) : file === ok,
+  );
+}
 
 function walkTypescript(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(path.join(process.cwd(), dir), {
@@ -109,9 +119,7 @@ describe("no sweep hard-deletes a booking row (#1319)", () => {
     // for months. This is the general rule, so a new delete site fails here
     // the moment it is written rather than when someone re-reads the sweeps.
     const offenders = SLOT_SCAN_ROOTS.flatMap((root) => walkTypescript(root))
-      .filter(
-        (file) => !SLOT_DELETE_ALLOWLIST.some((ok) => file.startsWith(ok)),
-      )
+      .filter((file) => !isAllowlisted(file))
       .filter((file) =>
         SLOT_DELETE.test(
           fs.readFileSync(path.join(process.cwd(), file), "utf8"),

@@ -161,7 +161,10 @@ function makeTx() {
         async ({ where, data }: { where: Row; data: Row }) => {
           const moved = matchSlots(where);
           for (const slot of moved) Object.assign(slot, data);
-          return moved.map((slot) => ({ id: slot.id }));
+          return moved.map((slot) => ({
+            id: slot.id,
+            appointmentId: slot.appointmentId,
+          }));
         },
       ),
     },
@@ -265,6 +268,19 @@ describe("cancelPendingCheckout — happy path (consultation)", () => {
     expect(cons?.cancellationNotes).toBe("Cancelled by user during checkout");
     expect(cons?.cancelledAt).toBeInstanceOf(Date);
     expect(cancelPaymentIntent).toHaveBeenCalledWith("order_abc", "RAZORPAY");
+    // #1333 — the slot history rows name the appointment the rows came back with.
+    const slotHistory = (
+      tx.bookingStatusHistory.create as jest.Mock
+    ).mock.calls.filter(([call]) => call.data.entity === "SLOT");
+    expect(slotHistory.length).toBeGreaterThan(0);
+    for (const [call] of slotHistory) {
+      expect(call.data).toEqual(
+        expect.objectContaining({
+          toStatus: "CANCELLED",
+          appointmentId: "appt-1",
+        }),
+      );
+    }
   });
 
   it("skips the gateway cancel for mock payments", async () => {

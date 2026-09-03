@@ -209,27 +209,29 @@ async function expirePendingConsultations(): Promise<{
     // isTentative so an already-confirmed slot is never touched.
     let slotsReleased = 0;
     if (expiredAppointmentIds.length > 0) {
-      slotsReleased = await transitionSlotCompletion(prisma, {
-        where: {
-          appointmentId: { in: expiredAppointmentIds },
-          isTentative: true,
-          deletedAt: null,
-          appointment: {
-            consultation: {
-              id: { in: expiredIds },
-              status: AppointmentStatus.EXPIRED,
+      slotsReleased = await prisma.$transaction((tx) =>
+        transitionSlotCompletion(tx, {
+          where: {
+            appointmentId: { in: expiredAppointmentIds },
+            isTentative: true,
+            deletedAt: null,
+            appointment: {
+              consultation: {
+                id: { in: expiredIds },
+                status: AppointmentStatus.EXPIRED,
+              },
             },
           },
-        },
-        to: SlotCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
-        // auto-complete stamps any SCHEDULED slot UNVERIFIED an hour past its
-        // end with no isTentative filter, so a hold on a slot whose time has
-        // passed is routinely UNVERIFIED by the time this 48h sweep sees it.
-        // Narrowing here would strand exactly the holds it exists to free.
-        allowZero: true,
-      });
+          to: SlotCompletionStatus.CANCELLED,
+          data: { deletedAt: new Date() },
+          // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
+          // auto-complete stamps any SCHEDULED slot UNVERIFIED an hour past its
+          // end with no isTentative filter, so a hold on a slot whose time has
+          // passed is routinely UNVERIFIED by the time this 48h sweep sees it.
+          // Narrowing here would strand exactly the holds it exists to free.
+          allowZero: true,
+        }),
+      );
     }
 
     console.log(`✅ Expired ${result.count} PENDING consultations`);
@@ -377,25 +379,27 @@ async function releaseStaleRescheduledSlots(): Promise<{
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
     );
-    const released = await transitionSlotCompletion(prisma, {
-      where: {
-        isTentative: true,
-        deletedAt: null,
-        updatedAt: { lt: cutoff },
-        appointment: {
-          subscriptionId: { not: null },
-          subscription: { status: AppointmentStatus.APPROVED },
+    const released = await prisma.$transaction((tx) =>
+      transitionSlotCompletion(tx, {
+        where: {
+          isTentative: true,
+          deletedAt: null,
+          updatedAt: { lt: cutoff },
+          appointment: {
+            subscriptionId: { not: null },
+            subscription: { status: AppointmentStatus.APPROVED },
+          },
         },
-      },
-      to: SlotCompletionStatus.CANCELLED,
-      data: { deletedAt: new Date() },
-      // The RESCHEDULED-only scope lives in fromIn, not the WHERE: the helper
-      // spreads the caller's where and then overwrites `completionStatus`
-      // with its own from-set, so a WHERE clause here would be silently
-      // widened to SCHEDULED rows this sweep must never touch.
-      fromIn: [SlotCompletionStatus.RESCHEDULED],
-      allowZero: true,
-    });
+        to: SlotCompletionStatus.CANCELLED,
+        data: { deletedAt: new Date() },
+        // The RESCHEDULED-only scope lives in fromIn, not the WHERE: the helper
+        // spreads the caller's where and then overwrites `completionStatus`
+        // with its own from-set, so a WHERE clause here would be silently
+        // widened to SCHEDULED rows this sweep must never touch.
+        fromIn: [SlotCompletionStatus.RESCHEDULED],
+        allowZero: true,
+      }),
+    );
     console.log(
       `✅ Released ${released} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
     );
