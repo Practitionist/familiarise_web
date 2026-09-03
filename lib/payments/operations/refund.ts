@@ -37,7 +37,10 @@
  * the paise.
  */
 
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EarningStatus,
@@ -47,7 +50,12 @@ import {
   RefundStatus,
 } from "@prisma/client";
 
-import { createRefund as createGatewayRefund } from "@/lib/payments";
+// Type-only on purpose: the gateway barrel loads lib/payments/core/razorpay,
+// whose #1219 guard throws at module load on a TEST key in production. A
+// value import here put that throw into every bundle that merely quotes or
+// previews a refund (cancel preview, cancel, reject all 500'd on prod). The
+// barrel is imported at the single gateway call below instead.
+import type { createRefund as createGatewayRefund } from "@/lib/payments";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -267,6 +275,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     throw err;
   }
 
+  // The gateway barrel is loaded here, BEFORE the reservation. Its module-load
+  // guard (#1219) is deterministic, so a throw here must not leave a PENDING
+  // placeholder that keeps reducing the refundable balance for the length of
+  // the reconciler's grace period.
+  const { createRefund } = await import("@/lib/payments");
+
   // PHASE 1 — reserve. Create the Refund row in PENDING with a `pending_`
   // placeholder id inside a Serializable tx: the balance re-check and the
   // reservation are atomic, so racing refunds can't oversubscribe, and the
@@ -360,7 +374,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           },
         });
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 
@@ -371,7 +389,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // the gateway. Mirrors actions/maintenance/freeze-appointments.ts.
   let gateway: Awaited<ReturnType<typeof createGatewayRefund>>;
   try {
-    gateway = await createGatewayRefund({
+    gateway = await createRefund({
       paymentIntentId: payment.paymentIntent,
       amount: requested,
       reason: input.reason,
@@ -536,7 +554,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         {
           subsystem: "payments",
           tags: { feature: "refund" },
-          extra: { placeholderRowId: reserved.id, gatewayRefundId: gateway.refundId },
+          extra: {
+            placeholderRowId: reserved.id,
+            gatewayRefundId: gateway.refundId,
+          },
         },
       );
     }
@@ -637,7 +658,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           gatewayRefundId: gateway.refundId || undefined,
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     ),
   );
 
