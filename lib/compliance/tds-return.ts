@@ -220,12 +220,6 @@ const TDS_RETURN_CSV_HEADER =
  * Reversals get their own `is_reversal=true` line with `amount_credited_paise`
  * zero, because the portal treats a reversal as an adjustment against a
  * previously reported credit rather than as a new credit of its own.
- *
- * Every cell goes through the shared `escapeCsvField`, which prefixes an
- * apostrophe to anything starting with `-` so a crafted value cannot execute
- * as a spreadsheet formula. A negative reversal amount therefore lands as
- * `'-500`; the CA strips it on import, and the alternative is an exporter that
- * opts out of the repo's injection guard.
  */
 export function buildTdsReturnCsv(
   draft: TdsReturnDraft,
