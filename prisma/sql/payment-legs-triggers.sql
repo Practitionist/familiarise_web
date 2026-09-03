@@ -9,9 +9,17 @@
 -- posture ledger-triggers.sql already gives the journal — so no writer
 -- (app code, raw SQL, a future script) can persist drifted legs.
 --
--- Semantics mirror checkPaymentLegsSumToAmount EXACTLY:
+-- Semantics mirror checkPaymentLegsSumToAmount:
 --   * funding sum  = Σ amountPaise over legs whose source does not end in
---     `_REVERSAL` (LICENSE's intentional 0-value legs are part of the sum)
+--     `_REVERSAL`
+--   * a payment whose non-reversal legs are ALL 0-value LICENSE legs skips the
+--     sum comparison outright: the licence is absorbed at contract time, so the
+--     leg is deliberately 0 while Payment.amount stays at full price and the
+--     comparison is structurally false for every one of them. The checker
+--     carves the same shape out; without it here the trigger would reject at
+--     COMMIT the very checkout the checker waves through. (The checker returns
+--     early and the reversal-pair loop below still runs — a reversal with no
+--     original sibling is corrupt under either reading.)
 --   * REFERRAL_CREDIT is EXCLUDED from that sum (#1347): Payment.amount is the
 --     gateway charge and the credit is already netted out of it, so counting
 --     the leg would demand the credit twice and fail every credit checkout
@@ -27,6 +35,8 @@ DECLARE
   v_amount BIGINT;
   v_funding_sum BIGINT;
   v_sibling_sum BIGINT;
+  v_original_count BIGINT;
+  v_non_license_count BIGINT;
   r RECORD;
 BEGIN
   SELECT "amount" INTO v_amount FROM "Payment" WHERE "id" = p_payment_id;
@@ -34,16 +44,32 @@ BEGIN
     RETURN; -- payment already gone (cascade delete) — nothing to guard
   END IF;
 
-  SELECT COALESCE(SUM("amountPaise"), 0) INTO v_funding_sum
+  -- Both counts span every non-reversal leg INCLUDING REFERRAL_CREDIT, so the
+  -- carve fires on exactly the shapes checkPaymentLegsSumToAmount carves: a
+  -- credit sitting beside a licence leg is a real funding leg and keeps the
+  -- payment in the comparison.
+  SELECT
+    COUNT(*),
+    COUNT(*) FILTER (
+      WHERE NOT ("source"::text = 'LICENSE' AND "amountPaise" = 0)
+    )
+  INTO v_original_count, v_non_license_count
   FROM "PaymentLeg"
   WHERE "paymentId" = p_payment_id
-    AND RIGHT("source"::text, 9) <> '_REVERSAL'
-    AND "source"::text <> 'REFERRAL_CREDIT';
+    AND RIGHT("source"::text, 9) <> '_REVERSAL';
 
-  IF v_funding_sum <> v_amount THEN
-    RAISE EXCEPTION 'payment_legs_sum_to_amount violated for payment %: legs sum to % but Payment.amount is %',
-      p_payment_id, v_funding_sum, v_amount
-      USING ERRCODE = 'check_violation';
+  IF NOT (v_original_count > 0 AND v_non_license_count = 0) THEN
+    SELECT COALESCE(SUM("amountPaise"), 0) INTO v_funding_sum
+    FROM "PaymentLeg"
+    WHERE "paymentId" = p_payment_id
+      AND RIGHT("source"::text, 9) <> '_REVERSAL'
+      AND "source"::text <> 'REFERRAL_CREDIT';
+
+    IF v_funding_sum <> v_amount THEN
+      RAISE EXCEPTION 'payment_legs_sum_to_amount violated for payment %: legs sum to % but Payment.amount is %',
+        p_payment_id, v_funding_sum, v_amount
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
 
   FOR r IN
