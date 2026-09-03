@@ -4,11 +4,11 @@
 **App URL:** `http://localhost:3000`
 **Dev server:** already running (`npm run dev`)
 
-> **Coverage marker:** both subjects are wave-5 work landing with **#1329**.
-> `allowPartial`, the `SLOT_SHORTAGE` refusal carrying `placeableSessions`, and
-> the co-host guard running in every allocation mode do not exist on plain
-> `dev`; the schema field is stripped there and the guard is reachable from one
-> route only. Run this case on a branch where #1329 is merged.
+> **Coverage marker:** both subjects are wave-5 work that landed with **#1329**,
+> now merged into `dev`, so this case runs against plain `dev`. Before #1329
+> `allowPartial` was stripped by the schema, the `SLOT_SHORTAGE` refusal carried
+> no `placeableSessions`, and the co-host guard was reachable from one route
+> only — the three regressions these phases pin.
 
 You are a senior QA engineer. Your job is to prove that a consultant who cannot
 fit every session the plan sold is offered an honest choice rather than a dead
@@ -149,8 +149,10 @@ WHERE a."subscriptionId" = '<SUBSCRIPTION_ID>' AND a."deletedAt" IS NULL;
 -- Expected: equals placedSessions.
 ```
 
-`partial` is derived at read time from confirmed sessions versus the plan's
-total and is **not** persisted — do not look for a `partial` column.
+`partial` is derived inside the allocation transaction from the sessions placed
+versus the sessions requested, and re-derived on a replay from the stored
+appointments versus the plan's `totalSessions` (`replayPartialCounts`). It is
+**not** persisted — do not look for a `partial` column.
 
 ## Phase 3 — Only the consultant may choose a partial schedule
 

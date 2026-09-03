@@ -6,9 +6,9 @@
 
 > **Coverage marker:** the cancellation **quote** endpoint and the funding-rail
 > field it returns are wave-5 work (#1325 for `fundingRail`, #1327 for the
-> single `quoteBookingRefund` both the quote and the charge call). Run the rail
-> phases on a branch where those are merged. The `?orgScope=` phases are live on
-> `dev`.
+> single `quoteBookingRefund` both the quote and the charge call). Both are
+> merged into `dev`, as are the `?orgScope=` phases, so every phase here runs
+> against plain `dev`.
 
 You are a senior QA engineer. Your job is to prove that the number and the
 sentence the cancel dialog shows are the number and the rail the cancel

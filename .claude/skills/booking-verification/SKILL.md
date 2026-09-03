@@ -13,17 +13,21 @@ alone do not settle a concurrency claim.
 ## 1. Which suite covers what
 
 Five folders carry the booking subsystem, and all five exist today.
-`__tests__/booking-algorithm/` is the large one (roughly fifty suites): slot
-validation, allocation, availability scans, reschedule proposals, the
+`__tests__/booking-algorithm/` is the large one (65 suites on merged wave-5
+dev): slot validation, allocation, availability scans, reschedule proposals, the
 idempotency key, the initial-allocation guard, trial slot integrity, the
-hold-expiry predicate. `__tests__/payments/` (roughly forty) covers checkout
-price parity, refund rails, lock TTLs, capture parity, the ledger baseline and
-disputes. `__tests__/booking/` holds the cancellation policy, the
-tentative-cleanup guard, the expiry-sweep race and the no-show refund front
-door. `__tests__/maintenance/` holds freeze and cron-lock. `__tests__/collaborators/`
-holds only `availability.test.ts` — the wave-5 co-host work landed under
-`__tests__/booking-algorithm/` instead, so grep both. Run everything with
-`npm run test`.
+hold-expiry predicate, the slot-completion transitions and the collaborator
+availability modes. `__tests__/payments/` (50) covers checkout price parity,
+refund-preview parity, refund rails, lock TTLs, capture parity, the earnings
+healer, the ledger baseline and disputes. `__tests__/booking/` holds five: the
+cancellation policy, the tentative-cleanup guard, the expiry-sweep reschedule
+race, the no-show refund front door and the slot/session fix pins.
+`__tests__/maintenance/` holds eight — freeze, the cron-lock registry, the
+`assertNotInMaintenance` guard, the `cleanupRoute()` factory, the DEGRADED
+write block, the abandoned-payments reversal, the `SystemJobExecution` prune and
+workflow import-env. `__tests__/collaborators/` holds only `availability.test.ts`
+— the wave-5 co-host work landed under `__tests__/booking-algorithm/` instead,
+so grep both. Run everything with `npm run test`.
 
 ## 2. The mocking patterns these suites actually use
 
@@ -67,12 +71,17 @@ A warm incremental `tsc` can also hide type errors here: clear the
 
 ## 4. What CI blocks on, and what it merely reports
 
-The only workflow that runs on pull requests is `.github/workflows/ci.yaml`
-(`pull_request` against `dev`, `staging`, `prod`). Its `test-and-build` job is
-the gate: `npx tsc --noEmit`, `npx prisma generate`, the SSO invariant script,
-the money-column, workflow-hygiene, DB-sidecar and DB-drift guards, `npm run
-test`, and `npm run build`. There is no `typecheck` script, so type-check
-locally by typing `npx tsc --noEmit` yourself.
+The only workflow that runs unconditionally on every pull request is
+`.github/workflows/ci.yaml` (`pull_request` against `dev`, `staging`, `prod`).
+Three others carry a `pull_request` trigger but are conditional and never gate a
+booking change: `stream-webhook-drift.yml` fires only on a `paths:` filter over
+three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
+and `claude.yml` only when a comment or review body contains `@claude`.
+
+CI's `test-and-build` job is the gate: `npx tsc --noEmit`, `npx prisma generate`,
+the SSO invariant script, the money-column, workflow-hygiene, DB-sidecar and
+DB-drift guards, `npm run test`, and `npm run build`. There is no `typecheck`
+script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
 The separate `lint` job is advisory: both the ESLint and Prettier steps carry
 `continue-on-error: true`, and the summary prints "non-blocking". There is no
@@ -130,11 +139,12 @@ require `--apply`). The reset itself is a scheduled, owner-approved event with
 its own procedure in `docs/prisma/pre-mvp-reset-runbook.md`. If a change needs
 new schema, say so and stop; do not push it to prove a test passes.
 
-The chain differs by branch: on `dev` `db:push` is push-then-sidecars, while the
-wave-5 schema branch (#1322) extends it to push-then-sidecars-then-assert so a
-push can no longer silently leave `slot_no_confirmed_overlap` and the money
-CHECK constraints behind. Either way, "Prisma schema is up to date" says nothing
-about the sidecars.
+Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
+(`db:push:schema` = `prisma db push && npm run db:sidecars`, then
+`db:assert-sidecars`), so a push can no longer silently leave
+`slot_no_confirmed_overlap` and the money CHECK constraints behind. The bare
+escape hatch survives as `db:push:no-sidecars-DANGEROUS`. Either way, "Prisma
+schema is up to date" says nothing about the sidecars.
 
 ## 8. The agent-run E2E corpus
 

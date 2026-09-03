@@ -105,7 +105,15 @@ async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        releasedSlotIds: ["<ORIGINAL_SLOT_ID>"],
+        // The REQUEST field is `slotIds` (legacy single `slotId` also accepted).
+        // `releasedSlotIds` is the COLUMN the route writes from the slots it
+        // resolved — sending it here does nothing, and because
+        // RescheduleProposalSchema is `.passthrough()` it is silently ignored
+        // rather than rejected, so the whole booking would be released.
+        slotIds: ["<ORIGINAL_SLOT_ID>"],
+        // Each proposed row must be EXACTLY one 30-minute atom; the schema
+        // rejects anything else, because manual mode reads each entry as one
+        // slot start and a 60-minute row would book half a session.
         proposedSlots: [{ startsAt: "<D+6T14:00Z>", endsAt: "<D+6T14:30Z>" }],
         reason: "Agent 007 consultant-initiated proposal",
       }),
@@ -193,7 +201,10 @@ mapped to a 409/400, never a second acceptance).
 ### Test 2.3 — Only the counterparty may respond
 
 As CONSULTANT (the initiator), attempt to accept your own proposal.
-**Expected:** 403/404 — the initiator cannot answer their own proposal.
+**Expected:** **404**, with the same `No open reschedule request for this
+booking.` message a caller with no open proposal gets — the respond route
+answers `!open || !isCounterparty` identically on purpose, so it cannot be used
+as a membership oracle. See Phase 4b item 2.
 
 ---
 

@@ -60,8 +60,12 @@ for audit (`lib/maintenance.ts`). Two behaviors matter for money:
   jobs, precisely so half-frozen state is never "cleaned up" mid-freeze.
 
 The post-freeze catch-up order is documented in
-`docs/maintenance/04-cron-jobs-reference.md` §Post-Maintenance Catch-Up
-Priority; this case exercises the two money hazards in that hand-off.
+`docs/maintenance/07-post-maintenance-recovery.md` §4 "Run Critical
+Reconciliation Jobs", whose six priorities run payment reconciliation, slot
+reconciliation, payment-earnings sync, tentative-slot cleanup, refund
+reconciliation and payout reconciliation in that order. The fleet itself is
+catalogued in `docs/maintenance/04-cron-jobs-reference.md`. This case exercises
+the two money hazards in that hand-off.
 
 ---
 

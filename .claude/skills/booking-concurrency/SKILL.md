@@ -68,10 +68,11 @@ interval path. Sold-out is separate and terminal: `EventFullError` (409,
 `DEFAULT_RETRY_CONFIG` is eleven exponential attempts and waits up to about 204
 seconds, roughly eight times the serverless function ceiling, so a request path
 using it dies as a 504 before it can return the 409 it computed. As of wave 5
-(#1319), `REQUEST_PATH_RETRY_CONFIG` (five attempts, about seven seconds) is the
-**default parameter of `acquireGuarded`**, so every request-path acquisition is
-bounded unless a caller opts out. `CHECKOUT_WAIT_RETRY_CONFIG` and the private
-`INTERVAL_RETRY_CONFIG` share that budget; `DEFAULT` remains only for callers
+(#1319), `REQUEST_PATH_RETRY_CONFIG` (`retryCount: 5`, so six attempts and about
+seven seconds) is the **default parameter of `acquireGuarded`**, so every
+request-path acquisition is bounded unless a caller opts out.
+`CHECKOUT_WAIT_RETRY_CONFIG` and the private `INTERVAL_RETRY_CONFIG` share that
+budget; `DEFAULT` remains only for callers
 that run outside a request.
 
 Treat the ceiling as an observed figure, not a configured one: there is no

@@ -35,7 +35,7 @@ them manually choosing times.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | **Search window**            | 4 weeks from now                                                                                                    | Full `schedulingPeriodStartsAt → EndsAt`                   |
 | **Slot grouping**            | One appointment containing all consecutive slots (entire duration)                                                  | One appointment per session, distributed across the period |
-| **Weekly limits**            | None                                                                                                                | `meetingsPerWeek` on `ClassPlan`                           |
+| **Weekly limits**            | None                                                                                                                | `sessionsPerWeek` on `ClassPlan`                           |
 | **Re-allocate**              | Replaces in a transaction; the appointment is only deleted when `payment: { none: {} }` still matches at write time | Same                                                       |
 | **Request body**             | `{ "isAuto": true }`                                                                                                | `{ "isAuto": true }`                                       |
 | **API endpoint**             | `PATCH /api/bookings/webinars/[webinarId]/allocate`                                                                 | `PATCH /api/bookings/classes/[classId]/allocate`           |
@@ -142,7 +142,7 @@ After signup, run:
 
 ```sql
 UPDATE "ConsulteeProfile"
-SET occupation = 'Software Engineer',
+SET goals = 'Exercise the auto-allocate paths end to end.',
     "aboutMe"  = 'Testing auto-allocate booking flows.'
 FROM users u
 WHERE "ConsulteeProfile"."userId" = u.id
@@ -235,7 +235,7 @@ Two classes:
 ```sql
 INSERT INTO "ClassPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
-  "meetingsPerWeek", "maxParticipants",
+  "sessionsPerWeek", "maxParticipants",
   price, "priceCurrency",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -393,7 +393,11 @@ async () => {
 };
 ```
 
-**Expected:** HTTP 200, old appointment deleted and replaced with a new one.
+**Expected:** HTTP 200. The old appointment is replaced, but only because it
+carries no Payment: the allocator's delete is
+`tx.appointment.deleteMany({ where: { id, payment: { none: {} } } })`, and a
+count of zero means a payment committed between the read and the write, in
+which case it keeps the appointment and strips only its sessionless slots.
 Total appointment count should still be exactly 1 with 4 slots.
 
 **DB verify:**

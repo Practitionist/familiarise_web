@@ -120,7 +120,13 @@ content.
 The lapsed pay-link sweep is `cleanupExpiredApprovalPendingPayments` in
 `scripts/payments/cleanup-abandoned-payments.ts`, and it transitions the request
 to `EXPIRED` with `fromIn: ["APPROVED_PENDING_PAYMENT"]` — narrower than the
-map's default, so only the lapsed shape moves. It is deliberately not REJECTED,
+map's default, so only the lapsed shape moves. The status guard is not enough on
+its own: the sweep also **repeats the cohort read's money predicate**
+(`appointment: { payment: { none: { paymentStatus: SUCCEEDED } } }`) inside the
+CAS `where`, so a capture that landed between the read and the write matches zero
+rows instead of expiring a paid booking. Payment rows then expire from `PENDING`
+only, through a conditional `updateMany`, so a racing capture keeps its
+`SUCCEEDED`. Any new sweep must carry both guards. It is deliberately not REJECTED,
 which reads as "the consultant declined" on every surface, and deliberately not
 CANCELLED. As of wave 5 (#1321) the unscheduled
 `app/api/cleanup/approval-payments` route is deleted and its work rides inside

@@ -30,14 +30,28 @@ All test data uses the `-006` suffix to avoid collisions with existing seed data
 
 **Distributed locking** (`utils/appointmentlock.ts`):
 
-- `lockAutoAllocate(consultantProfileId)` — consultant-level lock for auto-allocation
-- `lockSlotBooking(consultantProfileId, slotStartTime)` — per-slot lock for checkout
-- `lockEventCheckout(appointmentType, eventOrPlanId)` — event-level lock for webinar/class checkout
-- Lock contention throws errors that should be caught and returned as 409
+- `lockAutoAllocate(consultantProfileId, ttl?, scope?)` — consultant-level lock
+  for auto-allocation, key `auto-allocate:<consultantProfileId>[:<scope>]`
+- `lockSlotBooking(consultantProfileId, startsAt, endsAt, ttl?)` — the booking
+  lock, **interval-granular** since #1169: it delegates to `lockSlotInterval`,
+  which floors the window onto the 30-minute grid and takes one
+  `slot-booking:<consultantProfileId>:<atomStartISO>` key per atom, in ascending
+  order, all-or-nothing. There is no single per-slot key and the retired
+  `trial-slot-booking:` namespace must not come back — trials take these same
+  atoms.
+- `lockEventCheckout(appointmentType, eventOrPlanId)` — event-level lock for
+  webinar/class checkout, key `event-checkout:<appointmentType>:<eventOrPlanId>`
 
 **Error classification:**
 
-- Lock contention -> 409
+- Lock contention -> 409 in most places (`EventCheckoutBusyError`
+  `EVENT_CHECKOUT_BUSY`, `ConsulteeBookingBusyError` `CONSULTEE_BOOKING_BUSY`),
+  but the appointment lock answers **423** (`AppointmentBusyError`,
+  `APPOINTMENT_BUSY`). Assert the code, not just "4xx".
+- Redis unreachable or the circuit breaker open -> **503**
+  `BOOKING_LOCK_UNAVAILABLE`. Acquisition fails closed by design; a 409 here
+  would be a bug, because an unlocked booking must never proceed.
+- Sold out is terminal, not contention: **409** `EVENT_SOLD_OUT`, no retry.
 - Validation errors (bad data) -> 400
 - Not-found errors -> 400 (not 500)
 
@@ -176,7 +190,7 @@ After signup, run:
 
 ```sql
 UPDATE "ConsulteeProfile"
-SET occupation = 'Concurrency Tester',
+SET goals = 'Race the booking write path and survive it.',
     "aboutMe"  = 'Testing locking and validation flows.'
 FROM users u
 WHERE "ConsulteeProfile"."userId" = u.id
@@ -258,7 +272,7 @@ ON CONFLICT (id) DO NOTHING;
 -- Class Plan: 2 sessions, 1/week, 1h each, 3 max
 INSERT INTO "ClassPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
-  "meetingsPerWeek", "maxParticipants",
+  "sessionsPerWeek", "maxParticipants",
   price, "priceCurrency",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -773,8 +787,9 @@ async () => {
       appointmentType: "CONSULTATION",
       planId: "test-consultation-plan-006a",
       paymentGateway: "STRIPE",
-      slotStartTimeInUTC: nextMon.toISOString(),
-      slotEndTimeInUTC: slotEnd.toISOString(),
+      startsAt: nextMon.toISOString(),
+      endsAt: slotEnd.toISOString(),
+      slotOfAvailabilityWeeklyId: "test-w006a-mon",
       isMockPayment: true,
     }),
   });

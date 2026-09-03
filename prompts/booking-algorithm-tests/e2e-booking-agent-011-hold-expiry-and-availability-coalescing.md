@@ -6,10 +6,10 @@
 
 > **Coverage marker:** all three subjects here are wave-5 work. The dead-hold
 > rule for a `DIRECT_CHECKOUT` request and its SQL twin `buildDeadHoldFilter`
-> land with **#1328**; availability coalescing on save and the published-window
-> union check land with **#1323**. Run this case on a branch where both are
-> merged. On plain `dev` a lapsed direct-checkout hold stays blocked until the
-> sweep runs, which is the defect being fixed.
+> landed with **#1328**; availability coalescing on save and the published-window
+> union check landed with **#1323**. Both are merged into `dev`, so this case
+> runs against plain `dev`. Before #1328 a lapsed direct-checkout hold stayed
+> blocked until the sweep ran, which is the defect Phase 2 pins.
 
 You are a senior QA engineer. Your job is to prove that a slot whose payment
 window has lapsed becomes bookable again **immediately and consistently on
@@ -243,6 +243,14 @@ already holds.
 
 **Expected:** **409**, `Selected slot is no longer available` — that one _is_ a
 lost race.
+
+There is a second, distinct 409 on this route, so do not conflate them when
+triaging. Scheduling claims the trial through
+`transitionTrialSession(tx, { …, fromIn: [existingTrial.status] })`; if the CAS
+matches no row because a sibling request already moved the trial, the route
+throws `TrialStateChangedError` and answers 409 with "This trial was already
+updated by another request." That is the trial state having moved, not the slot
+having gone.
 
 ---
 

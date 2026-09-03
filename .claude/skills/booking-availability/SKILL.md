@@ -23,16 +23,22 @@ rather than unioning both tables.
 (0–1439), with `utcOffsetMinutes` as the live source of truth. Its `timezone`,
 `localStartMinutes`, `localEndMinutes`, `localStartDay` and `localEndDay`
 columns are frozen in for a future DST posture and are deliberately unwritten.
-`SlotOfAvailabilityCustom` holds date-specific rows as `startsAt`/`endsAt`, with
-no `isAvailable` and no `deletedAt`, so a custom row is purely additive and can
-never express a blackout.
+`SlotOfAvailabilityCustom` holds date-specific rows as `startsAt`/`endsAt` and
+has no `isAvailable`, so a custom row is purely additive and can never express a
+blackout. Both models gained a `deletedAt` tombstone in wave 5 (#1322, schema
+hygiene), but no reader filters on it yet — availability rows are still removed
+by a hard delete, so treat the column as frozen-in, not live.
 
 ## 2. Rows coalesce on save
 
 As of wave 5 (#1323), `utils/slotAllocation/mergeAdjacentWeeklyRows.ts` folds
-adjacent rows on every availability write, across all four routes under
-`app/api/slots/availability/`. Despite the file name it covers both modes, and
-the two rules differ because the row shapes do.
+adjacent rows on every availability write, across all four write routes under
+`app/api/slots/availability/` (`weekly`, `weekly/[id]`, `custom`,
+`custom/[id]`). Each of those routes runs its overlap check, its write and the
+coalescing pass inside **one** Serializable transaction under
+`withSerializableRetry`, so the check-then-act window is closed and the row ids
+the response returns are the post-merge ones. Despite the file name the module
+covers both modes, and the two rules differ because the row shapes do.
 
 Weekly rows merge only on exact adjacency and only when both are single-day,
 share a `startDay`, are not overnight and carry the same `utcOffsetMinutes`;
@@ -43,6 +49,12 @@ Custom rows merge on adjacency **or overlap**, keeping the later `endsAt`, and
 `coalesceConsultantCustomRows` preserves the surviving row's id, deleting only
 the folded rows, because a booking names a custom row. That asymmetry is
 load-bearing; do not "simplify" it.
+
+Both folds stop at `MAX_DURATION_MINUTES` (`utils/timeSlotValidation.ts`, twelve
+hours). A merge that would cross that bound starts a new row instead, because
+`isValidTimeRange` rejects anything longer and the settings loader filters its
+rows through that validator — a thirteen-hour merged row would vanish from the
+form and the next save would delete it.
 
 ## 3. Checkout validates against the union of rows, atom by atom
 
@@ -58,16 +70,23 @@ row need cover the whole window — coverage is per-atom across the union.
 `loadPublishedCoverage` makes "published" concrete: it reads `scheduleType` and
 returns weekly rows only in WEEKLY mode and custom rows only in CUSTOM mode,
 never querying the dormant arm, so a stale row from a previous schedule mode
-cannot cover an atom no surface offers. As of wave 5 (#1323) exactly two callers
-enforce this inside their transaction: checkout, and the trial route, which
-throws `OutsideAvailabilityWindowError` even when the consultant is the one
-scheduling, because a trial is a booking.
+cannot cover an atom no surface offers. It also **fails closed** on the profile
+itself — a missing or soft-deleted `ConsultantProfile` returns
+`{ scheduleType: null, weeklyRows: [], customRows: [] }`, so a deleted expert
+publishes nothing whatever rows survived the deletion. As of wave 5 (#1323)
+exactly two callers enforce this inside their transaction: checkout
+(`lib/payments/operations/checkout.ts`), and the trial route
+(`app/api/trials/[trialId]/route.ts`), which throws
+`OutsideAvailabilityWindowError` even when the consultant is the one scheduling,
+because a trial is a booking.
 
 The display path matches: `mergeConsecutiveSlots` (`utils/timeSlotsProcessing.ts`)
-joins consecutive free slots with a one-minute tolerance and, as of #1320,
-**across** availability rows, accumulating every covering id into
-`slotOfAvailabilityIds` — forbidden until union validation replaced the
-single-row-id check.
+joins free slots on **exact** adjacency — the merged end is the next start — and,
+as of #1320, **across** availability rows, accumulating every covering id into
+`slotOfAvailabilityIds`. Merging across rows was forbidden until union validation
+replaced the single-row-id check, and the old ±60 s tolerance had to go with it:
+rows ending 10:30 and starting 10:31 would otherwise be offered as one window
+whose 10:30 atom no row publishes, which checkout's union coverage then rejects.
 
 ## 4. Generation and the grid endpoint
 

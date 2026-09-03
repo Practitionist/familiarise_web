@@ -57,8 +57,11 @@ discount, tax on the discounted base, then referral credits against the
 tax-inclusive total. It returns `originalAmount`, `discountPaise`,
 `discountedAmount`, `taxAmount`, `taxRate`, `isZeroRated`, `taxedAmount`,
 `creditsApplied`, `amount`, `isInternational` and `tax`. Its helpers
-`computeDiscountPaise` (which multiplies before dividing) and
-`isCreditRedemptionEligible` are internal; do not reimplement either.
+`computeDiscountPaise` (which multiplies before dividing, and throws outright on
+a negative `discountValue` or `maxDiscount`, since either would raise the price
+above list) and `isCreditRedemptionEligible` are exported only so the parity
+suite can drive them; neither has a production call site outside the module, and
+neither should be reimplemented.
 
 ## 4. One refund quote
 
@@ -127,8 +130,12 @@ gate a concurrent writer walked through:
 
 - The slot window against the union of published availability rows, atom by
   atom (see `booking-availability`).
-- Slot conflicts, via `revalidateConflicts`, which turns the common race into a
-  typed conflict rather than a raw exclusion-constraint throw.
+- Slot conflicts, via `validateSlotAvailability`, checkout's own in-transaction
+  re-check. It subtracts `buildDeadHoldFilter(new Date())` from the occupancy
+  query so a lapsed hold no longer blocks, and the consultee-side conflict reads
+  beside it use the same subtraction for parity. (`revalidateConflicts` on
+  `SlotValidationService` is the allocator's equivalent, not checkout's — do not
+  cite it here.)
 - The lock grant, renewed at the top of every Serializable attempt; lost
   ownership aborts the attempt.
 - As of wave 5 (#1319, B2B gap 3) the **org funding context** — the org's
