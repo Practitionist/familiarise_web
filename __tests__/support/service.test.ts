@@ -27,7 +27,11 @@ jest.mock("../../lib/prisma", () => ({
       findUniqueOrThrow: jest.fn(),
     },
     supportMessage: { create: jest.fn() },
-    supportTicket: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    supportTicket: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
     supportTicketCounter: { upsert: jest.fn() },
     user: { findMany: jest.fn() },
     $transaction: jest.fn(),
@@ -51,7 +55,11 @@ const mockPrisma = prisma as unknown as {
     findUniqueOrThrow: jest.Mock;
   };
   supportMessage: { create: jest.Mock };
-  supportTicket: { create: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+  supportTicket: {
+    create: jest.Mock;
+    findUnique: jest.Mock;
+    update: jest.Mock;
+  };
   supportTicketCounter: { upsert: jest.Mock };
   user: { findMany: jest.Mock };
   $transaction: jest.Mock;
@@ -111,7 +119,9 @@ beforeEach(() => {
   mockPrisma.appointmentSupportThread.update.mockResolvedValue({
     messageSeq: 0,
   });
-  mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({ count: 1 });
+  mockPrisma.appointmentSupportThread.updateMany.mockResolvedValue({
+    count: 1,
+  });
   mockPrisma.appointmentSupportThread.findUniqueOrThrow.mockResolvedValue({
     status: "ESCALATED",
     messageSeq: 0,
@@ -125,7 +135,9 @@ beforeEach(() => {
 describe("runSupportTurn", () => {
   it("returns 404-null when the appointment is gone", async () => {
     mockPrisma.appointment.findUnique.mockResolvedValueOnce(null);
-    const r = await runSupportTurn("missing", "user1", { category: "CANCEL_REFUND" });
+    const r = await runSupportTurn("missing", "user1", {
+      category: "CANCEL_REFUND",
+    });
     expect(r).toBeNull();
   });
 
@@ -133,7 +145,9 @@ describe("runSupportTurn", () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ currentNodeId: null }),
     );
-    const r = await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "CANCEL_REFUND",
+    });
     expect(r?.status).toBe("IN_PROGRESS");
     expect(r?.currentNodeId).toBe("start");
     expect(r?.escalated).toBe(false);
@@ -145,8 +159,12 @@ describe("runSupportTurn", () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ currentNodeId: "start" }),
     );
-    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "cancel" });
-    expect(r?.actions).toEqual([{ kind: "OFFER_CANCEL_REFUND", refundPct: 100 }]);
+    const r = await runSupportTurn("appt1", "user1", {
+      chosenOptionId: "cancel",
+    });
+    expect(r?.actions).toEqual([
+      { kind: "OFFER_CANCEL_REFUND", refundPct: 100 },
+    ]);
   });
 
   it("escalates on a human keyword: creates a SupportTicket and flips to HUMAN", async () => {
@@ -166,7 +184,10 @@ describe("runSupportTurn", () => {
     expect(mockPrisma.supportTicket.create).toHaveBeenCalledTimes(1);
     expect(mockPrisma.appointmentSupportThread.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: "ESCALATED", activeChannel: "HUMAN" }),
+        data: expect.objectContaining({
+          status: "ESCALATED",
+          activeChannel: "HUMAN",
+        }),
       }),
     );
   });
@@ -175,7 +196,9 @@ describe("runSupportTurn", () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ activeChannel: "HUMAN", supportTicketId: "ticket-existing" }),
     );
-    const r = await runSupportTurn("appt1", "user1", { userMessage: "any update?" });
+    const r = await runSupportTurn("appt1", "user1", {
+      userMessage: "any update?",
+    });
     expect(r?.activeChannel).toBe("HUMAN");
     expect(r?.supportTicketId).toBe("ticket-existing");
     expect(mockPrisma.supportTicket.create).not.toHaveBeenCalled();
@@ -197,7 +220,9 @@ describe("runSupportTurn", () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ category: "CANCEL_REFUND", currentNodeId: "ghost-node" }),
     );
-    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "cancel" });
+    const r = await runSupportTurn("appt1", "user1", {
+      chosenOptionId: "cancel",
+    });
     expect(r?.currentNodeId).toBe("start"); // presented the CURRENT entry…
     expect(r?.escalated).toBe(false); // …not failed safe to a human
     expect(mockPrisma.supportMessage.create).toHaveBeenCalledTimes(1);
@@ -207,7 +232,9 @@ describe("runSupportTurn", () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
     );
-    const r = await runSupportTurn("appt1", "user1", { chosenOptionId: "bogus" });
+    const r = await runSupportTurn("appt1", "user1", {
+      chosenOptionId: "bogus",
+    });
     expect(r?.currentNodeId).toBe("start"); // cursor did not move
     // Exactly one bubble, and it is NOT a verbatim repeat of the prompt: this
     // used to persist nothing at all, so a user who typed at a prompt watched
@@ -240,11 +267,41 @@ describe("runSupportTurn", () => {
     expect(written[1].sender).toBe("BOT");
   });
 
+  it("does not scold the user for typing the word the nudge told them to type", async () => {
+    // "agent" matches no option, so the walk emits "I didn't catch that…" —
+    // which is the very copy telling them to type "agent". Escalating while
+    // persisting that message left the transcript contradicting itself one line
+    // above the hand-off.
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({ category: "CANCEL_REFUND", currentNodeId: "start" }),
+    );
+    mockPrisma.supportTicket.create.mockResolvedValue({
+      id: "t-kw",
+      title: "T",
+      organizationId: null,
+      referenceNumber: "FAM-2026-000001",
+    });
+    const r = await runSupportTurn("appt1", "user1", { userMessage: "agent" });
+    expect(r?.escalated).toBe(true);
+
+    const bodies = mockPrisma.supportMessage.create.mock.calls.map(
+      (c) => c[0].data,
+    );
+    // The user's own words are still recorded…
+    expect(bodies.some((b) => b.sender === "USER" && b.body === "agent")).toBe(
+      true,
+    );
+    // …but nothing tells them it wasn't understood.
+    expect(bodies.some((b) => /didn't catch that/i.test(b.body))).toBe(false);
+  });
+
   it("clicking the active intent chip restarts the flow at its entry", async () => {
     mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
       threadRow({ category: "CANCEL_REFUND", currentNodeId: "confirm" }),
     );
-    const r = await runSupportTurn("appt1", "user1", { category: "CANCEL_REFUND" });
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "CANCEL_REFUND",
+    });
     expect(r?.currentNodeId).toBe("start");
     expect(r?.status).toBe("IN_PROGRESS");
   });

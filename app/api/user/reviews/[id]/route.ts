@@ -9,7 +9,7 @@ import {
   checkOwnership,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { recomputeConsultantRating } from "@/lib/reviews";
+import { recomputeConsultantRating, ModeratedReviewError } from "@/lib/reviews";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { UpdateReviewSchema } from "@/schemas/feedbacks";
@@ -40,7 +40,19 @@ export async function GET(
 
     return NextResponse.json(review, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    if (error instanceof ModeratedReviewError) {
+      return NextResponse.json(
+        {
+          error:
+            "This review was removed by our moderation team and can't be edited.",
+        },
+        { status: 409 },
+      );
+    }
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error getting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -103,11 +115,22 @@ export async function PUT(
     const updatedReview = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          // Re-read INSIDE the transaction. The guard above ran before it
+          // opened, so moderation removing the review in between let the edit
+          // land on a row the public can no longer see, and the author was told
+          // it published.
+          const current = await tx.consultantReview.findUnique({
+            where: { id: id },
+            select: { deletedAt: true },
+          });
+          if (current?.deletedAt) throw new ModeratedReviewError();
+
           const updated = await tx.consultantReview.update({
             where: { id: id },
             data: {
               rating: body.rating,
               reviewDescription: body.reviewDescription,
+              isAnonymous: body.isAnonymous,
             },
             include: {
               consultantProfile: { select: consultantPublicScalars },
@@ -127,7 +150,10 @@ export async function PUT(
 
     return NextResponse.json(updatedReview, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error updating review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -189,7 +215,10 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error deleting review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

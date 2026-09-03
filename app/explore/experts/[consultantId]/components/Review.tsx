@@ -11,7 +11,11 @@ const Review: React.FC<Readonly<TConsultantReview>> = ({
   rating,
   reviewDescription,
 }) => {
-  const reviewerName = consulteeProfile?.user?.name || "Anonymous";
+  // "Verified client" rather than "Anonymous": the trust here comes from the
+  // review being welded to a paid, attended session, and that is worth saying
+  // out loud when the name is withheld. The server has already removed the
+  // name — this is the label for that, not the mechanism.
+  const reviewerName = consulteeProfile?.user?.name || "Verified client";
   const reviewerImage = consulteeProfile?.user?.image || null;
 
   return (

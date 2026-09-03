@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { stripAnonymousReviewers } from "@/lib/data/review-privacy";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
@@ -10,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
+  ModeratedReviewError,
   recomputeConsultantRating,
   resolveReviewableSession,
 } from "@/lib/reviews";
@@ -79,7 +81,9 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { data: reviews },
+      // PUBLIC and CDN-cached: a name withheld by the reviewer must not ship
+      // in the payload, or the anonymity is cosmetic.
+      { data: stripAnonymousReviewers(reviews) },
       {
         status: 200,
         headers: {
@@ -88,7 +92,10 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Reviews.GET]", error });
   }
 }
@@ -146,47 +153,83 @@ export async function POST(req: NextRequest) {
     // + retry so two concurrent reviews for the same consultant can't lose-update
     // the recomputed average (P2034 aborts one, retry then sees the committed row).
     const newReview = await withSerializableRetry(() =>
-      prisma.$transaction(async (tx) => {
-      const created = await tx.consultantReview.create({
-        data: {
-          rating: validatedData.rating,
-          reviewDescription: validatedData.reviewDescription,
-          consultantProfileId: reviewable.consultantProfileId,
-          consulteeProfileId: sessionConsulteeProfileId,
-          appointmentId: reviewable.appointmentId,
-          // Denormalized at write time: `groupBy` can only group on this
-          // model's own scalars, and this is what makes a 200-seat webinar one
-          // data point instead of two hundred.
-          ratingUnitId: reviewable.ratingUnitId,
-        },
-        include: {
-          // #946 allowlist — the response goes back to the consultee who wrote
-          // the review; a bare `include:` handed them the consultant's PAN and
-          // bank account.
-          consultantProfile: {
-            select: {
-              ...consultantPublicScalars,
-              user: { select: { name: true } },
+      prisma.$transaction(
+        async (tx) => {
+          // A review that moderation removed cannot be edited back into existence,
+          // and accepting the edit silently would tell the author it was published
+          // when nothing changed on the page.
+          const existing = await tx.consultantReview.findUnique({
+            where: {
+              consultantProfileId_consulteeProfileId: {
+                consultantProfileId: reviewable.consultantProfileId,
+                consulteeProfileId: sessionConsulteeProfileId,
+              },
             },
-          },
-          consulteeProfile: {
+            select: { deletedAt: true },
+          });
+          if (existing?.deletedAt) throw new ModeratedReviewError();
+
+          // UPSERT, not create. There is one review per consultant per consultee,
+          // so a second session with the same person updates the opinion rather
+          // than colliding on the unique — and `appointmentId`/`ratingUnitId` move
+          // to the session that prompted this edit, which is what keeps the group
+          // weighting pointed at the most recent thing they actually attended.
+          const created = await tx.consultantReview.upsert({
+            where: {
+              consultantProfileId_consulteeProfileId: {
+                consultantProfileId: reviewable.consultantProfileId,
+                consulteeProfileId: sessionConsulteeProfileId,
+              },
+            },
+            update: {
+              rating: validatedData.rating,
+              reviewDescription: validatedData.reviewDescription,
+              appointmentId: reviewable.appointmentId,
+              ratingUnitId: reviewable.ratingUnitId,
+              isAnonymous: validatedData.isAnonymous ?? undefined,
+              // A moderated-away review must not be resurrected by re-submitting.
+              deletedAt: undefined,
+            },
+            create: {
+              rating: validatedData.rating,
+              reviewDescription: validatedData.reviewDescription,
+              consultantProfileId: reviewable.consultantProfileId,
+              consulteeProfileId: sessionConsulteeProfileId,
+              appointmentId: reviewable.appointmentId,
+              isAnonymous: validatedData.isAnonymous ?? false,
+              // Denormalized at write time: `groupBy` can only group on this
+              // model's own scalars, and this is what makes a 200-seat webinar one
+              // data point instead of two hundred.
+              ratingUnitId: reviewable.ratingUnitId,
+            },
             include: {
-              user: {
+              // #946 allowlist — the response goes back to the consultee who wrote
+              // the review; a bare `include:` handed them the consultant's PAN and
+              // bank account.
+              consultantProfile: {
                 select: {
-                  name: true,
-                  image: true,
+                  ...consultantPublicScalars,
+                  user: { select: { name: true } },
+                },
+              },
+              consulteeProfile: {
+                include: {
+                  user: {
+                    select: {
+                      name: true,
+                      image: true,
+                    },
+                  },
                 },
               },
             },
-          },
+          });
+
+          await recomputeConsultantRating(tx, created.consultantProfileId);
+
+          return created;
         },
-      });
-
-      await recomputeConsultantRating(tx, created.consultantProfileId);
-
-      return created;
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
@@ -209,7 +252,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
-    // @@unique([appointmentId, consulteeProfileId]) — one review per session.
+    if (error instanceof ModeratedReviewError) {
+      return NextResponse.json(
+        {
+          error:
+            "This review was removed by our moderation team and can't be edited.",
+        },
+        { status: 409 },
+      );
+    }
+    // @@unique([consultantProfileId, consulteeProfileId]) — one per consultant.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -219,7 +271,10 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Reviews.POST]", error });
   }
 }

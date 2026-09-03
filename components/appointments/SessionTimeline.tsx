@@ -27,6 +27,9 @@ import { CountdownBadge } from "./CountdownBadge";
 
 type SessionStatus = "completed" | "noRecord" | "upcoming" | "joinable";
 
+/** Statuses that mean the session did not take place. */
+const DEAD_SESSION = new Set(["CANCELLED", "RESCHEDULED"]);
+
 interface SessionTimelineProps {
   sessions: SessionVM[];
   isJoining?: boolean;
@@ -40,6 +43,12 @@ interface SessionTimelineProps {
    * Defaults to true so multi-session plans show the full list.
    */
   defaultExpanded?: boolean;
+  /**
+   * Rendered at the end of a past session's row. #705 uses it for the per-call
+   * rating, so the question sits on the session being rated instead of in a
+   * separate card that could only describe the whole booking.
+   */
+  renderSessionExtra?: (session: SessionVM) => React.ReactNode;
 }
 
 interface SessionGroup {
@@ -136,6 +145,7 @@ export function SessionTimeline({
   joinWindowMs = CONSULTEE_JOIN_WINDOW_MS,
   className,
   defaultExpanded = true,
+  renderSessionExtra,
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
@@ -252,6 +262,16 @@ export function SessionTimeline({
                 {format(group.endTime, "h:mm a")}
               </span>
             </div>
+
+            {/* Nothing to rate on a call that never happened. */}
+            {renderSessionExtra &&
+            status !== "upcoming" &&
+            !joinable &&
+            !DEAD_SESSION.has(
+              group.slots[group.slots.length - 1].completionStatus ?? "",
+            )
+              ? renderSessionExtra(group.slots[group.slots.length - 1])
+              : null}
 
             {joinable ? (
               <button

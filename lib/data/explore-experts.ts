@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { IConsultantCardData } from "@/types/consultant";
+import { stripAnonymousReviewers } from "@/lib/data/review-privacy";
 
 /**
  * Server-side data access for the explore experts page.
@@ -326,7 +327,7 @@ export type ExpertsMetadata = Awaited<ReturnType<typeof fetchExpertsMetadata>>;
 // otherwise create two entries for the same data. The default lives on the wrapper.
 const getCachedRecentReviews = unstable_cache(
   async (limit: number) => {
-    return prisma.consultantReview.findMany({
+    const rows = await prisma.consultantReview.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       // #693 — moderation-removed reviews leave public surfaces too
       where: {
@@ -349,6 +350,7 @@ const getCachedRecentReviews = unstable_cache(
         },
       },
     });
+    return stripAnonymousReviewers(rows);
   },
   ["recent-reviews"],
   { revalidate: 120, tags: ["reviews"] },

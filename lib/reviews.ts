@@ -19,17 +19,40 @@ import type { AppointmentsType, SlotCompletionStatus } from "@prisma/client";
 export const MIN_RATED_UNITS_FOR_PUBLIC_SCORE = 5;
 
 /**
+ * Raised when the author tries to write over a review moderation has removed.
+ * Accepting the edit silently would tell them it published while nothing
+ * changed on the page. Both write paths raise it, so it lives here.
+ */
+export class ModeratedReviewError extends Error {}
+
+/**
  * A slot counts as held when it completed, or when it is UNVERIFIED — that
  * status means "past, with no MeetingSession recorded", which is what an
  * offline session looks like. Excluding it would silently deny a review to
  * everyone whose session did not run through the video stack.
  */
-const HELD_SLOT = {
-  deletedAt: null,
-  completionStatus: {
-    in: ["COMPLETED", "UNVERIFIED"] as SlotCompletionStatus[],
-  },
-};
+export function heldSlot(userId: string) {
+  return {
+    deletedAt: null,
+    // Not "the call happened" — "YOU were at the call". A COMPLETED slot the
+    // user never joined used to qualify, so a no-show could rate a session they
+    // did not attend and it fed the consultant's quality signal. Two ways in:
+    OR: [
+      // 1. You were demonstrably there. Also the reason this cannot key on
+      //    `completionStatus` alone: that only flips when the
+      //    call.session_ended webhook lands, which fires after the LAST
+      //    participant leaves plus an inactivity timeout — so a post-call
+      //    prompt keyed on it shows nothing to whoever leaves first.
+      { meetingSession: { attendances: { some: { userId } } } },
+      // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
+      //    MeetingSession", which is what an offline session looks like —
+      //    excluding it would deny feedback to everyone who met in person.
+      {
+        completionStatus: "UNVERIFIED" as SlotCompletionStatus,
+      },
+    ],
+  };
+}
 
 /**
  * Recompute the denormalized rating columns on ConsultantProfile.
@@ -101,6 +124,9 @@ export async function recomputeConsultantRating(
 export interface ReviewableSession {
   appointmentId: string;
   consultantProfileId: string;
+  /** Whose profile this review lands on — the card says the name, because that
+   *  is who the user thinks they are reviewing. */
+  consultantName: string | null;
   /** The unit this review's rating folds into — see recomputeConsultantRating. */
   ratingUnitId: string;
   appointmentType: AppointmentsType;
@@ -131,18 +157,18 @@ function loadReviewableAppointments(
         // 1:1 arms — the wrapper IS the relationship, so ownership is the gate.
         {
           consultation: { requestedById: consulteeProfileId },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         {
           subscription: { requestedById: consulteeProfileId },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         {
           trialSession: {
             consulteeProfileId,
             status: { in: ["COMPLETED", "CONVERTED"] },
           },
-          slotsOfAppointment: { some: HELD_SLOT },
+          slotsOfAppointment: { some: heldSlot(userId) },
         },
         // Group arms — there is no Attendee model: registration IS the m:n
         // between the user and every slot of the shared appointment. A paid
@@ -151,14 +177,14 @@ function loadReviewableAppointments(
         {
           webinarId: { not: null },
           slotsOfAppointment: {
-            some: { ...HELD_SLOT, user: { some: { id: userId } } },
+            some: { ...heldSlot(userId), user: { some: { id: userId } } },
           },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
         {
           classId: { not: null },
           slotsOfAppointment: {
-            some: { ...HELD_SLOT, user: { some: { id: userId } } },
+            some: { ...heldSlot(userId), user: { some: { id: userId } } },
           },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
@@ -172,37 +198,65 @@ function loadReviewableAppointments(
       consultation: {
         select: {
           consultationPlan: {
-            select: { title: true, consultantProfileId: true },
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
           },
         },
       },
       subscription: {
         select: {
           subscriptionPlan: {
-            select: { title: true, consultantProfileId: true },
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
           },
         },
       },
-      trialSession: { select: { consultantProfileId: true } },
+      trialSession: {
+        select: {
+          consultantProfileId: true,
+          consultantProfile: { select: { user: { select: { name: true } } } },
+        },
+      },
       webinar: {
         select: {
-          webinarPlan: { select: { title: true, consultantProfileId: true } },
+          webinarPlan: {
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
         },
       },
       class: {
         select: {
-          classPlan: { select: { title: true, consultantProfileId: true } },
+          classPlan: {
+            select: {
+              title: true,
+              consultantProfileId: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
         },
       },
       slotsOfAppointment: {
-        where: HELD_SLOT,
+        where: heldSlot(userId),
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
-        take: 1,
-      },
-      consultantReviews: {
-        where: { consulteeProfileId, deletedAt: null },
-        select: { id: true, rating: true, reviewDescription: true },
         take: 1,
       },
     },
@@ -219,7 +273,17 @@ function loadReviewableAppointments(
  * grouping by type alone would collapse every class a consultant ever ran into
  * a single data point — worse than the imbalance being fixed.
  */
-function describe(row: AppointmentRow): ReviewableSession | null {
+type ExistingReview = {
+  id: string;
+  rating: number;
+  reviewDescription: string | null;
+  isAnonymous: boolean;
+};
+
+function describe(
+  row: AppointmentRow,
+  reviewByConsultant: Map<string, ExistingReview>,
+): ReviewableSession | null {
   const consultantProfileId =
     row.consultation?.consultationPlan?.consultantProfileId ??
     row.subscription?.subscriptionPlan?.consultantProfileId ??
@@ -239,6 +303,13 @@ function describe(row: AppointmentRow): ReviewableSession | null {
   return {
     appointmentId: row.id,
     consultantProfileId,
+    consultantName:
+      row.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+      row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+      row.trialSession?.consultantProfile?.user?.name ??
+      row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+      row.class?.classPlan?.consultantProfile?.user?.name ??
+      null,
     ratingUnitId,
     appointmentType: row.appointmentType,
     title:
@@ -248,8 +319,58 @@ function describe(row: AppointmentRow): ReviewableSession | null {
       row.class?.classPlan?.title ??
       "Session",
     heldAt: row.slotsOfAppointment[0]?.endsAt ?? null,
-    existingReview: row.consultantReviews[0] ?? null,
+    // Keyed on the CONSULTANT, not this appointment. The review is one per
+    // person now, so it may well hang off a different booking — looking it up
+    // through the appointment made the card say "Post review" to someone who
+    // had already written one, and lose their text.
+    existingReview: reviewByConsultant.get(consultantProfileId) ?? null,
   };
+}
+
+/** This consultee's existing reviews of the given consultants, by consultant. */
+async function reviewsByConsultant(
+  consulteeProfileId: string,
+  consultantProfileIds: string[],
+): Promise<Map<string, ExistingReview>> {
+  if (consultantProfileIds.length === 0) return new Map();
+  const rows = await prisma.consultantReview.findMany({
+    where: {
+      consulteeProfileId,
+      deletedAt: null,
+      consultantProfileId: { in: consultantProfileIds },
+    },
+    select: {
+      id: true,
+      rating: true,
+      reviewDescription: true,
+      isAnonymous: true,
+      consultantProfileId: true,
+    },
+  });
+  return new Map(
+    rows.map(({ consultantProfileId, ...r }) => [consultantProfileId, r]),
+  );
+}
+
+/** Resolve a batch of appointment rows into reviewable sessions. */
+async function describeAll(
+  rows: AppointmentRow[],
+  consulteeProfileId: string,
+): Promise<ReviewableSession[]> {
+  const consultantIds = [
+    ...new Set(
+      rows
+        .map((r) => describe(r, new Map())?.consultantProfileId)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  const byConsultant = await reviewsByConsultant(
+    consulteeProfileId,
+    consultantIds,
+  );
+  return rows
+    .map((r) => describe(r, byConsultant))
+    .filter((s): s is ReviewableSession => s !== null);
 }
 
 /** Every session this consultee may review, newest first. */
@@ -258,7 +379,7 @@ export async function listReviewableSessions(
   userId: string,
 ): Promise<ReviewableSession[]> {
   const rows = await loadReviewableAppointments(consulteeProfileId, userId);
-  return rows.map(describe).filter((s): s is ReviewableSession => s !== null);
+  return describeAll(rows, consulteeProfileId);
 }
 
 /**
@@ -276,5 +397,5 @@ export async function resolveReviewableSession(
     userId,
     appointmentId,
   );
-  return rows[0] ? describe(rows[0]) : null;
+  return (await describeAll(rows, consulteeProfileId))[0] ?? null;
 }

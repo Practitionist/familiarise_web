@@ -68,6 +68,12 @@ export interface RunTurnResult {
   actions: SupportAction[];
   escalated: boolean;
   resolved: boolean;
+  /**
+   * False when a CAS refused the write — the thread settled underneath the
+   * user. Without it a discarded message came back as a plain success and the
+   * client marked it delivered.
+   */
+  accepted?: boolean;
   supportTicketId: string | null;
   /** Machine-readable escalation reason (terminal node / policy), if any. */
   reason?: string;
@@ -230,12 +236,20 @@ export async function runSupportTurn(
 
   const decision = decideEscalation(ctx, turn, input.userMessage);
   if (decision.escalate) {
+    // Drop the walk's "I didn't catch that" nudge when the turn escalates
+    // anyway. Typing "agent" hits no option, so the walk emits the nudge — and
+    // the nudge is the copy telling the user to type "agent". Persisting it
+    // left the transcript scolding them for doing exactly what it asked, one
+    // line above the hand-off. The escalation message is the real answer.
+    const escalating = turn.unrecognized
+      ? { ...turn, messages: [], unrecognized: false }
+      : turn;
     return escalate(
       ctx,
       thread.id,
       thread.supportTicketId,
       category,
-      turn,
+      escalating,
       input.userMessage,
       decision.reason ?? "escalated",
     );
@@ -330,72 +344,80 @@ async function persistHumanTurn(
   // "ESCALATED", so once ops resolved the thread the user's own message came
   // back claiming it was still with the team.
   let status = thread.status;
-  // Identifies this specific message to the notification dedupe — see
-  // notifyStaffOfTicketActivity.
   let messageId: string | null = null;
+  let accepted = true;
 
   if (userMessage) {
-    status = await prisma.$transaction(async (tx) => {
-      // CAS on the write, not just the read: a CLOSED thread is one the PATCH
-      // route explicitly refuses to reopen, so a message must not land on it
-      // and silently bump its activity clock either.
-      const moved = await tx.appointmentSupportThread.updateMany({
-        where: { id: thread.id, status: { notIn: ["CLOSED", "RESOLVED"] } },
-        data: { lastMessageAt: new Date() },
-      });
-      if (moved.count === 0) {
-        const current = await tx.appointmentSupportThread.findUniqueOrThrow({
-          where: { id: thread.id },
-          select: { status: true },
+    // Deliberately SHORT. On Netlify PG_POOL_MAX=1 serialises every query onto
+    // one connection, and a cold instance can stretch 400ms of idle await into
+    // twenty-plus seconds — so an interactive transaction holding that
+    // connection across six sequential round trips blew Prisma's 5s default and
+    // surfaced to the user as "something went wrong". Two writes here; the SLA
+    // clock and the notification both happen after the commit, because neither
+    // is an invariant of the message being stored.
+    const written = await prisma.$transaction(
+      async (tx) => {
+        // The CAS and the sequence allocation are the SAME statement: a CLOSED
+        // or RESOLVED thread is one the PATCH route refuses to reopen, so a
+        // message must not land on it or bump its activity clock.
+        const moved = await tx.appointmentSupportThread.updateMany({
+          where: { id: thread.id, status: { notIn: ["CLOSED", "RESOLVED"] } },
+          data: { messageSeq: { increment: 1 }, lastMessageAt: new Date() },
         });
-        return current.status;
-      }
-      const seq = await allocateMessageSeq(tx, thread.id, 1);
-      const written = await tx.supportMessage.create({
-        data: {
-          threadId: thread.id,
-          sender: "USER",
-          body: userMessage,
-          seq: seq + 1,
-        },
-        select: { id: true },
-      });
-      messageId = written.id;
-      if (thread.supportTicketId) {
-        const ticket = await tx.supportTicket.findUnique({
-          where: { id: thread.supportTicketId },
-          select: { awaitingUserSince: true, pausedSeconds: true },
-        });
-        await tx.supportTicket.update({
-          where: { id: thread.supportTicketId },
-          data: {
-            lastMessageAt: new Date(),
-            // The ball is back with us, so the resolution clock restarts.
-            ...(ticket ? userRepliedPatch(ticket) : {}),
-          },
-        });
-      }
-      return thread.status;
-    });
+        if (moved.count === 0) return null;
 
-    // A user reply into an escalated thread used to page nobody — staff only
-    // learned of it by reopening the inbox. Fire-and-forget after the commit,
-    // for the same reason every other notification here is.
-    if (
-      thread.supportTicketId &&
-      status !== "CLOSED" &&
-      status !== "RESOLVED"
-    ) {
-      await notifyStaffOfTicketActivity(
-        thread.supportTicketId,
-        thread.organizationId,
-        messageId ?? undefined,
-      ).catch((error) => {
-        console.error("support: user-reply notification failed", {
-          threadId: thread.id,
-          error,
+        const row = await tx.appointmentSupportThread.findUniqueOrThrow({
+          where: { id: thread.id },
+          select: { messageSeq: true },
         });
+        return tx.supportMessage.create({
+          data: {
+            threadId: thread.id,
+            sender: "USER",
+            body: userMessage,
+            seq: row.messageSeq,
+          },
+          select: { id: true },
+        });
+      },
+      { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
+    );
+
+    if (!written) {
+      // The thread settled underneath us and the CAS refused the write. Report
+      // where it actually landed AND that the message was not accepted —
+      // returning a plain success made the client mark it delivered, so a
+      // message that was never stored looked sent.
+      const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
+        where: { id: thread.id },
+        select: { status: true },
       });
+      status = current.status;
+      accepted = false;
+    } else {
+      messageId = written.id;
+
+      // Post-commit, and best-effort. A clock that resumes a moment late is a
+      // rounding error on a 15-day deadline; a message that failed to store
+      // because the clock update timed out is a lost customer message.
+      if (thread.supportTicketId) {
+        await resumeTicketClock(thread.supportTicketId).catch((error) => {
+          console.error("support: SLA resume failed", {
+            ticketId: thread.supportTicketId,
+            error,
+          });
+        });
+        await notifyStaffOfTicketActivity(
+          thread.supportTicketId,
+          thread.organizationId,
+          messageId ?? undefined,
+        ).catch((error) => {
+          console.error("support: user-reply notification failed", {
+            threadId: thread.id,
+            error,
+          });
+        });
+      }
     }
   }
 
@@ -408,8 +430,22 @@ async function persistHumanTurn(
     actions: [],
     escalated: true,
     resolved: false,
+    accepted,
     supportTicketId: thread.supportTicketId,
   };
+}
+
+/** The ball is back with us, so the resolution clock restarts. */
+async function resumeTicketClock(ticketId: string): Promise<void> {
+  const ticket = await prisma.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { awaitingUserSince: true, pausedSeconds: true },
+  });
+  if (!ticket) return;
+  await prisma.supportTicket.update({
+    where: { id: ticketId },
+    data: { lastMessageAt: new Date(), ...userRepliedPatch(ticket) },
+  });
 }
 
 /** Hand the thread to a human: persist the exchange, create/link a SupportTicket

@@ -1,84 +1,69 @@
 "use client";
 
 /**
- * #705 — the PUBLIC review of one session, and the first submission surface
- * this product has ever had. `/api/user/reviews` had no caller: the expert page
- * invited people to "Be the first to leave a review!" and there was nowhere to
- * do it, so the entire review corpus could only come from seeds.
+ * #705 — the ONE public-review form.
  *
- * Deliberately distinct from the per-call rating on the session rows above
- * (`SessionRatingRow`). That one is a PRIVATE rating of a single call; this is
- * a consumer review of the CONSULTANT, one per person, editable. FTC 16 CFR
- * 465.1(d) makes a bare star rating a "consumer review", so merging the two
- * would quietly turn private feedback into a published one.
+ * Shared by the profile page, the post-call sheet and nothing else. It exists
+ * as its own component because the alternative is three copies drifting apart,
+ * and this form carries constraints that must not drift: everyone is asked
+ * identically after every held session, with no sentiment gate and no
+ * incentive. The FTC preamble is explicit that soliciting only the customers
+ * you believe are happy is not a "generalized solicitation", and the programme
+ * that tested incentives found incentivised reviews MORE negative with no
+ * revenue effect.
  *
- * Shown to every attendee of every held session, identically and without
- * asking how they feel first — the preamble to that rule is explicit that
- * soliciting only the customers you believe are happy is not a "generalized
- * solicitation". It is also the J-shape mitigation, and it is why there is no
- * "enjoying your session?" gate here. Nothing is offered in exchange either:
- * the Airbnb programme that tested incentives found incentivised reviews MORE
- * negative, with no revenue effect.
+ * A review is about the CONSULTANT — one per person, editable. The session is
+ * provenance: it proves the review is genuine and it is what granted access to
+ * this form.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Star } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
-interface ReviewableSession {
-  appointmentId: string;
-  consultantName: string | null;
-  title: string;
-  existingReview: {
-    id: string;
-    rating: number;
-    reviewDescription: string | null;
-    isAnonymous?: boolean;
-  } | null;
+export interface ExistingReview {
+  id: string;
+  rating: number;
+  reviewDescription: string | null;
+  isAnonymous?: boolean;
 }
 
-export function SessionReviewCard({
+export function ReviewComposer({
   appointmentId,
-}: {
+  consultantName,
+  contextLine,
+  existing,
+  invalidateKeys,
+  onSaved,
+  compact = false,
+}: Readonly<{
+  /** The session that grants eligibility — provenance, not subject. */
   appointmentId: string;
-}) {
+  consultantName: string | null;
+  /** Small line under the heading, e.g. the session title. */
+  contextLine?: string;
+  existing: ExistingReview | null;
+  /** Query keys to refresh once the write lands. */
+  invalidateKeys: readonly (readonly unknown[])[];
+  onSaved?: () => void;
+  compact?: boolean;
+}>) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const queryKey = ["reviewable-session", appointmentId] as const;
 
-  const {
-    data: session,
-    isError,
-    isLoading,
-    refetch,
-  } = useQuery({
-    queryKey,
-    queryFn: async (): Promise<ReviewableSession | null> => {
-      const res = await fetch(
-        `/api/user/reviews/reviewable-sessions?appointmentId=${encodeURIComponent(appointmentId)}`,
-      );
-      if (!res.ok) await throwSupportError(res, "review eligibility");
-      const { data } = await res.json();
-      return (data as ReviewableSession[])[0] ?? null;
-    },
-  });
-
-  const existing = session?.existingReview ?? null;
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
   const [text, setText] = useState("");
   const [anonymous, setAnonymous] = useState(false);
 
-  // Seed the form from the stored review ONCE per review, not on every render
-  // of a new `existing` object. React Query hands back a fresh object on each
-  // refetch, so depending on its identity meant the 15s poll silently reset the
-  // textarea to the saved text — and a user who had just cleared it submitted
-  // the old value back. Keyed on the review id (and null, for "not written
-  // yet") so switching sessions still re-seeds.
+  // Seed ONCE per review, not on every render of a fresh object. React Query
+  // hands back a new object each refetch, so depending on its identity meant a
+  // background poll reset the textarea to the saved text — and a user who had
+  // just cleared it submitted the old value straight back.
   const seededFor = useRef<string | null>(null);
   const seedKey = existing?.id ?? `none:${appointmentId}`;
   useEffect(() => {
@@ -116,13 +101,16 @@ export function SessionReviewCard({
     onSuccess: async () => {
       toast({
         title: existing ? "Review updated" : "Thanks for your review",
-        description: "It appears on the expert's public profile.",
+        description: `It appears on ${consultantName ?? "the expert"}'s profile.`,
       });
-      // AWAITED: until this resolves, `existing` is still null and the button
+      // AWAITED: until this resolves `existing` is still null and the button
       // still reads "Post review", so a second press would POST again and take
-      // a 409 off the one-review-per-session unique. `isPending` stays true for
-      // the duration, which is what keeps the button disabled.
-      await qc.invalidateQueries({ queryKey });
+      // a 409 off the one-review-per-consultant unique. `isPending` stays true
+      // for the duration, which is what keeps the button disabled.
+      await Promise.all(
+        invalidateKeys.map((queryKey) => qc.invalidateQueries({ queryKey })),
+      );
+      onSaved?.();
     },
     onError: (e: unknown) => {
       toast({
@@ -133,44 +121,14 @@ export function SessionReviewCard({
     },
   });
 
-  // A failed eligibility check is NOT the same as "you cannot review this".
-  // Rendering nothing for both is the mistake the Platform tab already made
-  // once — it showed a load failure as an empty list and invited the user to
-  // file a request they already had open.
-  if (isError) {
-    return (
-      <section className="rounded-xl border border-dashed border-border p-4">
-        <p className="text-sm text-muted-foreground">
-          Couldn&apos;t check whether you can review this session.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-2"
-          onClick={() => refetch()}
-        >
-          Retry
-        </Button>
-      </section>
-    );
-  }
-  // Still asking, or genuinely not eligible. Showing a disabled form to someone
-  // who may never be allowed to use it is worse than showing nothing.
-  if (isLoading || !session) return null;
-
   return (
-    <section className="rounded-xl border border-border bg-card p-4">
-      {/* Named for the person, because that is who the user thinks they are
-          reviewing and whose profile it lands on. The session is provenance —
-          it proves the review is genuine and it is what let them in here — so
-          it sits underneath as context rather than as the subject. */}
+    <div>
       <h3 className="text-sm font-medium text-foreground">
         {existing ? "Your review of " : "Review "}
-        {session.consultantName ?? "this expert"}
+        {consultantName ?? "this expert"}
       </h3>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        {session.title}
-        {" · "}
+        {contextLine ? `${contextLine} · ` : ""}
         Public — it appears on their profile with the date. One review per
         expert; you can edit it after a later session.
       </p>
@@ -182,7 +140,7 @@ export function SessionReviewCard({
             type="button"
             // Every star is the same size and the same affordance. Making the
             // high ones easier to press is a named dark pattern under the CCPA
-            // 2023 guidelines, and it is also how a rating stops being data.
+            // 2023 guidelines, and it is how a rating stops being data.
             onClick={() => setRating(n)}
             onMouseEnter={() => setHover(n)}
             onMouseLeave={() => setHover(0)}
@@ -192,7 +150,7 @@ export function SessionReviewCard({
           >
             <Star
               className={
-                "h-6 w-6 " +
+                (compact ? "h-5 w-5 " : "h-6 w-6 ") +
                 ((hover || rating) >= n
                   ? "fill-foreground text-foreground"
                   : "text-muted-foreground")
@@ -204,7 +162,7 @@ export function SessionReviewCard({
 
       <Textarea
         className="mt-3"
-        rows={3}
+        rows={compact ? 2 : 3}
         maxLength={2000}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -219,8 +177,8 @@ export function SessionReviewCard({
           onChange={(e) => setAnonymous(e.target.checked)}
         />
         {/* Authenticity never depended on the name: the review is welded to a
-            paid, attended session either way. Hiding it costs no trust and
-            buys candour from someone who may want to book this person again. */}
+            paid, attended session either way. Hiding it buys candour from
+            someone who may want to book this person again. */}
         <span>
           Post as <strong>Verified client</strong> instead of my name
         </span>
@@ -241,6 +199,6 @@ export function SessionReviewCard({
           You can edit this later.
         </span>
       </div>
-    </section>
+    </div>
   );
 }

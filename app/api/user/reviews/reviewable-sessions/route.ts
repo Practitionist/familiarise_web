@@ -21,13 +21,34 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return supportError({ status: 401, code: "UNAUTHORIZED", context: { route: ROUTE } });
+      return supportError({
+        status: 401,
+        code: "UNAUTHORIZED",
+        context: { route: ROUTE },
+      });
     }
     const consulteeProfileId = session.user.consulteeProfileId;
     // Not having a consultee profile is not an error — it just means there is
     // nothing to review, and the card renders nothing.
     if (!consulteeProfileId) {
       return NextResponse.json({ data: [] });
+    }
+
+    // #705 — the profile page asks about a CONSULTANT, not an appointment:
+    // "have I earned the right to review this person, and have I already?"
+    // Returns the most recent qualifying session, which is the provenance the
+    // POST records.
+    const consultantProfileId = req.nextUrl.searchParams.get(
+      "consultantProfileId",
+    );
+    if (consultantProfileId) {
+      const all = await listReviewableSessions(
+        consulteeProfileId,
+        session.user.id,
+      );
+      return NextResponse.json({
+        data: all.filter((s) => s.consultantProfileId === consultantProfileId),
+      });
     }
 
     const appointmentId = req.nextUrl.searchParams.get("appointmentId");

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
@@ -42,8 +42,9 @@ import { SessionTimeline } from "../SessionTimeline";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
-import { AppointmentCsatCard } from "@/components/support/AppointmentCsatCard";
 import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
+import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
+import { useSessionFeedback } from "@/hooks/useSessionFeedback";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -56,13 +57,7 @@ function initials(name: string): string {
     .join("");
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
       <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -131,6 +126,22 @@ export function AppointmentDetailClient({
   });
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
+  // Which calls of this booking the viewer has already rated.
+  // Every appointment the rendered sessions belong to, not just this page's:
+  // a subscription group's rows carry their own child appointment ids.
+  const feedbackScopes = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          appointmentId,
+          ...(mapped?.vm.sessions ?? []).map(
+            (s) => s.appointmentId ?? appointmentId,
+          ),
+        ]),
+      ),
+    [appointmentId, mapped?.vm.sessions],
+  );
+  const sessionFeedback = useSessionFeedback(feedbackScopes);
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   if (isLoading && !detail) {
@@ -339,16 +350,44 @@ export function AppointmentDetailClient({
           <div className="flex min-w-0 flex-col gap-4">
             {/* #705 — attendees only. The API authorizes any participant, so
                 this used to offer a consultant a star rating on their own
-                session, which then fed the org quality average. */}
+                session, which then fed the org quality average.
+                The per-call rating now lives on each session row below; only
+                the public review is a card of its own, so the page no longer
+                asks the same-looking question twice. */}
             {vm.bucket === "past" && role === "consultee" && (
-              <>
-                <AppointmentCsatCard appointmentId={appointmentId} />
-                <SessionReviewCard appointmentId={appointmentId} />
-              </>
+              <SessionReviewCard appointmentId={appointmentId} />
             )}
             <Section title="Sessions">
               {hasConfirmedSessions ? (
                 <SessionTimeline
+                  // #705 — the private per-call rating sits on the session it
+                  // rates. Attendees only: the API authorizes any participant,
+                  // and a consultant rating their own session would feed the
+                  // org quality average.
+                  renderSessionExtra={(session) => {
+                    const rating =
+                      sessionFeedback.ratings[session.slotId] ?? null;
+                    // Offer stars only where a rating would be ACCEPTED —
+                    // you attended, or nobody could have recorded it. Showing
+                    // them on a call the viewer never joined invited a click
+                    // that the route then refused.
+                    const canRate = sessionFeedback.rateable.has(
+                      session.slotId,
+                    );
+                    if (role === "consultee" && !canRate && rating === null) {
+                      return null;
+                    }
+                    return (
+                      <SessionRatingRow
+                        appointmentId={session.appointmentId ?? appointmentId}
+                        slotId={session.slotId}
+                        existingRating={rating}
+                        // The consultant sees what a call scored; only the
+                        // attendee can set it.
+                        readOnly={role !== "consultee" || !canRate}
+                      />
+                    );
+                  }}
                   sessions={vm.sessions}
                   joinWindowMs={joinWindowMs}
                   defaultExpanded
