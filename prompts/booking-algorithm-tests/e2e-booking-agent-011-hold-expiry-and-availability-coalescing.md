@@ -67,6 +67,10 @@ Create with the `-011` suffix: consultant
 UTC), consultee `testconsultee011@familiarise.com` / `TestPassword011!`, and a
 consultation plan `test-consultation-plan-011` (0.5 h, ₹1,000).
 
+Pin `D` to the coming Monday, so the `D+4` this case books is a Friday inside
+the seeded Mon–Fri window rather than whatever day falls four days after the run
+happens to start.
+
 Then, as CONSULTEE, start a **real-payment** checkout (omit `isMockPayment`, or
 set it false) for **4 days out at 11:00 UTC** so the payment stays `PENDING`
 with a live `expiresAt` and the slot is tentative:
@@ -122,6 +126,26 @@ FROM "SlotOfAppointment" WHERE id = '<SLOT_ID>';
 This is the wave-5 change. Before #1328 the `PENDING` + `DIRECT_CHECKOUT` shape
 stayed blocked until the sweep ran, because only `APPROVED_PENDING_PAYMENT` was
 recognised.
+
+Then undo the third probe before going on. Auto-allocation is a write, so the
+probe that just proved 11:00 is placeable has placed something there, and that
+replacement booking would block 11:00 in Phase 3 on its own — a rule that wrongly
+freed an expired `SUCCEEDED` hold would still look correct, because the slot is
+occupied either way. Record the appointment the probe created, delete it and its
+slots, and re-run the grid probe to confirm 11:00 reads free again before
+touching the payment:
+
+```sql
+SELECT a.id AS appointment_id, s.id AS slot_id, s."startsAt"
+FROM "Appointment" a
+JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "Consultation" c ON c.id = a."consultationId"
+WHERE c."consultationPlanId" = 'test-consultation-plan-011'
+  AND a.id <> (SELECT "appointmentId" FROM "SlotOfAppointment"
+                WHERE id = '<SLOT_ID>');
+-- Expected: the replacement the auto-allocate probe wrote. Delete these rows
+-- (slots first), then re-probe the grid: 11:00 must still read free.
+```
 
 ## Phase 3 — The clock alone must not free a paid slot
 

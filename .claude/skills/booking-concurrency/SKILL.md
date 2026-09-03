@@ -7,9 +7,15 @@ description: How this repo serializes concurrent booking writes — the Redis lo
 
 Correctness under concurrency here is a hybrid: **Redis serializes, Postgres
 decides.** The lock removes contention cheaply and gives the loser a fast,
-structured answer; the constraints and CAS WHERE clauses make a double-book
-impossible when a lock is missed, expired or never taken. Neither half is
-optional.
+structured answer; Postgres then refuses the illegal write when a lock is
+missed, expired or never taken. Which Postgres mechanism does the refusing
+depends on the invariant: the `slot_no_confirmed_overlap` exclusion constraint
+(§7) blocks a consultant double-book, the CAS WHERE clause (§6) blocks an
+illegal status change, and the `Serializable` transaction with its retries (§8)
+is what holds webinar and class seat capacity. That last one is not
+interchangeable with the other two — an attendee slot carries a null
+`consultantProfileId` and so falls outside the constraint's predicate, and CAS
+knows nothing about a seat count. Neither half is optional.
 
 ## 1. One key shape per atom, minted in one file
 

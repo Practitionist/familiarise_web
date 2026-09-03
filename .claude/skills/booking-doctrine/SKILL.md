@@ -132,9 +132,17 @@ CANCELLED. As of wave 5 (#1321) the unscheduled
 `app/api/cleanup/approval-payments` route is deleted and its work rides inside
 the abandoned-payments run, so there is one code path and one semantics. Sibling
 sweeps with _different_ cohorts still end in CANCELLED, so the one-outcome rule
-is about approved-but-unpaid specifically, not all abandonment. Money follows
-status: an expiring row that was actually paid is refunded through the front
-door in the same sweep.
+is about approved-but-unpaid specifically, not all abandonment. No money moves
+in this sweep, because a paid row never reaches the expiry: `SUCCEEDED` payments
+are filtered out by the cohort read and again by the CAS `where`, and the payment
+rows themselves expire from `PENDING` only. The sweep that does refund is a
+different cohort — `expireApprovedUnallocatedSubscriptions` in
+`scripts/appointments/expire-stale-requests.ts` calls `refundPaymentsForExpired`,
+which routes every `SUCCEEDED` payment through `refundBookingPayment`. The
+sibling pass in that same file, `expirePaymentPendingRequests`, is the
+counter-example rather than the pattern: it flips `APPROVED_PENDING_PAYMENT` to
+`EXPIRED` with a bare `updateMany` that carries neither the money predicate nor
+the CAS helper.
 
 ## 6. There are no backfill migrations
 

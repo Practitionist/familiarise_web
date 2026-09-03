@@ -717,6 +717,10 @@ FROM "Consultation" c WHERE id = 'test-24h-cons-002';
 
 Expected: `CANCELLED`, `CONSULTANT_UNAVAILABLE`, `slots=1`, `cancelled_slots=1`,
 `apts=1`. A `slots=0` or `apts=0` here means someone reintroduced the delete.
+This fixture is seeded straight through SQL and carries no `Payment` row of its
+own, so it proves the rows survive but not that the money trail does; the
+payment-preservation assertion for a cancel lives in Agent 001 Test 5.7, against
+an appointment that came from a real checkout.
 
 ### 6.7 — 403 Cancel as Non-Participant
 

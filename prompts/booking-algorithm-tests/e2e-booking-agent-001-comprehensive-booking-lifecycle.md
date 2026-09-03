@@ -420,7 +420,9 @@ SELECT id, name, email, role, "consultantProfileId", "consulteeProfileId" FROM u
 
 -- Verify profiles
 SELECT id, headline, "scheduleType", "userId" FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-001';
-SELECT id, "aboutMe", "careerStage", "userId" FROM "ConsulteeProfile" WHERE id = 'test-consultee-profile-001';
+SELECT id, "aboutMe", goals, "careerStage", "userId" FROM "ConsulteeProfile" WHERE id = 'test-consultee-profile-001';
+-- goals must read 'Ship a distributed system end to end.'; a null here means the
+-- profile predates this seed and later booking assertions run on stale data.
 
 -- Verify availability (weekly uses Int minutes 0-1439, custom uses timestamptz)
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc" FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
@@ -1307,6 +1309,15 @@ FROM "SlotOfAppointment"
 WHERE "appointmentId" = '<APPOINTMENT_ID>';
 -- Expected: remainingSlots unchanged from before the cancel, and every one of
 -- them CANCELLED. Zero rows means someone reintroduced the delete.
+
+-- The Payment trail is the thing the soft cancel exists to protect, so assert it
+-- directly rather than inferring it from the slot count.
+SELECT id, "paymentStatus", amount
+FROM "Payment"
+WHERE "appointmentId" = '<APPOINTMENT_ID>';
+-- Expected: the same rows, statuses and amounts as before the cancel. A missing
+-- row is the #1074 cascade, and a changed status or amount means the cancel
+-- route is touching money it has no business touching.
 ```
 
 ### Test 5.8: Cancel With Non-Participant (403)
@@ -1813,9 +1824,15 @@ RescheduleRequestStatus: PENDING_REVIEW | COUNTERED | AUTO_ACCEPTED | ACCEPTED |
 
 Verified against the route files on 2026-09-02. Note the dynamic segments are
 named for their entity (`[consultationId]`, `[webinarId]`, `[appointmentId]`),
-never `[id]`, and that every allocate route is a **PATCH**.
+never `[id]`, and that every allocate route is a **PATCH**. The method column
+lists the verbs each route file exports, which is not the same as the verbs that
+succeed: both `[consultationId]` and `[subscriptionId]` export a `DELETE` whose
+whole body is a 405. That handler is deliberate rather than vestigial — it
+answers `code: "DELETE_NOT_SUPPORTED"` and names the cancel route in its message,
+which a bare framework 405 would not, and it is what replaced the raw
+`prisma.consultation.delete` that used to cascade Payment rows away.
 
-| Route                                                    | Method                  | Purpose                                                     |
+| Route                                                    | Methods exported        | Purpose                                                     |
 | -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
 | `/api/checkout`                                          | POST                    | Create a booking with payment                               |
 | `/api/checkout/pending/[paymentId]`                      | DELETE                  | Release your own pending hold early                         |

@@ -71,7 +71,11 @@ plan `test-subscription-plan-010` (4 sessions), and a webinar
 
 Then, as consultee A, book one mock-payment consultation **6 days out at 10:00
 UTC** via `POST /api/checkout` with `isMockPayment: true`. Record
-`APPOINTMENT_ID` and `PAYMENT_ID`.
+`APPOINTMENT_ID` and `PAYMENT_ID`. Start the run on a Tuesday so that six-day
+target is the following Monday; six days from an arbitrary today lands on a
+weekend roughly two runs in seven, and the seeded availability is Mon–Fri only.
+The six-day distance is itself load-bearing — it is what puts the booking in the
+top notice tier that Phase 1 asserts — so move the anchor, never the distance.
 
 ---
 

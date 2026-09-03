@@ -76,6 +76,9 @@ Create, with the `-009` suffix: consultant `testconsultant009@familiarise.com` /
 confirmed slots. Create the accounts through the signup UI, then attach the
 profiles via SQL as in Agent 005 Phase 0.
 
+Pin `D` to the coming Monday before anything else, so the `D+3` this case books
+is a Thursday and lands inside the seeded Mon–Fri window.
+
 ---
 
 ## Phase 1 — Checkout replays on a repeated `clientIdempotencyKey`
@@ -241,18 +244,25 @@ the route's ZodError formatter. Then send `{ "isAuto": false }` with no `slots`.
 
 ## Verification Checklist (End-to-End)
 
-| #   | Assertion                                            | Expected                         |
-| --- | ---------------------------------------------------- | -------------------------------- |
-| 1   | Repeated `clientIdempotencyKey` on checkout          | one Payment, one slot            |
-| 2   | Omitted `clientIdempotencyKey`                       | key minted server-side, not null |
-| 3   | Concurrent identical checkout                        | no 500; one Payment              |
-| 4   | Second tab, `initialAllocation: true`, different key | 409 `LOCK_CONTENTION`            |
-| 5   | Confirmed slot count after the 409                   | unchanged                        |
-| 6   | Same `Idempotency-Key` resubmitted to allocate       | 200 replay, not 409              |
-| 7   | Wrong `expectedTentativeSlotCount`                   | 409 `LOCK_CONTENTION`            |
-| 8   | Missing `isAuto`                                     | 400                              |
-| 9   | `isAuto: false` with no `slots`                      | 400                              |
-| 10  | `/api/checkout` ignores an `Idempotency-Key` header  | header has no dedupe effect      |
+| #   | Assertion                                            | Expected                          |
+| --- | ---------------------------------------------------- | --------------------------------- |
+| 1   | Repeated `clientIdempotencyKey` on checkout          | one Payment, one slot             |
+| 2   | Omitted `clientIdempotencyKey`                       | key minted server-side, not null  |
+| 3   | Concurrent identical checkout                        | no 500; one Payment               |
+| 4   | Second tab, `initialAllocation: true`, different key | 409 `LOCK_CONTENTION`             |
+| 5   | Confirmed slot count after the 409                   | unchanged                         |
+| 6   | Same `Idempotency-Key` resubmitted to allocate       | 200 replay, not 409               |
+| 7   | Wrong `expectedTentativeSlotCount`                   | 409 `LOCK_CONTENTION`             |
+| 8   | Missing `isAuto`                                     | 400                               |
+| 9   | `isAuto: false` with no `slots`                      | 400                               |
+| 10  | `/api/checkout` ignores an `Idempotency-Key` header  | contract, not a probe — see below |
+
+Row 10 is the one line in this table that no phase sends a request for, and that
+is deliberate. It is settled by reading `app/api/checkout/route.ts`, which takes
+`clientIdempotencyKey` off the validated body and never calls
+`request.headers.get("Idempotency-Key")` — the header is not ignored by accident,
+it is never looked at. Keep the row so nobody assumes the header dedupes a
+checkout, and do not report it as a passed assertion.
 
 ---
 

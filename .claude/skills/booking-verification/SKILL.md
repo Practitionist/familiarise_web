@@ -101,7 +101,9 @@ pushes. Every seeded user shares one password, `SeedPass123!`
 (`prisma/seedFiles/1a-create-users.ts`, overridable with `SEED_PASSWORD`), stored
 as a bcrypt hash on a BetterAuth `Account` row with `providerId: "credential"`.
 The credential roster and the reseed recipe live in
-`docs/enterprise/90-audits/03-verification-guide.md`; the booking- and
+`docs/enterprise/90-audits/03-verification-guide.md` — and the reseed itself is a
+write against the shared project, with no production guard anywhere in
+`prisma/seed.ts`, so read §7 before running it; the booking- and
 money-specific walkthrough is `docs/testing/booking-finance-hardening-test-plan.md`.
 
 Drive checkout with `isMockPayment: true` in the request body. It only works
@@ -119,10 +121,18 @@ categories against a seeded database and a running server. The runbook is
 cover the cancel-versus-reschedule race, the reschedule storm, two concurrent
 `DELETE`s on one pending payment (exactly one 200, the loser a 409), the
 last-seat storm, and webhook bulk-replay and out-of-order. They restore their
-fixtures and move no money, so a local run against seeded data is sanctioned;
-the money scenarios are not, and the runbook forbids running them against
-production or the shared development database. Scenarios that find no reachable
-server skip rather than fail, so check for SKIP lines before believing green.
+fixtures and move no gateway money, but they are not money-free: the last-seat
+storm posts `isMockPayment: true`, which by §5 writes a real `Payment` row and
+real earnings, and it then deletes the `Payment`, `PaymentLeg`,
+`ConsultantEarnings`, `OrganizationEarnings` and `BookingUtilization` rows again
+in a fenced `finally`
+(`tests/typescript/race-conditions/scenarios/07-real-api-booking/test-last-seat-storm.ts`)
+that logs a warning and leaves them in place when the teardown fails. A local run
+against seeded data is sanctioned on that basis, so read the run's output for
+that warning afterwards. The money scenarios are not sanctioned, and the runbook
+forbids running them against production or the shared development database.
+Scenarios that find no reachable server skip rather than fail, so check for SKIP
+lines before believing green.
 
 The race workflow `.github/workflows/race-condition-tests.yml` triggers only on
 `push` to `dev` and on `workflow_dispatch`. **It has no `pull_request` trigger**,

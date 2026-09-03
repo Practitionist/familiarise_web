@@ -510,7 +510,9 @@ async () => {
 };
 ```
 
-**Expected:** 400 or 404 (not 500)
+**Expected:** **400** — not 404, and not 500. `AllocationNotFoundError` fixes
+`httpStatus = 400` (`utils/slotAllocation/errors.ts`) and the allocate routes
+mint no 404 of their own, so a 404 here is a contract change, not a pass.
 
 ---
 
@@ -767,7 +769,8 @@ async () => {
 
 ### Test 6.1 — Book a Slot for Consultant A
 
-Login as CONSULTEE. Book a consultation with consultant A on Monday 10:00 UTC:
+Login as CONSULTEE. Book a consultation with consultant A on Monday 10:00 IST
+(04:30 UTC — the payload below is written in UTC, so read the two together):
 
 ```javascript
 async () => {
@@ -1075,7 +1078,7 @@ SELECT
 | 3   | Sequential auto-allocate after lock release -> 200        | 200                   |
 | 4   | No double-booking in DB after concurrent requests         | Verified via COUNT    |
 | 5   | Validation error -> 400 (not 500)                         | 400                   |
-| 6   | Not-found event -> 400 or 404 (not 500)                   | non-500               |
+| 6   | Not-found event -> 400 (not 404, not 500)                 | 400                   |
 | 7   | startTimeUtc > 1439 -> 400                                | 400                   |
 | 8   | startTimeUtc = -1 -> 400                                  | 400                   |
 | 9   | startTimeUtc = 10.5 -> 400                                | 400                   |

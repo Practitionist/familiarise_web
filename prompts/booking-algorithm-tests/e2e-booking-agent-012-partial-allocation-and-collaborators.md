@@ -64,15 +64,27 @@ Create with the `-012` suffix:
 
 - Consultant A: `testconsultant012a@familiarise.com` / `TestPassword012!`,
   profile `test-consultant-profile-012a`, `scheduleType` `WEEKLY`, with
-  **deliberately scarce** availability — Monday only, 09:00–11:00 UTC. Four
-  atoms; that scarcity is the whole point.
+  **deliberately scarce** availability — Monday only, 09:00–11:00 UTC. Read that
+  as two hours on _every_ Monday, not two hours in total: a `WEEKLY` row repeats
+  for as long as the scheduling period runs, so the scarcity cannot come from the
+  window alone. It comes from the session length the plan below sells against
+  that window.
 - Consultant B (the co-host): `testconsultant012b@familiarise.com`, profile
   `test-consultant-profile-012b`, generous availability Mon–Fri 09:00–17:00 UTC.
 - Consultee: `testconsultee012@familiarise.com` / `TestPassword012!`.
 - Subscription plan `test-subscription-plan-012` owned by A, selling **6**
-  sessions of 0.5 h over a 4-week scheduling period.
+  sessions of **2 h** over a four-week scheduling period. Four Mondays at two
+  hours each is eight hours of availability against the twelve hours the plan
+  sells, and a two-hour session fills one Monday window exactly, so four sessions
+  fit and two cannot. That shortfall of two is what every phase below turns on.
+  Half-hour sessions would leave sixteen atoms against the six required and
+  Phase 1 would simply succeed.
 - Class plan `test-class-plan-012` owned by A, with Consultant B attached as a
   collaborator in status `ACCEPTED`.
+
+Pin `D` to the first Monday of that four-week scheduling period, so the `D+n`
+dates below name real Mondays instead of counting days from whatever day the run
+starts on.
 
 Then, as the consultee, buy the subscription with `isMockPayment: true` so it
 lands `APPROVED` awaiting allocation. Record `SUBSCRIPTION_ID`.
@@ -193,14 +205,20 @@ on a delivered message.
 
 ## Phase 6 — The co-host guard runs in all three modes
 
-Schedule a session for Consultant B (the co-host) at D+7 10:00–11:00 UTC by any
+Work on `D+35`, the sixth Monday out and comfortably past the subscription's
+four-week scheduling period. Consultant A publishes every Monday, but Phase 2's
+partial allocation already consumed the Mondays inside that period, and an
+allocation onto an occupied window fails on the slot long before the co-host
+guard is consulted — which would pass this phase for entirely the wrong reason.
+
+Schedule a session for Consultant B (the co-host) at D+35 10:00–11:00 UTC by any
 means, so B is genuinely busy then. Now try to allocate the class
 `test-class-012` onto that same window three times, once per mode:
 
 | Mode        | Body                                                 |
 | ----------- | ---------------------------------------------------- |
 | `auto`      | `{ "isAuto": true }` with availability forcing 10:00 |
-| `manual`    | `{ "isAuto": false, "slots": ["<D+7T10:00Z>"] }`     |
+| `manual`    | `{ "isAuto": false, "slots": ["<D+35T10:00Z>"] }`    |
 | `requested` | `{ "isAuto": false, "useRequestedSlots": true }`     |
 
 **Expected in every case:** **409** with

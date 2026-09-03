@@ -19,8 +19,9 @@ Each directory is described in one line below; counts are current as of this ind
 
 ## Conventions the corpus follows
 
-Three rules keep the case files safe to run repeatedly:
+Four rules keep the case files safe to run repeatedly:
 
 - **Read the shared setup first.** Every `enterprise-tests/` case assumes [`_shared/shared-setup.md`](./enterprise-tests/_shared/shared-setup.md) (rules, glossary, schema reference, mock-data strategy) and [`_shared/case-template.md`](./enterprise-tests/_shared/case-template.md) (skeleton and the fix-and-retest gate). Booking cases carry their rules inline but follow the same shape.
 - **Deterministic, suffixed test data.** Booking cases suffix every id and email with their agent number (`-005`, `-007`, …); enterprise cases spawn throwaway orgs under a `test-2026-{date}-{slug}` prefix. Both clean up at the end of the run so reruns never collide.
 - **The DB is the arbiter.** Every meaningful action is verified with SQL against the double-entry ledger and the domain tables, not against what the UI shows.
+- **Relative dates are pinned to a weekday, never counted from today.** Booking cases seed weekday-specific availability — usually Monday to Friday, sometimes a single Monday — so a case that writes `D+3` has to say which weekday `D` is. Each case pins `D` in its Phase 0; counting days from whatever day the run happens to start on lands the target on a weekend, where the setup fails long before the assertion the case was written for.
