@@ -16,6 +16,9 @@ export const { GET, POST } = cleanupRoute({
   summarize: (r) => ({
     tentativeFlagsCleared: r.tentativeFlagsCleared,
     doubleBookingsDetected: r.doubleBookingsDetected,
+    // #1206 — sessions the top-up pass recovered for partially-scheduled plans.
+    topUpsPlaced: r.topUps.placed,
+    topUpSessionsPlaced: r.topUps.sessionsPlaced,
   }),
   // 207 when double bookings were detected and the run itself was clean.
   status: (r) => statusFor(r, r.doubleBookingsDetected > 0),
