@@ -17,7 +17,7 @@ import { tdsReturnCsvStoragePath } from "@/lib/compliance/tds-return";
 import {
   createPrivateFinanceSignedUrl,
   privateFinanceObjectExists,
-} from "@/lib/pdf/storage";
+} from "@/lib/storage/private-finance-object";
 
 /** Short enough that a leaked URL from a browser history is already dead. */
 const SIGNED_URL_TTL_SECONDS = 10 * 60;

@@ -30,7 +30,7 @@ import {
 } from "@/lib/compliance/tds-return";
 import { getIndianFinancialYear } from "@/lib/payments/tax/tds-service";
 import { decryptPAN } from "@/lib/payments/tax/pan-crypto";
-import { uploadPrivateFinanceObject } from "@/lib/pdf/storage";
+import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 
