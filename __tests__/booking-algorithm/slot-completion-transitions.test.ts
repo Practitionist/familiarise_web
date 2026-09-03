@@ -94,7 +94,9 @@ describe("transitionSlotCompletion", () => {
         completionStatus: "CANCELLED",
         deletedAt: new Date("2026-09-02T00:00:00Z"),
       },
-      select: { id: true },
+      // #1333 — the owning appointment comes back with each moved row so the
+      // history row it writes can name it.
+      select: { id: true, appointmentId: true },
     });
   });
 

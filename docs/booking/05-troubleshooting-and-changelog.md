@@ -85,6 +85,18 @@ flowchart TD
 
 ---
 
+## Changelog: 2026-09-03 — wave 6
+
+The wave-6 train picks up the defects that production verification surfaced after wave 5 shipped. Each PR appends its own bullets here.
+
+### PR C — every status history row carries its appointment id, and creation is a row
+
+- **The audit column was dead.** `BookingStatusHistory.appointmentId` has existed since wave 5 and `appendHistory` has always been willing to write it, but the value only ever arrived when a caller volunteered one, and no caller ever did. Every row in the table therefore carried NULL, and the staff timeline resolved a booking's trail entirely through the polymorphic `{ entity, entityId }` arms of its OR. Each of the seven helpers already reads a pre-image inside its transaction to learn the from-status, so the appointment id now rides that same read and is stamped automatically. A caller that knows better still wins, because the resolution only fills in what the caller left out.
+- **Two entities deliberately keep writing NULL.** A subscription and a class own `Appointment[]` rather than a single appointment, so their pre-image selects two live appointments and stamps the id only when exactly one came back. A multi-appointment aggregate has no single appointment to name, and guessing one would point the trail at an arbitrary member. A trial that has not been placed yet is the other case: its `appointmentId` is genuinely null until acceptance schedules the session. Both fall back to the entity arms, which is why those arms are load-bearing rather than a transitional fallback.
+- **The slot sweep takes the id from the rows it moved.** `transitionSlotCompletion` sweeps a full `WhereInput`, so its callers pass either one appointment id or an `in` list, and reading the id out of the caller's WHERE would have to branch on which. The `updateManyAndReturn` that already tells the helper which slots moved now returns each row's `appointmentId` alongside its id, so the stamp is exact in both shapes and needs no branch.
+- **Creation is now a history row.** A freshly created request had never transitioned, so it had no rows at all and the staff timeline answered "nothing has moved on this booking yet" for every new booking on production. A new `appendCreationHistory` helper writes one opening row in the same transaction as the create, from the literal `"CREATED"` to whatever status the row was born in. The literal matters: `appendHistory` renders a missing from-status as `"UNKNOWN"`, which on this surface means a concurrent writer moved the row between the pre-read and the update, and creation is emphatically not that.
+- **Three creation paths write it.** The direct-checkout consultation and subscription handlers already run inside the checkout transaction and simply append after the appointment exists. The request-for-approval route did not have a transaction at all — its nested create was atomic on its own — so the create and the audit row are now wrapped in one, budgeted well inside the sixty-second slot lock the route already holds. The capture webhook's own creators in `lib/payments/webhooks/handlers.ts` are deliberately out of scope for this PR. They are the legacy fallback that builds a booking when the payment carries no appointment because checkout never made one, so a booking born that way still opens with no creation row and its timeline starts at its first real transition.
+
 ## Changelog: 2026-09-02 — wave 5
 
 The wave-5 train (#1319) reconciles the original booking and maintenance audit briefs against everything that shipped in waves 1–4 and closes the residuals that survived. Each PR appends its own bullets here.

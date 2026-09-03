@@ -14,6 +14,7 @@ import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationServ
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
+import { appendCreationHistory } from "@/lib/booking/transitions";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -272,46 +273,68 @@ export async function POST(req: NextRequest) {
           },
         }));
 
-        const consultation = await prisma.consultation.create({
-          data: {
-            consultationPlanId: consultationPlanId,
-            requestedById: consulteeProfile.id,
-            status: AppointmentStatus.PENDING,
-            requestNotes: requestNotes,
-            appointment: {
-              create: {
-                appointmentType: "CONSULTATION",
-                // #1166 ORG-9 — org attribution rides the appointment from the
-                // moment the request exists.
-                organizationId: organizationId ?? null,
-                slotsOfAppointment: {
-                  create: slotChunksToCreate,
+        // #1333 — the request and its opening timeline row commit together, so
+        // a booking that exists is never one the staff timeline has nothing to
+        // say about. The nested create was already atomic on its own; the
+        // transaction is what extends that atomicity to the audit row. The
+        // budget sits well inside the 60 s slot lock held above.
+        const consultation = await prisma.$transaction(
+          async (tx) => {
+            const created = await tx.consultation.create({
+              data: {
+                consultationPlanId: consultationPlanId,
+                requestedById: consulteeProfile.id,
+                status: AppointmentStatus.PENDING,
+                requestNotes: requestNotes,
+                appointment: {
+                  create: {
+                    appointmentType: "CONSULTATION",
+                    // #1166 ORG-9 — org attribution rides the appointment from
+                    // the moment the request exists.
+                    organizationId: organizationId ?? null,
+                    slotsOfAppointment: {
+                      create: slotChunksToCreate,
+                    },
+                  },
                 },
               },
-            },
-          },
-          include: {
-            consultationPlan: {
               include: {
-                consultantProfile: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
                   include: {
                     user: true,
                   },
                 },
+                appointment: {
+                  include: {
+                    slotsOfAppointment: true,
+                  },
+                },
               },
-            },
-            requestedBy: {
-              include: {
-                user: true,
+            });
+            await appendCreationHistory(
+              tx,
+              "CONSULTATION",
+              created.id,
+              AppointmentStatus.PENDING,
+              {
+                appointmentId: created.appointment?.id ?? null,
+                actorUserId: session.user.id,
+                organizationId: created.appointment?.organizationId ?? null,
               },
-            },
-            appointment: {
-              include: {
-                slotsOfAppointment: true,
-              },
-            },
+            );
+            return created;
           },
-        });
+          { maxWait: 10_000, timeout: 15_000 },
+        );
 
         console.log(
           JSON.stringify({

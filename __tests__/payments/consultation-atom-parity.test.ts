@@ -271,6 +271,8 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
       createMany: jest.fn().mockResolvedValue({ count: 2 }),
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
     },
+    // #1333 — the handler opens the timeline in the same tx as the create.
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   } as unknown as Tx;
 
   await handleConsultationCheckout(
