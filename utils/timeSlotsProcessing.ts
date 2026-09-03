@@ -256,12 +256,7 @@ export function processWeeklySlots(
 
     weeklySlots.forEach((slot) => {
       // Defensive: Skip slots with invalid data
-      if (
-        !slot ||
-        !slot.id ||
-        !slot.startsAt ||
-        !slot.endsAt
-      ) {
+      if (!slot || !slot.id || !slot.startsAt || !slot.endsAt) {
         console.warn(
           `⚠️ processWeeklySlots: skipping slot with missing required fields`,
         );
@@ -345,12 +340,7 @@ export function processCustomSlots(
   return customSlots
     .filter((slot) => {
       // Defensive: Skip slots with invalid data
-      if (
-        !slot ||
-        !slot.id ||
-        !slot.startsAt ||
-        !slot.endsAt
-      ) {
+      if (!slot || !slot.id || !slot.startsAt || !slot.endsAt) {
         console.warn(
           `⚠️ processCustomSlots: skipping slot with missing required fields`,
         );
@@ -376,12 +366,7 @@ export function processCustomSlots(
       }
 
       // Only include slots that overlap with our date range
-      return hasTimeOverlap(
-        slot.startsAt,
-        slot.endsAt,
-        startDate,
-        endDate,
-      );
+      return hasTimeOverlap(slot.startsAt, slot.endsAt, startDate, endDate);
     })
     .map((slot) => ({
       start: slot.startsAt,
@@ -461,12 +446,7 @@ export function isSlotAllocated(
     ? candidatesFor(index, slotStart.getTime(), slotEnd.getTime())
     : appointmentSlots;
   return candidates.some((apptSlot) =>
-    hasTimeOverlap(
-      slotStart,
-      slotEnd,
-      apptSlot.startsAt,
-      apptSlot.endsAt,
-    ),
+    hasTimeOverlap(slotStart, slotEnd, apptSlot.startsAt, apptSlot.endsAt),
   );
 }
 
@@ -512,11 +492,7 @@ export function getSlotBookingStatus(
   // Find all appointments that overlap with this slot (with defensive filtering)
   const overlappingAppointments = searchSpace.filter((apptSlot) => {
     // Defensive: Skip invalid appointment slots
-    if (
-      !apptSlot ||
-      !apptSlot.startsAt ||
-      !apptSlot.endsAt
-    ) {
+    if (!apptSlot || !apptSlot.startsAt || !apptSlot.endsAt) {
       return false;
     }
 
@@ -624,9 +600,7 @@ export function convertToSlotTimings(
 
   // Sort chronologically by start time
   slotTimings.sort(
-    (a, b) =>
-      new Date(a.startsAt).getTime() -
-      new Date(b.startsAt).getTime(),
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
 
   return slotTimings;
@@ -643,52 +617,67 @@ export function mergeConsecutiveSlots(
   slots: (TSlotTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
+    slotOfAvailabilityIds?: string[];
   })[],
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus?: BookingStatus;
+  slotOfAvailabilityIds?: string[];
 })[] {
   if (!slots || slots.length === 0) return [];
 
   // Sort slots by start time
   const sortedSlots = [...slots].sort(
-    (a, b) =>
-      new Date(a.startsAt).getTime() -
-      new Date(b.startsAt).getTime(),
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
 
   const mergedSlots: (TSlotTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
+    slotOfAvailabilityIds?: string[];
   })[] = [];
 
-  let currentMerged = { ...sortedSlots[0] };
+  let currentMerged: (typeof sortedSlots)[number] & {
+    slotOfAvailabilityIds?: string[];
+  } = { ...sortedSlots[0] };
 
   for (let i = 1; i < sortedSlots.length; i++) {
     const currentSlot = sortedSlots[i];
     const currentMergedEnd = new Date(currentMerged.endsAt).getTime();
     const nextSlotStart = new Date(currentSlot.startsAt).getTime();
 
-    // Check if slots are consecutive (end time equals start time) and both are available
-    // Allow a small tolerance of 1 minute for edge cases
-    const isConsecutive = Math.abs(currentMergedEnd - nextSlotStart) <= 60000;
+    // Consecutive means EXACTLY adjacent — the merged end is the next start.
+    // The old ±60s tolerance was harmless while a merge could only fuse
+    // sub-windows of one row, but #1320 merges across rows: rows ending 10:30
+    // and starting 10:31 would be offered as one window whose 10:30 atom no
+    // row publishes, and checkout's union coverage then rejects the booking
+    // the grid promised.
+    const isConsecutive = currentMergedEnd === nextSlotStart;
     const bothAvailable =
       !currentMerged.isAllocated && !currentSlot.isAllocated;
-    // #788 — never merge across different availability rows. The merge keeps
-    // row A's slotOfAvailabilityId, so a cross-row merge mis-binds every
-    // sliced sub-window from row B's range to row A's ID and checkout's
-    // window validator correctly rejects the booking. The merge was designed
-    // (c9ad0de3) to fuse sub-windows WITHIN one row for trials; cross-row
-    // fusion was an accident no flow relies on.
-    const sameSource =
-      currentMerged.slotOfAvailabilityId === currentSlot.slotOfAvailabilityId;
-
-    if (isConsecutive && bothAvailable && sameSource) {
-      // Extend the current merged slot
+    // #1320 — merge ACROSS availability rows. #788 forbade this because
+    // checkout validated the whole window against the one row id the merged
+    // slot carried; checkout now validates against the union of the
+    // consultant's rows, so a window spanning "3:30–4:30" + "4:30–5:30" is
+    // bookable exactly as the expert-page grid draws it. The first row's id
+    // stays on the slot for compatibility; every covering id rides along.
+    if (isConsecutive && bothAvailable) {
+      // Both sides can already carry a set — the input type permits a
+      // pre-merged slot — so unioning only `currentSlot`'s single id would
+      // drop every row it had already absorbed.
+      const ids = new Set([
+        ...(currentMerged.slotOfAvailabilityIds ?? [
+          currentMerged.slotOfAvailabilityId,
+        ]),
+        ...(currentSlot.slotOfAvailabilityIds ?? [
+          currentSlot.slotOfAvailabilityId,
+        ]),
+      ]);
       currentMerged = {
         ...currentMerged,
         endsAt: currentSlot.endsAt,
         localEndTime: currentSlot.localEndTime,
+        slotOfAvailabilityIds: [...ids],
       };
     } else {
       // Push the current merged slot and start a new one
@@ -782,9 +771,7 @@ export function breakDownSlotsByDuration(
 
   // Sort chronologically
   brokenDownSlots.sort(
-    (a, b) =>
-      new Date(a.startsAt).getTime() -
-      new Date(b.startsAt).getTime(),
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
 
   return brokenDownSlots;
@@ -828,9 +815,7 @@ export function groupSlotsByDate(
   // Sort slots within each day chronologically
   Object.keys(slotsByDate).forEach((dateKey) => {
     slotsByDate[dateKey].sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() -
-        new Date(b.startsAt).getTime(),
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
   });
 
@@ -996,9 +981,7 @@ export function breakDownSlotsPreservingStatus(
   }
 
   result.sort(
-    (a, b) =>
-      new Date(a.startsAt).getTime() -
-      new Date(b.startsAt).getTime(),
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
 
   return result;

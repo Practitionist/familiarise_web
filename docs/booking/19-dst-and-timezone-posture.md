@@ -30,7 +30,7 @@ every surface renders in viewer-local time.
 
 ## Rules until #872 lands
 
-1. Never write the local* columns from new code — they are reserved for the
+1. Never write the local\* columns from new code — they are reserved for the
    #872 migration; writing them half-way creates two sources of truth.
 2. Any NEW consumer of weekly availability MUST go through
    `isMinuteWithinWeeklySlot` / `getNextOccurrenceWeekly` /
@@ -47,4 +47,6 @@ every surface renders in viewer-local time.
 
 - Schema doc-comment block on `SlotOfAvailabilityWeekly` (prisma/schema.prisma)
 - #1168 — draw the slot grid in `schedulingTimezone` (prerequisite for #872)
-- #1200 — the travel-hazard operational caveat
+- #1200 — the travel-hazard operational caveat this page documents; folded into
+  #872 as a single post-MVP DST issue (2026-09-02 decision, tracked under
+  #1319)

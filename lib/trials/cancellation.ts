@@ -15,6 +15,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { setParticipantStatus } from "@/lib/booking/participants";
 import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -61,6 +62,8 @@ export async function softCancelTrialAppointment(
       where: { id: appointmentId, deletedAt: null },
       data: { deletedAt: now },
     });
+    // #1319 A9 — seat released with the tombstone.
+    await setParticipantStatus(tx, { appointmentId }, "CANCELLED");
   });
 }
 

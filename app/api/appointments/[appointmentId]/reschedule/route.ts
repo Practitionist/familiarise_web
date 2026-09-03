@@ -1,4 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -83,6 +89,9 @@ export async function POST(
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // #1319 — this route triggers refunds/reallocation and had no limiter.
+    const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (limited) return limited;
 
     const { appointmentId } = await params;
     const { searchParams } = new URL(request.url);
@@ -161,501 +170,520 @@ export async function POST(
     );
 
     // Start transaction
-    const result = await prisma.$transaction(
-      async (tx) => {
-        // Get appointment details with all related data
-        const appointment = await tx.appointment.findUnique({
-          where: { id: appointmentId },
-          include: {
-            slotsOfAppointment: {
-              orderBy: { startsAt: "asc" },
-            },
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: true,
+    // #1319 — serialize lifecycle mutations per appointment (lock order:
+    // appointment first, before any consultee/slot key a future change adds).
+    const result = await withAppointmentLock(appointmentId, () =>
+      prisma.$transaction(
+        async (tx) => {
+          // Get appointment details with all related data
+          const appointment = await tx.appointment.findUnique({
+            where: { id: appointmentId },
+            include: {
+              slotsOfAppointment: {
+                orderBy: { startsAt: "asc" },
+              },
+              consultation: {
+                include: {
+                  consultationPlan: {
+                    include: {
+                      consultantProfile: true,
+                    },
                   },
+                  requestedBy: true,
                 },
-                requestedBy: true,
               },
-            },
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: true,
+              subscription: {
+                include: {
+                  subscriptionPlan: {
+                    include: {
+                      consultantProfile: true,
+                    },
                   },
+                  requestedBy: true,
                 },
-                requestedBy: true,
+              },
+              webinar: {
+                include: {
+                  webinarPlan: true,
+                },
+              },
+              class: {
+                include: {
+                  classPlan: true,
+                },
               },
             },
-            webinar: {
-              include: {
-                webinarPlan: true,
-              },
-            },
-            class: {
-              include: {
-                classPlan: true,
-              },
-            },
-          },
-        });
-
-        if (!appointment) {
-          throw new AppointmentNotFoundError("appointment", appointmentId);
-        }
-
-        // Participant authorization check
-        const consultantProfileId = session.user.consultantProfileId;
-        const consulteeProfileId = session.user.consulteeProfileId;
-
-        let isParticipant = false;
-        // Which side is asking. Load-bearing rather than descriptive: only a
-        // CONSULTEE proposal may auto-confirm, because publishing availability
-        // is standing consent to be booked inside it while merely being free is
-        // not consent to be moved. Null for a privileged bypass, which never
-        // auto-confirms on someone else's behalf.
-        let initiatorRole: RescheduleInitiatorRole | null = null;
-
-        // Check the single event-type relation (mutually exclusive via if-else)
-        if (appointment.consultation) {
-          const consultationConsultantId =
-            appointment.consultation.consultationPlan?.consultantProfileId;
-          const isConsultant =
-            consultantProfileId === consultationConsultantId;
-          const isConsultee =
-            consulteeProfileId === appointment.consultation.requestedById;
-          isParticipant = isConsultant || isConsultee;
-          initiatorRole = roleOf(isConsultee, isConsultant);
-        } else if (appointment.subscription) {
-          const subscriptionConsultantId =
-            appointment.subscription.subscriptionPlan?.consultantProfileId;
-          const isConsultant =
-            consultantProfileId === subscriptionConsultantId;
-          const isConsultee =
-            consulteeProfileId === appointment.subscription.requestedById;
-          isParticipant = isConsultant || isConsultee;
-          initiatorRole = roleOf(isConsultee, isConsultant);
-        } else if (appointment.webinar) {
-          // Only the consultant (organizer) can reschedule group events,
-          // since rescheduling changes the time for all participants.
-          const webinarConsultantId =
-            appointment.webinar.webinarPlan?.consultantProfileId;
-          isParticipant = consultantProfileId === webinarConsultantId;
-        } else if (appointment.class) {
-          // Same as webinar: consultant-only reschedule
-          const classConsultantId =
-            appointment.class.classPlan?.consultantProfileId;
-          isParticipant = consultantProfileId === classConsultantId;
-        }
-
-        // Allow ADMIN/STAFF bypass
-        const isPrivilegedUser = isPrivileged(session.user.role);
-
-        // #1166 — an admin of the FUNDING org may reschedule the booking. They
-        // act on the payer side, so their proposals carry the CONSULTEE role:
-        // same auto-confirm consent semantics as the buyer they act for.
-        const isOrgAdminActor =
-          !isParticipant && !isPrivilegedUser && actorIsFundingOrgAdmin;
-        if (isOrgAdminActor) {
-          initiatorRole = "CONSULTEE";
-        }
-
-        if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
-          throw new RescheduleAuthorizationError();
-        }
-
-        // Derive type from DB instead of trusting query param
-        const derivedType = appointment.consultation
-          ? "CONSULTATION"
-          : appointment.subscription
-            ? "SUBSCRIPTION"
-            : appointment.webinar
-              ? "WEBINAR"
-              : appointment.class
-                ? "CLASS"
-                : null;
-
-        if (appointmentType && derivedType && appointmentType !== derivedType) {
-          throw new AppointmentTypeMismatchError(appointmentType, derivedType);
-        }
-
-        // For SUBSCRIPTION and CLASS types, we need to get ALL slots across ALL appointments
-        // because the UI collects slots from all appointments but only passes one appointmentId
-        let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
-
-        if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
-          // Fetch all appointments for this subscription with their slots
-          const allAppointments = await tx.appointment.findMany({
-            where: { subscriptionId: appointment.subscription.id },
-            include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
           });
-          allSubscriptionSlots = allAppointments.flatMap(
-            (apt) => apt.slotsOfAppointment,
-          );
-        } else if (derivedType === "CLASS" && appointment.class) {
-          // Fetch all appointments for this class with their slots
-          const allAppointments = await tx.appointment.findMany({
-            where: { classId: appointment.class.id },
-            include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
-          });
-          allSubscriptionSlots = allAppointments.flatMap(
-            (apt) => apt.slotsOfAppointment,
-          );
-        }
 
-        // E2E-audit fix — whole-series flows must act on LIVE slots only.
-        // The 24-hour gate and the proposal-count check used to iterate every
-        // historical row (COMPLETED/CANCELLED sessions included), so any
-        // past session made hoursUntilSlot negative and the aggregate
-        // reschedule was bricked with a guaranteed 400 after the first
-        // delivery. SLOT_RESCHEDULABLE_FROM is the canonical live set — a
-        // requested-but-completed id now correctly reports as missing.
-        allSubscriptionSlots = allSubscriptionSlots.filter((s) =>
-          (SLOT_RESCHEDULABLE_FROM as string[]).includes(s.completionStatus),
-        );
-
-        // Determine which slots will be affected
-        // For multi-appointment types (SUBSCRIPTION, CLASS) without slotIds, check all slots
-        let slotsToReschedule =
-          (derivedType === "SUBSCRIPTION" || derivedType === "CLASS") &&
-          (!slotIds || slotIds.length === 0) &&
-          allSubscriptionSlots.length > 0
-            ? allSubscriptionSlots
-            : appointment.slotsOfAppointment;
-
-        // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
-        // slots. CLASS previously fell through to the whole-class branch, so
-        // a per-session class reschedule silently escalated to every session.
-        if (
-          slotIds &&
-          slotIds.length > 0 &&
-          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
-            (derivedType === "CLASS" && appointment.class))
-        ) {
-          // Filter to only the requested slots from ALL subscription slots
-          slotsToReschedule = allSubscriptionSlots.filter((s) =>
-            slotIds.includes(s.id),
-          );
-
-          // Validate all requested slots exist
-          if (slotsToReschedule.length !== slotIds.length) {
-            const foundIds = slotsToReschedule.map((s) => s.id);
-            const missingIds = slotIds.filter((id) => !foundIds.includes(id));
-            throw new AppointmentNotFoundError("slot", missingIds.join(", "));
+          if (!appointment) {
+            throw new AppointmentNotFoundError("appointment", appointmentId);
           }
-        }
 
-        // 24-hour restriction check - validate ALL selected slots
-        const now = new Date();
-        for (const slot of slotsToReschedule) {
-          const hoursUntilSlot =
-            (new Date(slot.startsAt).getTime() - now.getTime()) /
-            (1000 * 60 * 60);
+          // Participant authorization check
+          const consultantProfileId = session.user.consultantProfileId;
+          const consulteeProfileId = session.user.consulteeProfileId;
 
-          if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
-            throw new ReschedulePolicyError(
-              hoursUntilSlot,
-              MINIMUM_HOURS_BEFORE_RESCHEDULE,
+          let isParticipant = false;
+          // Which side is asking. Load-bearing rather than descriptive: only a
+          // CONSULTEE proposal may auto-confirm, because publishing availability
+          // is standing consent to be booked inside it while merely being free is
+          // not consent to be moved. Null for a privileged bypass, which never
+          // auto-confirms on someone else's behalf.
+          let initiatorRole: RescheduleInitiatorRole | null = null;
+
+          // Check the single event-type relation (mutually exclusive via if-else)
+          if (appointment.consultation) {
+            const consultationConsultantId =
+              appointment.consultation.consultationPlan?.consultantProfileId;
+            const isConsultant =
+              consultantProfileId === consultationConsultantId;
+            const isConsultee =
+              consulteeProfileId === appointment.consultation.requestedById;
+            isParticipant = isConsultant || isConsultee;
+            initiatorRole = roleOf(isConsultee, isConsultant);
+          } else if (appointment.subscription) {
+            const subscriptionConsultantId =
+              appointment.subscription.subscriptionPlan?.consultantProfileId;
+            const isConsultant =
+              consultantProfileId === subscriptionConsultantId;
+            const isConsultee =
+              consulteeProfileId === appointment.subscription.requestedById;
+            isParticipant = isConsultant || isConsultee;
+            initiatorRole = roleOf(isConsultee, isConsultant);
+          } else if (appointment.webinar) {
+            // Only the consultant (organizer) can reschedule group events,
+            // since rescheduling changes the time for all participants.
+            const webinarConsultantId =
+              appointment.webinar.webinarPlan?.consultantProfileId;
+            isParticipant = consultantProfileId === webinarConsultantId;
+          } else if (appointment.class) {
+            // Same as webinar: consultant-only reschedule
+            const classConsultantId =
+              appointment.class.classPlan?.consultantProfileId;
+            isParticipant = consultantProfileId === classConsultantId;
+          }
+
+          // Allow ADMIN/STAFF bypass
+          const isPrivilegedUser = isPrivileged(session.user.role);
+
+          // #1166 — an admin of the FUNDING org may reschedule the booking. They
+          // act on the payer side, so their proposals carry the CONSULTEE role:
+          // same auto-confirm consent semantics as the buyer they act for.
+          const isOrgAdminActor =
+            !isParticipant && !isPrivilegedUser && actorIsFundingOrgAdmin;
+          if (isOrgAdminActor) {
+            initiatorRole = "CONSULTEE";
+          }
+
+          if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
+            throw new RescheduleAuthorizationError();
+          }
+
+          // Derive type from DB instead of trusting query param
+          const derivedType = appointment.consultation
+            ? "CONSULTATION"
+            : appointment.subscription
+              ? "SUBSCRIPTION"
+              : appointment.webinar
+                ? "WEBINAR"
+                : appointment.class
+                  ? "CLASS"
+                  : null;
+
+          if (
+            appointmentType &&
+            derivedType &&
+            appointmentType !== derivedType
+          ) {
+            throw new AppointmentTypeMismatchError(
+              appointmentType,
+              derivedType,
             );
           }
-        }
 
-        // Mark the appropriate slots as tentative
-        if (
-          slotIds &&
-          slotIds.length > 0 &&
-          ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
-            (derivedType === "CLASS" && appointment.class))
-        ) {
-          // Individual/multiple session reschedule - mark ALL slots of the affected appointments
-          // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
-          const affectedAppointmentIds = Array.from(
-            new Set(slotsToReschedule.map((s) => s.appointmentId)),
-          );
-          // From-state guard on every slot flip: a reschedule must never
-          // resurrect COMPLETED/CANCELLED history to RESCHEDULED (#837).
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointmentId: { in: affectedAppointmentIds },
-              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
-            },
-            data: { isTentative: true, completionStatus: "RESCHEDULED" },
-          });
-        } else if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
-          // Entire subscription reschedule - mark ALL slots in ALL appointments
-          const allAppointmentIds = (
-            await tx.appointment.findMany({
+          // For SUBSCRIPTION and CLASS types, we need to get ALL slots across ALL appointments
+          // because the UI collects slots from all appointments but only passes one appointmentId
+          let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
+
+          if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
+            // Fetch all appointments for this subscription with their slots
+            const allAppointments = await tx.appointment.findMany({
               where: { subscriptionId: appointment.subscription.id },
-              select: { id: true },
-            })
-          ).map((a) => a.id);
-
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointmentId: { in: allAppointmentIds },
-              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
-            },
-            data: { isTentative: true, completionStatus: "RESCHEDULED" },
-          });
-        } else if (derivedType === "CLASS" && appointment.class) {
-          // Entire class reschedule - mark ALL slots in ALL appointments
-          const allAppointmentIds = (
-            await tx.appointment.findMany({
+              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+            });
+            allSubscriptionSlots = allAppointments.flatMap(
+              (apt) => apt.slotsOfAppointment,
+            );
+          } else if (derivedType === "CLASS" && appointment.class) {
+            // Fetch all appointments for this class with their slots
+            const allAppointments = await tx.appointment.findMany({
               where: { classId: appointment.class.id },
-              select: { id: true },
-            })
-          ).map((a) => a.id);
+              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+            });
+            allSubscriptionSlots = allAppointments.flatMap(
+              (apt) => apt.slotsOfAppointment,
+            );
+          }
 
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointmentId: { in: allAppointmentIds },
-              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
-            },
-            data: { isTentative: true, completionStatus: "RESCHEDULED" },
-          });
-        } else {
-          // Non-multi-appointment: mark all slots in the single appointment
-          await tx.slotOfAppointment.updateMany({
-            where: {
-              appointmentId,
-              completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
-            },
-            data: { isTentative: true, completionStatus: "RESCHEDULED" },
-          });
-        }
-
-        // Update status based on appointment type — CAS-guarded (B2): a
-        // reschedule racing a cancel/completion must not resurrect the
-        // booking; count 0 means the from-state was terminal → 409. The
-        // set lives in lib/booking/transitions.ts so the map is canonical.
-        let movedStatus = 1; // group events validated below
-        if (appointment.consultation) {
-          movedStatus = (
-            await tx.consultation.updateMany({
-              where: {
-                id: appointment.consultation.id,
-                status: { in: [...RESCHEDULABLE_FROM] },
-              },
-              // requestedAt rides along deliberately: the stale-request
-              // expiry sweep keys its PENDING cohort on requestedAt, so a
-              // reschedule re-entering PENDING must refresh the clock or the
-              // next hourly run reads the ORIGINAL request age — for any
-              // booking older than 48h that is "stale", and the sweep would
-              // terminalise (EXPIRED) and fully refund a live booking the
-              // consultee is actively trying to move.
-              data: { status: "PENDING", requestedAt: new Date() },
-            })
-          ).count;
-        } else if (appointment.subscription) {
-          // #448 — a single/multi-session reschedule must NOT flip the WHOLE
-          // subscription to PENDING. Subscription has no per-session status;
-          // the affected slots already carry isTentative + RESCHEDULED, so the
-          // session-level state is captured there. Only a full-subscription
-          // reschedule (no slotIds) genuinely re-enters PENDING. The partial
-          // path still terminal-guards (count, no write): rescheduling a
-          // session of a cancelled/completed subscription stays a 409.
-          const isPartialSubscriptionReschedule = Boolean(
-            slotIds && slotIds.length > 0,
+          // E2E-audit fix — whole-series flows must act on LIVE slots only.
+          // The 24-hour gate and the proposal-count check used to iterate every
+          // historical row (COMPLETED/CANCELLED sessions included), so any
+          // past session made hoursUntilSlot negative and the aggregate
+          // reschedule was bricked with a guaranteed 400 after the first
+          // delivery. SLOT_RESCHEDULABLE_FROM is the canonical live set — a
+          // requested-but-completed id now correctly reports as missing.
+          allSubscriptionSlots = allSubscriptionSlots.filter((s) =>
+            (SLOT_RESCHEDULABLE_FROM as string[]).includes(s.completionStatus),
           );
-          movedStatus = isPartialSubscriptionReschedule
-            ? await tx.subscription.count({
+
+          // Determine which slots will be affected
+          // For multi-appointment types (SUBSCRIPTION, CLASS) without slotIds, check all slots
+          let slotsToReschedule =
+            (derivedType === "SUBSCRIPTION" || derivedType === "CLASS") &&
+            (!slotIds || slotIds.length === 0) &&
+            allSubscriptionSlots.length > 0
+              ? allSubscriptionSlots
+              : appointment.slotsOfAppointment;
+
+          // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
+          // slots. CLASS previously fell through to the whole-class branch, so
+          // a per-session class reschedule silently escalated to every session.
+          if (
+            slotIds &&
+            slotIds.length > 0 &&
+            ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+              (derivedType === "CLASS" && appointment.class))
+          ) {
+            // Filter to only the requested slots from ALL subscription slots
+            slotsToReschedule = allSubscriptionSlots.filter((s) =>
+              slotIds.includes(s.id),
+            );
+
+            // Validate all requested slots exist
+            if (slotsToReschedule.length !== slotIds.length) {
+              const foundIds = slotsToReschedule.map((s) => s.id);
+              const missingIds = slotIds.filter((id) => !foundIds.includes(id));
+              throw new AppointmentNotFoundError("slot", missingIds.join(", "));
+            }
+          }
+
+          // 24-hour restriction check - validate ALL selected slots
+          const now = new Date();
+          for (const slot of slotsToReschedule) {
+            const hoursUntilSlot =
+              (new Date(slot.startsAt).getTime() - now.getTime()) /
+              (1000 * 60 * 60);
+
+            if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
+              throw new ReschedulePolicyError(
+                hoursUntilSlot,
+                MINIMUM_HOURS_BEFORE_RESCHEDULE,
+              );
+            }
+          }
+
+          // Mark the appropriate slots as tentative
+          if (
+            slotIds &&
+            slotIds.length > 0 &&
+            ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
+              (derivedType === "CLASS" && appointment.class))
+          ) {
+            // Individual/multiple session reschedule - mark ALL slots of the affected appointments
+            // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
+            const affectedAppointmentIds = Array.from(
+              new Set(slotsToReschedule.map((s) => s.appointmentId)),
+            );
+            // From-state guard on every slot flip: a reschedule must never
+            // resurrect COMPLETED/CANCELLED history to RESCHEDULED (#837).
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointmentId: { in: affectedAppointmentIds },
+                completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+              },
+              data: { isTentative: true, completionStatus: "RESCHEDULED" },
+            });
+          } else if (
+            derivedType === "SUBSCRIPTION" &&
+            appointment.subscription
+          ) {
+            // Entire subscription reschedule - mark ALL slots in ALL appointments
+            const allAppointmentIds = (
+              await tx.appointment.findMany({
+                where: { subscriptionId: appointment.subscription.id },
+                select: { id: true },
+              })
+            ).map((a) => a.id);
+
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointmentId: { in: allAppointmentIds },
+                completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+              },
+              data: { isTentative: true, completionStatus: "RESCHEDULED" },
+            });
+          } else if (derivedType === "CLASS" && appointment.class) {
+            // Entire class reschedule - mark ALL slots in ALL appointments
+            const allAppointmentIds = (
+              await tx.appointment.findMany({
+                where: { classId: appointment.class.id },
+                select: { id: true },
+              })
+            ).map((a) => a.id);
+
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointmentId: { in: allAppointmentIds },
+                completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+              },
+              data: { isTentative: true, completionStatus: "RESCHEDULED" },
+            });
+          } else {
+            // Non-multi-appointment: mark all slots in the single appointment
+            await tx.slotOfAppointment.updateMany({
+              where: {
+                appointmentId,
+                completionStatus: { in: SLOT_RESCHEDULABLE_FROM },
+              },
+              data: { isTentative: true, completionStatus: "RESCHEDULED" },
+            });
+          }
+
+          // Update status based on appointment type — CAS-guarded (B2): a
+          // reschedule racing a cancel/completion must not resurrect the
+          // booking; count 0 means the from-state was terminal → 409. The
+          // set lives in lib/booking/transitions.ts so the map is canonical.
+          let movedStatus = 1; // group events validated below
+          if (appointment.consultation) {
+            movedStatus = (
+              await tx.consultation.updateMany({
                 where: {
-                  id: appointment.subscription.id,
+                  id: appointment.consultation.id,
                   status: { in: [...RESCHEDULABLE_FROM] },
                 },
+                // requestedAt rides along deliberately: the stale-request
+                // expiry sweep keys its PENDING cohort on requestedAt, so a
+                // reschedule re-entering PENDING must refresh the clock or the
+                // next hourly run reads the ORIGINAL request age — for any
+                // booking older than 48h that is "stale", and the sweep would
+                // terminalise (EXPIRED) and fully refund a live booking the
+                // consultee is actively trying to move.
+                data: { status: "PENDING", requestedAt: new Date() },
               })
-            : (
-                await tx.subscription.updateMany({
+            ).count;
+          } else if (appointment.subscription) {
+            // #448 — a single/multi-session reschedule must NOT flip the WHOLE
+            // subscription to PENDING. Subscription has no per-session status;
+            // the affected slots already carry isTentative + RESCHEDULED, so the
+            // session-level state is captured there. Only a full-subscription
+            // reschedule (no slotIds) genuinely re-enters PENDING. The partial
+            // path still terminal-guards (count, no write): rescheduling a
+            // session of a cancelled/completed subscription stays a 409.
+            const isPartialSubscriptionReschedule = Boolean(
+              slotIds && slotIds.length > 0,
+            );
+            movedStatus = isPartialSubscriptionReschedule
+              ? await tx.subscription.count({
                   where: {
                     id: appointment.subscription.id,
                     status: { in: [...RESCHEDULABLE_FROM] },
                   },
-                  // Same clock-refresh rationale as the consultation flip
-                  // above: expirePendingSubscriptions keys on requestedAt.
-                  data: { status: "PENDING", requestedAt: new Date() },
                 })
-              ).count;
-        } else if (appointment.webinar) {
-          // Explicit allowed-from (was notIn) — robust against future enum
-          // additions (#837).
-          movedStatus = (
-            await tx.webinar.updateMany({
-              where: {
-                id: appointment.webinar.id,
-                status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
-              },
-              data: { status: "SCHEDULED" },
-            })
-          ).count;
-        } else if (appointment.class) {
-          movedStatus = (
-            await tx.class.updateMany({
-              where: {
-                id: appointment.class.id,
-                status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
-              },
-              data: { status: "SCHEDULED" },
-            })
-          ).count;
-        }
-        if (movedStatus === 0) {
-          throw Object.assign(
-            new Error(
-              "This appointment can no longer be rescheduled (already cancelled or completed).",
-            ),
-            { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
-          );
-        }
+              : (
+                  await tx.subscription.updateMany({
+                    where: {
+                      id: appointment.subscription.id,
+                      status: { in: [...RESCHEDULABLE_FROM] },
+                    },
+                    // Same clock-refresh rationale as the consultation flip
+                    // above: expirePendingSubscriptions keys on requestedAt.
+                    data: { status: "PENDING", requestedAt: new Date() },
+                  })
+                ).count;
+          } else if (appointment.webinar) {
+            // Explicit allowed-from (was notIn) — robust against future enum
+            // additions (#837).
+            movedStatus = (
+              await tx.webinar.updateMany({
+                where: {
+                  id: appointment.webinar.id,
+                  status: { in: EVENT_ALLOWED_FROM.SCHEDULED },
+                },
+                data: { status: "SCHEDULED" },
+              })
+            ).count;
+          } else if (appointment.class) {
+            movedStatus = (
+              await tx.class.updateMany({
+                where: {
+                  id: appointment.class.id,
+                  status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
+                },
+                data: { status: "SCHEDULED" },
+              })
+            ).count;
+          }
+          if (movedStatus === 0) {
+            throw Object.assign(
+              new Error(
+                "This appointment can no longer be rescheduled (already cancelled or completed).",
+              ),
+              { httpStatus: 409, code: "NOT_RESCHEDULABLE" },
+            );
+          }
 
-        // Attach the proposed replacement times, if any were given. Without
-        // this a reschedule reaches the consultant carrying LESS information
-        // than the original booking did — which slots to drop, and nothing
-        // about when the consultee actually wants them.
-        //
-        // #1065 — a stated preference opens the same record with no times on
-        // it, so "any time works, but ideally weekday mornings" survives to the
-        // allocator. It takes the openForAppointmentId reservation like any
-        // other reschedule: "at most one live reschedule per appointment" is an
-        // invariant four other places rely on, and a row that opted out of it
-        // could shadow a real proposal in the consultant's card or be picked
-        // arbitrarily by the withdraw route. The allocator closes the row when
-        // it places the replacement times (resolveConsumedPreferenceRequests),
-        // so the reservation is released the moment it stops meaning anything.
-        let rescheduleRequestId: string | null = null;
-        const hasPreference = Boolean(preferredTimeOfDay || preferredDays);
-        if (
-          (proposedSlots?.length || hasPreference) &&
-          initiatorRole &&
-          supportsProposals(derivedType)
-        ) {
+          // Attach the proposed replacement times, if any were given. Without
+          // this a reschedule reaches the consultant carrying LESS information
+          // than the original booking did — which slots to drop, and nothing
+          // about when the consultee actually wants them.
+          //
+          // #1065 — a stated preference opens the same record with no times on
+          // it, so "any time works, but ideally weekday mornings" survives to the
+          // allocator. It takes the openForAppointmentId reservation like any
+          // other reschedule: "at most one live reschedule per appointment" is an
+          // invariant four other places rely on, and a row that opted out of it
+          // could shadow a real proposal in the consultant's card or be picked
+          // arbitrarily by the withdraw route. The allocator closes the row when
+          // it places the replacement times (resolveConsumedPreferenceRequests),
+          // so the reservation is released the moment it stops meaning anything.
+          let rescheduleRequestId: string | null = null;
+          const hasPreference = Boolean(preferredTimeOfDay || preferredDays);
           if (
-            proposedSlots?.length &&
-            !proposalCountMatches(slotsToReschedule.length, proposedSlots.length)
+            (proposedSlots?.length || hasPreference) &&
+            initiatorRole &&
+            supportsProposals(derivedType)
           ) {
-            throw Object.assign(
-              new Error(
-                `Proposed ${proposedSlots.length} time(s) for ${slotsToReschedule.length} released slot(s). ` +
-                  `A reschedule replaces slots one for one; changing the count would change what was paid for.`,
-              ),
-              { httpStatus: 400, code: "PROPOSAL_COUNT_MISMATCH" },
-            );
-          }
+            if (
+              proposedSlots?.length &&
+              !proposalCountMatches(
+                slotsToReschedule.length,
+                proposedSlots.length,
+              )
+            ) {
+              throw Object.assign(
+                new Error(
+                  `Proposed ${proposedSlots.length} time(s) for ${slotsToReschedule.length} released slot(s). ` +
+                    `A reschedule replaces slots one for one; changing the count would change what was paid for.`,
+                ),
+                { httpStatus: 400, code: "PROPOSAL_COUNT_MISMATCH" },
+              );
+            }
 
-          const expiresAt = computeProposalExpiry(
-            slotsToReschedule.map((s) => new Date(s.startsAt)),
-          );
-          if (!expiresAt) {
-            // The 24-hour policy gate above should already have rejected this,
-            // so reaching here means the two rules have drifted apart.
-            throw Object.assign(
-              new Error(
-                "This session is too close to propose a new time for.",
-              ),
-              { httpStatus: 400, code: "PROPOSAL_WINDOW_CLOSED" },
+            const expiresAt = computeProposalExpiry(
+              slotsToReschedule.map((s) => new Date(s.startsAt)),
             );
-          }
+            if (!expiresAt) {
+              // The 24-hour policy gate above should already have rejected this,
+              // so reaching here means the two rules have drifted apart.
+              throw Object.assign(
+                new Error(
+                  "This session is too close to propose a new time for.",
+                ),
+                { httpStatus: 400, code: "PROPOSAL_WINDOW_CLOSED" },
+              );
+            }
 
-          const created = await tx.rescheduleRequest.create({
-            data: {
-              appointmentId,
-              initiatorRole,
-              initiatedById: session.user.id,
-              reason,
-              releasedSlotIds: slotsToReschedule.map((s) => s.id),
-              expiresAt,
-              // Reserves the appointment: the nullable @unique makes a second
-              // live reschedule a DB-level conflict rather than a race. Claimed
-              // by EVERY reschedule row, times or preference-only, because the
-              // uniqueness is what four downstream readers assume (#1065).
-              openForAppointmentId: appointmentId,
-              organizationId: appointment.organizationId ?? null,
-              preferredTimeOfDay,
-              preferredDays,
-              proposedSlots: {
-                create: (proposedSlots ?? []).map((s) => ({
-                  startsAt: s.startsAt,
-                  endsAt: s.endsAt,
-                  proposedById: session.user.id,
-                })),
+            const created = await tx.rescheduleRequest.create({
+              data: {
+                appointmentId,
+                initiatorRole,
+                initiatedById: session.user.id,
+                reason,
+                releasedSlotIds: slotsToReschedule.map((s) => s.id),
+                expiresAt,
+                // Reserves the appointment: the nullable @unique makes a second
+                // live reschedule a DB-level conflict rather than a race. Claimed
+                // by EVERY reschedule row, times or preference-only, because the
+                // uniqueness is what four downstream readers assume (#1065).
+                openForAppointmentId: appointmentId,
+                organizationId: appointment.organizationId ?? null,
+                preferredTimeOfDay,
+                preferredDays,
+                proposedSlots: {
+                  create: (proposedSlots ?? []).map((s) => ({
+                    startsAt: s.startsAt,
+                    endsAt: s.endsAt,
+                    proposedById: session.user.id,
+                  })),
+                },
               },
+              select: { id: true },
+            });
+            // Only a request carrying times can auto-confirm or be answered, and
+            // the caller reads this id as "times were sent" — so a preference-only
+            // row deliberately leaves it null.
+            if (proposedSlots?.length) rescheduleRequestId = created.id;
+          }
+
+          // #448 — count SESSIONS, not raw slots: one Appointment is one session
+          // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
+          // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
+          const sessionsAffected = new Set(
+            slotsToReschedule.map((s) => s.appointmentId),
+          ).size;
+
+          // Determine reschedule type for response — session-based (#448)
+          const getRescheduleType = () => {
+            if (
+              derivedType !== "SUBSCRIPTION" ||
+              !slotIds ||
+              slotIds.length === 0
+            ) {
+              return "entire_booking";
+            }
+            return sessionsAffected === 1
+              ? "individual_session"
+              : "multiple_sessions";
+          };
+
+          const rescheduleType = getRescheduleType();
+
+          // Captured here because an auto-confirm deletes these rows and writes
+          // new ones — by the time the notification is built, the time being
+          // given up no longer exists anywhere.
+          const releasedAt = slotsToReschedule.reduce<Date | null>(
+            (earliest, slot) =>
+              !earliest || slot.startsAt < earliest ? slot.startsAt : earliest,
+            null,
+          );
+
+          // Return detailed response
+          return {
+            success: true,
+            rescheduleType,
+            releasedAt,
+            // #448 — sessionsAffected is the user-facing count (distinct sessions);
+            // slotsAffected stays for back-compat / debugging.
+            sessionsAffected,
+            slotsAffected: slotsToReschedule.length,
+            message:
+              rescheduleType === "entire_booking"
+                ? "All sessions marked for rescheduling. Please select new times."
+                : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
+            // B14 — context for the post-tx activity log (appointment is only
+            // in scope inside this callback).
+            logContext: {
+              cpId:
+                appointment.consultation?.consultationPlan
+                  ?.consultantProfileId ??
+                appointment.subscription?.subscriptionPlan
+                  ?.consultantProfileId ??
+                appointment.webinar?.webinarPlan?.consultantProfileId ??
+                appointment.class?.classPlan?.consultantProfileId ??
+                null,
+              appointmentType: appointment.appointmentType,
+              consultationId: appointment.consultation?.id,
+              subscriptionId: appointment.subscription?.id,
+              webinarId: appointment.webinar?.id,
+              classId: appointment.class?.id,
             },
-            select: { id: true },
-          });
-          // Only a request carrying times can auto-confirm or be answered, and
-          // the caller reads this id as "times were sent" — so a preference-only
-          // row deliberately leaves it null.
-          if (proposedSlots?.length) rescheduleRequestId = created.id;
-        }
-
-        // #448 — count SESSIONS, not raw slots: one Appointment is one session
-        // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
-        // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
-        const sessionsAffected = new Set(
-          slotsToReschedule.map((s) => s.appointmentId),
-        ).size;
-
-        // Determine reschedule type for response — session-based (#448)
-        const getRescheduleType = () => {
-          if (
-            derivedType !== "SUBSCRIPTION" ||
-            !slotIds ||
-            slotIds.length === 0
-          ) {
-            return "entire_booking";
-          }
-          return sessionsAffected === 1
-            ? "individual_session"
-            : "multiple_sessions";
-        };
-
-        const rescheduleType = getRescheduleType();
-
-        // Captured here because an auto-confirm deletes these rows and writes
-        // new ones — by the time the notification is built, the time being
-        // given up no longer exists anywhere.
-        const releasedAt = slotsToReschedule.reduce<Date | null>(
-          (earliest, slot) =>
-            !earliest || slot.startsAt < earliest ? slot.startsAt : earliest,
-          null,
-        );
-
-        // Return detailed response
-        return {
-          success: true,
-          rescheduleType,
-          releasedAt,
-          // #448 — sessionsAffected is the user-facing count (distinct sessions);
-          // slotsAffected stays for back-compat / debugging.
-          sessionsAffected,
-          slotsAffected: slotsToReschedule.length,
-          message:
-            rescheduleType === "entire_booking"
-              ? "All sessions marked for rescheduling. Please select new times."
-              : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
-          // B14 — context for the post-tx activity log (appointment is only
-          // in scope inside this callback).
-          logContext: {
-            cpId:
-              appointment.consultation?.consultationPlan?.consultantProfileId ??
-              appointment.subscription?.subscriptionPlan?.consultantProfileId ??
-              appointment.webinar?.webinarPlan?.consultantProfileId ??
-              appointment.class?.classPlan?.consultantProfileId ??
-              null,
-            appointmentType: appointment.appointmentType,
-            consultationId: appointment.consultation?.id,
-            subscriptionId: appointment.subscription?.id,
-            webinarId: appointment.webinar?.id,
-            classId: appointment.class?.id,
-          },
-          rescheduleRequestId,
-        };
-      },
-      {
-        timeout: 60000, // 60 second timeout for complex transactions
-      },
+            rescheduleRequestId,
+          };
+        },
+        {
+          timeout: 60000, // 60 second timeout for complex transactions
+        },
+      ),
     );
 
     // A consultee's proposal that lands in published availability and finds both
@@ -670,7 +698,10 @@ export async function POST(
     if (result.rescheduleRequestId) {
       // Only the two 1:1 kinds carry proposals; a group event never opens one.
       const proposal = result.logContext.consultationId
-        ? { type: "consultation" as const, id: result.logContext.consultationId }
+        ? {
+            type: "consultation" as const,
+            id: result.logContext.consultationId,
+          }
         : null;
       const proposalTarget =
         proposal ??
@@ -873,7 +904,10 @@ export async function POST(
         }
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "appointments" } },
+      );
       console.error("[reschedule] Failed to send notification:", error);
     }
 
@@ -896,6 +930,19 @@ export async function POST(
       message: resultMessage(),
     });
   } catch (error) {
+    // #1319 — lock outcomes are structured, never a 500.
+    if (error instanceof BookingLockUnavailableError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
+    if (error instanceof AppointmentBusyError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     // openForAppointmentId is a nullable @unique, so a second reschedule while
     // one is still open is MEANT to fail here — that is the DB-level guarantee
     // of at most one live proposal per appointment. Without this branch the
@@ -944,7 +991,10 @@ export async function POST(
     }
 
     // Only log unexpected errors — the known error types above are normal control flow
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },
