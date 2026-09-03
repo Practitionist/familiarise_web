@@ -33,7 +33,11 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 // money), and this module loads while Next collects page data, so an
 // unconditional throw broke every deploy preview + the CI build job. The
 // guard still fires on the first real runtime boot in production, which is
-// where the customer-facing failure it exists for would happen. (The
+// where the customer-facing failure it exists for would happen. Before
+// launch the production site legitimately runs on test keys (signup is
+// closed, checkout is exercised with test cards), so
+// RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION=true downgrades the throw to a loud
+// error log; the variable must go away with the first LIVE keys. (The
 // RazorpayX payouts client carries the same guard keyed to
 // ENABLE_LIVE_PAYOUTS instead of NODE_ENV — see getRazorpayPayoutsService
 // in lib/payments/payouts/razorpay-payouts.ts.)
@@ -45,14 +49,21 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
     guardKeyId &&
     /^rzp_test_/.test(guardKeyId)
   ) {
-    throw new PaymentError(
-      `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${guardKeyId}) while NODE_ENV=production. ` +
-        "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
-        "Fix: replace RAZORPAY_KEY_ID and RAZORPAY_SECRET with the account's LIVE keys " +
-        "(dashboard.razorpay.com → Settings → API Keys → Live mode) and redeploy.",
-      "RAZORPAY_TEST_KEY_IN_PRODUCTION",
-      "RAZORPAY",
-    );
+    if (process.env.RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION === "true") {
+      console.error(
+        `[razorpay] RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION=true: the production posture is running on Razorpay TEST key ${guardKeyId}. ` +
+          "No real money can move. Delete the variable and set LIVE keys before signup opens.",
+      );
+    } else {
+      throw new PaymentError(
+        `RAZORPAY_KEY_ID is set to a Razorpay TEST key (${guardKeyId}) while NODE_ENV=production. ` +
+          "Live checkout, refunds and webhooks cannot run against Razorpay test mode. " +
+          "Fix: replace RAZORPAY_KEY_ID and RAZORPAY_SECRET with the account's LIVE keys " +
+          "(dashboard.razorpay.com → Settings → API Keys → Live mode) and redeploy.",
+        "RAZORPAY_TEST_KEY_IN_PRODUCTION",
+        "RAZORPAY",
+      );
+    }
   }
 }
 
@@ -503,12 +514,9 @@ export async function listRazorpayRefunds(
     const refundsResponse = await withRazorpaySdkTimeout(
       "payments.fetchMultipleRefund",
       () =>
-        razorpayClient.payments.fetchMultipleRefund(
-          paymentId,
-          {
-            count: limit,
-          },
-        ),
+        razorpayClient.payments.fetchMultipleRefund(paymentId, {
+          count: limit,
+        }),
     );
 
     return refundsResponse.items.map((refund) => ({
