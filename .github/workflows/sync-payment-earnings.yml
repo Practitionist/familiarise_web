@@ -23,6 +23,11 @@ jobs:
       # #476 — fail-closed cron lock: without these the job refuses to run.
       UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      # #1335 — this healer accrues through the same createEarningsFromPayment
+      # the webhook uses, so it has to see the same rate-card scope flag. Set on
+      # Netlify alone, the same booking would settle on the scoped card when the
+      # webhook caught it and on the org default when the healer did.
+      RATE_CARD_SCOPED_RESOLUTION: ${{ secrets.RATE_CARD_SCOPED_RESOLUTION }}
 
     steps:
       - name: Checkout code
