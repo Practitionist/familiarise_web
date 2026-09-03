@@ -17,9 +17,11 @@
  * Resolving the trail by that column alone would therefore return nothing. The
  * reader instead collects the appointment's own polymorphic keys — its
  * request/event/trial id, every one of its slot ids, and every reschedule
- * request id — and matches them against `entityId`, which is the column the
- * writers actually populate. The `appointmentId` arm stays in the OR so rows
- * written once the meta is wired through are picked up without a second edit.
+ * request id — and matches each of them against `entityId` PAIRED with the
+ * entity type its writer stamps, because `entityId` alone is unconstrained and
+ * would admit a same-id row of another type. The `appointmentId` arm stays in
+ * the OR so rows written once the meta is wired through are picked up without
+ * a second edit.
  *
  * Reading it is privileged-only. ADR 20
  * (`docs/enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md`)
@@ -87,7 +89,7 @@ export interface BookingTimeline {
   appointmentId: string;
   /** Newest first. */
   entries: BookingTimelineEntry[];
-  /** True when older status rows exist beyond `TIMELINE_LIMIT` and were dropped. */
+  /** True when older events exist beyond `TIMELINE_LIMIT` and were dropped. */
   truncated: boolean;
 }
 
@@ -160,23 +162,45 @@ export async function getBookingTimeline(
   });
   if (!appointment) return null;
 
-  const entityIds = [
-    appointment.consultationId,
-    appointment.subscriptionId,
-    appointment.webinarId,
-    appointment.classId,
-    appointment.trialSession?.id,
-    ...appointment.slotsOfAppointment.map((slot) => slot.id),
-    ...appointment.rescheduleRequests.map((request) => request.id),
-  ].filter((id): id is string => Boolean(id));
+  // Each key is carried with the entity type its writer stamps beside it —
+  // `lib/booking/transitions.ts` appends exactly one entity per call site, so
+  // this table is the read side of that pairing.
+  const keysByEntity: {
+    entity: BookingHistoryEntity;
+    ids: (string | null | undefined)[];
+  }[] = [
+    { entity: "CONSULTATION", ids: [appointment.consultationId] },
+    { entity: "SUBSCRIPTION", ids: [appointment.subscriptionId] },
+    { entity: "WEBINAR", ids: [appointment.webinarId] },
+    { entity: "CLASS", ids: [appointment.classId] },
+    { entity: "TRIAL", ids: [appointment.trialSession?.id] },
+    {
+      entity: "SLOT",
+      ids: appointment.slotsOfAppointment.map((slot) => slot.id),
+    },
+    {
+      entity: "RESCHEDULE_REQUEST",
+      ids: appointment.rescheduleRequests.map((request) => request.id),
+    },
+  ];
+
+  const entityMatches = keysByEntity
+    .map(({ entity, ids }) => ({
+      entity,
+      entityId: { in: ids.filter((id): id is string => Boolean(id)) },
+    }))
+    // An empty `in` matches nothing anyway; dropping the arm keeps the OR to
+    // the entities this appointment actually has.
+    .filter((match) => match.entityId.in.length > 0);
 
   const history = await prisma.bookingStatusHistory.findMany({
     where: {
       OR: [
         { appointmentId: appointment.id },
-        // Guarded: an empty `in` matches nothing, but an appointment with no
-        // sub-entity and no slots would otherwise build a pointless predicate.
-        ...(entityIds.length > 0 ? [{ entityId: { in: entityIds } }] : []),
+        // One `{ entity, entityId }` pair per source, never a bare id list:
+        // `entityId` is polymorphic and unconstrained, so a bare list would
+        // admit a row of a different type that happened to carry the same id.
+        ...entityMatches,
       ],
     },
     select: {
@@ -189,12 +213,13 @@ export async function getBookingTimeline(
       createdAt: true,
       actorUser: { select: { id: true, name: true } },
     },
-    orderBy: { createdAt: "desc" },
+    // `take` cuts the window in the database, before the merge below, so equal
+    // timestamps need a second key or the row at the cutoff changes between
+    // reads. Ascending id matches the in-memory tie-break.
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
     // One over the limit, so "there is more" is measured rather than guessed.
     take: TIMELINE_LIMIT + 1,
   });
-
-  const truncated = history.length > TIMELINE_LIMIT;
 
   const statusEntries: BookingTimelineEntry[] = history
     .slice(0, TIMELINE_LIMIT)
@@ -231,12 +256,19 @@ export async function getBookingTimeline(
       resolvedAt: request.resolvedAt ? request.resolvedAt.toISOString() : null,
     }));
 
-  const entries = [...statusEntries, ...rescheduleEntries]
-    .sort((a, b) => {
-      const delta = Date.parse(b.createdAt) - Date.parse(a.createdAt);
-      return delta !== 0 ? delta : compareIds(a.id, b.id);
-    })
-    .slice(0, TIMELINE_LIMIT);
+  const merged = [...statusEntries, ...rescheduleEntries].sort((a, b) => {
+    const delta = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    return delta !== 0 ? delta : compareIds(a.id, b.id);
+  });
 
-  return { appointmentId: appointment.id, entries, truncated };
+  // Measured on both sources: the status log over-fetches by one, and the
+  // proposals merged into it can push the list past the limit on their own.
+  const truncated =
+    history.length > TIMELINE_LIMIT || merged.length > TIMELINE_LIMIT;
+
+  return {
+    appointmentId: appointment.id,
+    entries: merged.slice(0, TIMELINE_LIMIT),
+    truncated,
+  };
 }

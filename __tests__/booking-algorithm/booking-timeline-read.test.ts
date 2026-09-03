@@ -122,10 +122,39 @@ describe("getBookingTimeline", () => {
 
     // The trail is resolved by entityId, not by the (always NULL) appointmentId
     // column — the SLOT and RESCHEDULE_REQUEST rows only surface because of it.
-    const where = historyFindMany.mock.calls[0][0].where;
-    expect(where.OR[1].entityId.in).toEqual(
-      expect.arrayContaining(["consult-1", "slot-1", "resched-1"]),
+    // Each id is paired with the entity its writer stamps, so a same-id row of
+    // another type cannot enter another appointment's trail.
+    const call = historyFindMany.mock.calls[0][0];
+    expect(call.where.OR).toEqual([
+      { appointmentId: "appt-1" },
+      { entity: "CONSULTATION", entityId: { in: ["consult-1"] } },
+      { entity: "SLOT", entityId: { in: ["slot-1"] } },
+      { entity: "RESCHEDULE_REQUEST", entityId: { in: ["resched-1"] } },
+    ]);
+    // The window is cut in the database, so equal timestamps need a second key.
+    expect(call.orderBy).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
+  });
+
+  it("flags truncation when the merge overflows the limit", async () => {
+    // Exactly the limit in status rows, so the over-fetch check alone sees
+    // nothing: the proposal merged in is what pushes an event off the end.
+    historyFindMany.mockResolvedValue(
+      Array.from({ length: 200 }, (_, index) => ({
+        id: `hist-${String(index).padStart(3, "0")}`,
+        entity: "SLOT",
+        entityId: "slot-1",
+        fromStatus: "SCHEDULED",
+        toStatus: "COMPLETED",
+        reason: null,
+        createdAt: new Date(Date.UTC(2026, 8, 2, 13, 0, index)),
+        actorUser: null,
+      })),
     );
+
+    const timeline = await getBookingTimeline("appt-1", PRIVILEGED);
+
+    expect(timeline!.entries).toHaveLength(200);
+    expect(timeline!.truncated).toBe(true);
   });
 
   it("never selects an actor's email", async () => {
