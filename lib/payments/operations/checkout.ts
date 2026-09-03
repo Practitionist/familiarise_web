@@ -89,6 +89,7 @@ import {
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
 import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import { mintConsumerInvoice } from "@/lib/payments/billing/consumer-invoice";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -824,6 +825,9 @@ export async function calculateAmountAndValidate(
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
+      // #1365 — the buyer's remembered GST state, resolved in the same lookup
+      // that resolves the consultee so the invoice mint needs no extra read.
+      consulteeBillingStateCode: user.consulteeProfile.billingStateCode,
       creditsApplied,
       buyerCountry,
       isInternational,
@@ -2574,6 +2578,7 @@ export async function handleCheckout(
       currency,
       discountCodeId,
       consulteeProfileId,
+      consulteeBillingStateCode,
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
@@ -3022,11 +3027,32 @@ export async function handleCheckout(
                 isInternational,
                 displayCurrencyAtCheckout,
                 exchangeRateAtCheckout,
+                // #1365 — GST place of supply for the tax invoice: what the
+                // buyer declared here, else what their profile already holds,
+                // else null (the s.12(2)(b) supplier-state default).
+                consumerStateCode:
+                  validatedData.consumerStateCode ??
+                  consulteeBillingStateCode ??
+                  null,
                 // Enterprise (Arch 4): org tag for reporting / billing.
                 organizationId,
                 billingAccountId,
               },
             });
+
+            // #1365 — remember a newly declared billing state on the profile so
+            // a repeat buyer is never asked for it twice. Same transaction as
+            // the Payment: the declaration and the supply it applies to are one
+            // fact. updateMany, so a missing profile is a no-op, not a throw.
+            if (
+              validatedData.consumerStateCode &&
+              validatedData.consumerStateCode !== consulteeBillingStateCode
+            ) {
+              await tx.consulteeProfile.updateMany({
+                where: { userId },
+                data: { billingStateCode: validatedData.consumerStateCode },
+              });
+            }
 
             // #1319 A9 — stamp the funding Payment on the participant rows and,
             // when no gateway leg follows (mock / zero-amount / org-sponsored),
@@ -3665,6 +3691,32 @@ export async function handleCheckout(
           console.error(
             `⚠️ Failed to create earnings for mock payment:`,
             earningsError,
+          );
+        }
+
+        // #1365 — these payments never see a capture webhook, so the tax
+        // invoice has to be minted here too. Org-sponsored payments no-op
+        // inside the minter by design; they are invoiced on the org series.
+        try {
+          const committedPayment = await prisma.payment.findUnique({
+            where: { paymentIntent: paymentResponse!.id },
+            select: { id: true },
+          });
+          if (committedPayment) {
+            await prisma.$transaction((tx) =>
+              mintConsumerInvoice(tx, { paymentId: committedPayment.id }),
+            );
+          }
+        } catch (invoiceError) {
+          // A document is never worth failing a confirmed booking for; the
+          // monthly register export heals anything missed.
+          reportSentryError(invoiceError, {
+            subsystem: "payments",
+            level: "warning",
+          });
+          console.error(
+            `⚠️ Failed to mint the consumer tax invoice for ${paymentResponse!.id}:`,
+            invoiceError,
           );
         }
 

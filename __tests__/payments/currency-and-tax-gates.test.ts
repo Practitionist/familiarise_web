@@ -26,6 +26,7 @@
 
 import { detectBuyerCountry } from "../../lib/payments/tax/buyer-country";
 import { validatePlanCurrency } from "../../lib/payments/validation/currency-guards";
+import { deriveConsumerInvoiceTax } from "../../lib/payments/billing/consumer-invoice";
 
 describe("buyer country never zero-rates on a browser locale", () => {
   it("ignores Accept-Language entirely, even when it names a country", () => {
@@ -107,5 +108,63 @@ describe("the planner cannot create an unsettleable plan", () => {
     const match = src.match(/const DEFAULT_CURRENCIES = (\[[^\]]*\])/);
     expect(match).not.toBeNull();
     expect(JSON.parse(match![1].replace(/'/g, '"'))).toEqual(["INR"]);
+  });
+});
+
+/**
+ * 3. Place of supply for a consumer invoice (#1365). Sec 12(2)(b) IGST Act
+ *    puts a B2C supply at the SUPPLIER's location when the recipient's
+ *    address is not on record — the opposite of the B2B fallback, which
+ *    reports IGST on an unknown buyer state as an audit signal. Getting that
+ *    backwards files the tax under the wrong heads in the wrong state.
+ */
+describe("B2C place of supply (s.12(2)(b))", () => {
+  // ₹1,000 + 18% GST, tax-inclusive.
+  const CHARGED = { totalPaise: 118_000, taxAmountPaise: 18_000 };
+
+  it("splits CGST and SGST when the buyer is in the supplier's state", () => {
+    const tax = deriveConsumerInvoiceTax({
+      ...CHARGED,
+      buyerStateCode: "29",
+      supplierStateCode: "KA",
+      buyerCountry: "IN",
+    });
+    expect(tax.igstPaise).toBe(0);
+    expect(tax.cgstPaise + tax.sgstPaise).toBe(CHARGED.taxAmountPaise);
+    expect(tax.placeOfSupply).toBe("29");
+    expect(tax.placeOfSupplySource).toBe("DECLARED_AT_CHECKOUT");
+    expect(
+      tax.taxableValuePaise + tax.cgstPaise + tax.sgstPaise + tax.igstPaise,
+    ).toBe(tax.totalPaise);
+  });
+
+  it("charges IGST only when the buyer is in another state", () => {
+    const tax = deriveConsumerInvoiceTax({
+      ...CHARGED,
+      buyerStateCode: "27",
+      supplierStateCode: "KA",
+      buyerCountry: "IN",
+    });
+    expect(tax.igstPaise).toBe(CHARGED.taxAmountPaise);
+    expect(tax.cgstPaise).toBe(0);
+    expect(tax.sgstPaise).toBe(0);
+    expect(tax.placeOfSupply).toBe("27");
+    expect(tax.taxableValuePaise + tax.igstPaise).toBe(tax.totalPaise);
+  });
+
+  it("falls back to the supplier's own state when no address is on record", () => {
+    const tax = deriveConsumerInvoiceTax({
+      ...CHARGED,
+      buyerStateCode: null,
+      supplierStateCode: "KA",
+      buyerCountry: "IN",
+    });
+    expect(tax.placeOfSupplySource).toBe("SUPPLIER_DEFAULT_12_2_B");
+    expect(tax.igstPaise).toBe(0);
+    expect(tax.placeOfSupply).toBe("29");
+    expect(tax.cgstPaise + tax.sgstPaise).toBe(CHARGED.taxAmountPaise);
+    expect(
+      tax.taxableValuePaise + tax.cgstPaise + tax.sgstPaise + tax.igstPaise,
+    ).toBe(tax.totalPaise);
   });
 });

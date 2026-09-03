@@ -14,6 +14,8 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 | 02  | [Setup](./02-setup.md)                                   | Payment gateway configuration, environment variables    |
 | 03  | [Status Enums Reference](./03-status-enums-reference.md) | All payment, refund, dispute, and booking status values |
 | 04  | [Abandoned Solutions](./04-abandoned-solutions.md)       | Previous approaches and why they were abandoned         |
+| 05  | [B2C ↔ B2B Funding Seam](./05-b2c-b2b-funding-seam.md)   | How org money flows through a consumer-facing checkout  |
+| 06  | [B2C Tax Invoices](./06-b2c-tax-invoice.md)              | Consumer tax invoices, credit notes, outward register   |
 
 ## Subsections
 

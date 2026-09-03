@@ -24,6 +24,10 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import type { Currency } from "@prisma/client";
+// #1365 — the consumer documents render buyer-supplied names and addresses,
+// which Helvetica cannot draw in Devanagari. Registration lives in the invoice
+// renderer so both document families share one registration.
+import { BODY_FONT } from "./invoice-renderer";
 
 export type CreditNotePdfData = {
   creditNoteNumber: string;
@@ -253,4 +257,156 @@ export async function renderOrgCreditNotePdf(
   data: CreditNotePdfData,
 ): Promise<Buffer> {
   return await renderToBuffer(<OrgCreditNoteDocument data={data} />);
+}
+
+// ============================================================================
+// Consumer (B2C ConsumerCreditNote) — #1365
+// ============================================================================
+
+export type ConsumerCreditNotePdfData = {
+  creditNoteNumber: string;
+  issuedAt: Date;
+  reason?: string | null;
+  currency: Currency;
+  taxableValuePaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  totalPaise: number;
+  /** s.34(1) requires the credit note to reference the invoice it adjusts. */
+  originalInvoiceNumber: string;
+  originalInvoiceDate: Date;
+  placeOfSupply: string | null;
+  sacCode: string;
+  supplier: {
+    name: string;
+    gstin: string;
+    address: string;
+    stateCode: string;
+  };
+  buyer: {
+    name: string;
+    email: string;
+    address?: string | null;
+    stateCode?: string | null;
+  };
+};
+
+export function ConsumerCreditNoteDocument({
+  data,
+}: {
+  readonly data: ConsumerCreditNotePdfData;
+}) {
+  return (
+    <Document>
+      <Page size="A4" style={styles.page}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Tax Credit Note</Text>
+            <Text style={styles.subtitle}>
+              Issued under Section 34 of the CGST Act, 2017
+              {data.reason ? ` — ${data.reason}` : ""}
+            </Text>
+          </View>
+          <View style={{ alignItems: "flex-end" }}>
+            <Text style={{ fontWeight: "bold" }}>{data.creditNoteNumber}</Text>
+            <Text>Date: {fmt(data.issuedAt)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.box}>
+          <Text style={styles.sectionTitle}>Supplier</Text>
+          <Text>{data.supplier.name}</Text>
+          <Text>GSTIN: {data.supplier.gstin}</Text>
+          <Text>{data.supplier.address}</Text>
+          <Text>State code: {data.supplier.stateCode}</Text>
+          <Text style={styles.sectionTitle}>Recipient</Text>
+          {/* Buyer-supplied text may be Devanagari; Helvetica has no coverage. */}
+          <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.name}</Text>
+          <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.email}</Text>
+          {data.buyer.address ? (
+            <Text style={{ fontFamily: BODY_FONT }}>{data.buyer.address}</Text>
+          ) : null}
+          {data.buyer.stateCode ? (
+            <Text>State code: {data.buyer.stateCode}</Text>
+          ) : null}
+        </View>
+
+        <Text style={styles.sectionTitle}>
+          Original document reference — Sec 34(1)
+        </Text>
+        <View style={styles.box}>
+          <Kv label="Invoice number" value={data.originalInvoiceNumber} />
+          <Kv label="Invoice date" value={fmt(data.originalInvoiceDate)} />
+          <Kv label="Place of supply" value={data.placeOfSupply ?? "—"} />
+          <Kv label="SAC" value={data.sacCode} />
+        </View>
+
+        <Text style={styles.sectionTitle}>Adjustment</Text>
+        <View>
+          <View style={styles.tableHeader}>
+            <Text style={styles.colDesc}>Description</Text>
+            <Text style={styles.colNum}>Amount</Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.colDesc}>Taxable value reduced</Text>
+            <Text style={styles.colNum}>
+              {formatMoney(data.taxableValuePaise, data.currency)}
+            </Text>
+          </View>
+          {data.igstPaise > 0 && (
+            <View style={styles.row}>
+              <Text style={styles.colDesc}>IGST reversed</Text>
+              <Text style={styles.colNum}>
+                {formatMoney(data.igstPaise, data.currency)}
+              </Text>
+            </View>
+          )}
+          {data.cgstPaise > 0 && (
+            <View style={styles.row}>
+              <Text style={styles.colDesc}>CGST reversed</Text>
+              <Text style={styles.colNum}>
+                {formatMoney(data.cgstPaise, data.currency)}
+              </Text>
+            </View>
+          )}
+          {data.sgstPaise > 0 && (
+            <View style={styles.row}>
+              <Text style={styles.colDesc}>SGST reversed</Text>
+              <Text style={styles.colNum}>
+                {formatMoney(data.sgstPaise, data.currency)}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.totalsRow}>
+          <View style={styles.totalsBox}>
+            <View style={styles.totalLine}>
+              <Text>Total credit to recipient</Text>
+              <Text style={styles.grandTotal}>
+                {formatMoney(data.totalPaise, data.currency)}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <Text style={styles.footer}>
+          System-generated credit note — does not require a signature per
+          Notification No. 61/2020-Central Tax. This document reduces the
+          supplier&apos;s output tax liability corresponding to the referenced
+          invoice.
+        </Text>
+      </Page>
+    </Document>
+  );
+}
+
+export async function renderConsumerCreditNotePdf(
+  data: ConsumerCreditNotePdfData,
+): Promise<Buffer> {
+  const buffer = await renderToBuffer(
+    <ConsumerCreditNoteDocument data={data} />,
+  );
+  return Buffer.from(buffer);
 }

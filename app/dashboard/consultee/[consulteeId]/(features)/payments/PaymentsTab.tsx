@@ -63,6 +63,12 @@ interface PaymentItem {
   refundedPaise: number;
   /** Server-derived: REFUNDED | PARTIALLY_REFUNDED | PaymentStatus. */
   displayStatus: string;
+  /** #1365 — the statutory tax invoice, when one was issued for this payment. */
+  consumerInvoice: {
+    id: string;
+    invoiceNumber: string;
+    issuedAt: string;
+  } | null;
   receiptUrl: string | null;
   expiresAt: string | null;
   createdAt: string;
@@ -389,6 +395,26 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           </ul>
         );
       },
+    },
+    {
+      key: "invoice",
+      header: "Tax invoice",
+      // #1365 — org-sponsored bookings are invoiced to the organization, so an
+      // empty cell here is the correct answer, not a missing document.
+      cell: (payment) =>
+        payment.consumerInvoice ? (
+          <a
+            href={`/api/payments/${payment.id}/invoice/pdf`}
+            className="whitespace-nowrap text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+          >
+            Download
+            <span className="ml-1.5 text-xs text-muted-foreground">
+              {payment.consumerInvoice.invoiceNumber}
+            </span>
+          </a>
+        ) : (
+          <span className="text-muted-foreground/70">&mdash;</span>
+        ),
     },
     {
       key: "expires",

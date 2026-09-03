@@ -78,8 +78,9 @@ export async function GET(
           ? { organizationId: scopedOrgId }
           : {};
 
-    // Per-Payment invoices stay out of this response since the v0 lockdown
-    // (#768) — v1.1 re-introduces a per-Payment invoice flow.
+    // #1365 — the per-Payment tax invoice is back. The v0 lockdown (#768) took
+    // it out; the platform bills as principal supplier, so a consumer charged
+    // 18% GST is owed the document and needs to be able to find it here.
     const [payments, credits, creditAgg, creditUsages] = await Promise.all([
       // All payments for this user, scoped to the selected org context
       prisma.payment.findMany({
@@ -129,6 +130,10 @@ export async function GET(
               createdAt: true,
             },
             orderBy: { createdAt: "desc" },
+          },
+          // #1365 — number + date only; the PDF is behind the signed-URL route.
+          consumerInvoice: {
+            select: { id: true, invoiceNumber: true, issuedAt: true },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -229,6 +234,7 @@ export async function GET(
         refunds,
         refundedPaise,
         displayStatus,
+        consumerInvoice: p.consumerInvoice,
         receiptUrl: p.receiptUrl,
         expiresAt: p.expiresAt,
         createdAt: p.createdAt,

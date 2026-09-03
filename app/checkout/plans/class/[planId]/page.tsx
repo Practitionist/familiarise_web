@@ -33,6 +33,7 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { BillingStateSelect } from "@/app/checkout/components/BillingStateSelect";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
@@ -111,6 +112,15 @@ export default function ClassCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  // #1365 — GST place of supply. `null` is the statutory s.12(2)(b) default,
+  // so this never blocks checkout; it is pre-filled from the profile once the
+  // checkout context loads and the buyer has not answered on this page yet.
+  const [billingStateCode, setBillingStateCode] = useState<string | null>(null);
+  const [billingStateTouched, setBillingStateTouched] = useState(false);
+  useEffect(() => {
+    if (billingStateTouched) return;
+    setBillingStateCode(checkoutTaxContext.billingStateCode);
+  }, [checkoutTaxContext.billingStateCode, billingStateTouched]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
@@ -264,6 +274,7 @@ export default function ClassCheckoutPage({
             ? false
             : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
+          consumerStateCode: billingStateCode ?? undefined,
         });
 
         await handleUnifiedCheckout(
@@ -327,6 +338,7 @@ export default function ClassCheckoutPage({
       appliedDiscount,
       useReferralCredits,
       selectedOrganizationId,
+      billingStateCode,
       validatedSearchParams,
       currency,
       availableClassId,
@@ -605,6 +617,14 @@ export default function ClassCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
+        <BillingStateSelect
+          value={billingStateCode}
+          onChange={(code) => {
+            setBillingStateTouched(true);
+            setBillingStateCode(code);
+          }}
+        />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -830,6 +850,7 @@ export default function ClassCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            consumerStateCode: billingStateCode ?? undefined,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -848,6 +869,7 @@ export default function ClassCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            consumerStateCode: billingStateCode ?? undefined,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}

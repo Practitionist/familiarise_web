@@ -25,6 +25,7 @@ import {
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { BillingStateSelect } from "@/app/checkout/components/BillingStateSelect";
 import { useSession } from "@/lib/auth-client";
 import {
   ConsultantProfile,
@@ -102,6 +103,15 @@ export default function ConsultationCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  // #1365 — GST place of supply. `null` is the statutory s.12(2)(b) default,
+  // so this never blocks checkout; it is pre-filled from the profile once the
+  // checkout context loads and the buyer has not answered on this page yet.
+  const [billingStateCode, setBillingStateCode] = useState<string | null>(null);
+  const [billingStateTouched, setBillingStateTouched] = useState(false);
+  useEffect(() => {
+    if (billingStateTouched) return;
+    setBillingStateCode(checkoutTaxContext.billingStateCode);
+  }, [checkoutTaxContext.billingStateCode, billingStateTouched]);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
@@ -317,6 +327,7 @@ export default function ConsultationCheckoutPage({
             ? false
             : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
+          consumerStateCode: billingStateCode ?? undefined,
         });
 
         // Make single API call - backend decides dev vs prod flow
@@ -394,6 +405,7 @@ export default function ConsultationCheckoutPage({
       appliedDiscount,
       useReferralCredits,
       selectedOrganizationId,
+      billingStateCode,
       validatedSearchParams,
       currency,
       handleApiError,
@@ -684,6 +696,14 @@ export default function ConsultationCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
+        <BillingStateSelect
+          value={billingStateCode}
+          onChange={(code) => {
+            setBillingStateTouched(true);
+            setBillingStateCode(code);
+          }}
+        />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -900,6 +920,7 @@ export default function ConsultationCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            consumerStateCode: billingStateCode ?? undefined,
                           })}
                           onPaymentSuccess={(response: {
                             razorpay_payment_id?: string;
@@ -949,6 +970,7 @@ export default function ConsultationCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            consumerStateCode: billingStateCode ?? undefined,
                           })}
                           onPaymentSuccess={(response: {
                             message?: string;

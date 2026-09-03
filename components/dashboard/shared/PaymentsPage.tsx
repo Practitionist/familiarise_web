@@ -158,6 +158,23 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
         ),
     },
     {
+      key: "invoice",
+      header: "Invoice",
+      // #1365 — org-funded payments are invoiced to the organization, so an
+      // empty cell here is expected rather than a gap to chase.
+      cell: (payment) =>
+        payment.consumerInvoice ? (
+          <a
+            href={`/api/payments/${payment.id}/invoice/pdf`}
+            className="text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+          >
+            {payment.consumerInvoice.invoiceNumber}
+          </a>
+        ) : (
+          <span className="text-muted-foreground/70">—</span>
+        ),
+    },
+    {
       key: "date",
       header: "Date",
       cell: (payment) => (

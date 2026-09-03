@@ -76,6 +76,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             createdAt: true,
           },
         },
+        // #1365 — the statutory B2C tax invoice for this payment, if one was
+        // issued. Number + date only; the document itself is behind the
+        // signed-URL download route.
+        consumerInvoice: {
+          select: { id: true, invoiceNumber: true, issuedAt: true },
+        },
       },
     });
 
