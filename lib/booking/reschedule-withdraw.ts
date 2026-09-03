@@ -184,22 +184,30 @@ export async function withdrawRescheduleRequest(args: {
             appointmentType: true,
             consultation: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 consultationPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
             },
             subscription: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 subscriptionPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
@@ -235,11 +243,14 @@ export async function withdrawRescheduleRequest(args: {
       );
     }
   } catch (notifyErr) {
-    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
-      subsystem: "bookings",
-      op: "reschedule-withdraw-notify",
-      expected: true,
-    });
+    reportSentryError(
+      notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+      {
+        subsystem: "bookings",
+        op: "reschedule-withdraw-notify",
+        expected: true,
+      },
+    );
   }
 
   return { withdrawn: true };
