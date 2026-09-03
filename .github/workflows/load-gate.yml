@@ -167,17 +167,23 @@ jobs:
       - name: Apply fixture overrides
         if: inputs.fixture_overrides != ''
         # Read through an env var, never interpolated into the script: the
-        # input is typed by whoever dispatches the run (S7630).
+        # input is typed by whoever dispatches the run (S7630). The lines go to
+        # a file that each fixture-reading step sources, NOT to $GITHUB_ENV: a
+        # job-level `env:` entry beats $GITHUB_ENV for the same name, so an
+        # override of any fixture declared above was silently ignored.
         env:
           FIXTURE_OVERRIDES: ${{ inputs.fixture_overrides }}
         run: |
+          : > "${RUNNER_TEMP}/load-gate-overrides.env"
           while IFS= read -r line; do
             [ -z "$line" ] && continue
             case "$line" in \#*) continue ;; esac
-            case "$line" in
-              *=*) echo "$line" >> "$GITHUB_ENV" ;;
-              *) echo "::warning::ignoring malformed override: $line" ;;
-            esac
+            if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+              echo "$line" >> "${RUNNER_TEMP}/load-gate-overrides.env"
+              echo "override applied: ${line%%=*}"
+            else
+              echo "::warning::ignoring malformed override: $line"
+            fi
           done <<< "$FIXTURE_OVERRIDES"
 
       - name: Pin the booking window for the whole run
@@ -189,6 +195,7 @@ jobs:
         # window is resolved ONCE here and handed to all three as a step-level
         # env var, which beats the job-level default.
         run: |
+          . load-tests/booking/apply-overrides.sh
           if [ -n "${WINDOW_START}" ]; then
             resolved="${WINDOW_START}"
           else
@@ -209,6 +216,7 @@ jobs:
         env:
           WINDOW_START: ${{ steps.window.outputs.value }}
         run: |
+          . load-tests/booking/apply-overrides.sh
           k6 run \
             --summary-trend-stats "avg,med,p(95),p(99),max" \
             load-tests/booking/scenarios.js
@@ -222,7 +230,9 @@ jobs:
         if: always()
         env:
           WINDOW_START: ${{ steps.window.outputs.value }}
-        run: k6 run load-tests/booking/verify-integrity.js
+        run: |
+          . load-tests/booking/apply-overrides.sh
+          k6 run load-tests/booking/verify-integrity.js
         continue-on-error: true
 
       - name: Clean up what the run created
@@ -231,7 +241,9 @@ jobs:
         # The target shares the production database. This is not optional.
         env:
           WINDOW_START: ${{ steps.window.outputs.value }}
-        run: k6 run load-tests/booking/cleanup.js
+        run: |
+          . load-tests/booking/apply-overrides.sh
+          k6 run load-tests/booking/cleanup.js
 
       - name: Summarise
         if: always()
