@@ -100,15 +100,21 @@ $$ LANGUAGE plpgsql;
 -- SPLIT
 -- #1205-triage — a leg RE-PARENTING must validate BOTH payments: moving one
 -- leg from payment A to B can leave A under-funded while B validates clean.
+--
+-- The column references MUST stay double-quoted. PL/pgSQL case-folds a bare
+-- `NEW.paymentId` to `paymentid`, which is not a field on a Prisma-generated
+-- camelCase table, so every leg write died at COMMIT on `record "new" has no
+-- field "paymentid"` — the sum was never reached and the guard below never
+-- actually guarded anything.
 CREATE OR REPLACE FUNCTION assert_payment_legs_on_leg_write() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    PERFORM assert_payment_legs_ok(OLD.paymentId);
-  ELSIF TG_OP = 'UPDATE' AND NEW.paymentId IS DISTINCT FROM OLD.paymentId THEN
-    PERFORM assert_payment_legs_ok(OLD.paymentId);
-    PERFORM assert_payment_legs_ok(NEW.paymentId);
+    PERFORM assert_payment_legs_ok(OLD."paymentId");
+  ELSIF TG_OP = 'UPDATE' AND NEW."paymentId" IS DISTINCT FROM OLD."paymentId" THEN
+    PERFORM assert_payment_legs_ok(OLD."paymentId");
+    PERFORM assert_payment_legs_ok(NEW."paymentId");
   ELSE
-    PERFORM assert_payment_legs_ok(NEW.paymentId);
+    PERFORM assert_payment_legs_ok(NEW."paymentId");
   END IF;
   RETURN NULL;
 END;
