@@ -14,7 +14,10 @@ import {
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
-import { transitionTrialSession } from "@/lib/booking/transitions";
+import {
+  appendCreationHistory,
+  transitionTrialSession,
+} from "@/lib/booking/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
@@ -1837,12 +1840,13 @@ export async function handleConsultationCheckout(
   );
 
   // Create consultation
+  const initialStatus = skipPayment
+    ? AppointmentStatus.APPROVED
+    : AppointmentStatus.PENDING;
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: plan.id,
-      status: skipPayment
-        ? AppointmentStatus.APPROVED
-        : AppointmentStatus.PENDING,
+      status: initialStatus,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -1885,6 +1889,16 @@ export async function handleConsultationCheckout(
       { userId: consulteeUserId, role: "CONSULTEE" },
     ],
     { organizationId, status: skipPayment ? "CONFIRMED" : "HELD" },
+  );
+  // #1333 — the opening timeline row, written here rather than left to the
+  // first CAS so a booking that has not moved yet still has a story. Same tx as
+  // the create: a consultation that exists always has one.
+  await appendCreationHistory(
+    tx,
+    "CONSULTATION",
+    consultation.id,
+    initialStatus,
+    { appointmentId: appointment.id, actorUserId: userId, organizationId },
   );
 
   return { appointment, plan, amount: plan.price };
@@ -2028,6 +2042,19 @@ export async function handleSubscriptionCheckout(
       { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
     );
   }
+  // #1333 — see handleConsultationCheckout. Placed after the buyer lookup so
+  // the opening row carries the same attribution the participant rows do.
+  await appendCreationHistory(
+    tx,
+    "SUBSCRIPTION",
+    subscription.id,
+    AppointmentStatus.PENDING,
+    {
+      appointmentId: appointment.id,
+      actorUserId: consulteeUser?.userId ?? null,
+      organizationId,
+    },
+  );
 
   return {
     appointment,
