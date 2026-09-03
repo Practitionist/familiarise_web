@@ -76,6 +76,12 @@ Two TDS files, two contracts, partial overlap (re-verified against code 2026-06-
 
 The deprecated `tds-service.ts` consultant path historically *skipped* deduction for non-residents (should pivot to §195/§393(2) + DTAA, not skip). The canonical `lib/compliance/tds.ts` handles NON_RESIDENT via the DTAA-lookup branch; the gap is only on the deprecated path, which is why consolidation onto the canonical lib (#778 §E) is the fix.
 
+### Both rails now write `TDSRecord` (#1354)
+
+`TDSRecord` was a consultant-only table, which meant that host-organisation withholding was computed, deducted from the disbursement and posted to `TDS_PAYABLE` without ever producing a filing row. Organisation payouts now write the same audit row that consultant payouts do, at the moment the payout reaches `COMPLETED` and never earlier, so the quarterly draft covers every deduction the platform actually made.
+
+The table carries both rails at once. `consultantProfileId` and `organizationId` are each nullable and exactly one is set on any row, which `tds_record_deductee_xor` enforces in the database; a second constraint, `tds_record_payout_rail_matches`, prevents a row from citing the payout of the rail it does not belong to. The org rail has its own unique key over `(organizationId, financialYear, quarter, orgPayoutId, isReversal)` rather than sharing the consultant one, because Postgres treats NULLs as distinct and a shared key would silently dedupe nothing. `TdsAdjustment` is widened the same way, so a reversal on either rail produces the revised-statement line the return generator exports.
+
 ## Gap
 
 Re-verified against code 2026-06-05. Several rows from the original audit are now **fixed** (struck) because the canonical lib was corrected under #771/#737/#738; the live gaps are the consultant-path consolidation, the 194J split, and the §393 code mapping.

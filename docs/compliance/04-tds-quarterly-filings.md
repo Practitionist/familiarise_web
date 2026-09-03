@@ -41,7 +41,7 @@ Three related deliverables to the income-tax department after every quarter's TD
 
 ### B2B (org-sponsored)
 
-- **Applies** for org → consultant payouts where TDS was withheld. `OrganizationPayout.tdsAmountPaise` is the source of truth.
+- **Applies** for org → consultant payouts where TDS was withheld. `OrganizationPayout.tdsAmountPaise` records what was withheld from the disbursement, and since #1354 the payout also writes a `TDSRecord` when it completes, so the return is built from `TDSRecord` on both rails rather than from the payout tables.
 - Resident consultant → 26Q. Non-resident → 27Q.
 - Form 16A is issued by the **deductor** (the platform) to the consultant, even though the org "paid" via its wallet/invoice. The platform is the legal deductor because we run the payout.
 
@@ -64,8 +64,25 @@ Three related deliverables to the income-tax department after every quarter's TD
 | FVU file generator | **Missing** | 🔴 |
 | 27Q file generator (non-resident) | **Missing** | 🔴 |
 | Form 16A PDF | **Missing** | 🔴 |
-| Quarterly cron / dashboard | **Missing** | 🔴 |
+| `jobs/compliance/tds-26q-draft-export.ts` | Quarterly draft builder: aggregates the quarter's `TDSRecord` rows on both rails, prints the masked draft, writes the full-PAN CSV to storage | ✅ |
+| `.github/workflows/tds-return-draft.yml` | Runs that job at 01:20 UTC on the 5th of January, April, July and October, and on manual dispatch | ✅ |
+| `app/api/admin/compliance/tds-return/route.ts` | ADMIN/STAFF hop that exchanges an FY and quarter for a short-lived signed URL to the CSV | ✅ |
+| Quarterly dashboard | **Missing** | 🔴 |
 | TRACES / NSDL e-filing integration | **Missing** | 🔴 |
+
+## Running the quarterly draft
+
+The draft is produced by the **TDS quarterly return draft** workflow (`.github/workflows/tds-return-draft.yml`). It runs on its own schedule at 01:20 UTC on the fifth of January, April, July and October, which is 06:50 IST on the fifth day after each fiscal quarter closes, and it can also be dispatched by hand from the Actions tab. A manual dispatch takes two optional inputs, `financialYear` in the `2026-27` form and `quarter` as a digit from 1 to 4; leaving both blank builds the quarter that contains today, which is what the scheduled run does. A malformed input fails the job rather than emitting a mislabelled compliance artifact.
+
+The job produces two things. The first is a **masked** draft, printed as JSON in the workflow log and safe to read, copy and quote: it carries each deductee's type, name, section, §393 payment code, credited amount and net TDS, together with the last four characters of their PAN and never more. The second is the **full-PAN CSV** the chartered accountant actually imports, written to the private Supabase bucket `org-invoices` at `compliance/tds/<FY>-Q<quarter>.csv`. The job logs only that path. There is deliberately no Actions artifact upload, because an artifact is downloadable by anyone with repository read access and this file is the one place a decrypted PAN exists outside the database.
+
+To fetch the CSV, an admin or staff user calls `GET /api/admin/compliance/tds-return?financialYear=2026-27&quarter=2`. The route answers 404 when no CSV exists for that quarter, which means the workflow has not been run for it yet, and otherwise redirects to a signed URL that expires after ten minutes. That short window is intentional: a URL left in a browser history or a chat message is dead long before anyone else finds it.
+
+The CSV has one row per deductee and section, with the columns `deductee_type`, `pan`, `deductee_name`, `section`, `payment_code`, `amount_credited_paise`, `tds_deducted_paise`, `quarter`, `financial_year` and `is_reversal`. A deductee whose withholding was reversed during the quarter gets a second row with `is_reversal` set to true, a zero credited amount and the negative reversal figure, because the portal treats a reversal as an adjustment against a previously reported credit rather than as a new credit of its own. Values are escaped against spreadsheet formula injection, so a negative amount arrives prefixed with an apostrophe.
+
+**The FVU step is still a human one.** The CSV is an input to the official NSDL Return Preparation Utility, not a replacement for it: nothing in this pipeline generates or validates an FVU file, and nothing files anything with TRACES. The workflow also deliberately does not stamp `reportedInForm26Q`, so re-running it for the same quarter is safe and idempotent, and the flag continues to mean "a human filed this" rather than "a job exported this".
+
+Two warnings on the draft deserve attention before filing. A deductee with no PAN on file has to be withheld at the punitive rate under §397(2), so the draft names how many lines are affected and the withheld amount should be checked before the return goes out. From FY 2026-27 the draft also flags any section with no §393 payment code, which means no effective-dated `TdsRate` row covers that section as at the quarter end.
 
 ## Gap
 

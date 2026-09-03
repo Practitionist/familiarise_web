@@ -53,22 +53,37 @@ describe("indianFyQuarterOf", () => {
 describe("buildTdsReturnDraft", () => {
   const base: TdsReturnSourceRow[] = [
     {
-      consultantProfileId: "c1",
+      deducteeType: "CONSULTANT",
+      deducteeId: "c1",
+      deducteeName: "Consultant One",
+      deducteePanLast4: "1234",
+      deducteeGstin: null,
       tdsSection: "194O",
+      paymentCode: "1005",
       amountCreditedPaise: 1_000_000,
       tdsDeductedPaise: 1_000,
       isReversal: false,
     },
     {
-      consultantProfileId: "c1",
+      deducteeType: "CONSULTANT",
+      deducteeId: "c1",
+      deducteeName: "Consultant One",
+      deducteePanLast4: "1234",
+      deducteeGstin: null,
       tdsSection: "194O",
+      paymentCode: "1005",
       amountCreditedPaise: 500_000,
       tdsDeductedPaise: -500,
       isReversal: true,
     },
     {
-      consultantProfileId: "c2",
+      deducteeType: "CONSULTANT",
+      deducteeId: "c2",
+      deducteeName: "Consultant Two",
+      deducteePanLast4: "5678",
+      deducteeGstin: null,
       tdsSection: null,
+      paymentCode: null,
       amountCreditedPaise: 250_000,
       tdsDeductedPaise: 2_500,
       isReversal: false,
@@ -80,7 +95,7 @@ describe("buildTdsReturnDraft", () => {
     expect(d.totalAmountCreditedPaise).toBe(1_750_000);
     // 1000 - 500 + 2500
     expect(d.totalTdsDeductedNetPaise).toBe(3_000);
-    const c1 = d.deductees.find((x) => x.consultantProfileId === "c1");
+    const c1 = d.deductees.find((x) => x.deducteeId === "c1");
     expect(c1?.tdsDeductedNetPaise).toBe(500);
     // Unstamped rows land under UNKNOWN with a warning, never silently dropped.
     expect(d.deductees.find((x) => x.tdsSection === "UNKNOWN")).toBeDefined();
@@ -97,8 +112,39 @@ describe("buildTdsReturnDraft", () => {
     expect(d.warnings.join(" ")).toMatch(/payout pipeline/i);
   });
 
-  it("always warns about the org-rail return-artifact gap", () => {
-    const d = buildTdsReturnDraft([], "2026-27", 3);
-    expect(d.warnings.join(" ")).toMatch(/OrganizationPayout/);
+  it("emits an organization deductee row alongside a consultant row (#1354)", () => {
+    const d = buildTdsReturnDraft(
+      [
+        ...base,
+        {
+          deducteeType: "ORGANIZATION",
+          deducteeId: "org1",
+          deducteeName: "Acme Advisory Pvt Ltd",
+          deducteePanLast4: "9012",
+          deducteeGstin: "27AAAAA0000A1Z5",
+          tdsSection: "194J",
+          paymentCode: "1004",
+          amountCreditedPaise: 4_000_000,
+          tdsDeductedPaise: 400_000,
+          isReversal: false,
+        },
+      ],
+      "2026-27",
+      2,
+    );
+
+    const consultant = d.deductees.find((x) => x.deducteeId === "c1");
+    const org = d.deductees.find((x) => x.deducteeId === "org1");
+    expect(consultant?.deducteeType).toBe("CONSULTANT");
+    expect(org?.deducteeType).toBe("ORGANIZATION");
+    expect(org?.tdsSection).toBe("194J");
+    expect(org?.tdsDeductedNetPaise).toBe(400_000);
+    // 1_750_000 consultant credits + the org's 4_000_000.
+    expect(d.totalAmountCreditedPaise).toBe(5_750_000);
+    // 1000 - 500 + 2500 + 400_000.
+    expect(d.totalTdsDeductedNetPaise).toBe(403_000);
+    // The org rail files a real return line now, so the standing "no return
+    // artifact" warning must be gone rather than merely inaccurate.
+    expect(d.warnings.join(" ")).not.toMatch(/OrganizationPayout/);
   });
 });

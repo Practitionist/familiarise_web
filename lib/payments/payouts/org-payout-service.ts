@@ -58,6 +58,14 @@ import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
 import { computeMsmePaymentDeadline } from "@/lib/compliance/msme";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
+// #1354 — the org rail now writes the same TDSRecord audit trail the consultant
+// rail does; the FY/quarter arithmetic is shared rather than re-derived here.
+import {
+  getFYDateRange,
+  getIndianFinancialYear,
+  recordOrgTDSDeduction,
+  recordOrgTdsReversal,
+} from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -418,6 +426,14 @@ export async function createOrgPayoutBatch(
                 netPayoutPaise: netPayout,
                 tdsSectionApplied: tds.tdsSection,
                 tdsAmountPaise: tds.tdsAmountPaise,
+                // #1354 — pin the rate and the FY at BATCH time. The TDSRecord
+                // is written at COMPLETED, which can be a different fiscal year
+                // (a March batch settling in April) and a different effective
+                // rate; re-deriving there would file a row that disagrees with
+                // the amount actually withheld here. `tdsRate` is a decimal
+                // fraction (0.10 = 10%) and always present on a computation.
+                tdsRateAppliedBps: Math.round(tds.tdsRate * 10_000),
+                tdsFinancialYear: getIndianFinancialYear(),
                 dtaaRateApplied:
                   tds.dtaaRateApplied !== null
                     ? new Prisma.Decimal(tds.dtaaRateApplied)
@@ -452,6 +468,9 @@ export async function createOrgPayoutBatch(
                   refundsPaise: totals.refunds,
                   tdsSection: tds.tdsSection,
                   tdsRate: tds.tdsRate,
+                  // #1354 — the integer form is what the TDSRecord files under;
+                  // the decimal above cannot be compared to it without rounding.
+                  tdsRateBps: Math.round(tds.tdsRate * 10_000),
                   tdsAmountPaise: tds.tdsAmountPaise,
                   tdsFallback: tds.fallbackApplied,
                   tdsReason: tds.reason,
@@ -1058,6 +1077,11 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         organizationId: true,
         netPayoutPaise: true,
         tdsAmountPaise: true,
+        // #1354 — the three columns the completion-time TDSRecord files under,
+        // pinned at batch time (see createOrgPayoutBatch).
+        tdsRateAppliedBps: true,
+        tdsFinancialYear: true,
+        tdsSectionApplied: true,
         currency: true,
         organization: { select: { name: true } },
       },
@@ -1120,6 +1144,52 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         kind: "ORG_PAYOUT",
         payoutId,
         postings: orgPostings,
+      });
+    }
+
+    // #1354 — the statutory audit row is written HERE and nowhere else. #837
+    // E-03/E-04: a batch that never completes never withheld anything, so a
+    // TDSRecord created at batch time would put money on the quarterly return
+    // that the government was never paid.
+    if (orgTds > 0 && payout.tdsRateAppliedBps) {
+      // Delete-then-write, matching the consultant rail: a payout can go
+      // COMPLETED after having been FAILED and re-batched, and the org unique
+      // (organizationId, FY, quarter, orgPayoutId, isReversal) would otherwise
+      // reject the second insert. Reversal rows are keyed isReversal=true and
+      // are not touched by an unqualified delete on a fresh completion.
+      await tx.tDSRecord.deleteMany({
+        where: { orgPayoutId: payoutId, isReversal: false },
+      });
+
+      const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
+      const { start, end } = getFYDateRange(financialYear);
+      // The return reports the GROSS amount credited, not the cash that left:
+      // net + withheld, over every other COMPLETED payout to this org in the FY
+      // plus this one.
+      const priorCompleted = await tx.organizationPayout.aggregate({
+        where: {
+          organizationId: payout.organizationId,
+          status: "COMPLETED",
+          processedAt: { gte: start, lt: end },
+          id: { not: payoutId },
+        },
+        _sum: { netPayoutPaise: true, tdsAmountPaise: true },
+      });
+      const cumulativeAmountCredited =
+        sumPaise(priorCompleted._sum.netPayoutPaise) +
+        sumPaise(priorCompleted._sum.tdsAmountPaise) +
+        payout.netPayoutPaise +
+        orgTds;
+
+      await recordOrgTDSDeduction({
+        organizationId: payout.organizationId,
+        financialYear,
+        tdsDeducted: orgTds,
+        tdsRateBps: payout.tdsRateAppliedBps,
+        cumulativeAmountCredited,
+        orgPayoutId: payoutId,
+        tdsSection: payout.tdsSectionApplied ?? undefined,
+        db: tx,
       });
     }
 
@@ -1189,6 +1259,17 @@ async function markOrgPayoutFailedInternal(
     await tx.organizationEarnings.updateMany({
       where: { orgPayoutId: payoutId, status: "BATCHED" },
       data: { status: "READY", orgPayoutId: null },
+    });
+
+    // #1354 — defensive: a PROCESSING→FAILED payout never disbursed, so it
+    // never withheld. Nothing should have written a deduction row yet (that
+    // happens only at COMPLETED), but if one exists it must not reach the
+    // The tdsAmountPaise/tdsRateAppliedBps/tdsFinancialYear columns are
+    // deliberately LEFT SET (the consultant rail clears its equivalents): they
+    // are the batch-time record of what was computed, and markOrgPayoutReversed
+    // sizes its reversing ledger posting from tdsAmountPaise.
+    await tx.tDSRecord.deleteMany({
+      where: { orgPayoutId: payoutId, isReversal: false },
     });
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
@@ -1346,6 +1427,17 @@ export async function markOrgPayoutReversed(
         postings: reversal,
       });
     }
+
+    // #1354 — the bank returned the money, so the withholding that rode on it
+    // never happened either. Net it out of the quarter with a negative
+    // TDSRecord + the TdsAdjustment the return exports as a revised line; the
+    // helper caps against prior reversals so a redelivered webhook cannot
+    // reverse twice.
+    await recordOrgTdsReversal(tx, {
+      orgPayoutId: payoutId,
+      organizationId: payout.organizationId,
+      reversalBasis: { kind: "FULL" },
+    });
 
     await tx.orgAuditLog.create({
       data: {

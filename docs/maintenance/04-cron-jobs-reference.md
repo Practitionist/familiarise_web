@@ -113,12 +113,13 @@ Organisation billing runs on its own cycle engine, and these jobs advance it. Th
 
 These jobs exist because a statute or a regulator says they must, and their deadlines are external. Skipping one for a maintenance window is cheap; skipping one for a week is not.
 
-| Workflow                                                                | Schedule (UTC) | Entrypoint                                      | Lock   | Financial | Mutates                                                                          | During maintenance       |
-| ----------------------------------------------------------------------- | -------------- | ----------------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- | ------------------------ |
-| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`   | `jobs/compliance/consent-retention-sweeper.ts`  | open   | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE           |
-| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`   | `jobs/compliance/databreach-deadline-alerts.ts` | open   | no        | Reads only; emails the DPDP officer inbox                                        | Skips: OFFLINE           |
-| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`   | `jobs/compliance/irp-uploader.ts`               | closed | yes       | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | Skips: OFFLINE, DEGRADED |
-| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`   | `jobs/compliance/msme-payment-alerts.ts`        | open   | no        | Reads only; emails the finance inbox                                             | Skips: OFFLINE           |
+| Workflow                                                                | Schedule (UTC)      | Entrypoint                                      | Lock   | Financial | Mutates                                                                          | During maintenance       |
+| ----------------------------------------------------------------------- | ------------------- | ----------------------------------------------- | ------ | --------- | -------------------------------------------------------------------------------- | ------------------------ |
+| **Consent Retention Sweeper**<br>`consent-retention-sweeper`            | `0 21 * * 0`        | `jobs/compliance/consent-retention-sweeper.ts`  | open   | no        | Expired `ConsentArtifact` rows deleted, and only when `DPDP_SWEEPER_DELETE=true` | Skips: OFFLINE           |
+| **DPDP DataBreach 72h Deadline Alerts**<br>`databreach-deadline-alerts` | `27 * * * *`        | `jobs/compliance/databreach-deadline-alerts.ts` | open   | no        | Reads only; emails the DPDP officer inbox                                        | Skips: OFFLINE           |
+| **IRP IRN Uploader**<br>`irp-uploader`                                  | `50 2 * * *`        | `jobs/compliance/irp-uploader.ts`               | closed | yes       | `OrganizationInvoice` IRN fields; uploads invoices to the IRP                    | Skips: OFFLINE, DEGRADED |
+| **MSME Section 43B(h) Payment Alerts**<br>`msme-payment-alerts`         | `30 4 * * *`        | `jobs/compliance/msme-payment-alerts.ts`        | open   | no        | Reads only; emails the finance inbox                                             | Skips: OFFLINE           |
+| **TDS quarterly return draft**<br>`tds-return-draft`                    | `20 1 5 1,4,7,10 *` | `jobs/compliance/tds-26q-draft-export.ts`       | open   | no        | Reads only; writes the return CSV to the private `org-invoices` bucket           | Skips: OFFLINE           |
 
 ## Stream and recordings
 

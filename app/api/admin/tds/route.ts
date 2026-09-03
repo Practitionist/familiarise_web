@@ -75,7 +75,10 @@ export async function GET(req: NextRequest) {
         tdsRatePercent: r.tdsRateBps / 100,
         cumulativeAmountCredited: r.cumulativeAmountCredited,
         isReversal: r.isReversal,
-        consultantPAN: r.consultantProfile.taxInfo?.panEncrypted
+        // #1354 — `consultantProfile` is now nullable because org-rail rows
+        // share this table. This view stays consultant-only; an org row simply
+        // has no consultant PAN to decrypt.
+        consultantPAN: r.consultantProfile?.taxInfo?.panEncrypted
           ? decryptPAN(Buffer.from(r.consultantProfile.taxInfo.panEncrypted))
           : null,
         createdAt: r.createdAt,

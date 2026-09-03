@@ -420,6 +420,59 @@ ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
 
 -- SPLIT
 -- ============================================================================
+-- #1354 — one withholding table, two deductee rails.
+--
+-- TDSRecord and TdsAdjustment used to be consultant-only, with a NOT NULL
+-- `consultantProfileId` doing the structural work. Admitting host
+-- organisations meant making that column nullable, which on its own would
+-- allow a row belonging to NEITHER rail (both null — an unattributable
+-- statutory deduction) or to BOTH (a return line filed twice, against two
+-- different PANs). Prisma cannot express a CHECK, so the invariant it used to
+-- get free from NOT NULL has to be restated here.
+--
+-- Precedent: collaborator_plan_xor above, same `<>`-on-IS-NULL shape.
+-- ============================================================================
+
+-- SPLIT
+-- Exactly one deductee. `(a IS NULL) <> (b IS NULL)` is true only when the two
+-- nullness flags differ, which is exactly "one of them is set".
+ALTER TABLE "TDSRecord" DROP CONSTRAINT IF EXISTS "tds_record_deductee_xor";
+-- SPLIT
+ALTER TABLE "TDSRecord" ADD CONSTRAINT "tds_record_deductee_xor"
+  CHECK (("consultantProfileId" IS NULL) <> ("organizationId" IS NULL));
+
+-- SPLIT
+-- The payout column must match the rail. Both FKs are real, so nothing else
+-- stops an org row from citing a ConsultantPayout: the row would then dedupe
+-- on the consultant unique (all-NULL, therefore never conflicting) and file
+-- its credit under someone else's disbursement.
+ALTER TABLE "TDSRecord" DROP CONSTRAINT IF EXISTS "tds_record_payout_rail_matches";
+-- SPLIT
+ALTER TABLE "TDSRecord" ADD CONSTRAINT "tds_record_payout_rail_matches"
+  CHECK (
+    ("organizationId" IS NULL AND "orgPayoutId" IS NULL)
+    OR ("consultantProfileId" IS NULL AND "payoutId" IS NULL)
+  );
+
+-- SPLIT
+-- Same XOR on the filing-side adjustment rows, which the return generator
+-- exports as revised-statement lines.
+ALTER TABLE "TdsAdjustment" DROP CONSTRAINT IF EXISTS "tds_adjustment_deductee_xor";
+-- SPLIT
+ALTER TABLE "TdsAdjustment" ADD CONSTRAINT "tds_adjustment_deductee_xor"
+  CHECK (("consultantProfileId" IS NULL) <> ("organizationId" IS NULL));
+
+-- SPLIT
+-- #676 PM-22 shape, now on the org rail too: OrganizationPayout.tdsFinancialYear
+-- is what the completion-time TDSRecord files under, so a malformed value there
+-- files a whole quarter's org withholding under a year that does not exist.
+ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_tds_fy_format";
+-- SPLIT
+ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
+  CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
+
+-- SPLIT
+-- ============================================================================
 -- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
 -- Each of these can fail against pre-reset data (existing nulls, historical
 -- overlaps, drifted denormalizations). They ship here commented so review and
