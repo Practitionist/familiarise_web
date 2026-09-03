@@ -326,7 +326,6 @@ export async function createEarningsFromPayment({
     planId = payment.appointment.class.classPlanId;
   }
 
-
   // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.
   // Also handles P2002 unique constraint violations gracefully for idempotency.
   // #896 — Serializable isolation + P2034 retry so the waiver eligibility count()
@@ -849,7 +848,10 @@ export async function createEarningsFromPayment({
               } else {
                 // Lost SSI race — withSerializableRetry re-runs the whole txn.
                 // Modelled outcome, reported at low volume/info only.
-                reportSentryError(err, { subsystem: "payments", expected: true });
+                reportSentryError(err, {
+                  subsystem: "payments",
+                  expected: true,
+                });
               }
               throw err;
             }
@@ -933,8 +935,8 @@ export async function getConsultantEarningsSummary(
 ): Promise<EarningsSummary> {
   const orgFilter =
     organizationId !== undefined ? { payment: { organizationId } } : {};
-  const [pending, ready, batched, paid, held, pendingTrust] =
-    await Promise.all([
+  const [pending, ready, batched, paid, held, pendingTrust] = await Promise.all(
+    [
       prisma.consultantEarnings.aggregate({
         where: {
           consultantProfileId,
@@ -983,16 +985,15 @@ export async function getConsultantEarningsSummary(
         },
         _sum: { consultantSharePaise: true },
       }),
-    ]);
+    ],
+  );
 
   const pendingEarnings = sumPaise(pending._sum.consultantSharePaise);
   const readyEarnings = sumPaise(ready._sum.consultantSharePaise);
   const batchedEarnings = sumPaise(batched._sum.consultantSharePaise);
   const paidEarnings = sumPaise(paid._sum.consultantSharePaise);
   const heldEarnings = sumPaise(held._sum.consultantSharePaise);
-  const pendingTrustEarnings = sumPaise(
-    pendingTrust._sum.consultantSharePaise,
-  );
+  const pendingTrustEarnings = sumPaise(pendingTrust._sum.consultantSharePaise);
 
   return {
     consultantProfileId,
