@@ -10,7 +10,7 @@
  *     escalation stage.
  *
  * No booking-suspend stage yet — dunningSuspendedAt stays unwritten.
- * TODO(#779): config-gated booking-suspend cascade once OVERDUE drags past
+ * TODO(#1319): config-gated booking-suspend cascade once OVERDUE drags past
  * the grace window.
  *
  * Schedule: daily at 05:00 IST (`.github/workflows/dunning.yml`), after the
