@@ -28,6 +28,22 @@ export function statusFor(
 }
 
 /**
+ * Optional `?limit=` cap shared by the routes the Netlify ticker drives every
+ * five minutes (#1356, ADR 27 — docs/enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
+ * A five-minute tick has to fit inside the ticker's per-target timeout, unlike
+ * the nightly GitHub Actions run, which can afford an unbounded batch — so the
+ * ticker sends `?limit=50` and every other caller (Actions, manual `curl`)
+ * omits it and keeps today's unbounded behaviour. Invalid input (non-integer,
+ * zero, negative, or over the 500 ceiling) is treated the same as absent.
+ */
+export function parseLimitParam(req: NextRequest): number | undefined {
+  const raw = req.nextUrl.searchParams.get("limit");
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 500 ? n : undefined;
+}
+
+/**
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
  * observable through response timing.

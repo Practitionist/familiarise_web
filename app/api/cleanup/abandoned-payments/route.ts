@@ -5,6 +5,7 @@ import {
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
 } from "@/scripts/payments/cleanup-abandoned-payments";
+import { parseLimitParam } from "@/lib/cron/cleanup-route";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -32,8 +33,11 @@ export async function POST(req: NextRequest) {
     Sentry.logger.info("cron:cleanup-abandoned-payments started");
 
     // Run both cleanup tasks
-    const paymentResult = await cleanupAbandonedPayments();
-    const consultationResult = await cleanupExpiredApprovalPendingPayments();
+    const limit = parseLimitParam(req);
+    const paymentResult = await cleanupAbandonedPayments({ limit });
+    const consultationResult = await cleanupExpiredApprovalPendingPayments({
+      limit,
+    });
     await disconnectDatabase();
 
     Sentry.logger.info("cron:cleanup-abandoned-payments finished", {

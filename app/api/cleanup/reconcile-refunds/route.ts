@@ -7,7 +7,7 @@
  * Schedule: Every 15 minutes (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, parseLimitParam } from "@/lib/cron/cleanup-route";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 
 export const { GET, POST } = cleanupRoute({
@@ -15,7 +15,7 @@ export const { GET, POST } = cleanupRoute({
   // DEGRADED branch on FINANCIAL_JOB_NAMES membership, and "reconcile-refunds"
   // is not a member, so this financial job would have run through DEGRADED.
   job: "reconcile-pending-refunds",
-  run: () => reconcilePendingRefunds(),
+  run: (req) => reconcilePendingRefunds({ limit: parseLimitParam(req) }),
   summarize: (r) => ({
     totalProcessed: r.totalProcessed,
     reconciledCount: r.reconciledCount,

@@ -47,6 +47,12 @@ export interface CleanupResult {
   errors: string[];
 }
 
+export interface CleanupAbandonedOptions {
+  /** #1356 — caps the cohort for the Netlify ticker; undefined keeps the
+   * unbounded GitHub Actions behaviour. */
+  limit?: number;
+}
+
 /**
  * Cancel payment intent with the appropriate payment gateway
  */
@@ -121,8 +127,9 @@ function logCleanupSummary(
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
  */
-function findAbandonedAppointments() {
+function findAbandonedAppointments(limit?: number) {
   return prisma.appointment.findMany({
+    take: limit,
     where: {
       payment: {
         some: {
@@ -453,15 +460,19 @@ async function cleanupAbandonedAppointment(
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function cleanupAbandonedPayments(): Promise<CleanupResult> {
+export async function cleanupAbandonedPayments(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
   return withCronLock(
     "cleanup-abandoned-payments",
     { failMode: "closed" },
-    () => cleanupAbandonedPaymentsUnlocked(),
+    () => cleanupAbandonedPaymentsUnlocked(opts),
   );
 }
 
-async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
+async function cleanupAbandonedPaymentsUnlocked(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
   console.log("🧹 Starting abandoned payment cleanup...");
 
   const result: CleanupResult = {
@@ -474,7 +485,7 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
   };
 
   try {
-    const abandonedAppointments = await findAbandonedAppointments();
+    const abandonedAppointments = await findAbandonedAppointments(opts.limit);
 
     result.totalProcessed = abandonedAppointments.length;
     console.log(
@@ -533,15 +544,19 @@ async function cleanupAbandonedPaymentsUnlocked(): Promise<CleanupResult> {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function cleanupExpiredApprovalPendingPayments(): Promise<CleanupResult> {
+export async function cleanupExpiredApprovalPendingPayments(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
   return withCronLock(
     "cleanup-abandoned-payments",
     { failMode: "closed" },
-    () => cleanupExpiredApprovalPendingPaymentsUnlocked(),
+    () => cleanupExpiredApprovalPendingPaymentsUnlocked(opts),
   );
 }
 
-async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupResult> {
+async function cleanupExpiredApprovalPendingPaymentsUnlocked(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
   console.log(
     "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
   );
@@ -558,6 +573,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(): Promise<CleanupR
   try {
     // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
     const expiredConsultations = await prisma.consultation.findMany({
+      take: opts.limit,
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         appointment: {

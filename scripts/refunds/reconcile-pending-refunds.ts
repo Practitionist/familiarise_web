@@ -38,6 +38,11 @@ export interface RefundReconciliationResult {
   timestamp: string;
 }
 
+export interface ReconcilePendingRefundsOptions {
+  /** #1356 — applied to both passes below; undefined keeps today's unbounded scan. */
+  limit?: number;
+}
+
 /**
  * Map gateway refund status to Prisma RefundStatus
  */
@@ -61,15 +66,19 @@ export interface RefundReconciliationResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function reconcilePendingRefunds(): Promise<RefundReconciliationResult> {
+export async function reconcilePendingRefunds(
+  opts: ReconcilePendingRefundsOptions = {},
+): Promise<RefundReconciliationResult> {
   return withCronLock(
     "reconcile-pending-refunds",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcilePendingRefundsUnlocked(),
+    () => reconcilePendingRefundsUnlocked(opts),
   );
 }
 
-async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationResult> {
+async function reconcilePendingRefundsUnlocked(
+  opts: ReconcilePendingRefundsOptions = {},
+): Promise<RefundReconciliationResult> {
   const thresholdDate = new Date(Date.now() - RECONCILIATION_THRESHOLD_MS);
   const errors: string[] = [];
   let reconciledCount = 0;
@@ -92,6 +101,7 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
     orderBy: {
       createdAt: "asc",
     },
+    take: opts.limit,
   });
 
   console.log(
@@ -232,11 +242,10 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
     },
     include: { payment: { select: { paymentGateway: true } } },
     orderBy: { createdAt: "asc" },
+    take: opts.limit,
   });
 
-  console.log(
-    `Found ${pendingRealId.length} real-id PENDING refunds to poll`,
-  );
+  console.log(`Found ${pendingRealId.length} real-id PENDING refunds to poll`);
   totalProcessed += pendingRealId.length;
 
   for (const refund of pendingRealId) {

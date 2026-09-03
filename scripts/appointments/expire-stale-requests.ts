@@ -616,9 +616,11 @@ async function expirePaymentPendingRequests(): Promise<{
  * Main function to expire all stale requests
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+// mutual exclusion. #1341 — fail-closed: this sweep refunds SUCCEEDED
+// payments through the refund front door, so an unlocked double-run risks a
+// double refund; a missed run pages instead.
 export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> {
-  return withCronLock("expire-stale-requests", { failMode: "open" }, () =>
+  return withCronLock("expire-stale-requests", { failMode: "closed" }, () =>
     expireStaleRequestsUnlocked(),
   );
 }

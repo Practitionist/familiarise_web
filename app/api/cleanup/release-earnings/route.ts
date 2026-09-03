@@ -7,12 +7,12 @@
  * Schedule: Hourly (via GitHub Actions or external cron)
  */
 
-import { cleanupRoute } from "@/lib/cron/cleanup-route";
+import { cleanupRoute, parseLimitParam } from "@/lib/cron/cleanup-route";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 export const { GET, POST } = cleanupRoute({
   job: "release-earnings",
-  run: () => releaseEarningsFromHold(),
+  run: (req) => releaseEarningsFromHold({ limit: parseLimitParam(req) }),
   summarize: (r) => ({
     releasedCount: r.releasedCount,
     errorCount: r.errorCount,
