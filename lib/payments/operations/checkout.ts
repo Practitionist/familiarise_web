@@ -14,7 +14,11 @@ import {
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
-import { transitionTrialSession } from "@/lib/booking/transitions";
+import {
+  appendCreationHistory,
+  transitionTrialSession,
+} from "@/lib/booking/transitions";
+import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -27,7 +31,6 @@ import {
   AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
-import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   EventFullError,
@@ -398,6 +401,9 @@ export class PaymentIntentManager {
     isMockPayment?: boolean;
   }) {
     try {
+      // Imported at call time so the checkout bundle does not evaluate the
+      // Razorpay core (and its #1219 test-key guard) at module load.
+      const { createPaymentIntent } = await import("../index");
       const paymentResponse = await createPaymentIntent(params);
 
       // Evict oldest entries first (Map iterates in insertion order) so a
@@ -435,6 +441,10 @@ export class PaymentIntentManager {
     } catch (error) {
       console.error("Payment intent creation failed:", error);
       reportSentryError(error, { subsystem: "payments" });
+      // A typed gateway error (the #1219 test-key guard, an UNKNOWN_GATEWAY)
+      // keeps its code so the route can answer with the right status; only
+      // untyped failures are flattened into the retry-later message.
+      if (error instanceof PaymentError) throw error;
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -449,6 +459,7 @@ export class PaymentIntentManager {
     reason: string = "Database operation failed",
   ) {
     try {
+      const { cancelPaymentIntent } = await import("../index");
       await cancelPaymentIntent(intentId, reason);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
@@ -1829,12 +1840,13 @@ export async function handleConsultationCheckout(
   );
 
   // Create consultation
+  const initialStatus = skipPayment
+    ? AppointmentStatus.APPROVED
+    : AppointmentStatus.PENDING;
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: plan.id,
-      status: skipPayment
-        ? AppointmentStatus.APPROVED
-        : AppointmentStatus.PENDING,
+      status: initialStatus,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       bookingSource: "DIRECT_CHECKOUT",
@@ -1877,6 +1889,16 @@ export async function handleConsultationCheckout(
       { userId: consulteeUserId, role: "CONSULTEE" },
     ],
     { organizationId, status: skipPayment ? "CONFIRMED" : "HELD" },
+  );
+  // #1333 — the opening timeline row, written here rather than left to the
+  // first CAS so a booking that has not moved yet still has a story. Same tx as
+  // the create: a consultation that exists always has one.
+  await appendCreationHistory(
+    tx,
+    "CONSULTATION",
+    consultation.id,
+    initialStatus,
+    { appointmentId: appointment.id, actorUserId: userId, organizationId },
   );
 
   return { appointment, plan, amount: plan.price };
@@ -2020,6 +2042,19 @@ export async function handleSubscriptionCheckout(
       { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
     );
   }
+  // #1333 — see handleConsultationCheckout. Placed after the buyer lookup so
+  // the opening row carries the same attribution the participant rows do.
+  await appendCreationHistory(
+    tx,
+    "SUBSCRIPTION",
+    subscription.id,
+    AppointmentStatus.PENDING,
+    {
+      appointmentId: appointment.id,
+      actorUserId: consulteeUser?.userId ?? null,
+      organizationId,
+    },
+  );
 
   return {
     appointment,
@@ -2799,6 +2834,8 @@ export async function handleCheckout(
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
         reportSentryError(paymentError, { subsystem: "payments" });
+        // Typed gateway errors keep their code for the route's classifier.
+        if (paymentError instanceof PaymentError) throw paymentError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
         );
