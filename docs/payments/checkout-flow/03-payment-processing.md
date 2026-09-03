@@ -2,6 +2,8 @@
 
 > **Superseded (2026-09-03):** this document dates to November 2025 and describes an architecture this codebase no longer has — webhooks that create appointments directly from payment-intent metadata (`createAppointmentFromWebhook`), and a failure path that `delete`s appointments and slots outright. The current checkout path is payment-first with a pre-acquired interval-atom lock and CAS status transitions, and cancellation is always a soft status write, never a row deletion. For what the code actually does today, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) (ADR B6, B7, B11) and the wave-5 entries in [`docs/booking/05-troubleshooting-and-changelog.md`](../../booking/05-troubleshooting-and-changelog.md). The rest of this file is kept for historical context only; do not cite its file:line references or its deletion-based cleanup flow as current behavior.
 
+---
+
 > **Navigation:** [Overview & Consultation](./01-overview-and-consultation.md) | [Webinar & Class](./02-webinar-and-class.md) | **Payment Processing** | [Edge Cases](./04-edge-cases.md) | [Status Flows](./05-status-flows.md)
 
 ## Table of Contents

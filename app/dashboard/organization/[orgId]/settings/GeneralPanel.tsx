@@ -490,12 +490,10 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* #1332 TODO: these fields are MAINTAINER-enabled in the UI but
-                the org PATCH route is requireOrgOwner — a MAINTAINER save
-                gets a silent 403. RBAC redistribution (widen the API to
-                MAINTAINER for the profile subset, or disable here for
-                non-OWNER) is deferred to v4; not broadening API auth in
-                this PR. */}
+            {/* The MAINTAINER/OWNER split below mirrors the PATCH route's
+                field-level gate (#779 §A), not a blanket owner check: name,
+                description, industry and website are MAINTAINER+, while
+                billing email, slug and payment terms stay OWNER-only. */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();

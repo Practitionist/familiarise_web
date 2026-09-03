@@ -1,7 +1,7 @@
 # Real-Time Dashboard Caching Strategy
 
 **Last Updated**: December 2025
-**Status**: Superseded — not implemented, and the platform decided against the freshness problem this doc solves for
+**Status**: Superseded — never implemented. The platform decided not to close the freshness gap described below with the Redis, SWR or SSE infrastructure this document proposes.
 
 > **Superseded by [ADR 16 — Slot freshness without Supabase Realtime](../../enterprise/70-design-decisions/16-slot-freshness-without-realtime.md).**
 > None of the Redis-caching, SWR, or SSE layers below were ever built — there

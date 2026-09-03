@@ -176,7 +176,16 @@ sequenceDiagram
 
   Note over UC: User clicks "Allocate"
 
-  UC->>AS: allocateSlots(type, id, mode, slots)
+  UC->>USA: autoAllocate / manualAllocate / allocateRequestedSlots
+
+  alt Auto Mode (client submits, server picks)
+    USA->>AS: allocateSlots(type, id, [], {isAuto: true})
+  else Manual or Requested Mode
+    USA->>AA: AllocationAlgorithms.manualAllocate / allocateRequestedSlots
+    AA->>AA: Pre-validate (required count, no past slots, webinar contiguity)
+    AA->>AS: allocateSlots(type, id, slots, options)
+  end
+
   AS->>API: PATCH /api/bookings/{type}/{id}/allocate
 
   API->>ZOD: Parse request body
@@ -209,7 +218,8 @@ sequenceDiagram
   SAS->>LOCK: Release lock
   SAS-->>API: AllocationResult
   API-->>AS: JSON response
-  AS-->>UC: Success -> refresh calendar
+  AS-->>USA: AllocationResponse (or AllocationAlgorithms result)
+  USA-->>UC: Success -> refresh calendar
 ```
 
 ---
@@ -221,30 +231,36 @@ How the GitHub Actions crons keep the booking subsystem healthy. Every job liste
 ```mermaid
 flowchart LR
   subgraph triggers ["GitHub Actions (Cron Triggers)"]
-    GH1["cleanup-tentative-slots.yml\nevery 2 hours"]
-    GH2["auto-complete-appointments.yml\nhourly"]
-    GH3["cleanup-invalid-appointments.yml\ndaily"]
-    GH4["reconcile-slot-availability.yml\ndaily"]
-    GH5["expire-stale-requests.yml\ndaily"]
-    GH6["cleanup-stale-pending-consultations.yml"]
-    GH7["expire-reschedule-proposals.yml"]
-    GH8["expire-unpaid-trials.yml"]
+    GH1["cleanup-tentative-slots.yml\nevery 2 hours at :38"]
+    GH2["auto-complete-appointments.yml\nhourly at :07"]
+    GH3["cleanup-invalid-appointments.yml\nhourly at :12"]
+    GH4["reconcile-slot-availability.yml\nhourly at :32"]
+    GH5["expire-stale-requests.yml\nhourly at :10"]
+    GH6["cleanup-stale-pending-consultations.yml\nhourly at :37"]
+    GH7["expire-reschedule-proposals.yml\nhourly at :45"]
+    GH8["expire-unpaid-trials.yml\nhourly at :40"]
   end
 
-  subgraph jobs ["jobs/appointments/*.ts (thin GH Actions wrappers)"]
-    J1["cleanup-tentative-slots.ts"]
-    J2["auto-complete-appointments.ts"]
-    J3["cleanup-invalid-appointments.ts"]
-    J4["reconcile-slot-availability.ts"]
-    J5["expire-stale-requests.ts"]
+  subgraph jobs ["jobs/**.ts (thin GH Actions wrappers)"]
+    J1["appointments/cleanup-tentative-slots.ts"]
+    J2["appointments/auto-complete-appointments.ts"]
+    J3["appointments/cleanup-invalid-appointments.ts"]
+    J4["appointments/reconcile-slot-availability.ts"]
+    J5["appointments/expire-stale-requests.ts"]
+    J6["appointments/cleanup-stale-pending-consultations.ts"]
+    J7["appointments/expire-reschedule-proposals.ts"]
+    J8["trials/expire-unpaid-trials.ts"]
   end
 
-  subgraph scripts ["scripts/appointments/*.ts (the actual logic)"]
-    S1["cleanup-tentative-slots.ts"]
-    S2["auto-complete-appointments.ts"]
-    S3["cleanup-invalid-appointments.ts"]
-    S4["reconcile-slot-availability.ts"]
-    S5["expire-stale-requests.ts"]
+  subgraph scripts ["scripts/**.ts (the actual logic)"]
+    S1["appointments/cleanup-tentative-slots.ts"]
+    S2["appointments/auto-complete-appointments.ts"]
+    S3["appointments/cleanup-invalid-appointments.ts"]
+    S4["appointments/reconcile-slot-availability.ts"]
+    S5["appointments/expire-stale-requests.ts"]
+    S6["appointments/cleanup-stale-pending-consultations.ts"]
+    S7["appointments/expire-reschedule-proposals.ts"]
+    S8["trials/expire-unpaid-trials.ts"]
   end
 
   subgraph cleanup_actions ["What They Do"]
@@ -253,6 +269,9 @@ flowchart LR
     A3["Remove orphaned records with missing FKs"]
     A4["Detect double-booking / sync slot availability with appointments"]
     A5["transitionConsultationRequest/transitionSubscriptionRequest(EXPIRED) for stale PENDING"]
+    A6["transitionConsultationRequest(CANCELLED) + transitionSlotCompletion(CANCELLED)\nfor approved consultations with no SUCCEEDED payment after 7 days"]
+    A7["RescheduleRequest -> EXPIRED for proposals nobody answered by their deadline"]
+    A8["TrialSession -> CANCELLED once paymentDueAt passes, which frees the slot by status alone"]
   end
 
   GH1 --> J1 --> S1 --> A1
@@ -260,6 +279,9 @@ flowchart LR
   GH3 --> J3 --> S3 --> A3
   GH4 --> J4 --> S4 --> A4
   GH5 --> J5 --> S5 --> A5
+  GH6 --> J6 --> S6 --> A6
+  GH7 --> J7 --> S7 --> A7
+  GH8 --> J8 --> S8 --> A8
 ```
 
 ---
@@ -296,4 +318,4 @@ erDiagram
 
 **Frontend**: `calendarUtils` -> `allocationService` -> `allocationAlgorithms` -> `useCalendarData` + `useSlotAllocation` -> `UnifiedCalendar`. Auto-allocation is server-only; the client never scores or picks slots itself.
 
-**Tracing a full request**: `UnifiedCalendar` -> `useSlotAllocation` -> `allocationService` -> API route -> `SlotAllocationService` -> `SlotValidationService` -> `SlotCalculationService` -> Prisma -> PostgreSQL (see Diagram 4).
+**Tracing a full request**: `UnifiedCalendar` -> `useSlotAllocation` -> `allocationAlgorithms` (manual and requested modes only; auto mode calls the service directly) -> `allocationService` -> API route -> `SlotAllocationService` -> `SlotValidationService` -> `SlotCalculationService` -> Prisma -> PostgreSQL (see Diagram 4).

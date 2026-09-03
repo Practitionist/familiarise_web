@@ -64,10 +64,15 @@ Two scoping columns let a card live at the **org** level (default across contrac
 **Resolution order** (`resolveEffectiveRateCard()`, most-specific → least):
 
 1. `Membership.rateCardOverride` (per-expert).
-2. Contract-scoped + `planId`. 3. Org-scoped + `planId`.
-3. Contract-scoped + `CoveredPlanType`. 5. Org-scoped + `CoveredPlanType`.
-4. Contract-scoped default. 7. Org-scoped default.
-5. Hardcoded `DEFAULT_RATE_CARD` = **10% / 10% / 80%** (platform / org / expert); `rateCardId = null` is the sentinel for "defaults used".
+2. Contract-scoped + `planId`.
+3. Org-scoped + `planId`.
+4. Contract-scoped + `CoveredPlanType`.
+5. Org-scoped + `CoveredPlanType`.
+6. Contract-scoped default.
+7. Org-scoped default.
+8. Hardcoded `DEFAULT_RATE_CARD` = **10% / 10% / 80%** (platform / org / expert); `rateCardId = null` is the sentinel for "defaults used".
+
+**Only tiers 1, 7 and 8 are reachable today.** `resolveOrgSplit()` (`lib/payments/payouts/earnings-service.ts`) is the resolver's only production caller, and it passes just `orgId`, `membershipOverrideId` and `at`. A settling booking can therefore land only on the per-expert override, the org-scoped default, or the hardcoded fallback, even though it has already resolved the plan that would select tiers 2 through 5. The rate-card POST handler will happily create a contract-scoped or `planId`-scoped card, so such a card can exist and never be chosen. Forwarding the booking's scope would change which card settles live money, so it is tracked as an open question under #1319 rather than treated as a documentation gap.
 
 **The bps invariant:** `platformBps + orgBps + consultantBps === 10000` on every row — enforced at the creation site (`bumpRateCard()` + the rate-card POST handler), not yet a Postgres CHECK (follow-up).
 

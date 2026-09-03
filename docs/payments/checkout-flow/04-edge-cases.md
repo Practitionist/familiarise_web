@@ -2,6 +2,8 @@
 
 > **Superseded (2026-09-03):** this document dates to November 2025. Its race-condition protection ("three-layer protection system") and capacity checks predate the interval-atom `slot-booking:` locks in `utils/appointmentlock.ts`, the CAS transitions in `lib/booking/transitions.ts`, and the union-coverage validation in `utils/slotAllocation/availabilityCoverage.ts`. For current concurrency and edge-case behavior, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) (ADR B6, B7, B11), [`docs/booking/15-checklist.md`](../../booking/15-checklist.md), and the wave-5 entries in [`docs/booking/05-troubleshooting-and-changelog.md`](../../booking/05-troubleshooting-and-changelog.md). The rest of this file is kept for historical context only; do not cite its file:line references as current.
 
+---
+
 > **Navigation:** [Overview & Consultation](./01-overview-and-consultation.md) | [Webinar & Class](./02-webinar-and-class.md) | [Payment Processing](./03-payment-processing.md) | **Edge Cases** | [Status Flows](./05-status-flows.md)
 
 ## Table of Contents
@@ -549,6 +551,8 @@ const currentParticipants = uniqueUserIds.size;
 ```
 
 **Edge Case:** User enrolled twice with different accounts → Counted as 2 participants.
+
+## 5. Validation Edge Cases
 
 ### 5.1 Slot Time Validation
 
