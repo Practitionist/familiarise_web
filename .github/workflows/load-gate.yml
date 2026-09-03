@@ -126,6 +126,10 @@ jobs:
 
       - name: Apply fixture overrides
         if: inputs.fixture_overrides != ''
+        # Read through an env var, never interpolated into the script: the
+        # input is typed by whoever dispatches the run (S7630).
+        env:
+          FIXTURE_OVERRIDES: ${{ inputs.fixture_overrides }}
         run: |
           while IFS= read -r line; do
             [ -z "$line" ] && continue
@@ -134,10 +138,10 @@ jobs:
               *=*) echo "$line" >> "$GITHUB_ENV" ;;
               *) echo "::warning::ignoring malformed override: $line" ;;
             esac
-          done <<< "${{ inputs.fixture_overrides }}"
+          done <<< "$FIXTURE_OVERRIDES"
 
       - name: Install k6
-        uses: grafana/setup-k6-action@v1
+        uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
 
       # handleSummary writes load-gate-summary.json and .html into the working
       # directory. The raw per-request JSON stream is deliberately NOT captured:
