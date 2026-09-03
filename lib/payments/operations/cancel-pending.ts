@@ -10,6 +10,7 @@ import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   transitionConsultationRequest,
+  transitionSlotCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
@@ -19,7 +20,7 @@ import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-paymen
  *
  * A user who abandons checkout otherwise waits for the cleanup cron's next
  * pass inside the 24h tentative window (#833). This is the self-serve path:
- * expire the caller's own PENDING payment, restore referral credits, delete
+ * expire the caller's own PENDING payment, restore referral credits, release
  * the tentative slots, and cancel the parent request.
  *
  * Race posture (#836/#838 doctrine): the whole body runs in one Serializable
@@ -73,10 +74,15 @@ async function releaseSlots(
   userId: string,
 ): Promise<number> {
   if (!appt.class && !appt.webinar) {
-    const res = await tx.slotOfAppointment.deleteMany({
-      where: { appointmentId: appt.id, isTentative: true },
+    // Doctrine rule 2: freed by status, not by DELETE. The buyer keeps a
+    // record of the hold they abandoned, and occupancy already ignores a
+    // soft-cancelled row.
+    return transitionSlotCompletion(tx, {
+      where: { appointmentId: appt.id, isTentative: true, deletedAt: null },
+      to: "CANCELLED",
+      data: { deletedAt: new Date() },
+      allowZero: true,
     });
-    return res.count;
   }
 
   const seatFilter = appt.class

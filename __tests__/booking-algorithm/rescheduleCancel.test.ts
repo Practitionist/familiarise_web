@@ -33,7 +33,11 @@ jest.mock("../../lib/prisma", () => ({
     // #1003 — group-event cancel reads the attendee roster off the payments so
     // it can notify them. Default to an empty event.
     payment: { findMany: jest.fn().mockResolvedValue([]) },
-    slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    slotOfAppointment: {
+      findMany: jest.fn(),
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
+    },
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
     // which reads prisma.dispute.findFirst. Default to no live dispute.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -1287,7 +1291,7 @@ describe("cleanupTentativeSlots", () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it("should find and delete stale tentative slots", async () => {
+  it("should find and soft-cancel stale tentative slots", async () => {
     const staleSlots = [
       {
         id: "slot-1",
@@ -1312,9 +1316,9 @@ describe("cleanupTentativeSlots", () => {
     ];
 
     (prisma.slotOfAppointment as any).findMany.mockResolvedValue(staleSlots);
-    (prisma.slotOfAppointment as any).deleteMany.mockResolvedValue({
-      count: 1,
-    });
+    (
+      prisma.slotOfAppointment as unknown as { updateManyAndReturn: jest.Mock }
+    ).updateManyAndReturn.mockResolvedValue([{ id: "slot-1" }]);
 
     const result = await cleanupTentativeSlots();
 
@@ -1358,9 +1362,13 @@ describe("cleanupTentativeSlots", () => {
     ];
 
     (prisma.slotOfAppointment as any).findMany.mockResolvedValue(staleSlots);
-    (prisma.slotOfAppointment as any).deleteMany.mockResolvedValue({
-      count: 3,
-    });
+    (
+      prisma.slotOfAppointment as unknown as { updateManyAndReturn: jest.Mock }
+    ).updateManyAndReturn.mockResolvedValue([
+      { id: "slot-1" },
+      { id: "slot-2" },
+      { id: "slot-3" },
+    ]);
 
     const result = await cleanupTentativeSlots();
 
@@ -1419,11 +1427,17 @@ describe("cleanupTentativeSlots", () => {
     );
   });
 
-  it("should not call deleteMany when no stale slots found", async () => {
+  it("should not write when no stale slots found", async () => {
     (prisma.slotOfAppointment as any).findMany.mockResolvedValue([]);
 
     await cleanupTentativeSlots();
 
-    expect((prisma.slotOfAppointment as any).deleteMany).not.toHaveBeenCalled();
+    expect(
+      (
+        prisma.slotOfAppointment as unknown as {
+          updateManyAndReturn: jest.Mock;
+        }
+      ).updateManyAndReturn,
+    ).not.toHaveBeenCalled();
   });
 });

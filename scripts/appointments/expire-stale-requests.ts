@@ -18,10 +18,13 @@
  */
 
 import prisma from "../../lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
-import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import {
+  RESCHEDULE_OPEN_STATUSES,
+  transitionSlotCompletion,
+} from "@/lib/booking/transitions";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -183,18 +186,21 @@ async function expirePendingConsultations(): Promise<{
       },
     });
 
-    // Release the tentative holds the expired requests pinned. The WHERE
-    // re-checks the consultation's status AT DELETE TIME (CodeRabbit triage):
-    // between the stale read above and this statement a consultant can
-    // approve a request (PENDING → APPROVED), and deleting by appointmentId
-    // alone would strip the hold from a booking that just came back to life.
-    // Scoped to isTentative so an already-confirmed slot is never touched.
+    // Release the tentative holds the expired requests pinned. Doctrine rule
+    // 2: the slot is freed by status alone, so this is a CAS soft-cancel and
+    // the row survives for support. The WHERE re-checks the consultation's
+    // status AT WRITE TIME (CodeRabbit triage): between the stale read above
+    // and this statement a consultant can approve a request
+    // (PENDING → APPROVED), and releasing by appointmentId alone would strip
+    // the hold from a booking that just came back to life. Scoped to
+    // isTentative so an already-confirmed slot is never touched.
     let slotsReleased = 0;
     if (expiredAppointmentIds.length > 0) {
-      const slotResult = await prisma.slotOfAppointment.deleteMany({
+      slotsReleased = await transitionSlotCompletion(prisma, {
         where: {
           appointmentId: { in: expiredAppointmentIds },
           isTentative: true,
+          deletedAt: null,
           appointment: {
             consultation: {
               id: { in: expiredIds },
@@ -202,8 +208,15 @@ async function expirePendingConsultations(): Promise<{
             },
           },
         },
+        to: SlotCompletionStatus.CANCELLED,
+        data: { deletedAt: new Date() },
+        // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
+        // auto-complete stamps any SCHEDULED slot UNVERIFIED an hour past its
+        // end with no isTentative filter, so a hold on a slot whose time has
+        // passed is routinely UNVERIFIED by the time this 48h sweep sees it.
+        // Narrowing here would strand exactly the holds it exists to free.
+        allowZero: true,
       });
-      slotsReleased = slotResult.count;
     }
 
     console.log(`✅ Expired ${result.count} PENDING consultations`);
@@ -351,21 +364,29 @@ async function releaseStaleRescheduledSlots(): Promise<{
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
     );
-    const result = await prisma.slotOfAppointment.deleteMany({
+    const released = await transitionSlotCompletion(prisma, {
       where: {
         isTentative: true,
-        completionStatus: "RESCHEDULED",
+        deletedAt: null,
         updatedAt: { lt: cutoff },
         appointment: {
           subscriptionId: { not: null },
           subscription: { status: AppointmentStatus.APPROVED },
         },
       },
+      to: SlotCompletionStatus.CANCELLED,
+      data: { deletedAt: new Date() },
+      // The RESCHEDULED-only scope lives in fromIn, not the WHERE: the helper
+      // spreads the caller's where and then overwrites `completionStatus`
+      // with its own from-set, so a WHERE clause here would be silently
+      // widened to SCHEDULED rows this sweep must never touch.
+      fromIn: [SlotCompletionStatus.RESCHEDULED],
+      allowZero: true,
     });
     console.log(
-      `✅ Released ${result.count} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
+      `✅ Released ${released} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
     );
-    return { released: result.count, errors: [] };
+    return { released, errors: [] };
   } catch (error) {
     const msg = `Failed to release stale rescheduled slots: ${error}`;
     console.error(`❌ ${msg}`);

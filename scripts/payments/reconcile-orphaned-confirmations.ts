@@ -80,8 +80,15 @@ async function reconcileOrphanedConfirmationsUnlocked(
           },
         ),
       );
+      // Live holds only: the tentative sweeps release by status now, so a
+      // released row keeps isTentative and an unfiltered count would report a
+      // successful re-drive as still blocked.
       const remaining = await prisma.slotOfAppointment.count({
-        where: { appointmentId: orphan.appointmentId!, isTentative: true },
+        where: {
+          appointmentId: orphan.appointmentId!,
+          isTentative: true,
+          deletedAt: null,
+        },
       });
       if (remaining === 0) {
         confirmed += 1;

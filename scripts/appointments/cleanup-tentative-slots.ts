@@ -18,8 +18,9 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { transitionSlotCompletion } from "@/lib/booking/transitions";
 
 // #833 — hours, not days: gateway orders expire well inside a day, so a
 // 7-day hold locked users out of rebooking for most of a week. 24h keeps
@@ -71,9 +72,13 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
       orderBy: { updatedAt: "asc" },
       where: {
         isTentative: true,
+        // The release is a soft cancel, so the released rows stay in the
+        // table. Without this the cohort read re-collects them every run and
+        // a large backlog would fill the per-run cap with dead rows forever.
+        deletedAt: null,
         // Grace runs from the LAST write, not creation: a reschedule flips
         // isTentative on an old row, and measuring from createdAt gave those
-        // slots zero grace before deletion.
+        // slots zero grace before release.
         updatedAt: { lt: expirationDate },
         appointment: {
           payment: {
@@ -207,24 +212,34 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
       appointmentsAffected.add(slot.appointmentId);
     }
 
-    // Delete the stale tentative slots to release consultant availability.
-    // Only delete slots whose IDs we already confirmed are safe to release.
+    // Release the stale tentative slots so the consultant's calendar frees
+    // up. Doctrine rule 2: the slot is freed by status alone, so this is a
+    // CAS soft-cancel — the row survives for support and disputes.
+    // Only slots whose IDs we already confirmed are safe to release.
     if (staleTentativeSlots.length > 0) {
-      const result = await prisma.slotOfAppointment.deleteMany({
+      slotsReleased = await transitionSlotCompletion(prisma, {
         where: {
           id: { in: staleTentativeSlots.map((s) => s.id) },
           // #829 — re-state the tentative + unpaid conditions so a slot whose
           // capture webhook confirmed it between the findMany above and this
-          // delete no longer matches (re-evaluated under the row lock). An
-          // id-only delete here destroyed paid bookings.
+          // write no longer matches (re-evaluated under the row lock). An
+          // id-only release here destroyed paid bookings.
           isTentative: true,
+          deletedAt: null,
           appointment: {
             payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
           },
         },
+        to: SlotCompletionStatus.CANCELLED,
+        data: { deletedAt: new Date() },
+        // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
+        // auto-complete stamps a past SCHEDULED slot UNVERIFIED an hour after
+        // it ends and does not exclude tentative rows, so a 24h-old hold is
+        // usually UNVERIFIED by now. Only COMPLETED is out of reach, which is
+        // right — a session that actually happened is not a stale hold.
+        allowZero: true,
       });
 
-      slotsReleased = result.count;
       console.log(`\n✅ Released ${slotsReleased} tentative slots`);
     }
 

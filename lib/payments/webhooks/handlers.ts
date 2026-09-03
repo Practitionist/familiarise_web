@@ -18,6 +18,7 @@ import {
   PaymentStatus,
   Prisma,
   AppointmentStatus,
+  SlotCompletionStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -26,6 +27,7 @@ import {
   REQUEST_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   CLASS_EVENT_ALLOWED_FROM,
+  transitionSlotCompletion,
 } from "@/lib/booking/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -2007,18 +2009,28 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
 
   if (!appointment) return;
 
+  // Live holds only: a previously released row is soft-cancelled, not gone,
+  // and counting it here would re-run this arm on every replayed failure.
   const tentativeSlots = appointment.slotsOfAppointment.filter(
-    (slot) => slot.isTentative,
+    (slot) => slot.isTentative && slot.deletedAt === null,
   );
 
   if (tentativeSlots.length > 0) {
-    await tx.slotOfAppointment.deleteMany({
-      where: { appointmentId, isTentative: true },
+    // Doctrine rule 2: the hold is freed by status, so the slot survives for
+    // the dispute trail that a failed payment is most likely to need.
+    await transitionSlotCompletion(tx, {
+      where: { appointmentId, isTentative: true, deletedAt: null },
+      to: SlotCompletionStatus.CANCELLED,
+      data: { deletedAt: new Date() },
+      allowZero: true,
     });
 
     if (appointment.consultation || appointment.subscription) {
+      // Live rows only — the release above leaves its rows in place, so an
+      // unfiltered count would never reach zero and the EXPIRED transition
+      // this gates would never fire again.
       const remainingSlots = await tx.slotOfAppointment.count({
-        where: { appointmentId },
+        where: { appointmentId, deletedAt: null },
       });
       if (remainingSlots === 0) {
         // Soft-delete: transition to EXPIRED status instead of hard-deleting
