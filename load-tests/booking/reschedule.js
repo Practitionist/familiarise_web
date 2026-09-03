@@ -18,6 +18,14 @@
 // the proposed times through the full allocator, so it is the expensive leg and
 // gets its own latency trend.
 //
+// The respond route answers the COUNTERPARTY only, and it answers 404 to
+// everyone else — including the initiator — so that it cannot be walked to
+// discover which bookings hold live reschedules. `runReschedule()` opens the
+// proposal as a buyer, which makes the consultant the counterparty, so the
+// respond leg needs its own credential (CONSULTANT_COOKIES). Without one it is
+// skipped: a buyer answering their own proposal measures the 404 branch, not
+// the allocator.
+//
 // Reschedule is re-entrant by design: multiple concurrent winners on one
 // appointment are LEGAL (chaos scenario 10). The assertion here is therefore
 // not "exactly one winner" but "no server errors and no timeouts".
@@ -59,7 +67,13 @@ export function setup() {
       "RESCHEDULE_APPOINTMENT_IDS is required for the reschedule path",
     );
   }
-  return establishSessions();
+  const sessions = establishSessions();
+  if (sessions.consultants.length === 0) {
+    console.warn(
+      "no CONSULTANT_COOKIES — the respond leg will be skipped and path_respond_duration will be empty",
+    );
+  }
+  return sessions;
 }
 
 export function runReschedule(data, appointmentId, tags) {
@@ -85,7 +99,9 @@ export function runReschedule(data, appointmentId, tags) {
 }
 
 export function runRespond(data, appointmentId, action, tags) {
-  const cookie = pick(data.buyers, __VU + __ITER + 1);
+  const consultants = data.consultants || [];
+  if (consultants.length === 0) return null;
+  const cookie = pick(consultants, __VU + __ITER);
   const target =
     appointmentId || rotate(RESCHEDULE_APPOINTMENT_IDS, __VU * 13 + __ITER);
   const res = post(

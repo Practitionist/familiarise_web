@@ -81,6 +81,18 @@ export const ORG_ADMIN_COOKIES = optional("ORG_ADMIN_COOKIES", "")
   .map((entry) => entry.trim())
   .filter(Boolean);
 
+/**
+ * The consultants that own the reschedule fixtures. Cookie-only on purpose: the
+ * sign-in limiter's ten-per-fifteen-minutes budget is already spent on the
+ * buyer and org-admin pools, so a third fallback pool could not be minted in
+ * the same run. Without these the respond leg is skipped rather than sent to a
+ * credential the route will refuse.
+ */
+export const CONSULTANT_COOKIES = optional("CONSULTANT_COOKIES", "")
+  .split("|")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
 /** consultantProfile ids the browse + checkout mix spreads across. */
 export const CONSULTANT_IDS = list("CONSULTANT_IDS");
 

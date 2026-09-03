@@ -121,6 +121,7 @@ export function summarize(data) {
       timeouts504: count("booking_gateway_timeouts_504"),
       serverErrors5xx: count("booking_server_errors_5xx"),
       clientErrors4xx: count("booking_client_errors_4xx"),
+      unexpected4xx: count("booking_unexpected_4xx"),
     },
     rates: {
       serverErrorRate: rate("booking_server_error_rate"),

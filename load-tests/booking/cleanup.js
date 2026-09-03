@@ -69,11 +69,19 @@ function selfId(cookie) {
   return body?.user?.id ?? null;
 }
 
+/**
+ * How many pages of a hundred the discovery sweep will read before giving up.
+ * Reaching it is a cleanup failure, not a ceiling: the rows past it are still
+ * in the shared production database.
+ */
+const MAX_PAGES = 5;
+
 /** Every appointment of this credential's that starts inside the window. */
 function appointmentsInWindow(cookie) {
   const found = [];
+  let truncated = false;
   // pageSize, not limit — and the response echoes it back as perPage.
-  for (let page = 1; page <= 5; page += 1) {
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
     const res = get(`/api/appointments?page=${page}&pageSize=100`, {
       cookie,
       tag: "cleanup_list",
@@ -98,8 +106,20 @@ function appointmentsInWindow(cookie) {
         found.push(item.id);
       }
     }
-    if (items.length === 0 || found.length >= CLEANUP_MAX_PER_USER) break;
+    if (items.length === 0) break;
     if (page * 100 >= (body.total ?? 0)) break;
+    if (page === MAX_PAGES) truncated = true;
+  }
+  // Stopping early used to be silent, so a run that created more rows than the
+  // sweep could see reported CLEAN while the rest stayed on real calendars.
+  // Both ceilings are now failures, and the verdict says NEEDS ATTENTION.
+  if (truncated || found.length > CLEANUP_MAX_PER_USER) {
+    console.error(
+      `cleanup: discovery stopped early — ${found.length} appointment(s) found, ` +
+        `CLEANUP_MAX_PER_USER=${CLEANUP_MAX_PER_USER}, pages read=${MAX_PAGES}. ` +
+        `Rows in the marked window may remain; raise CLEANUP_MAX_PER_USER and re-run.`,
+    );
+    failures.add(1);
   }
   return found.slice(0, CLEANUP_MAX_PER_USER);
 }

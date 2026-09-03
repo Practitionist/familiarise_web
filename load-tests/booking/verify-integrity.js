@@ -142,10 +142,15 @@ function checkEventCapacity() {
   // `effectiveMaxParticipants` does server-side.
   const max = event.maxParticipants ?? plan.maxParticipants ?? EVENT_CAPACITY;
 
-  const seats = (body.participants || [])
-    .map((p) => p.id)
-    .filter((id) => EVENT_EXCLUDE_USER_IDS.indexOf(id) === -1);
-  const registered = seats.length;
+  // De-duplicated, because a seat is a USER and the roster can carry the same
+  // user twice (one row per slot). Counting rows would invent over-capacity
+  // violations out of a roster the server considers exactly full.
+  const seats = new Set();
+  for (const participant of body.participants || []) {
+    if (EVENT_EXCLUDE_USER_IDS.indexOf(participant.id) !== -1) continue;
+    seats.add(participant.id);
+  }
+  const registered = seats.size;
 
   check(null, {
     "event is not over capacity": () => registered <= max,
@@ -168,6 +173,14 @@ export default function () {
   if (!VERIFY_COOKIE) {
     throw new Error(
       "VERIFY_COOKIE is required — both integrity oracles are self-scoped routes.",
+    );
+  }
+  // With neither oracle configured this script checks nothing and then reports
+  // PASS, because `integrity_violations` stays at zero. A verdict nobody
+  // measured is worse than no verdict at all.
+  if (CONSULTANT_PROFILE_IDS.length === 0 && !EVENT_ID) {
+    throw new Error(
+      "No integrity oracle configured — set CONSULTANT_PROFILE_IDS (the double-booking sweep), EVENT_ID (the capacity check), or both.",
     );
   }
   checkConsultantMinutes();

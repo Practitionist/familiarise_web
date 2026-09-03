@@ -54,10 +54,17 @@ export function setup() {
  *                      on its own sub-metric
  */
 export function runAllocate(data, eventId, useOrgAdmins, tags) {
-  const pool =
-    useOrgAdmins && data.orgAdmins && data.orgAdmins.length > 0
-      ? data.orgAdmins
-      : data.buyers;
+  // No substitution. A buyer standing in for a missing org admin measures the
+  // authorization refusal and the buyer's own limiter, not concurrent
+  // allocation — and it does it silently, which is worse than not running 14c
+  // at all. scenarios.js skips the race when the pool is empty; reaching here
+  // without one means a standalone run was mis-configured.
+  const pool = useOrgAdmins ? data.orgAdmins : data.buyers;
+  if (useOrgAdmins && (!pool || pool.length === 0)) {
+    throw new Error(
+      "scenario 14c needs org-admin credentials — set ORG_ADMIN_COOKIES (preferred) or ORG_ADMIN_EMAILS. A buyer cannot stand in for one.",
+    );
+  }
   const cookie = pick(pool, __VU + __ITER);
   const target = eventId || rotate(ALLOCATE_EVENT_IDS, __VU * 31 + __ITER);
   const key = idempotencyKey("alc");

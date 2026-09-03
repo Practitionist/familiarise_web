@@ -14,8 +14,22 @@
 //
 // CANCEL_APPOINTMENT_IDS must be appointments the credential pool owns and that
 // are still in a cancellable state. A run consumes them: an appointment can be
-// cancelled once, so a second iteration against the same id is a legitimate
-// 409/400 and not a load measurement. Size the list for the run.
+// cancelled once, so the list is rotated and repeats are expected.
+//
+// What a repeat still measures, and what it does not, decides how to read the
+// numbers. It measures everything up to and including the guard: the limiter,
+// the heavy appointment read, the dispute guard, the appointment lock, and the
+// CAS that refuses a second cancel. It does NOT measure the work behind the
+// guard — the refund quote, the ledger reversal and the whole-event refund
+// fan-out all sit past the CAS. So `path_cancel_duration` is a floor once the
+// list has wrapped, and the timeout and lock assertions stay honest while the
+// latency budget reads optimistically.
+//
+// One target per invocation would make every request measure the full path, but
+// a six-minute mutation ramp issues well over a thousand of them, and each one
+// needs a pre-created, still-cancellable appointment on a real calendar in the
+// shared production database. Sizing the list to the ramp is the fixture cost
+// that buys the stronger measurement; size it as far as the fixtures allow.
 //
 // Standalone:
 //   k6 run --env BASE_URL=... --env CANCEL_APPOINTMENT_IDS=a,b,c \

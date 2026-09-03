@@ -66,6 +66,7 @@ ${row("all requests", summary.latency.overall)}
 <tr><td>timeouts (502/504/0)</td><td>${o.timeouts504}</td><td>FAIL — outlived the ~26 s function ceiling</td></tr>
 <tr><td>server errors (other 5xx)</td><td>${o.serverErrors5xx}</td><td>FAIL — unhandled path</td></tr>
 <tr><td>client errors (4xx total)</td><td>${o.clientErrors4xx}</td><td>context for the rows above</td></tr>
+<tr><td>unexpected (401/403/404/405/422)</td><td>${o.unexpected4xx}</td><td>FAIL — the request never reached the guard under test</td></tr>
 </tbody></table>
 
 <h2>Rates</h2>

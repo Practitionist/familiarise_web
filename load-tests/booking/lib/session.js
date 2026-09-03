@@ -29,6 +29,7 @@ import {
   BUYER_COOKIES,
   BUYER_EMAILS,
   BUYER_PASSWORD,
+  CONSULTANT_COOKIES,
   ORG_ADMIN_COOKIES,
   ORG_ADMIN_EMAILS,
 } from "./config.js";
@@ -118,7 +119,14 @@ export function establishSessions() {
       "No buyer credentials — set BUYER_COOKIES (preferred) or BUYER_EMAILS.",
     );
   }
-  return { buyers, orgAdmins };
+  // Cookie-only: the sign-in allowance is already committed to the two pools
+  // above, so there is no e-mail fallback to mint a consultant with.
+  if (CONSULTANT_COOKIES.length > 0) {
+    console.log(
+      `consultants: using ${CONSULTANT_COOKIES.length} pre-minted session cookie(s)`,
+    );
+  }
+  return { buyers, orgAdmins, consultants: CONSULTANT_COOKIES };
 }
 
 /**

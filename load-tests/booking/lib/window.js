@@ -14,19 +14,32 @@ import { WINDOW_ATOMS, WINDOW_START } from "./config.js";
 
 export const ATOM_MS = 30 * 60 * 1000;
 
+/**
+ * Resolved once. Deriving "tomorrow" per call would move the window under a run
+ * that crosses midnight UTC, and a window that moves between booking and
+ * cleanup leaves production rows behind. This memo only covers one k6 process —
+ * the storm, the integrity check and the cleanup are three of them — so the
+ * workflow resolves WINDOW_START once and passes the same instant to all three.
+ * A standalone run must set WINDOW_START explicitly for the same reason.
+ */
+let resolvedStartMs = null;
+
 /** Start of the marked window as epoch milliseconds. */
 export function windowStartMs() {
+  if (resolvedStartMs !== null) return resolvedStartMs;
   if (WINDOW_START) {
     const parsed = Date.parse(WINDOW_START);
     if (Number.isNaN(parsed)) {
       throw new Error(`WINDOW_START is not a parseable date: ${WINDOW_START}`);
     }
-    return parsed;
+    resolvedStartMs = parsed;
+    return resolvedStartMs;
   }
   const base = new Date();
   base.setUTCDate(base.getUTCDate() + 1);
   base.setUTCHours(4, 0, 0, 0); // 09:30 IST
-  return base.getTime();
+  resolvedStartMs = base.getTime();
+  return resolvedStartMs;
 }
 
 export function windowEndMs() {

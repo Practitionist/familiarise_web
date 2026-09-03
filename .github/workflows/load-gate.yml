@@ -40,7 +40,7 @@ on:
           - "17"
           - "all"
       skip_cleanup:
-        description: "Leave the created rows in place (only ever for debugging a failed cleanup)"
+        description: "Leave the created rows in place (debugging only — the workflow then FAILS on purpose)"
         required: false
         default: false
         type: boolean
@@ -76,6 +76,10 @@ jobs:
       BUYER_COOKIES: ${{ secrets.LOAD_GATE_AUTH_TOKEN }}
       ORG_ADMIN_COOKIES: ${{ secrets.LOAD_GATE_ORG_ADMIN_TOKEN }}
       VERIFY_COOKIE: ${{ secrets.LOAD_GATE_VERIFY_TOKEN }}
+      # The consultant is the COUNTERPARTY on a reschedule the buyer opened, so
+      # the respond leg needs its own credential; a buyer answering their own
+      # proposal is refused 404 by design.
+      CONSULTANT_COOKIES: ${{ secrets.LOAD_GATE_CONSULTANT_TOKEN }}
       # Fallback when no cookies are supplied. `SeedPass123!` is the seed
       # suite's password; the harness signs in at most four of each pool.
       BUYER_EMAILS: ${{ secrets.LOAD_GATE_BUYER_EMAILS }}
@@ -111,14 +115,50 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Refuse to run against the production hostname
-        # A typo in base_url is the one mistake that turns a load test into an
-        # outage. The database is shared either way, but the production
-        # hostname also serves real buyers.
+      - name: Validate the dispatch inputs
+        # Two inputs are typed by hand at dispatch time and both are dangerous
+        # if taken on trust.
+        #
+        # base_url receives pre-minted PRODUCTION session cookies on every
+        # request, so any host it names can harvest them. A denylist on the
+        # production hostname is not enough: it leaves every other host in the
+        # world allowed, and `case` matches case-sensitively, so an uppercase
+        # spelling walks straight past a literal pattern. The target is
+        # allow-listed to a Netlify preview or branch deploy instead — those
+        # always carry the `<context>--<site>.netlify.app` double dash, which
+        # the bare `<site>.netlify.app` production alias does not.
+        #
+        # peak_vus is evaluated arithmetically further down, and bash arithmetic
+        # re-expands its operands, so a crafted array-index expression in a
+        # non-numeric value executes a command substitution.
         run: |
-          case "${BASE_URL}" in
-            *familiarisenow.com*)
+          url=$(printf '%s' "${BASE_URL}" | tr '[:upper:]' '[:lower:]')
+          case "$url" in
+            https://*) ;;
+            *)
+              echo "::error::base_url must be an https:// URL; got '${BASE_URL}'."
+              exit 1
+              ;;
+          esac
+          host=${url#https://}
+          host=${host%%/*}
+          host=${host%%:*}
+          case "$host" in
+            *familiarisenow.com)
               echo "::error::base_url points at the production hostname. Use a deploy preview."
+              exit 1
+              ;;
+          esac
+          case "$host" in
+            *--*.netlify.app) ;;
+            *)
+              echo "::error::base_url must be a Netlify deploy-preview or branch-deploy host (<context>--<site>.netlify.app); got '${host}'. Editing this allowlist is a deliberate act: the run replays production session cookies against whatever it names."
+              exit 1
+              ;;
+          esac
+          case "${PEAK_VUS}" in
+            '' | *[!0-9]*)
+              echo "::error::peak_vus must be digits only; got '${PEAK_VUS}'."
               exit 1
               ;;
           esac
@@ -140,6 +180,23 @@ jobs:
             esac
           done <<< "$FIXTURE_OVERRIDES"
 
+      - name: Pin the booking window for the whole run
+        id: window
+        # The storm, the integrity check and the cleanup are three separate k6
+        # processes, and each would otherwise derive "04:00 UTC tomorrow" for
+        # itself. A run that crosses midnight UTC therefore books into one day's
+        # window and cleans the next one, leaving production rows behind. The
+        # window is resolved ONCE here and handed to all three as a step-level
+        # env var, which beats the job-level default.
+        run: |
+          if [ -n "${WINDOW_START}" ]; then
+            resolved="${WINDOW_START}"
+          else
+            resolved="$(date -u -d "$(date -u -d tomorrow +%Y-%m-%d) 04:00:00" +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+          echo "value=${resolved}" >> "$GITHUB_OUTPUT"
+          echo "Marked booking window starts at ${resolved}"
+
       - name: Install k6
         uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
 
@@ -149,6 +206,8 @@ jobs:
       # record that #874 wants.
       - name: Run scenario ${{ inputs.scenario }}
         id: run
+        env:
+          WINDOW_START: ${{ steps.window.outputs.value }}
         run: |
           k6 run \
             --summary-trend-stats "avg,med,p(95),p(99),max" \
@@ -161,6 +220,8 @@ jobs:
         # ALSO double-booked is a different incident from one that merely
         # missed a latency budget, and the difference must be recorded.
         if: always()
+        env:
+          WINDOW_START: ${{ steps.window.outputs.value }}
         run: k6 run load-tests/booking/verify-integrity.js
         continue-on-error: true
 
@@ -168,6 +229,8 @@ jobs:
         id: cleanup
         if: always() && !inputs.skip_cleanup
         # The target shares the production database. This is not optional.
+        env:
+          WINDOW_START: ${{ steps.window.outputs.value }}
         run: k6 run load-tests/booking/cleanup.js
 
       - name: Summarise
@@ -244,18 +307,30 @@ jobs:
 
       - name: Fail the workflow if the gate did not pass
         if: always()
+        env:
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: |
           fail=0
-          if [ "${{ steps.run.outcome }}" = "failure" ]; then
+          if [ "${RUN_OUTCOME}" = "failure" ]; then
             echo "::error::storm thresholds breached"
             fail=1
           fi
-          if [ "${{ steps.verify.outcome }}" = "failure" ]; then
+          if [ "${VERIFY_OUTCOME}" = "failure" ]; then
             echo "::error::booking integrity violated — a consultant-minute or an event is over-subscribed"
             fail=1
           fi
-          if [ "${{ steps.cleanup.outcome }}" = "failure" ]; then
+          if [ "${CLEANUP_OUTCOME}" = "failure" ]; then
             echo "::error::cleanup left rows behind — the shared production database needs manual attention"
+            fail=1
+          fi
+          # A skipped cleanup is a green run with production rows still in the
+          # database, which is the one outcome this workflow must never report
+          # as success. skip_cleanup stays available for debugging a broken
+          # cleanup — it just costs a red X until a human unwinds the rows.
+          if [ "${CLEANUP_OUTCOME}" = "skipped" ]; then
+            echo "::error::cleanup was skipped (skip_cleanup=true) — the appointments, seats and earnings this run created are still in the shared production database. Run load-tests/booking/cleanup.js by hand."
             fail=1
           fi
           exit $fail

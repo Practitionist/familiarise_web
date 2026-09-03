@@ -56,10 +56,23 @@ build. Locally, `brew install k6`.
 
 ### A target
 
-A Netlify deploy preview URL. The workflow refuses a `base_url` containing the
-production hostname, because a typo there is the one mistake that turns a load
-test into an outage — although, as the warning above says, the database is
+A Netlify deploy preview URL. The workflow validates `base_url` before it does
+anything else, and it validates by allowlist rather than by denylist. The host
+must be `https://`, it must carry the `<context>--<site>.netlify.app` double
+dash that a deploy preview or a branch deploy has and the bare production alias
+does not, and it must not end in the production hostname. The reason the
+allowlist is not merely a refusal of the production name is that every request
+this harness sends carries a pre-minted production session cookie, so any host
+the input names can collect those cookies. A typo is the ordinary failure this
+guard catches; a deliberately hostile target is the one it is shaped for.
+Widening the allowlist is therefore a deliberate edit to the workflow, not a
+dispatch-time choice — although, as the warning above says, the database is
 shared either way.
+
+`peak_vus` is validated in the same step and must be digits only. It is
+evaluated arithmetically when the job writes its summary, and bash arithmetic
+re-expands its operands, so a non-numeric value is a command-execution path
+rather than a bad number.
 
 There is a second, subtler consideration in choosing the target, and it decides
 what the run is actually measuring.
@@ -153,26 +166,26 @@ The identifiers below are repository variables rather than secrets, because an
 id is not a secret and hiding it makes the run log unreadable. Each one is
 listed with what it must point at.
 
-| Variable                                    | What it is                                                                                                          |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `LOAD_GATE_CONSULTANT_IDS`                  | `consultantProfile` ids the browse mix reads availability for.                                                      |
-| `LOAD_GATE_CONSULTANT_PROFILE_IDS`          | The profiles the integrity check sweeps for double-booked minutes.                                                  |
-| `LOAD_GATE_PLAN_IDS`                        | `ConsultationPlan` ids, positionally paired with the consultant ids.                                                |
-| `LOAD_GATE_SLOT_AVAILABILITY_WEEKLY_ID`     | A published weekly availability row for the target consultant. Exactly one of this and the custom id may be set.    |
-| `LOAD_GATE_SLOT_AVAILABILITY_CUSTOM_ID`     | The custom-schedule alternative.                                                                                    |
-| `LOAD_GATE_EVENT_ID`                        | The webinar or class instance the hot-event storm attacks.                                                          |
-| `LOAD_GATE_EVENT_PLAN_ID`                   | Its plan.                                                                                                           |
-| `LOAD_GATE_EVENT_TYPE`                      | `WEBINAR` or `CLASS`.                                                                                               |
-| `LOAD_GATE_EVENT_CAPACITY`                  | The effective seat count — the instance's `maxParticipants` when it overrides, otherwise the plan's.                |
-| `LOAD_GATE_EVENT_EXCLUDE_USER_IDS`          | The host's user id. See "what the API cannot tell you".                                                             |
-| `LOAD_GATE_HOT_PLAN_ID`                     | The plan for the single contested consultant-minute.                                                                |
-| `LOAD_GATE_HOT_SLOT_STARTS_AT` / `_ENDS_AT` | That minute, as ISO-8601 instants exactly thirty minutes apart.                                                     |
-| `LOAD_GATE_ALLOCATE_EVENT_IDS`              | Consultation, subscription, webinar or class ids for the allocation race. The first is the one every racer targets. |
-| `LOAD_GATE_ALLOCATE_EVENT_KIND`             | The route family: `consultations`, `subscriptions`, `webinars` or `classes`.                                        |
-| `LOAD_GATE_CANCEL_APPOINTMENT_IDS`          | Cancellable appointments the buyer pool owns. A run consumes them.                                                  |
-| `LOAD_GATE_RESCHEDULE_APPOINTMENT_IDS`      | Reschedulable appointments the buyer pool owns.                                                                     |
-| `LOAD_GATE_CONSULTEE_PROFILE_IDS`           | Optional, positionally paired with the buyer credentials; only cleanup's third pass uses them.                      |
-| `LOAD_GATE_WINDOW_START`                    | Optional. The start of the marked booking window; defaults to 04:00 UTC tomorrow.                                   |
+| Variable                                    | What it is                                                                                                                                                                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOAD_GATE_CONSULTANT_IDS`                  | `consultantProfile` ids the browse mix reads availability for.                                                                                                                                                                                       |
+| `LOAD_GATE_CONSULTANT_PROFILE_IDS`          | The profiles the integrity check sweeps for double-booked minutes.                                                                                                                                                                                   |
+| `LOAD_GATE_PLAN_IDS`                        | `ConsultationPlan` ids, positionally paired with the consultant ids.                                                                                                                                                                                 |
+| `LOAD_GATE_SLOT_AVAILABILITY_WEEKLY_ID`     | A published weekly availability row for the target consultant. Exactly one of this and the custom id may be set.                                                                                                                                     |
+| `LOAD_GATE_SLOT_AVAILABILITY_CUSTOM_ID`     | The custom-schedule alternative.                                                                                                                                                                                                                     |
+| `LOAD_GATE_EVENT_ID`                        | The webinar or class instance the hot-event storm attacks.                                                                                                                                                                                           |
+| `LOAD_GATE_EVENT_PLAN_ID`                   | Its plan.                                                                                                                                                                                                                                            |
+| `LOAD_GATE_EVENT_TYPE`                      | `WEBINAR` or `CLASS`.                                                                                                                                                                                                                                |
+| `LOAD_GATE_EVENT_CAPACITY`                  | The effective seat count — the instance's `maxParticipants` when it overrides, otherwise the plan's.                                                                                                                                                 |
+| `LOAD_GATE_EVENT_EXCLUDE_USER_IDS`          | The host's user id. See "what the API cannot tell you".                                                                                                                                                                                              |
+| `LOAD_GATE_HOT_PLAN_ID`                     | The plan for the single contested consultant-minute.                                                                                                                                                                                                 |
+| `LOAD_GATE_HOT_SLOT_STARTS_AT` / `_ENDS_AT` | That minute, as ISO-8601 instants exactly thirty minutes apart.                                                                                                                                                                                      |
+| `LOAD_GATE_ALLOCATE_EVENT_IDS`              | Consultation, subscription, webinar or class ids for the allocation race. The first is the one every racer targets.                                                                                                                                  |
+| `LOAD_GATE_ALLOCATE_EVENT_KIND`             | The route family: `consultations`, `subscriptions`, `webinars` or `classes`.                                                                                                                                                                         |
+| `LOAD_GATE_CANCEL_APPOINTMENT_IDS`          | Cancellable appointments the buyer pool owns. A run consumes them.                                                                                                                                                                                   |
+| `LOAD_GATE_RESCHEDULE_APPOINTMENT_IDS`      | Reschedulable appointments the buyer pool owns, and whose consultant is in the `LOAD_GATE_CONSULTANT_TOKEN` pool — the respond leg answers the counterparty only, so a consultant who does not own the appointment is refused 404 and the run fails. |
+| `LOAD_GATE_CONSULTEE_PROFILE_IDS`           | Optional, positionally paired with the buyer credentials; only cleanup's third pass uses them.                                                                                                                                                       |
+| `LOAD_GATE_WINDOW_START`                    | Optional. The start of the marked booking window. When it is unset the workflow resolves 04:00 UTC tomorrow ONCE and hands the same instant to all three k6 processes; set it here rather than through `fixture_overrides`.                          |
 
 The slot times must sit inside the consultant's published availability. Since
 #1320 checkout validates the booking window as interval containment against the
@@ -189,6 +202,7 @@ These must exist as repository secrets before the workflow can run.
 | `LOAD_GATE_AUTH_TOKEN`       | Yes (or the e-mail pair)         | Pre-minted buyer session cookies, `\|`-separated. Each entry is a full cookie header value, e.g. `better-auth.session_token=...; better-auth.session_data=...`. |
 | `LOAD_GATE_VERIFY_TOKEN`     | Yes                              | One pre-minted cookie for the consultant who owns the fixtures, or an `ADMIN`/`STAFF` account. Both integrity oracles are self-scoped.                          |
 | `LOAD_GATE_ORG_ADMIN_TOKEN`  | For scenario 14c                 | Pre-minted org-admin cookies, same format.                                                                                                                      |
+| `LOAD_GATE_CONSULTANT_TOKEN` | For the reschedule respond leg   | Pre-minted cookies for the consultants that own the reschedule fixtures, same format. The respond route answers the counterparty only.                          |
 | `LOAD_GATE_AUTH_ORIGIN`      | Yes when the target is a preview | The production URL, which is what `BETTER_AUTH_TRUSTED_ORIGINS` contains.                                                                                       |
 | `LOAD_GATE_BUYER_EMAILS`     | Fallback                         | Comma-separated seed e-mails, used only when no cookies are supplied.                                                                                           |
 | `LOAD_GATE_ORG_ADMIN_EMAILS` | Fallback                         | The same for org admins.                                                                                                                                        |
@@ -203,6 +217,19 @@ which scenario to run.
 `peak_vus` is the **expected** peak, not the ceiling. Scenario 6 ramps to twice
 it, which is what the chaos runbook asks for; entering the ceiling there halves
 the test.
+
+`skip_cleanup` leaves the rows this run created in the shared production
+database, and the workflow therefore **fails on purpose** when it is used. That
+is not a bug to be worked around: the red X is the record that a human still
+owes the database a manual cleanup. Use it only to debug a cleanup that is
+itself broken, and run `load-tests/booking/cleanup.js` by hand afterwards.
+
+Naming one scenario is a claim about what the run measured, so a scenario
+dispatched without its full fixture set fails at init with the list of missing
+variables rather than running a subset. `SCENARIO=all` is the survey and skips
+what it cannot execute — scenario 14c without an org-admin credential, the
+hot-event storm without `LOAD_GATE_EVENT_ID`, the mutation ramp without
+appointment ids.
 
 The three scenarios can also be run locally, which is the right way to shake
 out a fixture problem before spending a gate run:
@@ -271,6 +298,14 @@ nothing was charged. A sold-out 4xx is a pass: the optimistic capacity
 pre-check answered before the mutex was even requested, which is the cheapest
 possible refusal. A 400 from the slot validator is a pass for a consultation
 racer, because "time slot is already booked" is a true and useful answer.
+
+A 401, 403, 404, 405 or 422 is a failure, and it is a different kind of failure
+from the ones above: it means the request never reached the guard under test at
+all. The credential was wrong, the fixture does not exist for that caller, or
+the body was the wrong shape. These are counted in `booking_unexpected_4xx` and
+they fail the `checks` threshold, because a run in which every request was
+answered 401 would otherwise read as a clean sweep of honest refusals and pass
+a gate that measured nothing.
 
 A 502 or a 504 is a failure, and it is the single most important line in the
 gate. It means a lock, or a lock's retry budget, outlived the function ceiling —
@@ -382,6 +417,19 @@ an appointment id nor a payment id — only the gateway order id — and no rout
 lists a user's payments by order id. So the harness books every consultation
 into one declared window and cleanup cancels anything of the buyer pool's that
 starts inside it. Do not change `WINDOW_START` between a run and its cleanup.
+
+The storm, the integrity check and the cleanup are three separate k6 processes,
+so each of them would derive its own "04:00 UTC tomorrow" if left to. A run that
+crossed midnight UTC would then book into one day's window and clean the next
+one, leaving production rows behind. The workflow resolves the window once,
+before k6 is even installed, and passes that instant to all three steps. A
+standalone run must set `WINDOW_START` explicitly for the same reason.
+
+Discovery is also bounded, and the bound is a failure rather than a ceiling.
+Cleanup reads at most five pages of a hundred appointments per credential and
+cancels at most `CLEANUP_MAX_PER_USER` of them; reaching either limit records a
+cleanup failure, so the verdict reads `NEEDS ATTENTION` instead of `CLEAN`.
+Raise `CLEANUP_MAX_PER_USER` and run the script again until it comes back clean.
 
 Three passes run in order. The first cancels the consultations and
 subscriptions in the window through `POST /api/appointments/[id]/cancel`; the

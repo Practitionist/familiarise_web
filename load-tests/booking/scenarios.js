@@ -30,6 +30,7 @@ import { check, sleep } from "k6";
 import {
   ALLOCATE_EVENT_IDS,
   BROWSE_RPM,
+  CANCEL_APPOINTMENT_IDS,
   CONSULTANT_IDS,
   DURATION,
   EVENT_CAPACITY,
@@ -40,9 +41,12 @@ import {
   HOT_SLOT_BUYERS,
   HOT_SLOT_ENDS_AT,
   HOT_SLOT_STARTS_AT,
+  ORG_ADMIN_COOKIES,
+  ORG_ADMIN_EMAILS,
   ORG_ADMIN_RACERS,
   PEAK_VUS,
   PLAN_IDS,
+  RESCHEDULE_APPOINTMENT_IDS,
   SCENARIO,
   SEARCH_RPM,
 } from "./lib/config.js";
@@ -70,8 +74,61 @@ const wants = (name) => SCENARIO === "all" || SCENARIO === name;
  */
 const TWICE_PEAK = PEAK_VUS * 2;
 
+/**
+ * Whether an org-admin credential exists at all. Known at init time, which is
+ * when the executor set is built — `data.orgAdmins` is not, because sessions
+ * are established in setup(). Without one, scenario 14c is skipped rather than
+ * run with a substitute actor (allocate.js refuses the substitution outright).
+ */
+const HAS_ORG_ADMINS =
+  ORG_ADMIN_COOKIES.length > 0 || ORG_ADMIN_EMAILS.length > 0;
+
+/**
+ * The fixtures each scenario cannot execute without, checked before k6 builds a
+ * single executor.
+ *
+ * `SCENARIO=all` is a survey and skips what it cannot run — that is the
+ * documented behaviour and the reason the hot-slot and hot-event storms are
+ * gated individually. Naming ONE scenario is a claim about what the run
+ * measured, so a missing fixture there is a failure rather than a quiet skip:
+ * scenario 17 with no EVENT_ID would otherwise run half its storms and still
+ * report "17 passed".
+ */
+const REQUIRED_FIXTURES = {
+  6: [
+    ["PLAN_IDS", PLAN_IDS.length > 0],
+    ["CONSULTANT_IDS", CONSULTANT_IDS.length > 0],
+    ["CANCEL_APPOINTMENT_IDS", CANCEL_APPOINTMENT_IDS.length > 0],
+    ["RESCHEDULE_APPOINTMENT_IDS", RESCHEDULE_APPOINTMENT_IDS.length > 0],
+  ],
+  "14c": [
+    ["ALLOCATE_EVENT_IDS", ALLOCATE_EVENT_IDS.length > 0],
+    ["ORG_ADMIN_COOKIES or ORG_ADMIN_EMAILS", HAS_ORG_ADMINS],
+  ],
+  17: [
+    [
+      "HOT_PLAN_ID or HOT_SLOT_STARTS_AT",
+      !!(HOT_PLAN_ID || HOT_SLOT_STARTS_AT),
+    ],
+    ["EVENT_ID", !!EVENT_ID],
+    ["EVENT_PLAN_ID", !!EVENT_PLAN_ID],
+  ],
+};
+
+function assertFixturesFor(name) {
+  const missing = (REQUIRED_FIXTURES[name] || [])
+    .filter(([, present]) => !present)
+    .map(([variable]) => variable);
+  if (missing.length > 0) {
+    throw new Error(
+      `SCENARIO=${name} cannot run: ${missing.join(", ")} not set. Either supply them or dispatch SCENARIO=all, which skips what it cannot execute. See docs/enterprise/50-operations/08-load-gate-runbook.md.`,
+    );
+  }
+}
+
 function scenarioSet() {
   const set = {};
+  if (SCENARIO !== "all") assertFixturesFor(SCENARIO);
 
   if (wants("6")) {
     // Browse. Its own arrival-rate executor rather than a VU ramp, because the
@@ -98,40 +155,52 @@ function scenarioSet() {
       tags: { scenario: "6", path_group: "search" },
     };
     // The write mix. This is the part that actually ramps to 2x peak.
-    set.ramp_checkout = {
-      executor: "ramping-vus",
-      exec: "checkoutMix",
-      startVUs: 0,
-      stages: [
-        { duration: "1m", target: PEAK_VUS },
-        { duration: DURATION, target: PEAK_VUS },
-        { duration: "1m", target: TWICE_PEAK },
-        { duration: DURATION, target: TWICE_PEAK },
-        { duration: "30s", target: 0 },
-      ],
-      gracefulRampDown: "30s",
-      tags: { scenario: "6", path_group: "checkout" },
-    };
+    if (PLAN_IDS.length > 0 || (EVENT_ID && EVENT_PLAN_ID)) {
+      set.ramp_checkout = {
+        executor: "ramping-vus",
+        exec: "checkoutMix",
+        startVUs: 0,
+        stages: [
+          { duration: "1m", target: PEAK_VUS },
+          { duration: DURATION, target: PEAK_VUS },
+          { duration: "1m", target: TWICE_PEAK },
+          { duration: DURATION, target: TWICE_PEAK },
+          { duration: "30s", target: 0 },
+        ],
+        gracefulRampDown: "30s",
+        tags: { scenario: "6", path_group: "checkout" },
+      };
+    }
     // Cancels and reschedules alongside, at a quarter of the write pressure —
     // real traffic is not all creation, and the cancel path is where a lock TTL
-    // longer than the function ceiling surfaces.
-    set.ramp_mutations = {
-      executor: "ramping-vus",
-      exec: "mutationMix",
-      startVUs: 0,
-      stages: [
-        { duration: "1m", target: Math.max(1, Math.round(PEAK_VUS / 4)) },
-        { duration: DURATION, target: Math.max(1, Math.round(PEAK_VUS / 4)) },
-        { duration: "1m", target: Math.max(1, Math.round(TWICE_PEAK / 4)) },
-        { duration: DURATION, target: Math.max(1, Math.round(TWICE_PEAK / 4)) },
-        { duration: "30s", target: 0 },
-      ],
-      gracefulRampDown: "30s",
-      tags: { scenario: "6", path_group: "mutations" },
-    };
+    // longer than the function ceiling surfaces. Gated on the fixtures: with
+    // neither id list set this executor spent the whole plateau POSTing to
+    // `/api/appointments/null/cancel`, which is a 4xx storm dressed up as load.
+    if (
+      CANCEL_APPOINTMENT_IDS.length > 0 ||
+      RESCHEDULE_APPOINTMENT_IDS.length > 0
+    ) {
+      set.ramp_mutations = {
+        executor: "ramping-vus",
+        exec: "mutationMix",
+        startVUs: 0,
+        stages: [
+          { duration: "1m", target: Math.max(1, Math.round(PEAK_VUS / 4)) },
+          { duration: DURATION, target: Math.max(1, Math.round(PEAK_VUS / 4)) },
+          { duration: "1m", target: Math.max(1, Math.round(TWICE_PEAK / 4)) },
+          {
+            duration: DURATION,
+            target: Math.max(1, Math.round(TWICE_PEAK / 4)),
+          },
+          { duration: "30s", target: 0 },
+        ],
+        gracefulRampDown: "30s",
+        tags: { scenario: "6", path_group: "mutations" },
+      };
+    }
   }
 
-  if (wants("14c") && ALLOCATE_EVENT_IDS.length > 0) {
+  if (wants("14c") && ALLOCATE_EVENT_IDS.length > 0 && HAS_ORG_ADMINS) {
     // Every racer targets ALLOCATE_EVENT_IDS[0]: N admins auto-allocating
     // against ONE consultant pool is the race. Spreading them across events
     // would measure throughput instead.
@@ -193,13 +262,28 @@ const STORM_THRESHOLDS = {
   "booking_server_errors_5xx{path_group:allocate}": ["count==0"],
 };
 
+const SCENARIOS = scenarioSet();
+
 export const options = {
-  scenarios: scenarioSet(),
+  scenarios: SCENARIOS,
   thresholds: Object.assign({}, ALL_THRESHOLDS, STORM_THRESHOLDS),
 };
 
 export function setup() {
-  return establishSessions();
+  const sessions = establishSessions();
+  // Credential pools are only knowable after sign-in, so the executor gate
+  // above uses the env contract and this one uses what was actually obtained.
+  if (SCENARIOS.allocation_race && sessions.orgAdmins.length === 0) {
+    throw new Error(
+      "scenario 14c was scheduled but no org-admin session was obtained — check ORG_ADMIN_COOKIES / ORG_ADMIN_EMAILS. A buyer cannot stand in for an org admin.",
+    );
+  }
+  if (SCENARIOS.ramp_mutations && sessions.consultants.length === 0) {
+    console.warn(
+      "no CONSULTANT_COOKIES — the reschedule respond leg is skipped and path_respond_duration will be empty",
+    );
+  }
+  return sessions;
 }
 
 // ---------------------------------------------------------------- scenario 6
@@ -248,13 +332,20 @@ export function checkoutMix(data) {
 }
 
 export function mutationMix(data) {
-  if ((__VU + __ITER) % 2 === 0) {
+  // Either list may be empty even when the other is not, and a request against
+  // a `null` id measures the 404 branch.
+  const wantsCancel =
+    CANCEL_APPOINTMENT_IDS.length > 0 &&
+    ((__VU + __ITER) % 2 === 0 || RESCHEDULE_APPOINTMENT_IDS.length === 0);
+  if (wantsCancel) {
     runCancel(data, undefined, { path_group: "mutations" });
-  } else {
+  } else if (RESCHEDULE_APPOINTMENT_IDS.length > 0) {
     const { appointmentId } = runReschedule(data, undefined, {
       path_group: "mutations",
     });
     sleep(1);
+    // Returns null and sends nothing when no consultant credential exists: the
+    // respond route answers 404 to anyone but the counterparty.
     runRespond(data, appointmentId, "decline", { path_group: "mutations" });
   }
   // The event-mutation limiter is 10 per minute per user, twice the checkout

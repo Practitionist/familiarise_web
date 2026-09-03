@@ -6,6 +6,12 @@
 // from a failure is HOW they are turned away.
 //
 //   409 / 4xx structured  → PASS. The guard did its job and told the caller so.
+//   401 / 403 / 404 / 422 → FAIL. The request never reached the contention
+//                           path at all: the credential is wrong, the fixture
+//                           does not exist, or the body is the wrong shape. A
+//                           whole run of these would otherwise read as a clean
+//                           sweep of honest refusals and pass the gate while
+//                           measuring nothing.
 //   504 / 502             → FAIL. The request outlived the ~26s function
 //                           ceiling, which means a lock or a lock retry budget
 //                           is longer than the platform allows (see #1328).
@@ -26,6 +32,7 @@ export const rateLimited = new Counter("booking_rate_limited_429");
 export const gatewayTimeouts = new Counter("booking_gateway_timeouts_504");
 export const serverErrors = new Counter("booking_server_errors_5xx");
 export const clientErrors = new Counter("booking_client_errors_4xx");
+export const unexpectedClientErrors = new Counter("booking_unexpected_4xx");
 
 export const serverErrorRate = new Rate("booking_server_error_rate");
 export const timeoutRate = new Rate("booking_timeout_rate");
@@ -45,6 +52,16 @@ const BUSY_CODES = [
   "BOOKING_BUSY",
 ];
 const SOLD_OUT_CODES = ["EVENT_SOLD_OUT", "EVENT_FULL"];
+
+/**
+ * Statuses that mean the request never reached the guard under test. None of
+ * them is a race outcome: 401 and 403 are credential problems, 404 is a fixture
+ * that does not exist for this caller (the reschedule respond route answers it
+ * to anyone who is not the counterparty), 405 is the wrong verb, and 422 is a
+ * body the route understood and refused on its shape. 400 is deliberately NOT
+ * here — the slot validator refuses a lost consultation race with one.
+ */
+const UNEXPECTED_STATUSES = [401, 403, 404, 405, 422];
 
 function errorTypeOf(res) {
   try {
@@ -121,6 +138,10 @@ export function record(res, tags) {
       soldOut.add(1, t);
       return "sold_out";
     }
+    if (UNEXPECTED_STATUSES.indexOf(status) !== -1) {
+      unexpectedClientErrors.add(1, t);
+      return "unexpected";
+    }
     // A losing consultation racer is refused by the slot validator with a 400
     // ("Time slot is already booked"), which is a legitimate loss, not a bug.
     return "rejected";
@@ -129,7 +150,14 @@ export function record(res, tags) {
   return "server_error";
 }
 
-/** True when the verdict is an acceptable outcome for a losing racer. */
+/**
+ * True when the verdict is an acceptable outcome for a losing racer.
+ *
+ * `unexpected` is deliberately absent, and that absence is load-bearing: every
+ * script asserts `win || isAcceptableLoss(verdict)` through a k6 `check()`, and
+ * the `checks` threshold in thresholds.js turns a run of 401s or 404s into a
+ * failed gate instead of a clean sweep of "honest refusals".
+ */
 export function isAcceptableLoss(verdict) {
   return (
     verdict === "conflict" ||
