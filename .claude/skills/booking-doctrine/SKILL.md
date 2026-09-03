@@ -1,121 +1,157 @@
 ---
 name: booking-doctrine
-description: The non-negotiable invariants of this repo's booking subsystem — status CAS transitions, soft-delete-only, refund front doors, lock namespaces, SQL sidecars, org scoping, and how to test it. Load when working on booking, appointment, slot, reschedule, cancellation, refund, or maintenance-freeze code — anything under lib/booking/, lib/appointments/, utils/slotAllocation/, lib/payments/operations/, or app/api/appointments|bookings|checkout.
+description: The non-negotiable invariants of this repo's booking subsystem — CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, and the no-backfill reset posture. Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/slotAllocation/, lib/payments/operations/, scripts/appointments/, or app/api/appointments|bookings|checkout.
 ---
 
 # Booking Doctrine
 
-Seven rules govern every change in this subsystem. Each has been violated at
-least once, and each violation cost real money or real bookings — the issue
-numbers are the receipts. Verify against these before writing code, and treat
-any diff that breaks one as wrong until proven otherwise.
+Six rules govern every change in this subsystem. Each has been violated at least
+once, and each violation cost real money or real bookings — the issue numbers
+are the receipts. Treat any diff that breaks one as wrong until proven
+otherwise. Sibling skills carry the detail: `booking-concurrency` for locks and
+constraints, `booking-availability` for the slot model, `booking-money-boundary`
+for holds and refunds, `booking-verification` for proving a change works.
 
-## 1. All status writes go through the CAS transition helpers
+## 1. Every status write goes through a CAS transition helper
 
-Every booking status write goes through `lib/booking/transitions.ts`
-(`transitionConsultationRequest`, `transitionSubscriptionRequest`,
-`transitionWebinarEvent`, `transitionClassEvent`,
-`transitionRescheduleRequest`) — never a raw `update`/`updateMany` on a status
-column. The allowed-from set is baked into the UPDATE's WHERE clause, so an
-illegal transition — a capture webhook racing a cancel, a stale tab approving
-a cancelled request, a double-submitted decline — matches **zero rows** instead
-of corrupting state. The WHERE clause IS the state machine; app-level
-pre-checks are only friendly error text. A matched count of 0 throws
-`IllegalTransitionError` → map it to 4xx, never swallow it. Doctrine:
-`docs/enterprise/70-design-decisions/13-postgres-native-concurrency.md`; the
-enterprise sibling is `lib/enterprise/transitions.ts` (#836, #837, #838).
+`lib/booking/transitions.ts` exports seven guarded helpers, and no booking
+status column may be written any other way. As of wave 5 (#1319) the set is
+complete:
 
-## 2. Nothing is deleted
+| Helper                          | Guards                               | Allowed-from map               |
+| ------------------------------- | ------------------------------------ | ------------------------------ |
+| `transitionConsultationRequest` | `Consultation.status`                | `REQUEST_ALLOWED_FROM`         |
+| `transitionSubscriptionRequest` | `Subscription.status`                | `REQUEST_ALLOWED_FROM`         |
+| `transitionWebinarEvent`        | `Webinar.status`                     | `EVENT_ALLOWED_FROM`           |
+| `transitionClassEvent`          | `Class.status`                       | `CLASS_EVENT_ALLOWED_FROM`     |
+| `transitionSlotCompletion`      | `SlotOfAppointment.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
+| `transitionTrialSession`        | `TrialSession.status`                | `TRIAL_ALLOWED_FROM`           |
+| `transitionRescheduleRequest`   | `RescheduleRequest.status`           | `RESCHEDULE_ALLOWED_FROM`      |
 
-Bookings soft-cancel. Slots carry `completionStatus`
-(SCHEDULED/COMPLETED/UNVERIFIED/CANCELLED/RESCHEDULED) and `deletedAt`
-tombstones; reschedule flips replaced slots to RESCHEDULED and re-confirms them
-in place; live-slot reads filter dead rows rather than expecting them gone.
-Above all: **never delete an appointment a `Payment` row points at** — a trial
-cancellation once hard-deleted the appointment and destroyed the Payment row
-with it (#1074, PR #1074). The slot is freed by status alone. If you think you
-need `delete`/`deleteMany` on Appointment/SlotOfAppointment, you are almost
-certainly wrong — reconcile in place (see `replaceContiguousSlotRun`, which
-survives Stream `MeetingSession`/`Recording` FKs precisely by not deleting).
+Every map is keyed by **target** state: `ALLOWED_FROM[to]` lists the only states
+the row may currently be in, and that set is baked into the `updateMany`'s
+WHERE clause. An illegal transition therefore matches zero rows rather than
+corrupting state, and the helper throws `IllegalTransitionError` (409,
+`ILLEGAL_TRANSITION`, defined in `lib/enterprise/transitions.ts`). The WHERE
+clause is the state machine; application-level pre-checks are only friendly
+error text. Never swallow the zero-row case.
+
+Two helpers depart deliberately. `transitionSlotCompletion` takes a full
+`Prisma.SlotOfAppointmentWhereInput` because callers sweep by appointment rather
+than by slot id, accepts `allowZero` because a cancel or reschedule sweep
+legitimately matches no live rows, and returns the matched count.
+`transitionRescheduleRequest` also clears `openForAppointmentId` and stamps
+`resolvedAt` on any terminal target, so callers never have to remember to
+release the one-open-proposal lock.
+
+Every helper accepts `fromIn` to narrow or widen the set for a flow-specific
+edge, and narrowing is safer: automated completion from a Stream webhook passes
+`fromIn: ["SCHEDULED"]` so it can never lift a slot a human pulled back to
+UNVERIFIED. As of wave 5 (#1322, ADR A12) each helper also appends one
+`BookingStatusHistory` row in the same transaction, reading the from-status
+before the CAS, so a lost race logs a stale from-status but never a wrong
+state.
+
+## 2. Nothing that a Payment points at is ever deleted
+
+`Payment.appointment` cascades on delete, so deleting an Appointment destroys
+the Payment rows, the refund trail and the credit usage with it. A trial
+cancellation did exactly this once (#1074). The rule that replaced it is
+mechanical: **the payment guard rides inside the DELETE's WHERE clause**, never
+in an earlier read.
+
+The allocator's form is `tx.appointment.deleteMany({ where: { id, payment:
+{ none: {} } } })`. A count of zero means a Payment committed between the read
+and the write, so the caller keeps the appointment and strips only its
+sessionless slots (`utils/slotAllocation/SlotAllocationService.ts`, #1189 audit
+B-P1-05, #898). Requests are retired by status: `DELETE
+/api/bookings/consultations/{id}` and its subscription twin answer **405** with
+`code: "DELETE_NOT_SUPPORTED"`, and
+`__tests__/payments/appointment-delete-forbidden.test.ts` keeps the six sweep
+scripts free of the forbidden call shapes.
+
+Be precise about slots rather than absolute, because slot rows are _not_
+uniformly soft-deleted. `cleanup-abandoned-payments` soft-cancels them
+(`transitionSlotCompletion` to `CANCELLED` plus `deletedAt`), while
+`expire-stale-requests.ts` and `cleanup-tentative-slots.ts` under
+`scripts/appointments/` still hard-delete tentative holds — always re-checking
+`isTentative: true` in the WHERE at delete time, so a slot confirmed between the
+cohort read and the statement is never touched. If you think you need a delete
+on an Appointment or a confirmed slot, you are almost certainly wrong: reconcile
+in place, as `replaceContiguousSlotRun` does precisely so Stream
+`MeetingSession` and `Recording` rows survive.
 
 ## 3. Refunds have exactly two front doors
 
-All refunds go through `refundBookingPayment`
-(`lib/payments/operations/booking-refund.ts`) for one booking, or
-`refundWholeEventPayments` (`lib/payments/operations/event-refunds.ts`) for a
-whole webinar/class — never a raw `createRefund` call. The front doors exist
-because there are three rails and only they split them correctly:
+One booking refunds through `refundBookingPayment`
+(`lib/payments/operations/booking-refund.ts`); a whole webinar or class refunds
+through `refundWholeEventPayments` (`lib/payments/operations/event-refunds.ts`).
+A removed attendee's single seat is the third entry point,
+`refundRemovedAttendeeSeat`, in the same event-refunds module. Never call
+`createRefund` directly. The front doors exist because there are three rails and
+only they split them correctly, keyed off the payment intent prefix.
+`isInternalFundedIntent` matches `org_` — the synthetic intents org-funded
+bookings carry — and refunds as an in-ledger reversal, because a gateway call on
+these dies on `UNKNOWN_GATEWAY` and historically reversed nothing (#1003,
+#1020). `isFreeCreditIntent` matches `free_` and restores referral credits
+rather than moving gateway money. Everything else is the two-phase gateway refund.
 
-- **Gateway** intents (`pi_`/`cs_` from Stripe, `order_`/`pay_` from Razorpay)
-  → the two-phase gateway refund in `refundPayment`.
-- **Internal org-funded** intents (`org_wallet_`/`org_invoice_`/`org_license_`,
-  detected by `isInternalFundedIntent`) → in-ledger reversal only; a gateway
-  call on these dies on UNKNOWN_GATEWAY and, historically, silently reversed
-  nothing (#1003, #1020).
-- **`free_`** intents (`Payment.amount === 0`, credits-covered) have no
-  refundable balance — callers filter them out upstream on `amount > 0`.
+## 4. Org scoping is explicit on every list
 
-## 4. One lock namespace per atom
+`lib/api/scope/parse.ts` is the single definition of the `?orgScope=` vocabulary
+and resolves it to one of four kinds: `personal`, `org`, `orgMember`, and `all`.
+An active membership alone does not earn `org` scope, which carries no user
+filter — below `operations.read` the resolution deliberately downgrades to
+`orgMember` (the member's own rows within that org) rather than returning 403.
+Compose filters with `scopeOrgId` and `scopeToWhereOrgId`, end every `buildWhere`
+with `assertNeverScope` so an unhandled kind is a compile error instead of an
+unfiltered cross-tenant read, and never hand-roll an org filter.
 
-Distributed lock keys are minted in ONE place — `utils/appointmentlock.ts` —
-and a given atom has exactly one key shape. A slot atom is thirty minutes of
-one consultant's calendar, and it locks under
-`slot-booking:<consultantProfileId>:<atomStartISO>`; `lockSlotInterval` takes
-one such key per atom that `[startsAt, endsAt)` covers, with starts floored to
-the half-hour grid so an unaligned booking still collides with the aligned ones
-it overlaps. Keying on the raw `startsAt` instant instead would let a
-10:00–12:00 booking and an 11:00–12:00 booking hold different keys and both
-proceed to payment. The consultee side is `consultee-booking:<userId>`; events
-are `event-checkout:<type>:<eventOrPlanId>`; allocation is
-`auto-allocate:<consultantProfileId>[:scope]`.
+The org arm is **owned rows only**. As of #1166 ORG-8 the funded-elsewhere
+clause (`payment: { some: { organizationId } }`) is gone from
+`lib/api/scope/list-appointments.ts`, because the detail page 404s any row whose
+`organizationId` is not this org — the list was offering rows the click could
+not open. Cross-org funding visibility now belongs to the money views. Org lists remain
+metadata-only by design (ADR 20): an org sees that a session happened, never its
+content.
 
-**Trials hold no namespace of their own.** They used to lock under
-`trial-slot-booking:`, which nothing else read, so a trial and a checkout for
-the same consultant-minute never contended (#1093 §1). #1170 retired that
-namespace entirely and pointed the trial route at `lockSlotBooking` — the same
-shared `slot-booking:` atom keys every other direct slot writer takes. Do not
-reintroduce it: `__tests__/booking-algorithm/trial-slot-integrity.test.ts`
-asserts the string is gone from both the route and the lock module.
+## 5. An approved request that was never paid has one outcome: EXPIRED
 
-Never mint a new key shape for an atom that already has one — two names for one
-atom is no lock at all. The one deliberate exception is `SlotAllocationService`,
-which keeps its coarser consultant-wide `auto-allocate:` lock because it
-discovers slots dynamically under that lock; its write transaction re-validates
-conflicts and absorbs the #440 exclusion constraint. Global lock order (a total
-order ⇒ deadlock-free): **event/consultant → consultee → slot**.
+The lapsed pay-link sweep is `cleanupExpiredApprovalPendingPayments` in
+`scripts/payments/cleanup-abandoned-payments.ts`, and it transitions the request
+to `EXPIRED` with `fromIn: ["APPROVED_PENDING_PAYMENT"]` — narrower than the
+map's default, so only the lapsed shape moves. The status guard is not enough on
+its own: the sweep also **repeats the cohort read's money predicate**
+(`appointment: { payment: { none: { paymentStatus: SUCCEEDED } } }`) inside the
+CAS `where`, so a capture that landed between the read and the write matches zero
+rows instead of expiring a paid booking. Payment rows then expire from `PENDING`
+only, through a conditional `updateMany`, so a racing capture keeps its
+`SUCCEEDED`. Any new sweep must carry both guards. It is deliberately not REJECTED,
+which reads as "the consultant declined" on every surface, and deliberately not
+CANCELLED. As of wave 5 (#1321) the unscheduled
+`app/api/cleanup/approval-payments` route is deleted and its work rides inside
+the abandoned-payments run, so there is one code path and one semantics. Sibling
+sweeps with _different_ cohorts still end in CANCELLED, so the one-outcome rule
+is about approved-but-unpaid specifically, not all abandonment. No money moves
+in this sweep, because a paid row never reaches the expiry: `SUCCEEDED` payments
+are filtered out by the cohort read and again by the CAS `where`, and the payment
+rows themselves expire from `PENDING` only. The sweep that does refund is a
+different cohort — `expireApprovedUnallocatedSubscriptions` in
+`scripts/appointments/expire-stale-requests.ts` calls `refundPaymentsForExpired`,
+which routes every `SUCCEEDED` payment through `refundBookingPayment`. The
+sibling pass in that same file, `expirePaymentPendingRequests`, is the
+counter-example rather than the pattern: it flips `APPROVED_PENDING_PAYMENT` to
+`EXPIRED` with a bare `updateMany` that carries neither the money predicate nor
+the CAS helper.
 
-## 5. Constraints Prisma can't express live in sidecars
+## 6. There are no backfill migrations
 
-The correctness backstops — the `slot_no_confirmed_overlap` GiST exclusion
-constraint, the CHECK constraints, the ledger triggers — are NOT in
-`schema.prisma`. They live in `prisma/sql/` (`check-constraints.sql`,
-`ledger-triggers.sql`) and are applied **after** a schema push by
-`npm run db:sidecars` (`npm run db:push` chains it automatically). Never
-assume they are present on a database you did not push to with the full
-chain, and never treat "Prisma schema is up to date" as proof the sidecars
-are. A 23P01 from the exclusion constraint is the backstop working — surface
-it as 409, do not "fix" it away.
-
-## 6. Org scoping is explicit on every list
-
-Personal surfaces pin `organizationId: null` — both arms, consultee-side and
-consultant-side; org surfaces scope by the org id, and the org arm includes
-sessions the org **funded** into another host's event
-(`payment: { some: { organizationId } }`), not only sessions it hosts. The
-single source of truth is `lib/api/scope/parse.ts` (+
-`lib/api/scope/list-appointments.ts`); never hand-roll an org filter. Org
-lists are metadata-only by design — ADR 20 (`docs/enterprise/
-70-design-decisions/20-org-visibility-into-member-sessions.md`): an org sees
-that a session happened, never its content, and there is deliberately no
-drill-in from the org appointments table.
-
-## 7. Test against a running app, not the shared DB's schema
-
-Verification is a background dev server plus mock-data scripts and
-mock-payment checkouts (`isMockPayment: true`) — never `prisma db push`
-against the shared dev database, which other branches depend on. The jest
-suites live under `__tests__/booking-algorithm/` and `__tests__/payments/`;
-the agent-run E2E corpus is `prompts/booking-algorithm-tests/`. For
-concurrency claims, the real-API chaos suite and its runbook are at
-`docs/enterprise/50-operations/07-chaos-test-runbook.md` — a lock or CAS
-change is not "verified" by unit tests alone.
+The schema is managed with `prisma db push`, not migrations, and everything
+currently in the database is seed data awaiting the one-time pre-MVP reset
+(`docs/prisma/pre-mvp-reset-runbook.md`). The doctrine is therefore to freeze
+the schema shape before launch, have every code path write the new tables from
+day one, and never write a data migration for pre-reset rows. This is why wave 5
+added `AppointmentParticipant` and `BookingStatusHistory` with no backfill.
+Several constraints are staged behind a commented banner at the end of
+`prisma/sql/check-constraints.sql` because they cannot pass against pre-reset
+data; do not uncomment them outside the reset window.
