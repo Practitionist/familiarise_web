@@ -26,6 +26,7 @@
 
 import { detectBuyerCountry } from "../../lib/payments/tax/buyer-country";
 import { validatePlanCurrency } from "../../lib/payments/validation/currency-guards";
+import { assertGatewayUsable } from "../../lib/payments/validation/gateway-guards";
 
 describe("buyer country never zero-rates on a browser locale", () => {
   it("ignores Accept-Language entirely, even when it names a country", () => {
@@ -107,5 +108,34 @@ describe("the planner cannot create an unsettleable plan", () => {
     const match = src.match(/const DEFAULT_CURRENCIES = (\[[^\]]*\])/);
     expect(match).not.toBeNull();
     expect(JSON.parse(match![1].replace(/'/g, '"'))).toEqual(["INR"]);
+  });
+});
+
+describe("the Stripe rail is fenced unless it is switched on", () => {
+  // #1351 — Stripe was fully live: every checkout page offered the button and
+  // routeGateway honoured an explicit STRIPE request unconditionally, on
+  // sk_test_ keys. It is a contingency rail for an RBI rule change, so the
+  // flag is the gate.
+  const original = process.env.STRIPE_ENABLED;
+  afterEach(() => {
+    if (original === undefined) delete process.env.STRIPE_ENABLED;
+    else process.env.STRIPE_ENABLED = original;
+  });
+
+  it("rejects STRIPE with the flag unset and accepts it with the flag on", () => {
+    delete process.env.STRIPE_ENABLED;
+    expect(() => assertGatewayUsable("STRIPE", "route a checkout")).toThrow(
+      /STRIPE_ENABLED/,
+    );
+
+    process.env.STRIPE_ENABLED = "true";
+    expect(() =>
+      assertGatewayUsable("STRIPE", "route a checkout"),
+    ).not.toThrow();
+
+    // The fence must not touch the gateway that actually takes money.
+    expect(() =>
+      assertGatewayUsable("RAZORPAY", "route a checkout"),
+    ).not.toThrow();
   });
 });

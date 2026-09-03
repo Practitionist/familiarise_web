@@ -35,6 +35,7 @@ import {
   createHandleApiError,
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
+  paymentGateways,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -841,20 +842,7 @@ export default function SubscriptionCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {[
-            {
-              name: "Stripe",
-              description: "Card payments (international)",
-              gateway: "STRIPE" as const,
-              isActive: true,
-            },
-            {
-              name: "Razorpay",
-              description: "UPI, cards & bank transfer",
-              gateway: "RAZORPAY" as const,
-              isActive: true,
-            },
-          ].map((gateway) => (
+          {paymentGateways.map((gateway) => (
             <Card key={gateway.gateway} className="border-border">
               <CardHeader>
                 <CardTitle className="text-foreground">{gateway.name}</CardTitle>
