@@ -208,13 +208,15 @@ describe("checkPaymentLegsSumToAmount — zero-value LICENSE exemption", () => {
 
   it("exempts a license booking whose accrual reversal nets it back to nothing", () => {
     // Reversal sources are filtered out before the sum runs, so a refunded
-    // license booking is still judged on its original legs alone.
+    // license booking is still judged on its original legs alone. The reversal
+    // is written as plain 0 rather than -0: the two compare equal, so a -0
+    // fixture proves nothing the 0 one does not.
     expect(
       checkPaymentLegsSumToAmount({
         paymentAmountPaise: 500000,
         legs: [
           { source: "LICENSE", amountPaise: 0 },
-          { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -0 },
+          { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: 0 },
         ],
       }),
     ).toBeNull();
@@ -253,5 +255,67 @@ describe("checkPaymentLegsSumToAmount — zero-value LICENSE exemption", () => {
     });
     expect(mismatch).not.toBeNull();
     expect(mismatch!.legSumPaise).toBe(0);
+  });
+});
+
+/**
+ * #786 — partial-refund reversal pairs.
+ *
+ * A refund appends a negative `*_REVERSAL` sibling rather than mutating the
+ * original leg, so the originals keep summing to `Payment.amount` and the
+ * reversal is judged against its own pair: it must be negative and must never
+ * exceed the originals it reverses. `assert_payment_legs_ok` enforces the same
+ * two rules in the database, including on a licence-only payment, so the
+ * checker has to reach them there too — otherwise a leg the checker waved
+ * through would still be rejected at COMMIT (#1347).
+ */
+describe("checkPaymentLegsSumToAmount — reversal pairs", () => {
+  it("accepts a partial reversal that stays inside its original sibling", () => {
+    expect(
+      checkPaymentLegsSumToAmount({
+        paymentAmountPaise: 500000,
+        legs: [
+          { source: "INVOICE_ACCRUAL", amountPaise: 500000 },
+          { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -200000 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a partial reversal larger than the accrual it reverses", () => {
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "INVOICE_ACCRUAL", amountPaise: 500000 },
+        { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -600000 },
+      ],
+    });
+    expect(mismatch?.reason).toBe("REVERSAL_PAIR_VIOLATION");
+  });
+
+  it("rejects a positive reversal leg", () => {
+    // A reversal is a counter-entry; a positive one would credit the org twice.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "INVOICE_ACCRUAL", amountPaise: 500000 },
+        { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: 200000 },
+      ],
+    });
+    expect(mismatch?.reason).toBe("REVERSAL_PAIR_VIOLATION");
+  });
+
+  it("still checks the pair on a licence-only payment the sum carve exempts", () => {
+    // The zero-LICENSE carve skips the SUM comparison only. A reversal with no
+    // original sibling is corrupt whichever way the sum is read, and the
+    // trigger raises on it, so the checker must agree rather than return early.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "LICENSE", amountPaise: 0 },
+        { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -200000 },
+      ],
+    });
+    expect(mismatch?.reason).toBe("REVERSAL_PAIR_VIOLATION");
   });
 });

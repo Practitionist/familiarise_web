@@ -64,12 +64,28 @@ export async function rollupOrgInvoiceAccruals(params: {
   });
   if (!org?.billingAccountId) return EMPTY;
 
+  // #1357 7.4 — orphaned overage events are collected in the tx and written
+  // AFTER it commits. `recordSystemError` goes through the global client, so a
+  // call fired from inside the Serializable block races its own transaction:
+  // a P2034 abort (routine here — the cron treats it as a benign skip) would
+  // leave a SystemEvent naming an invoice that was rolled back, and the cron's
+  // `prisma.$disconnect()` can cut an un-awaited insert off mid-flight.
+  const orphanedOverages: Array<{
+    overageEventId: string;
+    invoiceId: string;
+    invoiceNumber: string;
+    paymentId: string;
+  }> = [];
+
   // #813 — Serializable + in-tx read: the accrued read, invoice create and
   // billableToOrgInvoiceId stamp must be one atomic unit, else two concurrent
   // runs both read the same unstamped set and each issue a duplicate invoice.
   // Under Serializable the loser aborts (P2034) or reads the empty set after
   // the winner stamps; the caller treats P2034 as a benign skip.
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    // A retried attempt must not inherit the discarded one's orphans.
+    orphanedOverages.length = 0;
+
     // Unbilled accrued bookings: org-tagged, succeeded payments carrying an
     // INVOICE_ACCRUAL leg not yet attached to an invoice.
     const accrued = await tx.payment.findMany({
@@ -241,24 +257,20 @@ export async function rollupOrgInvoiceAccruals(params: {
 
       // #1357 7.4 (inverse) — the allowed-from guard IS the filter, so an
       // event that is no longer PENDING silently does not move and the
-      // discarded count was the only evidence. Its marginal is already inside
-      // this invoice's line amounts, so an unsettled event gets re-billed by
-      // the next rollup. The invoice still commits — the money is on it and
-      // refusing to issue would strand the whole cycle — but the orphan is
-      // recorded for a human.
+      // discarded count was the only evidence. The payment carries
+      // billableToOrgInvoiceId from the stamp above and the next rollup reads
+      // only unstamped payments, so nothing gets re-billed; what is lost is
+      // the event's own settlement — it never links to the line item that
+      // billed it and never reaches CHARGED when the invoice is paid. The
+      // invoice still commits — the money is on it and refusing to issue would
+      // strand the whole cycle — but the orphan is recorded for a human.
       if (moved === 0) {
-        void recordSystemError({
-          organizationId,
-          category: "OVERAGE",
-          summary: `OverageEvent ${ev.id} did not move to ACCRUED while rolling up invoice ${invoice.id} — its marginal is billed on that invoice but the event stays unsettled and the next rollup will bill it again`,
-          err: new Error("OVERAGE_ACCRUAL_TRANSITION_NOOP"),
-          context: {
-            overageEventId: ev.id,
-            invoiceId: invoice.id,
-            invoiceNumber,
-            paymentId: ev.bookingUtilization.paymentId,
-          },
-        }).catch(() => {});
+        orphanedOverages.push({
+          overageEventId: ev.id,
+          invoiceId: invoice.id,
+          invoiceNumber,
+          paymentId: ev.bookingUtilization.paymentId,
+        });
       }
     }
 
@@ -270,4 +282,33 @@ export async function rollupOrgInvoiceAccruals(params: {
       totalPaise: gst.totalPaise,
     };
   }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 });
+
+  // Awaited, not voided: the caller is a cron that disconnects Prisma as soon
+  // as it returns, and these rows are the only record that an event was left
+  // behind. `recordSystemError` is best-effort internally, so allSettled here
+  // is belt-and-braces — one failed insert must not lose the others or throw
+  // away an invoice that has already committed.
+  if (orphanedOverages.length > 0) {
+    const written = await Promise.allSettled(
+      orphanedOverages.map((o) =>
+        recordSystemError({
+          organizationId,
+          category: "OVERAGE",
+          summary: `OverageEvent ${o.overageEventId} did not move to ACCRUED while rolling up invoice ${o.invoiceNumber} — its marginal is billed on that invoice but the event keeps its previous chargeStatus, so it never links to the line item and never reaches CHARGED when the invoice is paid`,
+          err: new Error("OVERAGE_ACCRUAL_TRANSITION_NOOP"),
+          context: o,
+        }),
+      ),
+    );
+    for (const w of written) {
+      if (w.status === "rejected") {
+        console.error(
+          "[invoice-rollup] orphaned-overage SystemEvent write failed:",
+          w.reason,
+        );
+      }
+    }
+  }
+
+  return result;
 }

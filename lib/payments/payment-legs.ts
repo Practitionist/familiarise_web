@@ -206,16 +206,19 @@ export function checkPaymentLegsSumToAmount(args: {
   const nonLicenseOriginals = originals.filter(
     (l) => !(l.source === "LICENSE" && l.amountPaise === 0),
   );
-  if (nonLicenseOriginals.length === 0 && originals.length > 0) {
-    return null;
-  }
+  // #1347 — the carve suppresses the SUM COMPARISON only, never the
+  // reversal-pair checks below. Returning early here let a positive or
+  // over-large *_REVERSAL leg pass the checker on a licence-only payment while
+  // `assert_payment_legs_ok` still raised on it at COMMIT, so runtime and
+  // database reached opposite verdicts about the same rows.
+  const licenseOnly = nonLicenseOriginals.length === 0 && originals.length > 0;
 
   // #1347 — the credit is platform-funded and already netted out of
   // Payment.amount; counting it here would demand it twice over.
   const legSum = originals
     .filter((l) => l.source !== "REFERRAL_CREDIT")
     .reduce((acc, leg) => acc + leg.amountPaise, 0);
-  if (legSum !== args.paymentAmountPaise) {
+  if (!licenseOnly && legSum !== args.paymentAmountPaise) {
     return {
       paymentAmountPaise: args.paymentAmountPaise,
       legSumPaise: legSum,

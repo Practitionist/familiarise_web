@@ -17,9 +17,10 @@
 --     leg is deliberately 0 while Payment.amount stays at full price and the
 --     comparison is structurally false for every one of them. The checker
 --     carves the same shape out; without it here the trigger would reject at
---     COMMIT the very checkout the checker waves through. (The checker returns
---     early and the reversal-pair loop below still runs — a reversal with no
---     original sibling is corrupt under either reading.)
+--     COMMIT the very checkout the checker waves through. The carve suppresses
+--     the sum comparison ONLY — both sides still run their reversal-pair loop
+--     over a licence-only payment, because a reversal with no original sibling
+--     is corrupt under either reading.
 --   * REFERRAL_CREDIT is EXCLUDED from that sum (#1347): Payment.amount is the
 --     gateway charge and the credit is already netted out of it, so counting
 --     the leg would demand the credit twice and fail every credit checkout
