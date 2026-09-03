@@ -18,13 +18,20 @@
  */
 
 import prisma from "../../lib/prisma";
-import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
+import {
+  AppointmentStatus,
+  PaymentStatus,
+  SlotCompletionStatus,
+} from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   RESCHEDULE_OPEN_STATUSES,
+  transitionConsultationRequest,
   transitionSlotCompletion,
+  transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -458,7 +465,15 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
 }
 
 /**
- * Expire requests stuck in APPROVED_PENDING_PAYMENT
+ * Expire requests stuck in APPROVED_PENDING_PAYMENT.
+ *
+ * This was the counter-example to doctrine rule 1 rather than the pattern: a
+ * bare bulk `updateMany` with neither the CAS from-set nor the money
+ * predicate, so a capture recovered by `reconcile-payment-status` between the
+ * scan and the write — which flips the Payment to SUCCEEDED without touching
+ * the request — expired a booking the buyer had paid for, with no audit row
+ * to show for it. Each request now moves through its guarded helper in its
+ * own transaction; a raced capture matches zero rows and is skipped.
  */
 async function expirePaymentPendingRequests(): Promise<{
   consultationsExpired: number;
@@ -470,42 +485,95 @@ async function expirePaymentPendingRequests(): Promise<{
     Date.now() - PAYMENT_PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
+  // The money predicate is repeated in each CAS WHERE below, so these read
+  // filters are an optimisation rather than the guard.
+  const UNPAID_CONSULTATION = {
+    appointment: {
+      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+    },
+  };
+  // Subscription→Appointment is to-many (one per session), so the predicate
+  // inverts: no appointment under this subscription carries a paid payment.
+  const UNPAID_SUBSCRIPTION = {
+    appointments: {
+      none: { payment: { some: { paymentStatus: PaymentStatus.SUCCEEDED } } },
+    },
+  };
+
   try {
-    // Expire consultations awaiting payment
-    const consultationResult = await prisma.consultation.updateMany({
+    const staleConsultations = await prisma.consultation.findMany({
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
+        ...UNPAID_CONSULTATION,
       },
-      data: {
-        status: AppointmentStatus.EXPIRED,
-        pendingPaymentUrl: null, // Clear payment link
-      },
+      select: { id: true },
     });
 
+    let consultationsExpired = 0;
+    let consultationsSkipped = 0;
+    for (const consultation of staleConsultations) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionConsultationRequest(tx, {
+            where: { id: consultation.id, ...UNPAID_CONSULTATION },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+            data: { pendingPaymentUrl: null }, // Clear payment link
+          }),
+        );
+        consultationsExpired += 1;
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        consultationsSkipped += 1;
+      }
+    }
+
     console.log(
-      `✅ Expired ${consultationResult.count} consultations awaiting payment`,
+      `✅ Expired ${consultationsExpired} consultations awaiting payment` +
+        (consultationsSkipped > 0
+          ? ` (${consultationsSkipped} skipped — paid or moved on since the read)`
+          : ""),
     );
 
-    // Expire subscriptions awaiting payment
-    const subscriptionResult = await prisma.subscription.updateMany({
+    const staleSubscriptions = await prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         updatedAt: { lt: expirationDate },
+        ...UNPAID_SUBSCRIPTION,
       },
-      data: {
-        status: AppointmentStatus.EXPIRED,
-        pendingPaymentUrl: null, // Clear payment link
-      },
+      select: { id: true },
     });
 
+    let subscriptionsExpired = 0;
+    let subscriptionsSkipped = 0;
+    for (const subscription of staleSubscriptions) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id, ...UNPAID_SUBSCRIPTION },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+            data: { pendingPaymentUrl: null }, // Clear payment link
+          }),
+        );
+        subscriptionsExpired += 1;
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        subscriptionsSkipped += 1;
+      }
+    }
+
     console.log(
-      `✅ Expired ${subscriptionResult.count} subscriptions awaiting payment`,
+      `✅ Expired ${subscriptionsExpired} subscriptions awaiting payment` +
+        (subscriptionsSkipped > 0
+          ? ` (${subscriptionsSkipped} skipped — paid or moved on since the read)`
+          : ""),
     );
 
     return {
-      consultationsExpired: consultationResult.count,
-      subscriptionsExpired: subscriptionResult.count,
+      consultationsExpired,
+      subscriptionsExpired,
       errors,
     };
   } catch (error) {

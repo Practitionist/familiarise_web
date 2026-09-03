@@ -13,22 +13,30 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
     refundBookingPayment(...(a as [never])),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const db: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     subscription: {
       findMany: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    slotOfAppointment: { deleteMany: jest.fn() },
+    slotOfAppointment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
+    },
+    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: { findMany: jest.fn() },
     $disconnect: jest.fn(),
-  },
-}));
+  };
+  // The payment-pending arm now expires each request in its own transaction.
+  db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  return { __esModule: true, default: db };
+});
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
