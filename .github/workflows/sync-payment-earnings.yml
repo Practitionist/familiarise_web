@@ -27,7 +27,7 @@ jobs:
       # the webhook uses, so it has to see the same rate-card scope flag. Set on
       # Netlify alone, the same booking would settle on the scoped card when the
       # webhook caught it and on the org default when the healer did.
-      RATE_CARD_SCOPED_RESOLUTION: ${{ secrets.RATE_CARD_SCOPED_RESOLUTION }}
+      RATE_CARD_SCOPED_RESOLUTION: ${{ vars.RATE_CARD_SCOPED_RESOLUTION }}
 
     steps:
       - name: Checkout code
