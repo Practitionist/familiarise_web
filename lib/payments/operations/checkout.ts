@@ -27,7 +27,6 @@ import {
   AppointmentStatus,
   TrialSessionStatus,
 } from "@prisma/client";
-import { cancelPaymentIntent, createPaymentIntent } from "../index";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   EventFullError,
@@ -398,6 +397,9 @@ export class PaymentIntentManager {
     isMockPayment?: boolean;
   }) {
     try {
+      // Imported at call time so the checkout bundle does not evaluate the
+      // Razorpay core (and its #1219 test-key guard) at module load.
+      const { createPaymentIntent } = await import("../index");
       const paymentResponse = await createPaymentIntent(params);
 
       // Evict oldest entries first (Map iterates in insertion order) so a
@@ -449,6 +451,7 @@ export class PaymentIntentManager {
     reason: string = "Database operation failed",
   ) {
     try {
+      const { cancelPaymentIntent } = await import("../index");
       await cancelPaymentIntent(intentId, reason);
     } catch (error) {
       console.error(`Failed to cancel payment intent ${intentId}:`, error);
