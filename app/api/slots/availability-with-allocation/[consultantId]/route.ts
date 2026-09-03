@@ -24,6 +24,11 @@ import {
   type AppointmentForOverlapMeta,
 } from "@/lib/booking/overlap-meta";
 import { isPrivileged } from "@/lib/auth-helpers";
+import {
+  availabilityGridEtag,
+  ifNoneMatchSatisfied,
+  readAvailabilityGridMarker,
+} from "@/lib/scheduling/availabilityGridMarker";
 import type { TSlotTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/timeSlotsProcessing";
 
@@ -32,6 +37,15 @@ type SlotTimingWithOverlap = TSlotTiming & {
   bookingStatus: BookingStatus;
   overlappingAppointments?: OverlapAppointmentMeta[];
 };
+
+// #1164 — browser-only cache for the polling grid. `private`, not the sibling's
+// `public, s-maxage`: the same URL answers differently by session (the
+// includeAppointmentDetails/consulteeUserId gates below), so a shared cache
+// would cross identities. Bounded staleness is safe — allocation re-validates
+// server-side — and the one caller that must never see it, the post-allocation
+// refetch, asks for `cache: "no-store"` (AllocationService, #1164).
+// No SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old.
+const GRID_CACHE_CONTROL = "private, max-age=30";
 
 // An org OWNER/MAINTAINER acting for a member consultant (RequestSlotAllocationTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
@@ -205,6 +219,41 @@ export async function GET(
         { error: "Dates must be in UTC ISO format" },
         { status: 400 },
       );
+    }
+
+    // #1319 PR 9 — conditional GET, computed BEFORE the heavy reads.
+    //
+    // Every open calendar re-asks this endpoint once a minute (ADR 16: polling,
+    // not Realtime) and the answer is almost always the one it already has. One
+    // indexed marker read decides that in a single statement, against the 8
+    // statements the public grid costs and the 18 the detail grid costs (#997,
+    // docs/booking/20-availability-grid-cost.md).
+    //
+    // Placed after the authorization gates on purpose: a caller who has since
+    // lost access is refused up there, so a 304 can never serve stale
+    // permission. The resolved (not requested) detail flag and the consultee id
+    // are hashed into the tag, so the two payload shapes cannot collide.
+    const marker = await readAvailabilityGridMarker(
+      prisma,
+      consultantId,
+      consulteeUserId,
+    );
+    // No marker = no such consultant; fall through so the 404 below still answers.
+    const etag = marker
+      ? availabilityGridEtag(marker, {
+          consultantId,
+          startIso: startDate.toISOString(),
+          endIso: endDate.toISOString(),
+          timezone,
+          includeAppointmentDetails,
+          consulteeUserId,
+        })
+      : null;
+    if (etag && ifNoneMatchSatisfied(req.headers.get("if-none-match"), etag)) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: { "Cache-Control": GRID_CACHE_CONTROL, ETag: etag },
+      });
     }
 
     // 1. Fetch consultant's availability
@@ -699,15 +748,9 @@ export async function GET(
       {
         status: 200,
         headers: {
-          // #1164 — browser-only cache for the polling grid. `private`, not
-          // the sibling's `public, s-maxage`: the same URL answers differently
-          // by session (includeAppointmentDetails/consulteeUserId gates
-          // above), so a shared cache would cross identities. Bounded
-          // staleness is safe — allocation re-validates server-side — and the
-          // one caller that must never see it, the post-allocation refetch,
-          // asks for `cache: "no-store"` (AllocationService, #1164).
-          // #1164 — no SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old (adversarial review)
-          "Cache-Control": "private, max-age=30",
+          "Cache-Control": GRID_CACHE_CONTROL,
+          // #1319 PR 9 — what the next poll sends back as If-None-Match.
+          ...(etag ? { ETag: etag } : {}),
         },
       },
     );
