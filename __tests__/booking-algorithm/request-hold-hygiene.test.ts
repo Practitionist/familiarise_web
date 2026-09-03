@@ -144,34 +144,29 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
     expect(result.consultationsExpired).toBe(3);
     expect(result.consultationSlotsReleased).toBe(5);
 
-    // The CAS guard rides the WHERE: only rows still PENDING flip.
-    expect(prisma.consultation.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: { in: ["c1", "c2", "c3"] },
-          status: "PENDING",
+    // One transaction per consultation: the CAS guard rides the WHERE (only a
+    // row still PENDING flips), and the release of its tentative holds commits
+    // with it, so a failed release can never leave an EXPIRED request holding
+    // the calendar. Freed by status: the row is CANCELLED and tombstoned,
+    // never deleted (doctrine rule 2).
+    for (const id of ["c1", "c2", "c3"]) {
+      expect(prisma.consultation.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id, status: { in: ["PENDING"] } }),
+          data: expect.objectContaining({ status: "EXPIRED" }),
         }),
-        data: { status: "EXPIRED" },
-      }),
+      );
+    }
+    // c3 is a slot-less placeholder, so only two releases run.
+    expect(prisma.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledTimes(
+      2,
     );
-
-    // Only TENTATIVE slots of consultations that are STILL expired at write
-    // time are released — the relational guard re-checks status at write
-    // time, so a request approved between the read and the write keeps its
-    // hold (CodeRabbit triage on the approve-race). Freed by status: the row
-    // is CANCELLED and tombstoned, never deleted (doctrine rule 2).
     expect(prisma.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          appointmentId: { in: ["apt-1", "apt-2"] },
+          appointmentId: "apt-1",
           isTentative: true,
           deletedAt: null,
-          appointment: {
-            consultation: {
-              id: { in: ["c1", "c2", "c3"] },
-              status: "EXPIRED",
-            },
-          },
           completionStatus: { in: ["SCHEDULED", "UNVERIFIED", "RESCHEDULED"] },
         },
         data: expect.objectContaining({ completionStatus: "CANCELLED" }),

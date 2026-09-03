@@ -25,6 +25,7 @@ import {
   AppointmentStatus,
   SlotCompletionStatus,
   TrialSessionStatus,
+  Prisma,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
@@ -33,14 +34,16 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
-  transitionSlotCompletion,
   transitionTrialSession,
 } from "@/lib/booking/transitions";
+import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
 // This gives buffer time for any post-session activities
 const COMPLETION_BUFFER_HOURS = 1;
+// Slot rows each completion pass moves per run; the next hourly run continues.
+const MAX_SLOT_COMPLETIONS_PER_RUN = 2000;
 
 export interface AutoCompleteResult {
   success: boolean;
@@ -619,46 +622,48 @@ async function completeIndividualSlots(): Promise<{
     // One transaction for the three passes: the helper writes the status and
     // then its history rows, and a slot must never be COMPLETED or UNVERIFIED
     // without the audit row that says why.
-    const { completedCount, unverifiedCount, orphanedCount } =
-      await prisma.$transaction(
-        async (tx) => {
-          // Slots past buffer WITH MeetingSession.endedAt → COMPLETED
-          // Note: completedAt = cron run time (not session endedAt). Real-time
-          // completion via webhooks (session-handlers.ts) uses the actual endedAt.
-          // This cron is a fallback for missed webhooks, so the cron timestamp
-          // represents "when the system acknowledged completion."
-          const completedCount = await transitionSlotCompletion(tx, {
-            where: {
-              ...liveHeldSlot,
-              meetingSession: { endedAt: { not: null } },
-            },
-            to: SlotCompletionStatus.COMPLETED,
-            data: { completedAt: new Date() },
-            fromIn: fromScheduled,
-            allowZero: true,
-          });
-
-          // Slots past buffer WITHOUT MeetingSession → UNVERIFIED
-          const unverifiedCount = await transitionSlotCompletion(tx, {
-            where: { ...liveHeldSlot, meetingSession: null },
-            to: SlotCompletionStatus.UNVERIFIED,
-            fromIn: fromScheduled,
-            allowZero: true,
-          });
-
-          // Slots with MeetingSession but no endedAt (orphaned sessions — call
-          // started but webhook never fired) → UNVERIFIED
-          const orphanedCount = await transitionSlotCompletion(tx, {
-            where: { ...liveHeldSlot, meetingSession: { endedAt: null } },
-            to: SlotCompletionStatus.UNVERIFIED,
-            fromIn: fromScheduled,
-            allowZero: true,
-          });
-
-          return { completedCount, unverifiedCount, orphanedCount };
+    // Each pass reads a bounded, oldest-first cohort of SCHEDULED slots and
+    // moves it in chunked transactions, so a backlog can never outlive one
+    // transaction's timeout and roll back with its history rows.
+    const runPass = async (
+      predicate: Prisma.SlotOfAppointmentWhereInput,
+      to: SlotCompletionStatus,
+      data?: { completedAt: Date },
+    ): Promise<number> => {
+      const cohort = await prisma.slotOfAppointment.findMany({
+        where: {
+          ...liveHeldSlot,
+          ...predicate,
+          completionStatus: SlotCompletionStatus.SCHEDULED,
         },
-        { maxWait: 10_000, timeout: 30_000 },
+        select: { id: true },
+        orderBy: { endsAt: "asc" },
+        take: MAX_SLOT_COMPLETIONS_PER_RUN,
+      });
+      return transitionSlotsInChunks(
+        cohort.map((s) => s.id),
+        (idChunk) => ({
+          where: { id: { in: idChunk }, ...liveHeldSlot, ...predicate },
+          to,
+          ...(data ? { data } : {}),
+          fromIn: fromScheduled,
+          allowZero: true,
+        }),
       );
+    };
+    const completedCount = await runPass(
+      { meetingSession: { endedAt: { not: null } } },
+      SlotCompletionStatus.COMPLETED,
+      { completedAt: new Date() },
+    );
+    const unverifiedCount = await runPass(
+      { meetingSession: null },
+      SlotCompletionStatus.UNVERIFIED,
+    );
+    const orphanedCount = await runPass(
+      { meetingSession: { endedAt: null } },
+      SlotCompletionStatus.UNVERIFIED,
+    );
     if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {
       console.log(
         `   Slot-level: ${completedCount} completed, ${unverifiedCount + orphanedCount} unverified (${orphanedCount} orphaned)`,

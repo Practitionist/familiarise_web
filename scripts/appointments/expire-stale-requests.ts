@@ -32,6 +32,10 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  SLOT_TRANSITION_TX_OPTIONS,
+  transitionSlotsInChunks,
+} from "@/lib/booking/slot-release";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -63,6 +67,8 @@ const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 // bulk statement, so an unbounded cohort times the function out before it
 // pages. Oldest-first, so consecutive hourly runs drain a backlog.
 const MAX_REQUESTS_PER_RUN = 500;
+// Slot rows released per run by the stale-RESCHEDULED pass; the next run continues.
+const MAX_SLOT_RELEASES_PER_RUN = 2000;
 
 export interface ExpireStaleRequestsResult {
   success: boolean;
@@ -164,7 +170,10 @@ async function expirePendingConsultations(): Promise<{
         },
       },
       select: { id: true, appointment: { select: { id: true } } },
+      orderBy: { requestedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
     });
+    warnIfCapped("consultation", staleConsultations.length);
 
     console.log(
       `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
@@ -174,74 +183,55 @@ async function expirePendingConsultations(): Promise<{
       return { expired: 0, slotsReleased: 0, issued: 0, failures: 0, errors };
     }
 
-    const expiredIds = staleConsultations.map((c) => c.id);
-    const expiredAppointmentIds = staleConsultations
-      .map((c) => c.appointment?.id)
-      .filter((id): id is string => !!id);
-
-    // Bulk update to EXPIRED
-    const result = await prisma.consultation.updateMany({
-      where: {
-        id: { in: expiredIds },
-        status: AppointmentStatus.PENDING,
-        // Re-checked AT WRITE TIME: between the stale read above and this
-        // statement the consultee could have opened a reschedule proposal
-        // (PENDING is reschedulable), and expiring then would kill a booking
-        // with a live proposal.
-        appointment: {
-          rescheduleRequests: {
-            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-          },
-        },
-      },
-      data: {
-        status: AppointmentStatus.EXPIRED,
-      },
-    });
-
-    // Release the tentative holds the expired requests pinned. Doctrine rule
-    // 2: the slot is freed by status alone, so this is a CAS soft-cancel and
-    // the row survives for support. The WHERE re-checks the consultation's
-    // status AT WRITE TIME (CodeRabbit triage): between the stale read above
-    // and this statement a consultant can approve a request
-    // (PENDING → APPROVED), and releasing by appointmentId alone would strip
-    // the hold from a booking that just came back to life. Scoped to
-    // isTentative so an already-confirmed slot is never touched.
+    // One transaction per consultation: the EXPIRED transition and the release
+    // of its tentative holds commit together, so a failed release can never
+    // leave an EXPIRED request still holding the consultant's calendar. A
+    // lost CAS (approved between the read and the write) is skipped, not fatal.
+    const expiredIds: string[] = [];
     let slotsReleased = 0;
-    if (expiredAppointmentIds.length > 0) {
-      slotsReleased = await prisma.$transaction((tx) =>
-        transitionSlotCompletion(tx, {
-          where: {
-            appointmentId: { in: expiredAppointmentIds },
-            isTentative: true,
-            deletedAt: null,
-            appointment: {
-              consultation: {
-                id: { in: expiredIds },
-                status: AppointmentStatus.EXPIRED,
+    let skipped = 0;
+    for (const stale of staleConsultations) {
+      try {
+        const releasedForOne = await prisma.$transaction(async (tx) => {
+          await transitionConsultationRequest(tx, {
+            where: {
+              id: stale.id,
+              appointment: {
+                rescheduleRequests: {
+                  none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+                },
               },
             },
-          },
-          to: SlotCompletionStatus.CANCELLED,
-          data: { deletedAt: new Date() },
-          // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
-          // auto-complete stamps any SCHEDULED slot UNVERIFIED an hour past its
-          // end with no isTentative filter, so a hold on a slot whose time has
-          // passed is routinely UNVERIFIED by the time this 48h sweep sees it.
-          // Narrowing here would strand exactly the holds it exists to free.
-          allowZero: true,
-        }),
-      );
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.PENDING],
+          });
+          if (!stale.appointment) return 0;
+          return transitionSlotCompletion(tx, {
+            where: {
+              appointmentId: stale.appointment.id,
+              isTentative: true,
+              deletedAt: null,
+            },
+            to: SlotCompletionStatus.CANCELLED,
+            data: { deletedAt: new Date() },
+            allowZero: true,
+          });
+        }, SLOT_TRANSITION_TX_OPTIONS);
+        expiredIds.push(stale.id);
+        slotsReleased += releasedForOne;
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        skipped++;
+      }
     }
-
-    console.log(`✅ Expired ${result.count} PENDING consultations`);
+    console.log(
+      `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} moved on before the write)`,
+    );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-
-    // PR 2c — a paid row expiring must take its money back with it.
     const refunds = await refundPaymentsForExpired("consultation", expiredIds);
     errors.push(...refunds.failureMsgs);
 
-    return { expired: result.count, slotsReleased, ...refunds, errors };
+    return { expired: expiredIds.length, slotsReleased, ...refunds, errors };
   } catch (error) {
     const msg = `Failed to expire consultations: ${error}`;
     console.error(`❌ ${msg}`);
@@ -379,23 +369,32 @@ async function releaseStaleRescheduledSlots(): Promise<{
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
     );
-    const released = await prisma.$transaction((tx) =>
-      transitionSlotCompletion(tx, {
-        where: {
-          isTentative: true,
-          deletedAt: null,
-          updatedAt: { lt: cutoff },
-          appointment: {
-            subscriptionId: { not: null },
-            subscription: { status: AppointmentStatus.APPROVED },
-          },
-        },
+    const staleRescheduled = {
+      isTentative: true as const,
+      deletedAt: null,
+      updatedAt: { lt: cutoff },
+      appointment: {
+        subscriptionId: { not: null },
+        subscription: { status: AppointmentStatus.APPROVED },
+      },
+    };
+    // Bounded, oldest first, released in chunked transactions; the CAS
+    // re-states the cohort's guards on every chunk.
+    const stale = await prisma.slotOfAppointment.findMany({
+      where: {
+        ...staleRescheduled,
+        completionStatus: SlotCompletionStatus.RESCHEDULED,
+      },
+      select: { id: true },
+      orderBy: { updatedAt: "asc" },
+      take: MAX_SLOT_RELEASES_PER_RUN,
+    });
+    const released = await transitionSlotsInChunks(
+      stale.map((s) => s.id),
+      (idChunk) => ({
+        where: { id: { in: idChunk }, ...staleRescheduled },
         to: SlotCompletionStatus.CANCELLED,
         data: { deletedAt: new Date() },
-        // The RESCHEDULED-only scope lives in fromIn, not the WHERE: the helper
-        // spreads the caller's where and then overwrites `completionStatus`
-        // with its own from-set, so a WHERE clause here would be silently
-        // widened to SCHEDULED rows this sweep must never touch.
         fromIn: [SlotCompletionStatus.RESCHEDULED],
         allowZero: true,
       }),

@@ -64,7 +64,7 @@ const SLOT_DELETE_ALLOWLIST = [
 // Tolerates `delete (` and bracket access; Prettier normalises the former,
 // but the pin should not depend on it.
 const SLOT_DELETE =
-  /\bslotOfAppointment(?:\.delete(?:Many)?|\[["']delete(?:Many)?["']\])\s*\(/;
+  /\bslotOfAppointment(?:\??\.delete(?:Many)?|\[\s*["']delete(?:Many)?["']\s*\])\s*\(/;
 // A file entry (no trailing slash) matches exactly; a directory entry matches
 // on a path boundary, so `SlotAllocationService.tsx` is not the allocator.
 function isAllowlisted(file: string): boolean {

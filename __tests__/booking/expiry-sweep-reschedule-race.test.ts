@@ -128,7 +128,10 @@ describe("expiry sweep × live reschedule proposals", () => {
       expect(terminalWrite.where.appointment).toEqual({
         rescheduleRequests: { none: openStatusFilter },
       });
-      expect(terminalWrite.where.status).toBe(AppointmentStatus.PENDING);
+      // Through the CAS helper now: the from-set rides the WHERE as a list.
+      expect(terminalWrite.where.status).toEqual({
+        in: [AppointmentStatus.PENDING],
+      });
     });
   });
 

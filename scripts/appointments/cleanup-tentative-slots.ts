@@ -20,7 +20,7 @@
 import prisma from "../../lib/prisma";
 import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 
 // #833 — hours, not days: gateway orders expire well inside a day, so a
 // 7-day hold locked users out of rebooking for most of a week. 24h keeps
@@ -218,10 +218,11 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     // Only slots whose IDs we already confirmed are safe to release.
     if (staleTentativeSlots.length > 0) {
       // One transaction so the tombstone and its history rows land together.
-      slotsReleased = await prisma.$transaction((tx) =>
-        transitionSlotCompletion(tx, {
+      slotsReleased = await transitionSlotsInChunks(
+        staleTentativeSlots.map((s) => s.id),
+        (idChunk) => ({
           where: {
-            id: { in: staleTentativeSlots.map((s) => s.id) },
+            id: { in: idChunk },
             // #829 — re-state the tentative + unpaid conditions so a slot whose
             // capture webhook confirmed it between the findMany above and this
             // write no longer matches (re-evaluated under the row lock). An
