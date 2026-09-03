@@ -107,7 +107,7 @@ exists to skip. Its measured plan is 3.4–5.5 ms of planning and 3.3–4.7 ms o
 execution, with 21–24 index scans against 4–7 sequential scans, and 32 ms of
 wall time end to end — which is the network round trip and almost nothing else.
 
-The marker is the tuple of five values, hashed together with the request
+The marker is the tuple of seven values, hashed together with the request
 parameters into a strong ETag:
 
 1. `ConsultantProfile.updatedAt`, which covers `scheduleType` flipping between
@@ -115,7 +115,10 @@ parameters into a strong ETag:
    route's 404 reachable.
 2. The maximum `updatedAt` across the consultant's `SlotOfAvailabilityWeekly`
    and `SlotOfAvailabilityCustom` rows, which covers every availability edit,
-   including the coalescing that #1323 does on save.
+   including the coalescing that #1323 does on save, together with the count
+   of those rows. The count is what catches a deletion: removing an older row
+   leaves the maximum timestamp untouched, and without the count the grid
+   would answer 304 for a calendar that just lost a window.
 3. The maximum `SlotOfAppointment.updatedAt` over the appointments that reach
    this consultant. Reachability is the union of the denormalized
    `consultantProfileId` (#440), the `user` edge to the consultant, and — when
@@ -126,7 +129,10 @@ parameters into a strong ETag:
    appointments, plus the request rows belonging to the consultant's own plans.
    This is what catches a status flip that starts or stops occupying a cell
    without rewriting the slot.
-5. The earliest still-future `Payment.expiresAt` among `PENDING` payments on
+5. The maximum `Payment.updatedAt` over those same appointments, so a capture
+   that flips a payment without rewriting the slot or the request still moves
+   the tag.
+6. The earliest still-future `Payment.expiresAt` among `PENDING` payments on
    those appointments. This is the clock fold, and it is the only entry that
    is not a row version.
 

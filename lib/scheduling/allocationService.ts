@@ -573,12 +573,9 @@ export class AllocationService {
       // 304 — the marker says nothing this grid reads has changed. The caller
       // keeps the state it already has; no body was sent to parse.
       if (response.status === 304) {
-        return {
-          weekly: [] as RawAvailabilityApiSlot[],
-          custom: [] as RawAvailabilityApiSlot[],
-          etag: ifNoneMatch ?? null,
-          notModified: true,
-        };
+        // Discriminated: the 304 branch carries NO arrays, so a caller that
+        // forgets to check `notModified` cannot mistake it for an empty week.
+        return { etag: ifNoneMatch ?? null, notModified: true as const };
       }
       if (!response.ok) {
         const errorData = await response.json();
@@ -602,7 +599,7 @@ export class AllocationService {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),
         etag: response.headers.get("ETag"),
-        notModified: false,
+        notModified: false as const,
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);

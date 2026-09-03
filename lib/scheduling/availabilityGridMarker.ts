@@ -24,13 +24,25 @@ import type { Db } from "@/lib/prisma";
  * Bump when the response SHAPE changes (new field, different bucketing). Every
  * previously issued ETag then misses and the next poll repaints.
  */
-const MARKER_VERSION = "av1";
+const MARKER_VERSION = "av2";
 
 export interface AvailabilityGridMarker {
   /** Null when no such consultant — the caller must fall through to its 404. */
   profileUpdatedAt: Date | null;
   /** Weekly + custom availability rows for this consultant. */
   availabilityUpdatedAt: Date | null;
+  /**
+   * Weekly + custom row COUNT. A delete of an older row leaves max(updatedAt)
+   * unchanged, so without this the grid could 304 on a calendar that lost a
+   * window (review of #1334).
+   */
+  availabilityRowCount: number;
+  /**
+   * Payments reaching this calendar. A capture that flips PENDING → SUCCEEDED
+   * writes the payment row; the slot/request rows usually move too, but this
+   * keeps the marker honest when only the payment does.
+   */
+  paymentsUpdatedAt: Date | null;
   /** Booked slot rows reaching this consultant (and the consultee, if given). */
   slotsUpdatedAt: Date | null;
   /** Parent request rows — status flips that start or stop occupying. */
@@ -97,6 +109,14 @@ export async function readAvailabilityGridMarker(
             FROM "SlotOfAvailabilityCustom" cu
            WHERE cu."consultantProfileId" = ${consultantId}
        ) a) AS "availabilityUpdatedAt",
+      (SELECT (SELECT count(*) FROM "SlotOfAvailabilityWeekly" w
+                 WHERE w."consultantProfileId" = ${consultantId})
+            + (SELECT count(*) FROM "SlotOfAvailabilityCustom" cu
+                 WHERE cu."consultantProfileId" = ${consultantId}))::int
+        AS "availabilityRowCount",
+      (SELECT max(p."updatedAt")
+         FROM "Payment" p
+         JOIN reach r ON r.id = p."appointmentId") AS "paymentsUpdatedAt",
       (SELECT max(s."updatedAt")
          FROM "SlotOfAppointment" s
          JOIN reach r ON r.id = s."appointmentId") AS "slotsUpdatedAt",
@@ -195,7 +215,9 @@ export function availabilityGridEtag(
     key.consulteeUserId ?? "",
     iso(marker.profileUpdatedAt),
     iso(marker.availabilityUpdatedAt),
+    String(marker.availabilityRowCount ?? 0),
     iso(marker.slotsUpdatedAt),
+    iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),
   ].join(" ");

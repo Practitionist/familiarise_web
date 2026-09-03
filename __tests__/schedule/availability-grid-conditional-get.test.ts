@@ -42,11 +42,13 @@ const mockedMarker = prisma.$queryRaw as unknown as jest.Mock;
 const mockedProfile = prisma.consultantProfile.findUnique as jest.Mock;
 const mockedAppointments = prisma.appointment.findMany as jest.Mock;
 
-function marker(overrides: Record<string, Date | null> = {}) {
+function marker(overrides: Record<string, Date | number | null> = {}) {
   return [
     {
       profileUpdatedAt: new Date("2026-09-01T10:00:00.000Z"),
       availabilityUpdatedAt: new Date("2026-09-01T11:00:00.000Z"),
+      availabilityRowCount: 3,
+      paymentsUpdatedAt: null,
       slotsUpdatedAt: new Date("2026-09-02T09:00:00.000Z"),
       requestsUpdatedAt: new Date("2026-09-02T08:00:00.000Z"),
       nextHoldExpiry: null,
@@ -131,6 +133,22 @@ describe("availability grid conditional GET", () => {
     mockedMarker.mockResolvedValue(
       marker({ nextHoldExpiry: new Date("2026-09-07T12:00:00.000Z") }),
     );
+
+    const after = await GET(request(etag), { params });
+
+    expect(after.status).toBe(200);
+    expect(after.headers.get("ETag")).not.toBe(etag);
+  });
+
+  it("answers 200 when an availability row was deleted — count moved, timestamps equal", async () => {
+    const withHold = await GET(request(), {
+      params,
+    });
+    const etag = withHold.headers.get("ETag") as string;
+
+    // The earliest still-future PENDING deadline is what the marker carries;
+    // when now() passes it the row drops out and the next one takes its place.
+    mockedMarker.mockResolvedValue(marker({ availabilityRowCount: 2 }));
 
     const after = await GET(request(etag), { params });
 
