@@ -60,10 +60,8 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
-import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";
-import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
-import { bookingOrgId } from "@/lib/stream-utils";
 import { getAppUrl } from "@/lib/url";
 
 // ============================================================================
@@ -181,12 +179,20 @@ export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
+  gatewayPaymentId?: string,
 ): Promise<void> {
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
   // keys; normalize ONCE here so validation AND the legacy create flow
   // read the same new-key shape.
   const metadata = normalizeLegacySlotKeys(rawMetadata);
+  // #1353 — the gateway's `pay_…` id is persisted by THIS pipeline and nowhere
+  // else, because Phase 1 is already the single writer of the Payment row's
+  // capture truth (ADR 21) and the id is part of that truth. Spread rather than
+  // assigned unconditionally: `order.paid` carries no payment id, and writing
+  // `undefined` from that path would erase an id a `payment.captured` had
+  // already recorded.
+  const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
   // C1 FIX: Split into two phases:
   //   Phase 1 (transaction): Critical payment + appointment processing
   //   Phase 2 (post-tx): Earnings, invoice, notifications
@@ -269,6 +275,11 @@ export async function handlePaymentSuccess(
               where: { id: payment.id },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
+                // #1353 — this branch auto-refunds in Phase 2, so it is the one
+                // that MOST needs the id: the refund webhook that comes back
+                // carries only `pay_…`, and without the column it cannot find
+                // the Payment it is reversing.
+                ...capturedGatewayId,
                 description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
               },
             });
@@ -331,6 +342,9 @@ export async function handlePaymentSuccess(
               where: { id: payment.id },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
+                // #1353 — a manual recovery here usually ends in a refund; give
+                // that refund's webhook the id it needs to match this row.
+                ...capturedGatewayId,
                 description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
               },
             });
@@ -377,7 +391,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
           await tx.payment.update({
             where: { id: payment.id },
-            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+            data: {
+              paymentStatus: PaymentStatus.SUCCEEDED,
+              ...capturedGatewayId,
+            },
           });
 
           let appointment;
@@ -509,6 +526,10 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       where: { id: loser.id },
       data: {
         paymentStatus: PaymentStatus.SUCCEEDED,
+        // #1353 — the rolled-back tx took the id with it, and this branch
+        // refunds immediately below; re-stamp it so that refund's webhook can
+        // match the row.
+        ...capturedGatewayId,
         description:
           "Refund pending: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
       },
@@ -977,131 +998,22 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   }
 
   // --- Stream channel creation (truly fire-and-forget — does not block webhook response) ---
+  //
+  // #1356 — the work itself moved to `ensureChannelsForAppointment`, which
+  // stamps `Appointment.chatChannelEnsuredAt` on success. The call stays here,
+  // in the same post-commit position and with the same fire-and-forget posture,
+  // for the same reason as before: it is outbound network work. What changed is
+  // that failing it now leaves a trace — a confirmed appointment with a NULL
+  // stamp — which reconcile-orphaned-confirmations re-drives instead of the
+  // buyer silently never having a chat.
   void (async () => {
     try {
-      const eventType = metadata.appointmentType?.toUpperCase();
-      const appointmentForChannel = await prisma.appointment.findUnique({
-        where: { id: appointmentId },
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: { consultantProfile: true },
-              },
-              // The org-tagged sibling, not the appointment being paid for.
-              // `appointmentForChannel` is one appointment of many under a
-              // subscription and may be the personal one, while
-              // createSubscriptionChannel resolves the first ORG-tagged row —
-              // so without this the creator mints `dmo-…` and this path looks
-              // for `dm-…`. Filtered in the query because `take: 1` truncates
-              // server-side, before bookingOrgId's `find` can choose.
-              appointments: {
-                where: { organizationId: { not: null } },
-                select: { organizationId: true },
-                // Deterministic, not just filtered: `take: 1` over an
-                // unordered result can hand different callers different
-                // rows if a subscription ever carries two org-tagged
-                // appointments, which is the same divergence one layer down.
-                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-                take: 1,
-              },
-            },
-          },
-          webinar: {
-            include: {
-              webinarPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          class: {
-            include: {
-              classPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          // A trial appointment has none of the four relations above — the
-          // consultant hangs off TrialSession directly. Without this the
-          // resolution below yields undefined, the guard fails, and the TRIAL
-          // branch added below never executes for the only appointments that
-          // can reach it.
-          trialSession: {
-            include: { consultantProfile: true },
-          },
-        },
-      });
-
-      const consultantProfile =
-        appointmentForChannel?.consultation?.consultationPlan
-          ?.consultantProfile ||
-        appointmentForChannel?.subscription?.subscriptionPlan
-          ?.consultantProfile ||
-        appointmentForChannel?.webinar?.webinarPlan?.consultantProfile ||
-        appointmentForChannel?.class?.classPlan?.consultantProfile ||
-        // `TrialSession.consultantProfile` is the required, authoritative
-        // relation — not `trialSession.subscriptionPlan.consultantProfile`,
-        // which is the plan author and can differ.
-        appointmentForChannel?.trialSession?.consultantProfile;
-
-      const consultantUserId = consultantProfile?.userId;
-
-      if (appointmentForChannel && consultantUserId) {
-        const consultation = appointmentForChannel.consultation;
-        const subscription = appointmentForChannel.subscription;
-        const webinar = appointmentForChannel.webinar;
-        const classEvent = appointmentForChannel.class;
-
-        // #1134 P0-8 — the org MUST be threaded through. getDmPairsForUser
-        // recomputes the expected id with plan-org-then-appointment-org
-        // precedence, so a DM minted without it landed on the personal `dm-`
-        // key, failed to match the expected `dmo-` one, and — because `dm-` is
-        // a managed prefix — was then treated as stale and the user removed
-        // from the only conversation they had. Shared with every other site
-        // that derives this key, so the two can no longer drift.
-        const dmOrgId = bookingOrgId({
-          consultationPlan: consultation?.consultationPlan,
-          subscriptionPlan: subscription?.subscriptionPlan,
-          appointments: subscription?.appointments,
-          appointment: appointmentForChannel,
-        });
-
-        // #1134 P0-7 — `consultation-<id>` / `subscription-<id>` channels are
-        // NOT created any more. syncUserEventChannels only ever expected
-        // webinars, classes and DMs, while treating both prefixes as managed,
-        // so every one of these was deleted on the buyer's next dashboard load.
-        // The pair already gets a DM, and createConsultationChannel minted a DM
-        // rather than a `consultation-` channel anyway — the concept never
-        // cohered. One thread per relationship-context is the whole model now.
-        if (
-          (eventType === "CONSULTATION" && consultation) ||
-          (eventType === "SUBSCRIPTION" && subscription) ||
-          // #1134 P1-16 — TRIAL had no branch here at all, so a trial buyer got
-          // video and no way to message the consultant before or after it. A
-          // trial is the platform's first impression; it is the LAST session
-          // type that should be mute. Same DM as any other 1:1, so it merges
-          // with their thread if they go on to book.
-          eventType === "TRIAL"
-        ) {
-          await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
-        } else if (eventType === "WEBINAR" && webinar) {
-          await addUserToEventChannel("webinar", webinar.id, userId);
-        } else if (eventType === "CLASS" && classEvent) {
-          await addUserToEventChannel("class", classEvent.id, userId);
-        }
-
-        streamLogger.info("Stream channel created on payment success", {
-          appointmentType: eventType,
-          appointmentId,
-          userId,
-        });
+      const result = await ensureChannelsForAppointment(appointmentId);
+      if (!result.ensured) {
+        streamLogger.warn(
+          "Stream channels not ensured on payment success — left for the reconcile sweep",
+          { appointmentId, userId, reason: result.reason },
+        );
       }
     } catch (channelError) {
       // #1134 P1-15 — this used to say "sync job will catch up". No such job
@@ -1109,7 +1021,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       // syncUserEventChannels repairs webinar/class/DM membership on the next
       // dashboard load but cannot invent a channel for a booking it never saw.
       // A failure here means the buyer silently has no chat, so it must at
-      // least page. A durable outbox is the real fix and is tracked separately.
+      // least page. The reconcile sweep is now the durable re-drive.
       reportSentryError(channelError, {
         subsystem: "stream",
         op: "handlePaymentSuccess.createChannels",

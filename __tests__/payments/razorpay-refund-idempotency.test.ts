@@ -80,14 +80,22 @@ describe("X-Refund-Idempotency header", () => {
     );
   });
 
-  it("omits the header entirely when no key is supplied", async () => {
+  it("always sends the header, because the key is no longer optional", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
-    await createRazorpayRefund({ paymentIntentId: "order_1", amount: 5000 });
+    // #1352 — this used to assert the opposite: with no key supplied, no
+    // header. Optionality was the only way to express a non-idempotent refund,
+    // and a network-error retry of one credits the customer's card twice. The
+    // key is required at the type level now, so every refund carries it.
+    await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+    });
 
-    // Deriving a key from paymentId+amount would make two legitimate partial
-    // refunds of equal amount collide — no key is safer than a guessed one.
-    expect(headersOf()).not.toHaveProperty("X-Refund-Idempotency");
+    expect(headersOf()["X-Refund-Idempotency"]).toBe(
+      "clx3k2j9a0000abcd1234efgh",
+    );
   });
 
   it("refuses a key that cannot satisfy Razorpay's >=10 char rule", async () => {
@@ -146,12 +154,12 @@ describe("request shape", () => {
   it("POSTs to the captured payment with basic auth and omits amount on a full refund", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
-    await createRazorpayRefund({ paymentIntentId: "order_1" });
+    await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+    });
 
-    const [url, init] = fetchMock.mock.calls[0] as [
-      string,
-      { method: string },
-    ];
+    const [url, init] = fetchMock.mock.calls[0] as [string, { method: string }];
     expect(url).toBe(
       "https://api.razorpay.com/v1/payments/pay_captured/refund",
     );
@@ -166,7 +174,11 @@ describe("request shape", () => {
   it("sends the amount in paise for a partial refund", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
-    await createRazorpayRefund({ paymentIntentId: "order_1", amount: 5000 });
+    await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+    });
 
     expect(bodyOf().amount).toBe(5000);
   });
@@ -219,7 +231,11 @@ describe("error passthrough", () => {
     });
 
     await expect(
-      createRazorpayRefund({ paymentIntentId: "order_1", amount: 999_999 }),
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: 999_999,
+        idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      }),
     ).rejects.toMatchObject({
       code: "BAD_REQUEST_ERROR",
       message: "The amount is more than the refundable amount",
@@ -243,6 +259,7 @@ describe("status mapping", () => {
     const result = await createRazorpayRefund({
       paymentIntentId: "order_1",
       amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
     });
 
     expect(result.status).toBe(expected);

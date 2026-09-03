@@ -246,6 +246,12 @@ SKIP_PAYMENT=true # Remove for production
 - ✅ Track booking status updates
 - ✅ Review logs regularly
 
+### Method 5: The deferral warning
+
+A Razorpay webhook can be valid and still be unprocessable on arrival, most commonly a `refund.created` that overtakes the `payment.captured` which would have created the Payment row. The handler answers those with a `DeferSignal`, the dispatcher deliberately leaves the row `processed=false, error=null`, and `sweep-stuck-webhook-events` re-drives it until the awaited row lands or the seven-day give-up cap fires.
+
+The problem with that design was that a deferred row is indistinguishable from a row whose handler crashed before recording anything, so an event that would never become processable stayed silent for a week. The dispatcher now increments `WebhookEvent.deferCount` every time it defers, and the sweeper raises a single Sentry warning per run listing every event that has deferred five or more times or has been unprocessed for over an hour. If you see `sweep-stuck-webhook-events: N webhook event(s) still unprocessed` in Sentry, the attached context names each event id, its provider, its type and its defer count; a high `deferCount` on a refund almost always means the payment it references was never captured on our side, which is a reconciliation question rather than a webhook one.
+
 ## Success Indicators
 
 ### Your webhooks are working correctly if:

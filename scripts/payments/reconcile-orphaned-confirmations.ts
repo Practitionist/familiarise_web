@@ -14,10 +14,19 @@
  * double-booking loser is NOT force-confirmed — it stays tentative with its
  * CONFIRMATION_BLOCKED_DOUBLE_BOOKING system event, and this sweep reports
  * it for the refund path instead of fighting the guard.
+ *
+ * #1356 — a second pass rides the same sweep, for the other half of a capture
+ * that only half-happened. The Stream chat channel is created after the
+ * confirmation commits, fire-and-forget, so the same crash window that strands
+ * a tentative slot also strands the buyer's conversation. That leg now stamps
+ * `Appointment.chatChannelEnsuredAt` when it succeeds, which turns "confirmed,
+ * paid, still NULL" into an exact work queue — state-as-outbox, no queue table.
+ * See ADR 27.
  */
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
+import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -26,6 +35,10 @@ export interface OrphanedConfirmationResult {
   scanned: number;
   confirmed: number;
   stillBlocked: number;
+  /** #1356 — appointments whose chat channel this run created and stamped. */
+  channelsEnsured: number;
+  /** #1356 — appointments still without a channel; retried next run. */
+  channelsFailed: number;
 }
 
 // #476 — fail-closed: re-driving a confirmation twice is guarded by the
@@ -45,6 +58,11 @@ async function reconcileOrphanedConfirmationsUnlocked(
 ): Promise<OrphanedConfirmationResult> {
   const graceMinutes = opts.graceMinutes ?? 15;
   const limit = opts.limit ?? 200;
+  // #1356 — the channel pass is bounded separately and much lower: each entry
+  // is an outbound Stream round trip, and the caller that matters is a Netlify
+  // ticker with a function ceiling, not a GitHub Actions job with minutes to
+  // spend. An explicit `limit` from that caller governs both passes.
+  const channelLimit = opts.limit ?? 50;
   const cutoff = new Date(Date.now() - graceMinutes * 60_000);
 
   const orphans = await prisma.payment.findMany({
@@ -112,14 +130,64 @@ async function reconcileOrphanedConfirmationsUnlocked(
     }
   }
 
+  // #1356 — second pass: the chat leg. Deliberately separate from the loop
+  // above, because the two failures are independent — an appointment can be
+  // perfectly confirmed and still have no conversation, which is precisely the
+  // case nothing used to look for.
+  //
+  // Bounded to the last seven days because this is a repair for a recent crash
+  // window, not a backfill: an older appointment has either been through
+  // syncUserEventChannels on a dashboard load or is past caring. Oldest first,
+  // so a backlog drains in arrival order rather than starving its head.
+  const unchanneled = await prisma.appointment.findMany({
+    where: {
+      chatChannelEnsuredAt: null,
+      deletedAt: null,
+      createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
+      payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+      slotsOfAppointment: { none: { isTentative: true, deletedAt: null } },
+    },
+    select: { id: true },
+    orderBy: { createdAt: "asc" },
+    take: channelLimit,
+  });
+
+  let channelsEnsured = 0;
+  let channelsFailed = 0;
+  for (const appointment of unchanneled) {
+    try {
+      const result = await ensureChannelsForAppointment(appointment.id);
+      if (result.ensured) {
+        channelsEnsured += 1;
+        console.log(
+          `💬 Ensured chat channel for appointment ${appointment.id}`,
+        );
+      } else {
+        channelsFailed += 1;
+        console.warn(
+          `💬 Could not ensure chat channel for appointment ${appointment.id}: ${result.reason}`,
+        );
+      }
+    } catch (err) {
+      channelsFailed += 1;
+      console.error(
+        `❌ Chat-channel ensure failed for appointment ${appointment.id}:`,
+        err,
+      );
+    }
+  }
+
   console.log(
-    `🩹 Orphaned confirmations: scanned=${orphans.length} confirmed=${confirmed} stillBlocked=${stillBlocked}`,
+    `🩹 Orphaned confirmations: scanned=${orphans.length} confirmed=${confirmed} stillBlocked=${stillBlocked} ` +
+      `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed}`,
   );
   return {
     success: true,
     scanned: orphans.length,
     confirmed,
     stillBlocked,
+    channelsEnsured,
+    channelsFailed,
   };
 }
 

@@ -279,9 +279,10 @@ type RazorpayRefundResponse = {
  * unreachable per-request *and* per-client. Raw HTTP is the only path.
  * https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/
  *
- * The header is sent only when the caller supplies a key. Deriving one from
- * paymentId+amount would make two legitimate partial refunds of equal amount
- * collide, and the second would silently return the first refund.
+ * #1352 — the key is required, not optional. The caller must supply one that it
+ * can reproduce on a retry; deriving one here from paymentId+amount would make
+ * two legitimate partial refunds of equal amount collide, and the second would
+ * silently return the first refund instead of moving any money.
  */
 async function postRefund({
   paymentId,
@@ -292,7 +293,7 @@ async function postRefund({
   paymentId: string;
   amount?: number;
   notes: Record<string, unknown>;
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }): Promise<RazorpayRefundResponse> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_SECRET;
@@ -308,25 +309,23 @@ async function postRefund({
     Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
     "Content-Type": "application/json",
   };
-  // A caller that supplies a key is asking for exactly-once semantics. If the
-  // key doesn't survive sanitization we must NOT quietly send the request
-  // without the header — that downgrades a refund to at-least-once delivery
+  // Every refund is asking for exactly-once semantics, so the header is never
+  // optional. If the key doesn't survive sanitization we must NOT quietly send
+  // the request without it — that downgrades a refund to at-least-once delivery
   // against a customer's card, with no signal that it happened. Refuse instead;
   // every real caller passes `Refund.id` (a uuid), so this only fires on a
   // programming error.
-  if (idempotencyKey !== undefined) {
-    const sanitizedKey = idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "");
-    if (sanitizedKey.length < IDEMPOTENCY_KEY_MIN_LENGTH) {
-      throw new RefundError(
-        `Refund idempotency key "${idempotencyKey}" is unusable after sanitization ` +
-          `(${sanitizedKey.length} of the required ${IDEMPOTENCY_KEY_MIN_LENGTH} chars). ` +
-          `Refusing to issue a non-idempotent refund.`,
-        "INVALID_IDEMPOTENCY_KEY",
-        "RAZORPAY",
-      );
-    }
-    headers["X-Refund-Idempotency"] = sanitizedKey;
+  const sanitizedKey = idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "");
+  if (sanitizedKey.length < IDEMPOTENCY_KEY_MIN_LENGTH) {
+    throw new RefundError(
+      `Refund idempotency key "${idempotencyKey}" is unusable after sanitization ` +
+        `(${sanitizedKey.length} of the required ${IDEMPOTENCY_KEY_MIN_LENGTH} chars). ` +
+        `Refusing to issue a non-idempotent refund.`,
+      "INVALID_IDEMPOTENCY_KEY",
+      "RAZORPAY",
+    );
   }
+  headers["X-Refund-Idempotency"] = sanitizedKey;
 
   const body = JSON.stringify({ ...(amount ? { amount } : {}), notes });
   const url = `${RAZORPAY_API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`;

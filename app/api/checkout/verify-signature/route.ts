@@ -35,6 +35,8 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { z } from "zod";
 
 const verifySignatureSchema = z.object({
@@ -53,6 +55,14 @@ export async function POST(req: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // #1353 — the same 5/min budget `/api/checkout` applies, for the same
+    // reason: this route makes an outbound `payments.fetch` per call and then
+    // drives the whole confirmation pipeline, so an unbounded client loop here
+    // is both a gateway-quota drain and a way to hammer the money path. It was
+    // the one confirmation entry point with no limit at all.
+    const rl = await applyRateLimit(checkoutLimiter, session.user.id);
+    if (rl) return rl;
 
     const body = await req.json();
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
@@ -205,6 +215,23 @@ export async function POST(req: NextRequest) {
     //
     // Handlers are idempotent and Serializable, so a concurrent webhook either
     // loses the SSI race and retries into a no-op or wins and makes this one.
+    // #1353 3.3 — the audit trail has to distinguish a capture the CLIENT
+    // confirmed from one the WEBHOOK confirmed. Both run the identical
+    // pipeline, so afterwards the Payment row looks the same either way, and
+    // when the two disagree — a confirmation with no matching webhook, or one
+    // that arrived impossibly fast — there was no record of which door the
+    // money came through. Fire-and-forget: an audit insert must not fail a
+    // confirmation.
+    void recordSystemEvent({
+      category: "PAYMENT",
+      message: "client-side payment confirmation",
+      correlationId: razorpay_order_id,
+      context: {
+        paymentId: payment.id,
+        gatewayPaymentId: razorpay_payment_id,
+      },
+    }).catch(() => {});
+
     after(async () => {
       try {
         await routeCapturedPayment({

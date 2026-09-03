@@ -77,6 +77,30 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
 };
 
 // ============================================================================
+// Gateway refund codes
+// ============================================================================
+
+/**
+ * #1352 — `RefundError.code` values are minted by the gateway adapter and
+ * travel to the client as `code`, never through `classifyError`. They therefore
+ * arrived here as an unrecognised string and fell straight through to
+ * "Something Went Wrong".
+ *
+ * `REFUND_IN_FLIGHT` is the one where that was actively misleading. Razorpay
+ * answers 409 on a duplicate idempotency key while the original refund is still
+ * settling, which means the refund IS happening — telling the operator (or the
+ * customer) that something went wrong invites them to issue a second one.
+ */
+const REFUND_CODE_TOAST_MAP: Record<string, ToastMessage> = {
+  REFUND_IN_FLIGHT: {
+    title: "Refund Already In Progress",
+    description:
+      "Your refund is already being processed and does not need to be requested again. " +
+      "It can take a few moments to settle with the bank — refresh this page shortly to see the updated status.",
+  },
+};
+
+// ============================================================================
 // Fallback descriptions (used when the toast entry has description: null
 // AND no server error message is available)
 // ============================================================================
@@ -98,12 +122,17 @@ const FALLBACK_DESCRIPTIONS: Partial<Record<ErrorType, string>> = {
 
 /**
  * Resolve an errorType + optional message into a toast-ready { title, description }.
+ *
+ * `errorType` is a string rather than the `ErrorType` union because API routes
+ * also return gateway-minted `RefundError.code` values here (#1352); those are
+ * matched first, then the classified error types, then the UNKNOWN fallback.
  */
 export function getErrorToast(
   errorType: string,
   serverMessage?: string,
 ): { title: string; description: string } {
   const entry =
+    REFUND_CODE_TOAST_MAP[errorType] ??
     ERROR_TOAST_MAP[errorType as ErrorType] ??
     ERROR_TOAST_MAP[ErrorTypes.UNKNOWN];
 
