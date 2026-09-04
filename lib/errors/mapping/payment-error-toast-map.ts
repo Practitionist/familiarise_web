@@ -78,6 +78,24 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "This payment method isn't available right now. Please go back and choose a different one.",
   },
+  // #1426 — the buyer's card was never charged in any of these three
+  // rejections, so each toast says so and points at the one action that
+  // actually unblocks the buyer, instead of the generic gateway copy above.
+  [ErrorTypes.WALLET_FROZEN]: {
+    title: "Wallet On Hold",
+    description:
+      "Your organisation's wallet is frozen; ask your billing admin or support before booking again.",
+  },
+  [ErrorTypes.CONSENT_REQUIRED]: {
+    title: "Booking Not Available",
+    description:
+      "This consultant has not enabled bookings yet; you can try another consultant or check back later.",
+  },
+  [ErrorTypes.CONSENT_WITHDRAWN]: {
+    title: "Booking Not Available",
+    description:
+      "This consultant has paused bookings; your card was not charged.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

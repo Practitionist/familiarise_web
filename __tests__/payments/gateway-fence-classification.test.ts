@@ -40,4 +40,24 @@ describe("gateway fence classification", () => {
     expect(toast.title).toBe("This payment method is not available");
     expect(toast.description).not.toContain("STRIPE_ENABLED");
   });
+
+  // #1426 — WALLET_FROZEN, CONSENT_REQUIRED and CONSENT_WITHDRAWN are the
+  // codes checkout.ts already throws (lib/payments/operations/checkout.ts:881,
+  // :1556, :2538) but BUSINESS_ERROR_CODES only carried GATEWAY_DISABLED and
+  // UNSUPPORTED_GATEWAY, so these three fell through to the 500 UNKNOWN path.
+  it.each(["WALLET_FROZEN", "CONSENT_REQUIRED", "CONSENT_WITHDRAWN"])(
+    "classifies %s as a business rejection with an actionable toast",
+    (code) => {
+      const classified = classifyError(
+        Object.assign(new Error("refused"), { code }),
+      );
+
+      expect(classified.isBusinessError).toBe(true);
+      expect(classified.httpStatus).not.toBe(500);
+
+      const toast = getErrorToast(classified.errorType);
+      expect(toast.title).not.toBe("Something Went Wrong");
+      expect(toast.description).toBeTruthy();
+    },
+  );
 });

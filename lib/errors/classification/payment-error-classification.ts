@@ -27,6 +27,14 @@ export const ErrorTypes = {
   LOCK_CONTENTION: "LOCK_CONTENTION_ERROR",
   UNSUPPORTED_CONFIG: "UNSUPPORTED_CONFIG_ERROR",
   GATEWAY_UNAVAILABLE: "GATEWAY_UNAVAILABLE_ERROR",
+  // #1426 — CONSENT_REQUIRED/CONSENT_WITHDRAWN flow through classifyByErrorCode
+  // below, so their value only has to be unique. WALLET_FROZEN never reaches
+  // classifyByErrorCode (app/api/checkout/route.ts intercepts WalletFrozenError
+  // by instanceof and hardcodes `errorType: "WALLET_FROZEN"` in the response
+  // JSON), so this value must equal that literal or the toast map misses it.
+  WALLET_FROZEN: "WALLET_FROZEN",
+  CONSENT_REQUIRED: "CONSENT_REQUIRED_ERROR",
+  CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -183,6 +191,25 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     code: "UNSUPPORTED_GATEWAY",
     errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
     httpStatus: 422,
+  },
+  // #1426 — the wallet-freeze and consent guards throw with these codes
+  // (lib/payments/operations/checkout.ts:881, :1556, :2538) but had no
+  // BUSINESS_ERROR_CODES row, so classifyError's message-only fallback
+  // mislabelled them 500 instead of the buyer-actionable rejection they are.
+  {
+    code: "WALLET_FROZEN",
+    errorType: ErrorTypes.WALLET_FROZEN,
+    httpStatus: 409,
+  },
+  {
+    code: "CONSENT_REQUIRED",
+    errorType: ErrorTypes.CONSENT_REQUIRED,
+    httpStatus: 403,
+  },
+  {
+    code: "CONSENT_WITHDRAWN",
+    errorType: ErrorTypes.CONSENT_WITHDRAWN,
+    httpStatus: 403,
   },
 ] as const;
 
