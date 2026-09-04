@@ -72,14 +72,21 @@ export const BODY_FONT = devanagariReady ? "NotoSansDevanagari" : "Helvetica";
 // Formatting
 // ============================================================================
 
+/** #1365 — S3358: named per-currency lookup instead of a nested ternary. */
+const STATUTORY_MONEY_LOCALES: Record<Currency, string> = {
+  INR: "en-IN",
+  GBP: "en-GB",
+  USD: "en-US",
+  EUR: "en-US",
+};
+
 /** Locale-aware money, picking a digit-grouping locale by currency so the
  *  figure reads idiomatically to whoever receives it. */
 export function formatStatutoryMoney(
   paise: number,
   currency: Currency,
 ): string {
-  const locale =
-    currency === "INR" ? "en-IN" : currency === "GBP" ? "en-GB" : "en-US";
+  const locale = STATUTORY_MONEY_LOCALES[currency] ?? "en-US";
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
@@ -388,6 +395,3 @@ export function taxTotalLines(heads: {
   }
   return lines;
 }
-
-// React is needed for JSX type inference even where no API is referenced.
-void React;
