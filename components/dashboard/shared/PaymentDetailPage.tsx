@@ -18,6 +18,19 @@ import type {
 // read-only: operators can see refund history that the system wrote from
 // automated paths (gateway-originated refunds, dispute resolutions).
 
+/**
+ * Dispute states with a verdict behind them. Everything else is a proceeding
+ * still in motion, and the gateway can advance it at any moment without the
+ * operator doing anything — which is what the poll below is for.
+ */
+const TERMINAL_DISPUTE_STATUSES = new Set([
+  "WON",
+  "LOST",
+  "CHARGE_REFUNDED",
+  "CLOSED",
+  "WARNING_CLOSED",
+]);
+
 async function fetchPaymentDetails(paymentId: string): Promise<PaymentDetail> {
   const response = await fetch(`/api/admin/payments/${paymentId}`);
   if (!response.ok) {
@@ -47,6 +60,18 @@ export function PaymentDetailPage({
     queryKey: ["admin-payment", resolvedParams.paymentId],
     queryFn: () => fetchPaymentDetails(resolvedParams.paymentId),
     staleTime: 30 * 1000,
+    // #1352 — a live dispute moves on the gateway's clock, not ours: the
+    // webhook advances the row while the operator is sitting on this page
+    // deciding whether to refund, and a 30-second stale window with no refetch
+    // meant they could act on a status the platform had already superseded.
+    // Poll only while a verdict is still outstanding; a resolved dispute never
+    // changes again, so it goes back to costing nothing.
+    refetchInterval: (query) =>
+      query.state.data?.disputes?.some(
+        (dispute) => !TERMINAL_DISPUTE_STATUSES.has(dispute.status),
+      )
+        ? 15 * 1000
+        : false,
   });
 
   if (error) {

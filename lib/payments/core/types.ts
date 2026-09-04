@@ -46,7 +46,13 @@ export interface RefundParams {
   // gateway returns the original refund instead of issuing a second one. Must
   // NOT be derived from paymentId+amount: two legitimate partial refunds of the
   // same amount would collide and the second would silently under-refund.
-  idempotencyKey?: string;
+  //
+  // #1352 — required, not optional. Optionality here was the only thing that
+  // made a non-idempotent refund expressible: omit the key and a network-error
+  // retry credits the customer's card twice with nothing to detect it. Every
+  // real caller already passes its Phase-1 reservation id, so the type now says
+  // what the code already did.
+  idempotencyKey: string;
 }
 
 export interface RefundResult {

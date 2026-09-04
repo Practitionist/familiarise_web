@@ -4230,6 +4230,16 @@ model Appointment {
   // Restrict their parents, so removal is a soft-delete, not a hard delete.
   deletedAt DateTime? @db.Timestamptz
 
+  /// #1356 — state-as-outbox stamp for the post-payment chat leg. Creating the
+  /// buyer's Stream channel happens after the confirmation transaction commits,
+  /// fire-and-forget, so a crash or a Stream outage in that window used to leave
+  /// a confirmed booking with no conversation and nothing that could tell.
+  /// Stamped only once the channel calls have actually succeeded, which makes
+  /// `NULL` on a confirmed appointment the exact work queue the reconcile sweep
+  /// re-drives — no separate outbox table, because the appointment row already
+  /// is the durable record of the work.
+  chatChannelEnsuredAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -4243,6 +4253,14 @@ model Appointment {
   // organizationId != null`; these composites let it probe instead of scan.
   @@index([subscriptionId, organizationId])
   @@index([classId, organizationId])
+  // #1356 — the chat-leg work queue. The reconcile sweep asks for
+  // `chatChannelEnsuredAt IS NULL AND deletedAt IS NULL AND createdAt >= cutoff`
+  // ordered by createdAt, and nothing above serves that: the leading column is
+  // the stamp, which every other index ignores. Postgres cannot express the
+  // partial index this really wants through Prisma, but leading with the two
+  // equality columns gets the same seek, and the queue shrinks to the rows that
+  // genuinely failed once the stamp is written on the happy path.
+  @@index([chatChannelEnsuredAt, deletedAt, createdAt])
   // #1169 PR 9 — `deletedAt: null` rides nearly every hot filter unindexed.
   @@index([deletedAt])
 }
@@ -5024,6 +5042,15 @@ model Payment {
   receiptUrl           String?
   paymentMethod        String
   paymentIntent        String         @unique
+  /// #1353 — the gateway's PAYMENT id (`pay_…` on Razorpay, `ch_…` on Stripe),
+  /// as distinct from `paymentIntent`, which holds the ORDER id. Refund and
+  /// dispute webhooks arrive carrying only the payment id, so without this
+  /// column every one of them had to spend a live `payments.fetch` round trip
+  /// just to learn the order id — and when that call failed the event could not
+  /// be matched at all and was deferred for up to a week. Written once, by the
+  /// confirmation pipeline, at capture (ADR 21). Unique so a second Payment can
+  /// never claim the same gateway capture.
+  gatewayPaymentId     String?        @unique
   paymentGateway       PaymentGateway
   paymentStatus        PaymentStatus
   /// #828 — client-minted key, one per logical checkout attempt. The unique
@@ -5889,6 +5916,14 @@ model WebhookEvent {
   // permanently-failing row dodge the give-up cap forever. The stale selector
   // reads (receivedAt, claimedAt) together; giveUp aging stays on receivedAt.
   claimedAt   DateTime?
+  /// #1356 6.2 — how many times a handler answered this event with a
+  /// DeferSignal instead of processing it. A deferral is invisible on the row
+  /// itself (it deliberately looks identical to "crashed before recording
+  /// anything": processed=false, error=null), so an event that defers forever
+  /// was indistinguishable from one that had just arrived until the 168h
+  /// give-up cap finally fired. The counter is what lets the sweeper alert on a
+  /// stubborn event days before that cap.
+  deferCount  Int       @default(0)
 
   @@index([provider])
   @@index([processed])

@@ -260,6 +260,8 @@ const REFUND_TIMEOUT_MS = 30_000;
 
 /** Razorpay: at least 10 chars, only letters, digits, hyphens and underscores. */
 const IDEMPOTENCY_KEY_MIN_LENGTH = 10;
+/** That documented rule as a whole-string match, so a key is accepted or refused, never rewritten. */
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{10,}$/;
 
 type RazorpayRefundResponse = {
   id: string;
@@ -279,9 +281,10 @@ type RazorpayRefundResponse = {
  * unreachable per-request *and* per-client. Raw HTTP is the only path.
  * https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/
  *
- * The header is sent only when the caller supplies a key. Deriving one from
- * paymentId+amount would make two legitimate partial refunds of equal amount
- * collide, and the second would silently return the first refund.
+ * #1352 — the key is required, not optional. The caller must supply one that it
+ * can reproduce on a retry; deriving one here from paymentId+amount would make
+ * two legitimate partial refunds of equal amount collide, and the second would
+ * silently return the first refund instead of moving any money.
  */
 async function postRefund({
   paymentId,
@@ -292,7 +295,7 @@ async function postRefund({
   paymentId: string;
   amount?: number;
   notes: Record<string, unknown>;
-  idempotencyKey?: string;
+  idempotencyKey: string;
 }): Promise<RazorpayRefundResponse> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_SECRET;
@@ -308,25 +311,25 @@ async function postRefund({
     Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
     "Content-Type": "application/json",
   };
-  // A caller that supplies a key is asking for exactly-once semantics. If the
-  // key doesn't survive sanitization we must NOT quietly send the request
-  // without the header — that downgrades a refund to at-least-once delivery
-  // against a customer's card, with no signal that it happened. Refuse instead;
-  // every real caller passes `Refund.id` (a uuid), so this only fires on a
-  // programming error.
-  if (idempotencyKey !== undefined) {
-    const sanitizedKey = idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "");
-    if (sanitizedKey.length < IDEMPOTENCY_KEY_MIN_LENGTH) {
-      throw new RefundError(
-        `Refund idempotency key "${idempotencyKey}" is unusable after sanitization ` +
-          `(${sanitizedKey.length} of the required ${IDEMPOTENCY_KEY_MIN_LENGTH} chars). ` +
-          `Refusing to issue a non-idempotent refund.`,
-        "INVALID_IDEMPOTENCY_KEY",
-        "RAZORPAY",
-      );
-    }
-    headers["X-Refund-Idempotency"] = sanitizedKey;
+  // Every refund is asking for exactly-once semantics, so the header is never
+  // optional, and a bad key is rejected rather than repaired. Rewriting it is
+  // the more dangerous option: stripping the characters Razorpay rejects is
+  // lossy, so two distinct keys can collapse onto one header value and the
+  // second refund would come back as a replay of the first. Sending nothing is
+  // worse still — that downgrades a refund to at-least-once delivery against a
+  // customer's card with no signal it happened. So fail closed; every real
+  // caller passes `Refund.id`, so this only fires on a programming error. #1352
+  if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    throw new RefundError(
+      `Refund idempotency key "${idempotencyKey}" is not a valid Razorpay key ` +
+        `(at least ${IDEMPOTENCY_KEY_MIN_LENGTH} chars of letters, digits, ` +
+        `hyphens and underscores only). ` +
+        `Refusing to issue a non-idempotent refund.`,
+      "REFUND_IDEMPOTENCY_KEY_INVALID",
+      "RAZORPAY",
+    );
   }
+  headers["X-Refund-Idempotency"] = idempotencyKey;
 
   const body = JSON.stringify({ ...(amount ? { amount } : {}), notes });
   const url = `${RAZORPAY_API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`;
@@ -346,9 +349,30 @@ async function postRefund({
       return (await res.json()) as RazorpayRefundResponse;
     }
 
-    if (res.status === 409 && attempt === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      continue;
+    // #1451 — Razorpay answers 409 for TWO conditions and only one of them is
+    // worth waiting on: "Another request with the same idempotency key is
+    // still in progress" (the concurrent duplicate this loop exists for)
+    // versus "Different request with the same idempotency key has already been
+    // processed" — a key collision that will answer 409 for as long as the key
+    // lives, so retrying it only buys a second wasted second and reports the
+    // wrong cause. The key material itself is never rewritten (see above); the
+    // collision is surfaced under its own code so it reads as our bug.
+    if (res.status === 409) {
+      const conflict = await res.json().catch(() => null);
+      const conflictBody = readRazorpayErrorBody(conflict);
+      const keyReused = /different request/i.test(
+        conflictBody?.description ?? "",
+      );
+      if (attempt === 0 && !keyReused) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      throw new RefundError(
+        conflictBody?.description ??
+          "Razorpay refund is still in flight for this idempotency key",
+        keyReused ? "REFUND_IDEMPOTENCY_KEY_REUSED" : "REFUND_IN_FLIGHT",
+        "RAZORPAY",
+      );
     }
 
     // Razorpay's error body is `{ error: { code, description } }` — the shape
@@ -359,7 +383,7 @@ async function postRefund({
     }
     throw new RefundError(
       `Razorpay refund failed with HTTP ${res.status}`,
-      res.status === 409 ? "REFUND_IN_FLIGHT" : "UNKNOWN_ERROR",
+      "UNKNOWN_ERROR",
       "RAZORPAY",
     );
   }
@@ -561,15 +585,42 @@ export async function listRazorpayRefunds(
 // Error Handlers
 // ============================================================================
 
-function handleRazorpayError(error: unknown): PaymentError {
-  if (error && typeof error === "object" && "error" in error) {
-    const razorpayError = error as {
-      error: { code?: string; description?: string };
-    };
+/**
+ * #1353 — `"error" in error` also passes for `{ error: undefined }`, and the
+ * envelope really does arrive that way; reading `.code` off it then throws a
+ * TypeError that escapes the handler entirely (E2E 2026-09-04: reconcile-refunds
+ * lost 4 of 8 rows to it instead of classifying them). Returns the body only
+ * when its fields are readable, so callers fall through to their generic error.
+ */
+function readRazorpayErrorBody(
+  error: unknown,
+): { code?: string; description?: string } | null {
+  if (!error || typeof error !== "object" || !("error" in error)) {
+    return null;
+  }
 
-    const code = razorpayError.error.code || "UNKNOWN_ERROR";
-    const description =
-      razorpayError.error.description || "Failed to create order";
+  const body = (error as { error: unknown }).error;
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const { code, description } = body as {
+    code?: unknown;
+    description?: unknown;
+  };
+
+  return {
+    // A non-string code would break the `.includes` branching below.
+    code: typeof code === "string" ? code : undefined,
+    description: typeof description === "string" ? description : undefined,
+  };
+}
+
+function handleRazorpayError(error: unknown): PaymentError {
+  const razorpayError = readRazorpayErrorBody(error);
+  if (razorpayError) {
+    const code = razorpayError.code || "UNKNOWN_ERROR";
+    const description = razorpayError.description || "Failed to create order";
 
     if (code.includes("BAD_REQUEST_ERROR")) {
       return new PaymentError(
@@ -608,14 +659,10 @@ function handleRazorpayRefundError(error: unknown): RefundError {
     return error;
   }
 
-  if (error && typeof error === "object" && "error" in error) {
-    const razorpayError = error as {
-      error: { code?: string; description?: string };
-    };
-
-    const code = razorpayError.error.code || "UNKNOWN_ERROR";
-    const description =
-      razorpayError.error.description || "Failed to process refund";
+  const razorpayError = readRazorpayErrorBody(error);
+  if (razorpayError) {
+    const code = razorpayError.code || "UNKNOWN_ERROR";
+    const description = razorpayError.description || "Failed to process refund";
 
     return new RefundError(description, code, "RAZORPAY", error);
   }

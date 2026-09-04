@@ -622,9 +622,30 @@ export async function handleRefundCreated(
   return await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-    // Find the payment (B2C appointment path)
-    const payment = await tx.payment.findUnique({
-      where: { paymentIntent: paymentIntentId },
+    // Find the payment (B2C appointment path).
+    //
+    // #1353 — match on EITHER id. A refund webhook carries only the gateway's
+    // `pay_…` payment id, so the dispatcher had to translate it into our order
+    // id with a live `payments.fetch`; when that call failed it passed the
+    // `pay_…` id through unchanged and a lookup keyed solely on `paymentIntent`
+    // could never match it. The refund then deferred and was re-driven for up
+    // to a week against a payment that had been captured all along. Now the id
+    // the webhook actually carries is itself a key.
+    //
+    // Deliberately NOT filtered on `deletedAt: null`: the lookup this replaced
+    // was a `findUnique` on `paymentIntent`, which reached soft-deleted rows
+    // too. A Payment soft-deleted after capture still owes its refund event a
+    // hearing — excluding it would defer the webhook and give up on it after
+    // 168h, which is a money outcome, not a tidier query.
+    const payment = await tx.payment.findFirst({
+      where: {
+        OR: [
+          { paymentIntent: paymentIntentId },
+          ...(providerPaymentId
+            ? [{ gatewayPaymentId: providerPaymentId }]
+            : []),
+        ],
+      },
     });
 
     if (!payment) {
@@ -1232,11 +1253,26 @@ export async function handleDisputeCreated(
   return await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const payment = resolvedPaymentIntent
-          ? await tx.payment.findUnique({
-              where: { paymentIntent: resolvedPaymentIntent },
-            })
-          : null;
+        // #1353 — either id resolves the disputed payment: the order id when
+        // the gateway lookup above succeeded, or `chargeId` (the `pay_…` id the
+        // webhook itself carried) against the column the capture pipeline now
+        // persists. The second key is what keeps a dispute linkable when that
+        // gateway fetch fails — until now such a failure meant no link at all,
+        // a CRITICAL_DISPUTE_UNLINKED page, and disputed earnings left payable
+        // until the six-hourly reconcile cron noticed. As on the refund path,
+        // no `deletedAt` filter: this replaced a `findUnique` that reached
+        // soft-deleted rows, and a chargeback against one still has to be
+        // recorded and still has to hold the earnings.
+        const payment = await tx.payment.findFirst({
+          where: {
+            OR: [
+              ...(resolvedPaymentIntent
+                ? [{ paymentIntent: resolvedPaymentIntent }]
+                : []),
+              { gatewayPaymentId: chargeId },
+            ],
+          },
+        });
 
         if (!payment) {
           console.warn(`Payment not found for dispute: ${disputeId}`);
@@ -2101,6 +2137,12 @@ export async function handleRazorpayPayoutWebhook(
     processed: "COMPLETED",
     reversed: "FAILED",
     rejected: "FAILED",
+    // #1451 — RazorpayX answers a bank-level failure with `failed`, and the missing
+    // entry fell through to the `|| "PENDING"` default: a `payout.failed`
+    // delivery left the consultant payout in flight and its earnings BATCHED
+    // forever, because the un-batch back to READY only runs on the FAILED
+    // branch of handlePayoutWebhook. The Stripe twin below already maps it.
+    failed: "FAILED",
     cancelled: "CANCELLED",
   };
 
