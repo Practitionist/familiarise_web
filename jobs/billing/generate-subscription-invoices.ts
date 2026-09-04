@@ -43,7 +43,7 @@ import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatc
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { reportSentryError } from "@/lib/observability/report";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -297,12 +297,20 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           level: "error",
           extra: { subscriptionId: sub.id, competingInvoiceNumber },
         });
-        void recordSystemError({
+        // One capture, not two: recordSystemError escalates to Sentry itself,
+        // and its escalation drops `context`, so the collision extras would
+        // only survive on the reportSentryError event above. The durable row
+        // is written through recordSystemEvent directly instead.
+        void recordSystemEvent({
           organizationId: sub.contract.organization.id,
           category: "INVOICE",
-          summary: `Duplicate invoice number on subscription ${sub.id}`,
-          err,
-          context: { subscriptionId: sub.id, competingInvoiceNumber },
+          severity: "ERROR",
+          message: `Duplicate invoice number on subscription ${sub.id}: ${err.message}`,
+          context: {
+            subscriptionId: sub.id,
+            competingInvoiceNumber,
+            errorMessage: err.message,
+          },
         }).catch(() => {});
         skipped++;
         continue;

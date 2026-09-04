@@ -185,4 +185,18 @@ describe("#1407 — retry reset loses the CAS", () => {
     expect(prismaStub.consultantPayout.update).not.toHaveBeenCalled();
     expect(result.skippedCount).toBe(1);
   });
+
+  it("count 1 → the winner re-arms once and the increment rides the CAS", async () => {
+    payoutRow = { ...STUCK_PAYOUT, providerPayoutId: null, retryCount: 0 };
+    prismaStub.consultantPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const result = await handleStuckPayouts();
+
+    // Exactly one reset attempt for the one stuck row, and the retryCount bump
+    // is part of the same guarded write rather than a follow-up update.
+    expect(prismaStub.consultantPayout.updateMany).toHaveBeenCalledTimes(1);
+    expect(result.retriedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(prismaStub.consultantPayout.update).not.toHaveBeenCalled();
+  });
 });

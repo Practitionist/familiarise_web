@@ -960,16 +960,26 @@ async function runReconcileLedgersUnlocked(
       select: { id: true, organizationId: true, clawbackAmountPaise: true },
     });
     if (clawedBackPayouts.length > 0) {
-      const clawbackTxns = await prisma.ledgerTransaction.findMany({
-        where: {
-          payoutId: { in: clawedBackPayouts.map((po) => po.id) },
-          idempotencyKey: { startsWith: "clawback:" },
-        },
-        select: { payoutId: true },
-      });
-      const clawedBackWithTxn = new Set(
-        clawbackTxns.map((t) => t.payoutId).filter((p): p is string => !!p),
-      );
+      // Chunked IN to stay under the bind-param cap, like the sibling lookups
+      // below; a full-scope run can carry more payout ids than one statement.
+      const CLAWBACK_CHUNK = 5_000;
+      const clawedBackWithTxn = new Set<string>();
+      for (let i = 0; i < clawedBackPayouts.length; i += CLAWBACK_CHUNK) {
+        const clawbackTxns = await prisma.ledgerTransaction.findMany({
+          where: {
+            payoutId: {
+              in: clawedBackPayouts
+                .slice(i, i + CLAWBACK_CHUNK)
+                .map((po) => po.id),
+            },
+            idempotencyKey: { startsWith: "clawback:" },
+          },
+          select: { payoutId: true },
+        });
+        for (const t of clawbackTxns) {
+          if (t.payoutId) clawedBackWithTxn.add(t.payoutId);
+        }
+      }
       for (const po of clawedBackPayouts) {
         if (!clawedBackWithTxn.has(po.id)) {
           findings.push({
