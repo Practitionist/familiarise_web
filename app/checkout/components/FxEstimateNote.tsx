@@ -90,3 +90,44 @@ export function FxEstimateNote({
     </p>
   );
 }
+
+/**
+ * #1396 — the Total row plus this note is the one piece every checkout page
+ * repeats verbatim; folding it into a single component (rather than each page
+ * inlining the row and this note next to it) keeps the new-code duplication
+ * ratio under the quality gate. `isLicenseCovered` only ever arrives `true`
+ * from the consultation page today, but the branch is shape-identical to what
+ * that page already rendered, so this is a pure move, not a behaviour change.
+ */
+export function CheckoutTotalRow({
+  totalPaise,
+  organizationId,
+  formatPrice,
+  isLicenseCovered = false,
+}: {
+  totalPaise: number;
+  organizationId?: string | null;
+  formatPrice: (paise: number) => string;
+  isLicenseCovered?: boolean;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between font-semibold">
+        <div>Total</div>
+        <div>{isLicenseCovered ? formatPrice(0) : formatPrice(totalPaise)}</div>
+      </div>
+      {!isLicenseCovered && (
+        <FxEstimateNote
+          totalPaise={totalPaise}
+          organizationId={organizationId}
+        />
+      )}
+      {isLicenseCovered && (
+        <p className="text-xs text-emerald-600">
+          Session value {formatPrice(totalPaise)} — covered by enterprise
+          license
+        </p>
+      )}
+    </>
+  );
+}
