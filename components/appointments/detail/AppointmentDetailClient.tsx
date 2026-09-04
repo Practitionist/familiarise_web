@@ -56,13 +56,7 @@ function initials(name: string): string {
     .join("");
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
       <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -192,6 +186,21 @@ export function AppointmentDetailClient({
     ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
   const hasConfirmedSessions = vm.sessions.some((s) => !s.isTentative);
+  const hasTentativeSessions = vm.sessions.some((s) => s.isTentative);
+  // #1428 — the tentative-hold deadline: the soonest still-pending payment
+  // guarding a held slot on this booking. Reused as-is by both the timeline
+  // row and the "Complete payment" affordance below so they never disagree
+  // about when the hold releases.
+  const holdDeadline =
+    payments
+      .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
+      .map((p) => new Date(p.expiresAt!))
+      .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+  const openPendingPayment = () => {
+    if (vm.pendingPaymentUrl && /^https?:\/\//.test(vm.pendingPaymentUrl)) {
+      window.open(vm.pendingPaymentUrl, "_blank", "noopener,noreferrer");
+    }
+  };
   // #1163 — the read narrows to open statuses and takes one, so [0] is THE
   // live proposal; the card is the answer surface "Awaiting schedule
   // confirmation" never offered.
@@ -347,7 +356,7 @@ export function AppointmentDetailClient({
               </>
             )}
             <Section title="Sessions">
-              {hasConfirmedSessions ? (
+              {hasConfirmedSessions || hasTentativeSessions ? (
                 <SessionTimeline
                   sessions={vm.sessions}
                   joinWindowMs={joinWindowMs}
@@ -358,12 +367,19 @@ export function AppointmentDetailClient({
                       ? () => action.onClick!()
                       : undefined
                   }
+                  showHeld
+                  holdDeadline={holdDeadline}
+                  // #1428 — consultee sees the CTA; consultant sees the same
+                  // held row read-only ("awaiting payment", no action).
+                  onCompletePayment={
+                    role === "consultee" && vm.pendingPaymentUrl
+                      ? openPendingPayment
+                      : undefined
+                  }
                 />
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  {vm.sessions.length > 0
-                    ? "Awaiting schedule confirmation."
-                    : "No sessions scheduled yet."}
+                  No sessions scheduled yet.
                 </p>
               )}
             </Section>
@@ -405,25 +421,32 @@ export function AppointmentDetailClient({
                       This booking is sponsored by <strong>{orgName}</strong>.
                     </p>
                   )}
-                  {vm.needsActionReason === "PAY_NOW" &&
-                    vm.pendingPaymentUrl && (
-                      <Button
-                        size="sm"
-                        className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
-                        onClick={() => {
-                          if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
-                            window.open(
-                              vm.pendingPaymentUrl!,
-                              "_blank",
-                              "noopener,noreferrer",
-                            );
-                          }
-                        }}
-                      >
-                        <CreditCard className="h-4 w-4 mr-2" />
-                        Pay Now to Confirm
-                      </Button>
-                    )}
+                  {/* #1428 — TENTATIVE (held pending payment) reaches this
+                      branch too now, consultee-only like the timeline's held
+                      row; PAY_NOW's existing (role-agnostic) behaviour is
+                      unchanged. */}
+                  {((vm.needsActionReason === "PAY_NOW" &&
+                    vm.pendingPaymentUrl) ||
+                    (vm.needsActionReason === "TENTATIVE" &&
+                      role === "consultee" &&
+                      vm.pendingPaymentUrl)) && (
+                    <Button
+                      size="sm"
+                      className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+                      onClick={() => {
+                        if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {
+                          window.open(
+                            vm.pendingPaymentUrl!,
+                            "_blank",
+                            "noopener,noreferrer",
+                          );
+                        }
+                      }}
+                    >
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Pay Now to Confirm
+                    </Button>
+                  )}
                 </div>
               )}
             </Section>
