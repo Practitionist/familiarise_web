@@ -41,7 +41,8 @@ import { createHandleApiError } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { mintClientIdempotencyKey,
+import {
+  mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
 } from "@/app/checkout/plans/utils";
@@ -189,7 +190,10 @@ export default function ConsultationCheckoutPage({
           );
         }
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -270,7 +274,10 @@ export default function ConsultationCheckoutPage({
   );
 
   const handleCheckout = useCallback(
-    async (gateway: SupportedCheckoutGateway, isMockPayment: boolean = false) => {
+    async (
+      gateway: SupportedCheckoutGateway,
+      isMockPayment: boolean = false,
+    ) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
@@ -372,7 +379,10 @@ export default function ConsultationCheckoutPage({
       } catch (error) {
         // Only fires for unexpected errors (network failure, JSON parse error, etc.)
         // API errors are handled above with handleApiError() + return
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         toast({
           title: "Checkout Failed",
           description:
@@ -444,7 +454,10 @@ export default function ConsultationCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("[Checkout] Error fetching event data:", error);
         setError(
           error instanceof Error
@@ -628,14 +641,15 @@ export default function ConsultationCheckoutPage({
               <div className="text-muted-foreground">Date</div>
               <div>
                 {validatedSearchParams
-                  ? new Date(
-                      validatedSearchParams.startsAt,
-                    ).toLocaleDateString(undefined, {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })
+                  ? new Date(validatedSearchParams.startsAt).toLocaleDateString(
+                      undefined,
+                      {
+                        weekday: "long",
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                      },
+                    )
                   : "—"}
               </div>
             </div>
@@ -831,7 +845,10 @@ export default function ConsultationCheckoutPage({
                 </div>
               </div>
               {!isLicenseCovered && (
-                <FxEstimateNote totalPaise={pricing.total} />
+                <FxEstimateNote
+                  totalPaise={pricing.total}
+                  organizationId={selectedOrganizationId}
+                />
               )}
               {isLicenseCovered && (
                 <p className="text-xs text-emerald-600">
@@ -865,7 +882,9 @@ export default function ConsultationCheckoutPage({
           ].map((gateway) => (
             <Card key={gateway.name} className="border-border">
               <CardHeader>
-                <CardTitle className="text-foreground">{gateway.name}</CardTitle>
+                <CardTitle className="text-foreground">
+                  {gateway.name}
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
@@ -889,10 +908,8 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "RAZORPAY",
-                            startsAt:
-                              validatedSearchParams.startsAt,
-                            endsAt:
-                              validatedSearchParams.endsAt,
+                            startsAt: validatedSearchParams.startsAt,
+                            endsAt: validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:
@@ -938,10 +955,8 @@ export default function ConsultationCheckoutPage({
                             appointmentType: "CONSULTATION",
                             planId: resolvedParams.planId,
                             paymentGateway: "STRIPE",
-                            startsAt:
-                              validatedSearchParams.startsAt,
-                            endsAt:
-                              validatedSearchParams.endsAt,
+                            startsAt: validatedSearchParams.startsAt,
+                            endsAt: validatedSearchParams.endsAt,
                             slotOfAvailabilityWeeklyId:
                               validatedSearchParams.slotOfAvailabilityWeeklyId,
                             slotOfAvailabilityCustomId:

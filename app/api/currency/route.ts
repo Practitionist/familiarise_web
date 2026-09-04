@@ -1,7 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { getExchangeRates } from "@/lib/currency";
-import { SUPPORTED_CURRENCIES } from "@/lib/currency-codes";
+import {
+  SUPPORTED_CURRENCIES,
+  SUPPORTED_CURRENCY_CODES,
+} from "@/lib/currency-codes";
 import { applyRateLimit, currencyLimiter, getClientIp } from "@/lib/rate-limit";
 
 // #1396 — this replaces the `CURRENCY_SYMBOLS` Proxy in lib/currency.ts, which
@@ -26,13 +30,32 @@ function symbolFor(code: string): string {
 // and gives no cross-instance hit rate at all.
 const CACHE_CONTROL = "public, s-maxage=3600, stale-while-revalidate=86400";
 
+// #1414 — `to` arrives from localStorage by way of useCurrency, so it is
+// attacker-controlled. The provider answers with roughly 160 codes, and reading
+// `rates[to]` straight off that object returned a real rate for currencies the
+// navbar never offers and `symbolFor` has no symbol for. Allowlisting here is
+// the same list the switcher renders and the checkout schema accepts, so the
+// three cannot drift; an unsupported code 400s without the raw value being
+// echoed back.
+const querySchema = z.object({
+  to: z.enum(SUPPORTED_CURRENCY_CODES).default("INR"),
+});
+
 export async function GET(request: NextRequest) {
   const limited = await applyRateLimit(currencyLimiter, getClientIp(request));
   if (limited) return limited;
 
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const to = searchParams.get("to") || "INR";
+    const parsed = querySchema.safeParse({
+      to: request.nextUrl.searchParams.get("to") || undefined,
+    });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Unsupported currency" },
+        { status: 400 },
+      );
+    }
+    const { to } = parsed.data;
 
     // If target is INR, no conversion needed
     if (to === "INR") {
@@ -45,10 +68,13 @@ export async function GET(request: NextRequest) {
     const rates = await getExchangeRates();
     const rate = rates[to];
 
+    // Allowlisted but absent upstream: the provider dropped a code we offer.
+    // Treated as a provider failure, not a client error, so useCurrency
+    // degrades to honest INR rather than showing a converted figure.
     if (rate === undefined) {
       return NextResponse.json(
-        { error: `Unsupported currency: ${to}` },
-        { status: 400 },
+        { error: "Failed to fetch exchange rates" },
+        { status: 500 },
       );
     }
 

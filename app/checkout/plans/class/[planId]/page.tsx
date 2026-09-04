@@ -773,7 +773,10 @@ export default function ClassCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
-              <FxEstimateNote totalPaise={pricing.total} />
+              <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
             </div>
           </CardContent>
         </Card>

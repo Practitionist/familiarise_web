@@ -26,6 +26,13 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour (reduced from 24h)
 // back to showing honest INR. A missing estimate is better than a stale one.
 const MAX_STALE_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
+// #1414 — an unbounded fetch let a stalled provider hold /api/currency (and the
+// admin refresh) open for as long as the platform's own function ceiling
+// allowed. The checkout rate lookup runs before acquireCheckoutLock, so it
+// spends no lock budget, but it still delays the buyer. Five seconds is well
+// past this endpoint's normal latency and well inside every caller's ceiling.
+const FETCH_TIMEOUT_MS = 5_000;
+
 // Deliberately module-level, so the cache is per serverless instance rather
 // than shared. Netlify runs many instances and there is no shared store in this
 // path, which means the hit rate is whatever a warm instance gives us and the
@@ -53,7 +60,19 @@ export async function getExchangeRates(): Promise<Record<string, number>> {
     return cachedRates;
   }
 
-  const res = await fetch(EXCHANGE_RATE_API_URL);
+  let res: Response;
+  try {
+    res = await fetch(EXCHANGE_RATE_API_URL, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // A timeout or a network failure is the same situation as a 5xx: serve the
+    // cached copy while it is still young enough to be honest, else throw and
+    // let the caller degrade to INR.
+    const stale = servableStaleRates();
+    if (stale) return stale;
+    throw error;
+  }
 
   if (!res.ok) {
     const stale = servableStaleRates();
@@ -85,7 +104,10 @@ export function invalidateExchangeRateCache(): void {
 /**
  * Returns cache metadata for admin monitoring.
  */
-export function getExchangeRateCacheInfo(): { cachedAt: number | null; ageMs: number | null } {
+export function getExchangeRateCacheInfo(): {
+  cachedAt: number | null;
+  ageMs: number | null;
+} {
   if (!cachedRates) return { cachedAt: null, ageMs: null };
   return { cachedAt, ageMs: Date.now() - cachedAt };
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo } from "react";
+import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
 import { RATE_PROVIDER_NAME, RATE_PROVIDER_URL } from "@/lib/currency-codes";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -15,7 +17,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
  * unaccounted for anywhere on the page.
  *
  * This component is the disclosure. It renders only while the figures above it
- * really are an estimate, names the INR amount the gateway will take, and
+ * really are an estimate, names the INR amount that will actually be taken, and
  * carries the attribution that the rate provider's licence requires wherever
  * its rates are displayed.
  *
@@ -23,16 +25,59 @@ import { formatCurrencyAmount } from "@/utils/formatting";
  * checkout pages each add a single line, which also keeps the duplication ratio
  * on new code inside the quality gate.
  */
-export function FxEstimateNote({ totalPaise }: { totalPaise: number }) {
+export function FxEstimateNote({
+  totalPaise,
+  organizationId,
+}: {
+  totalPaise: number;
+  /**
+   * #1414 — the selected org, when the buyer is booking against one. Only
+   * PERSONAL funding (and no org at all) reaches a payment gateway; WALLET
+   * debits the credit pool, INVOICE defers to NET-X billing and LICENSE
+   * charges nothing, so naming a gateway charge in those flows is false.
+   */
+  organizationId?: string | null;
+}) {
   const { currency, isEstimate } = useCurrency();
+  const { data: session } = useSession();
+  const fundingSource = useMemo(() => {
+    if (!organizationId) return null;
+    const memberships = session?.user?.organizationMemberships ?? [];
+    return (
+      memberships.find((m) => m.organizationId === organizationId)
+        ?.fundingSource ?? null
+    );
+  }, [organizationId, session?.user?.organizationMemberships]);
 
   if (!isEstimate) return null;
 
+  const inr = formatCurrencyAmount(totalPaise, "INR");
+  const lead =
+    fundingSource === "WALLET" ? (
+      <>
+        Estimated in {currency}. Your organisation&rsquo;s wallet will be
+        debited {inr} in INR; no card is charged.
+      </>
+    ) : fundingSource === "INVOICE" ? (
+      <>
+        Estimated in {currency}. {inr} in INR will be billed to your
+        organisation&rsquo;s invoice account; no card is charged.
+      </>
+    ) : fundingSource === "LICENSE" ? (
+      <>
+        Estimated in {currency}. The session value is {inr} in INR and is
+        covered by your enterprise licence.
+      </>
+    ) : (
+      <>
+        Estimated in {currency}. You will be charged {inr} in INR by the payment
+        gateway; your card issuer&rsquo;s rate applies.
+      </>
+    );
+
   return (
     <p className="text-xs text-muted-foreground">
-      Estimated in {currency}. You will be charged{" "}
-      {formatCurrencyAmount(totalPaise, "INR")} in INR by the payment gateway;
-      your card issuer&rsquo;s rate applies. Rates by{" "}
+      {lead} Rates by{" "}
       <a
         href={RATE_PROVIDER_URL}
         target="_blank"

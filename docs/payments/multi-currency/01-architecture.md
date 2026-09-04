@@ -11,14 +11,16 @@ Settlement being INR-only is enforced, not merely assumed. `assertInrSettlement`
 | Buyer Country | Gateway  | Method                                       | Fee                     | Settlement |
 | ------------- | -------- | -------------------------------------------- | ----------------------- | ---------- |
 | India         | Razorpay | Domestic (UPI, cards, netbanking)            | 2% + GST (~2.36%)       | INR, T+2   |
-| International | Razorpay | The same INR order, paid by an overseas card | ~3% + GST               | INR, T+1   |
+| International | Razorpay | The same INR order, paid by an overseas card | ~3% + GST               | INR, T+7   |
 | Fallback      | Stripe   | Checkout Sessions                            | ~6.3% (4.3% + 2% forex) | INR, T+5-7 |
+
+The settlement column deserves one clarification, because an earlier revision of this table put the international row at T+1. That figure belongs to the MoneySaver Export Account, not to this flow. Razorpay settles an ordinary international card payment in INR on a [T+7 working-day cycle](https://razorpay.com/docs/payments/international-payments/faqs/), against T+2 for a domestic one, which is also what our own [gateway evaluation](../gateways/gateway-evaluation-mar-2026.md) recorded.
 
 An earlier revision of this table quoted Razorpay's International Bank Transfer product at 1% with zero forex markup and automatic eFIRC. That was a description of a product this codebase has never used. IBT is the MoneySaver Export Account, a virtual-account bank-transfer rail with [no Orders API behind it](https://razorpay.com/docs/payments/international-payments/international-bank-transfer/), so no checkout could have routed through it. The international row above is what the router actually does, and it costs roughly two points more than the figure that used to appear here.
 
 ### Why Razorpay for Everything
 
-Razorpay remains the primary rail for three reasons that survive the correction above. It is still materially cheaper than Stripe for international cards, at roughly 3% against Stripe's 6.3% all-in. It holds an RBI PA-CB licence granted in December 2025, which authorises it for cross-border collection. And it settles zero-fee UPI domestically, which is the bulk of the volume and something a Stripe-based competitor cannot match.
+Razorpay remains the primary rail for three reasons that survive the correction above. It is still materially cheaper than Stripe for international cards, at roughly 3% against Stripe's 6.3% all-in. It holds an RBI PA-CB licence granted in December 2025, which authorises it for cross-border collection. And it accepts UPI, which is the bulk of domestic volume and something a Stripe-based competitor cannot offer on this rail. That last reason should not be overstated: UPI carries zero MDR because the RBI mandates it, but Razorpay still charges its standard 2% platform fee plus GST on a UPI collection, so the method is cheap for the buyer rather than free for us.
 
 ## Currency Flow
 
