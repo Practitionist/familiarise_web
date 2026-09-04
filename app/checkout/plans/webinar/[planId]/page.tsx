@@ -28,6 +28,7 @@ import {
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
+  paymentGateways,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
@@ -903,20 +904,7 @@ export default function WebinarCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {[
-            {
-              name: "Stripe",
-              description: "Card payments (international)",
-              gateway: "STRIPE" as const,
-              isActive: true,
-            },
-            {
-              name: "Razorpay",
-              description: "UPI, cards & bank transfer",
-              gateway: "RAZORPAY" as const,
-              isActive: true,
-            },
-          ].map((gateway) => (
+          {paymentGateways.map((gateway) => (
             <Card key={gateway.name} className="border-border">
               <CardHeader>
                 <CardTitle className="text-foreground">

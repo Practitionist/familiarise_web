@@ -40,7 +40,7 @@ import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
-import { createHandleApiError } from "../../utils";
+import { createHandleApiError, paymentGateways } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
@@ -859,20 +859,7 @@ export default function ConsultationCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {[
-            {
-              name: "Stripe",
-              description: "Card payments (international)",
-              gateway: "STRIPE" as const,
-              isActive: true,
-            },
-            {
-              name: "Razorpay",
-              description: "UPI, cards & bank transfer",
-              gateway: "RAZORPAY" as const,
-              isActive: true,
-            },
-          ].map((gateway) => (
+          {paymentGateways.map((gateway) => (
             <Card key={gateway.name} className="border-border">
               <CardHeader>
                 <CardTitle className="text-foreground">{gateway.name}</CardTitle>

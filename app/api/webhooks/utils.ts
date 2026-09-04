@@ -968,8 +968,16 @@ export async function handleRefundCreated(
       // error=true which the sweeper skips (it only re-drives error=null) — both
       // are permanent death on Razorpay (no redelivery after a 200). Instead
       // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
-      // until the payment lands (or the terminal age cap gives up). Stripe retries
-      // natively on a 5xx and doesn't read this return, so keep throwing there.
+      // until the payment lands (or the terminal age cap gives up).
+      //
+      // Stripe keeps throwing, and the asymmetry is deliberate rather than
+      // leftover: sweep-stuck-webhook-events.ts selects
+      // `provider: { in: ["razorpay", "stream"] }`, so a deferred Stripe event
+      // has NO actor — it would sit processed=false/error=null forever after a
+      // 200 told Stripe to stop retrying. The throw returns 5xx, and Stripe's
+      // native retry schedule (~3 days) is the re-drive. Extracting a Stripe
+      // dispatch and adding it to the sweep is the precondition for unifying
+      // these two branches.
       const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
       if (gateway === "RAZORPAY") {
         return new DeferSignal(deferReason);
