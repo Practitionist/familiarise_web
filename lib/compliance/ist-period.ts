@@ -15,18 +15,26 @@
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 /**
- * The UTC instant that begins the previous calendar month, as reckoned in IST.
+ * The instant that begins the previous IST calendar month.
  * `now` is injectable so callers can be tested without freezing the clock.
  */
 export function previousIstCalendarMonthStart(now: Date = new Date()): Date {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
-  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - 1, 1));
+  // The shift is needed twice, and only doing it once was the bug (#1370):
+  // adding the offset picks the right IST month, subtracting it turns that IST
+  // midnight back into the instant a UTC-stored timestamp compares against.
+  return new Date(
+    Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() - 1, 1) - IST_OFFSET_MS,
+  );
 }
 
-/** The exclusive end of the calendar month that `monthStart` begins. */
+/** The exclusive end of the IST calendar month that `monthStart` begins. */
 export function nextMonthStart(monthStart: Date): Date {
+  // `monthStart` is an IST midnight, so its own UTC components name the day
+  // before; read the month in IST for the same reason the start boundary does.
+  const ist = new Date(monthStart.getTime() + IST_OFFSET_MS);
   return new Date(
-    Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1),
+    Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth() + 1, 1) - IST_OFFSET_MS,
   );
 }
 

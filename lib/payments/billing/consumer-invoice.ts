@@ -23,7 +23,9 @@
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
@@ -66,7 +68,7 @@ export interface ConsumerInvoiceTax {
  * absent state produces an intra-state (CGST+SGST) document, not IGST.
  *
  * @param buyerStateCode alpha or numeric; normalised here.
- * @param supplierStateCode the platform's own state (env `SUPPLIER_STATE_CODE`).
+ * @param supplierStateCode the platform's own state, as `resolveSupplierStateCode` settled it.
  */
 export function deriveConsumerInvoiceTax(params: {
   /** Tax-inclusive amount the buyer was charged, paise. */
@@ -153,6 +155,31 @@ export function deriveConsumerInvoiceTax(params: {
     placeOfSupplySource: "DECLARED_AT_CHECKOUT",
     reason: "INTER_STATE_IGST",
   };
+}
+
+/**
+ * Resolve the platform's OWN state for a statutory document.
+ *
+ * PURE. The first two digits of a GSTIN are the state of registration by law,
+ * so the GSTIN is authoritative and `SUPPLIER_STATE_CODE` is only the fallback
+ * for a GSTIN that carries none. A disagreement between the two is a
+ * configuration fault, never a fact about the supply, and it decides CGST+SGST
+ * against IGST on a gapless Rule 46 number that cannot be corrected in place —
+ * so the caller must fail closed rather than pick one (#1365).
+ */
+export function resolveSupplierStateCode(
+  gstin: string | null | undefined,
+  envStateCode: string | null | undefined,
+): {
+  stateCode: string | null;
+  mismatch: { fromGstin: string; fromEnv: string } | null;
+} {
+  const fromGstin = numericStateCode(gstin, null);
+  const fromEnv = numericStateCode(null, envStateCode);
+  if (fromGstin && fromEnv && fromGstin !== fromEnv) {
+    return { stateCode: null, mismatch: { fromGstin, fromEnv } };
+  }
+  return { stateCode: fromGstin ?? fromEnv, mismatch: null };
 }
 
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
@@ -281,7 +308,33 @@ export async function mintConsumerInvoice(
     payment.user.consulteeProfile?.billingStateCode ?? null;
   const buyerStateCode = declaredStateCode ?? profileStateCode;
 
-  const supplierStateCode = process.env.SUPPLIER_STATE_CODE ?? null;
+  const { stateCode: supplierStateCode, mismatch } = resolveSupplierStateCode(
+    supplier.gstin,
+    process.env.SUPPLIER_STATE_CODE,
+  );
+  if (mismatch) {
+    // Fail closed exactly like a missing PLATFORM_GSTIN: minting under the
+    // wrong state puts IGST on an intra-state supply (or the reverse) and the
+    // document then contradicts the GST_PAYABLE credit settlement posted.
+    const ambiguous = new Error(
+      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
+    );
+    reportSentryError(ambiguous, {
+      subsystem: "payments",
+      level: "warning",
+      tags: { feature: "consumer-invoice" },
+      extra: { paymentId: payment.id, ...mismatch },
+    });
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: "Consumer tax invoice not minted: supplier state is ambiguous",
+      err: ambiguous,
+      context: { paymentId: payment.id, ...mismatch },
+    }).catch(() => {});
+    return { consumerInvoiceId: null };
+  }
+
   const tax = deriveConsumerInvoiceTax({
     totalPaise,
     taxAmountPaise: payment.taxAmount,
@@ -317,10 +370,9 @@ export async function mintConsumerInvoice(
       supplierName: supplier.name,
       supplierGstin: supplier.gstin,
       supplierAddress: supplier.address,
-      // The supplier's own state is authoritative from its GSTIN prefix; the
-      // env code is the fallback for the same reason numericStateCode exists.
-      supplierStateCode:
-        numericStateCode(supplier.gstin, supplierStateCode) ?? "00",
+      // The same variable the derivation above used, so the stored state and
+      // the heads on the document can never disagree.
+      supplierStateCode: supplierStateCode ?? "00",
       buyerName: payment.user.name ?? payment.user.email,
       buyerEmail: payment.user.email,
       buyerAddress,
@@ -350,6 +402,82 @@ export async function mintConsumerInvoice(
   return { consumerInvoiceId: created.id };
 }
 
+/** The figures one credit note carries, once the invoice's remaining
+ *  creditable value and the head-rounding rule have both been applied. */
+export interface ConsumerCreditNoteAmounts {
+  creditedTotalPaise: number;
+  taxableValuePaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+}
+
+export type ConsumerCreditNoteDerivation =
+  | { outcome: "CREDIT"; amounts: ConsumerCreditNoteAmounts }
+  | { outcome: "FULLY_CREDITED" }
+  | { outcome: "NOTHING_TO_CREDIT" };
+
+/**
+ * Size one s.34 credit note against what is still creditable on its invoice.
+ *
+ * PURE — no I/O, no clock, integer paise throughout.
+ *
+ * The cap is CUMULATIVE. A partial refund and a later lost chargeback are two
+ * different idempotency keys against one invoice, so neither probe short-
+ * circuits the other and a per-note cap lets them credit past 100% of the
+ * supply, which understates the period's output tax on the outward register.
+ *
+ * The heads are prorated from the invoice's TOTAL tax and then re-split, not
+ * prorated one head at a time: flooring each head independently leaves the row
+ * short of its own total. Proration then the invoice's own floor-CGST rule
+ * makes `taxable + cgst + sgst + igst == total` hold by construction and keeps
+ * every head at or below the invoice's, since both are monotone in the
+ * credited fraction. The taxable value absorbs the residual paise, because a
+ * credit note may never reverse more tax than the invoice charged.
+ */
+export function deriveConsumerCreditNoteAmounts(params: {
+  invoiceTotalPaise: number;
+  invoiceCgstPaise: number;
+  invoiceSgstPaise: number;
+  invoiceIgstPaise: number;
+  /** Sum of `totalPaise` over the notes already issued against this invoice. */
+  alreadyCreditedPaise: number;
+  requestedPaise: number;
+}): ConsumerCreditNoteDerivation {
+  const creditablePaise =
+    params.invoiceTotalPaise - params.alreadyCreditedPaise;
+  if (creditablePaise <= 0) return { outcome: "FULLY_CREDITED" };
+
+  const creditedTotalPaise = Math.min(
+    Math.max(params.requestedPaise, 0),
+    creditablePaise,
+  );
+  if (creditedTotalPaise <= 0) return { outcome: "NOTHING_TO_CREDIT" };
+
+  const invoiceTaxPaise =
+    params.invoiceCgstPaise + params.invoiceSgstPaise + params.invoiceIgstPaise;
+  // BigInt: the product of two paise columns can leave the safe-integer range
+  // long before either column overflows its own int8.
+  const creditedTaxPaise = Number(
+    (BigInt(invoiceTaxPaise) * BigInt(creditedTotalPaise)) /
+      BigInt(params.invoiceTotalPaise),
+  );
+  // A note may not move a supply from one head to another, so the invoice's
+  // own head decides the split.
+  const interState = params.invoiceIgstPaise > 0;
+  const cgstPaise = interState ? 0 : Math.floor(creditedTaxPaise / 2);
+  return {
+    outcome: "CREDIT",
+    amounts: {
+      creditedTotalPaise,
+      taxableValuePaise: creditedTotalPaise - creditedTaxPaise,
+      cgstPaise,
+      sgstPaise: interState ? 0 : creditedTaxPaise - cgstPaise,
+      igstPaise: interState ? creditedTaxPaise : 0,
+    },
+  };
+}
+
 /**
  * Mint the s.34 credit note that reverses part or all of a consumer invoice.
  *
@@ -358,9 +486,9 @@ export async function mintConsumerInvoice(
  * invoice — an org-funded refund is handled by `mintRefundCreditNote` on the
  * org series instead.
  *
- * The reversal is strictly proportional over the tax-INCLUSIVE total, and uses
- * the same tax head the invoice used: a credit note may not move a supply from
- * one head to another.
+ * The reversal is strictly proportional over the tax-INCLUSIVE total, capped
+ * at what the invoice still has left to credit, and uses the same tax head the
+ * invoice used.
  */
 export async function mintConsumerCreditNote(
   tx: Tx,
@@ -391,7 +519,6 @@ export async function mintConsumerCreditNote(
     where: { paymentId: params.paymentId },
     select: {
       id: true,
-      taxableValuePaise: true,
       cgstPaise: true,
       sgstPaise: true,
       igstPaise: true,
@@ -402,16 +529,47 @@ export async function mintConsumerCreditNote(
     return { consumerCreditNoteId: null };
   }
 
-  // Cap at the invoice: a refund larger than the documented supply (a goodwill
-  // top-up, a mis-keyed amount) may not credit more tax than was charged.
-  const creditedTotal = Math.min(
-    Math.max(params.amountPaise, 0),
-    invoice.totalPaise,
-  );
-  if (creditedTotal <= 0) return { consumerCreditNoteId: null };
-
-  const share = (component: number): number =>
-    Math.floor((component * creditedTotal) / invoice.totalPaise);
+  // Read the notes already issued inside this same transaction, so the cap is
+  // cumulative rather than per-note. Two concurrent triggers can still read
+  // the same sum under READ COMMITTED; the @unique trigger keys bound that to
+  // one note per refund and one per dispute.
+  const issued = await tx.consumerCreditNote.aggregate({
+    where: { consumerInvoiceId: invoice.id },
+    _sum: { totalPaise: true },
+  });
+  const derived = deriveConsumerCreditNoteAmounts({
+    invoiceTotalPaise: invoice.totalPaise,
+    invoiceCgstPaise: invoice.cgstPaise,
+    invoiceSgstPaise: invoice.sgstPaise,
+    invoiceIgstPaise: invoice.igstPaise,
+    // Aggregations bypass the money result extension — see lib/prisma-extensions.
+    alreadyCreditedPaise: sumPaise(issued._sum.totalPaise),
+    requestedPaise: params.amountPaise,
+  });
+  if (derived.outcome === "FULLY_CREDITED") {
+    // Not a silent no-op: the caller believes it reversed money, and an
+    // over-credit attempt means a refund and a chargeback both landed on one
+    // payment. That needs an operator, not a swallowed return.
+    void recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary:
+        "Consumer credit note not minted: invoice already fully credited",
+      err: new Error(
+        `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
+      ),
+      context: {
+        paymentId: params.paymentId,
+        refundId: params.refundId ?? null,
+        disputeId: params.disputeId ?? null,
+      },
+    }).catch(() => {});
+    return { consumerCreditNoteId: null };
+  }
+  if (derived.outcome === "NOTHING_TO_CREDIT") {
+    return { consumerCreditNoteId: null };
+  }
+  const amounts = derived.amounts;
 
   const issuedAt = new Date();
   const { creditNoteNumber, fiscalYear } =
@@ -425,11 +583,11 @@ export async function mintConsumerCreditNote(
       refundId: params.refundId ?? null,
       disputeId: params.disputeId ?? null,
       reason: params.reason,
-      taxableValuePaise: share(invoice.taxableValuePaise),
-      cgstPaise: share(invoice.cgstPaise),
-      sgstPaise: share(invoice.sgstPaise),
-      igstPaise: share(invoice.igstPaise),
-      totalPaise: creditedTotal,
+      taxableValuePaise: amounts.taxableValuePaise,
+      cgstPaise: amounts.cgstPaise,
+      sgstPaise: amounts.sgstPaise,
+      igstPaise: amounts.igstPaise,
+      totalPaise: amounts.creditedTotalPaise,
       issuedAt,
     },
     select: { id: true },

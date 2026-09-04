@@ -131,8 +131,9 @@ export function buildOutwardRegister(
     // `periodEnd` is EXCLUSIVE (the job queries `lt`), so labelling it names a
     // day the file does not contain and a filer reads the register as covering
     // one extra day. Step back a whole day rather than a millisecond: the label
-    // is rendered in IST, so `periodEnd - 1ms` still lands inside the next IST
-    // calendar day and would print the same wrong date.
+    // is rendered in IST and a GST_REGISTER_PERIOD_END override is a UTC
+    // midnight, so `periodEnd - 1ms` still lands inside the next IST calendar
+    // day and would print the same wrong date.
     periodLabel: `${istDateLabel(periodStart)} to ${istDateLabel(
       new Date(periodEnd.getTime() - 24 * 60 * 60 * 1000),
     )}`,
