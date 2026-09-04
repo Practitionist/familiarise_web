@@ -14,14 +14,75 @@
  * re-exports every name below unchanged, so the request-scoped invoice callers
  * keep their `server-only` guard and no existing call site had to move.
  *
- * Bucket: `org-invoices` (private — must exist; create via the Supabase
- * dashboard or `ensureBucketExists`). It holds org invoice PDFs under
- * `<orgId>/<invoiceId>.pdf` and the TDS return CSVs under `compliance/tds/`.
+ * Bucket: `org-invoices` (private, and self-provisioning — see
+ * `ensurePrivateFinanceBucket`). It holds the org invoice PDFs under
+ * `<orgId>/<invoiceId>.pdf` and the quarterly TDS return CSVs under
+ * `compliance/tds/`.
  */
 
 import { supabaseAdmin } from "@/lib/supabase-storage-core";
 
 const BUCKET = "org-invoices";
+
+/**
+ * Everything written here is a rendered document — an invoice PDF or a
+ * quarterly return CSV — so single-digit megabytes is the realistic size and
+ * 25MB is generous headroom. It also sits under the 50MB per-object ceiling the
+ * Supabase FREE plan clamps every bucket to (#1314), so this is the limit
+ * actually in force rather than a number the plan silently overrides.
+ *
+ * No MIME allow-list on purpose: the bucket already carries two unrelated
+ * content types, and a stale list rejects an upload with a 415 that reads like
+ * a credentials failure.
+ */
+const BUCKET_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * #1354 — the bucket had never been created on the live project. The E2E run of
+ * the TDS return export on 2026-09-04 died inside `uploadPrivateFinanceObject`
+ * with `Bucket not found`, and the org invoice PDF route had been latently
+ * broken the same way since the name was introduced: the comment here used to
+ * say "must exist, create it via the Supabase dashboard" and nobody ever did.
+ *
+ * Deliberately not `ensureBucketExists` from the same core module. That helper
+ * probes with the ANON client via an object list, which cannot answer reliably
+ * for a bucket that is private by design, and it reports failure as `false` —
+ * so a caller would fail later at the upload with the same opaque error.
+ * `getBucket` on the admin client is a management-API read and answers directly.
+ */
+let bucketReady: Promise<void> | null = null;
+
+async function provisionPrivateFinanceBucket(): Promise<void> {
+  const client = requireAdminClient();
+  if ((await client.storage.getBucket(BUCKET)).data) return;
+
+  const { error } = await client.storage.createBucket(BUCKET, {
+    public: false,
+    fileSizeLimit: BUCKET_FILE_SIZE_LIMIT_BYTES,
+  });
+  if (!error) return;
+
+  // Re-probe instead of matching the message: a concurrent writer that won the
+  // race leaves us exactly the bucket we wanted, and the wording of Supabase's
+  // duplicate error is not part of its contract.
+  if (!(await client.storage.getBucket(BUCKET)).data) {
+    throw new Error(`Failed to create bucket ${BUCKET}: ${error.message}`);
+  }
+}
+
+/**
+ * Create the private finance bucket when it is missing. Idempotent, and
+ * memoized per process so the second document of a run skips the round trip. A
+ * rejection is deliberately NOT memoized: caching it would pin a transient
+ * Supabase failure for the whole life of the process.
+ */
+export function ensurePrivateFinanceBucket(): Promise<void> {
+  bucketReady ??= provisionPrivateFinanceBucket().catch((error: unknown) => {
+    bucketReady = null;
+    throw error;
+  });
+  return bucketReady;
+}
 
 function requireAdminClient() {
   if (!supabaseAdmin) {
@@ -45,6 +106,8 @@ export async function uploadPrivateFinanceObject(args: {
   /** Browser cache seconds; the bucket is private so this only affects the signed hop. */
   cacheControl?: string;
 }): Promise<void> {
+  await ensurePrivateFinanceBucket();
+
   const { error } = await requireAdminClient()
     .storage.from(BUCKET)
     .upload(args.storagePath, args.body, {
