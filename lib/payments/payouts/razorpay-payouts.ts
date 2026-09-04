@@ -6,7 +6,10 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { PaymentError } from "@/lib/payments/core/types";
 import crypto from "crypto";
@@ -146,6 +149,13 @@ export interface PayoutWebhookEvent {
 // RazorpayX Payouts Service
 // ============================================
 
+/**
+ * #1377 — ceiling on any single RazorpayX HTTP call. Sized against the payout
+ * batch: the submission loop runs under a cron lock, and a request that has
+ * not answered in half a minute is not going to answer usefully.
+ */
+const RAZORPAYX_REQUEST_TIMEOUT_MS = 30_000;
+
 export class RazorpayPayoutsService {
   private config: RazorpayXConfig;
   private baseUrl = "https://api.razorpay.com/v1";
@@ -184,20 +194,64 @@ export class RazorpayPayoutsService {
       `${this.config.keyId}:${this.config.keySecret}`,
     ).toString("base64");
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method,
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-        ...headers,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method,
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        // #1377 — bare `fetch` has no default timeout, so a hung connection to
+        // api.razorpay.com hangs the caller for as long as the socket stays
+        // open. This is the same hazard `withRazorpaySdkTimeout` exists for on
+        // the payments client, and it is worse here: the payout batch holds a
+        // cron lock while it submits, so one stalled socket can wedge an
+        // entire disbursement run. Every payout submission carries
+        // `X-Payout-Idempotency`, so a timed-out request that DID reach
+        // RazorpayX returns the original payout on retry rather than paying
+        // twice.
+        signal: AbortSignal.timeout(RAZORPAYX_REQUEST_TIMEOUT_MS),
+      });
+    } catch (cause) {
+      // AbortSignal.timeout rejects with a TimeoutError DOMException, and a
+      // DNS/socket failure rejects with a TypeError. Neither says whether the
+      // request reached RazorpayX, so both are surfaced as one retryable code
+      // rather than being flattened into an anonymous Error.
+      throw new PaymentError(
+        `RazorpayX request ${method} ${endpoint} did not complete: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        "RAZORPAYX_REQUEST_FAILED",
+        "RAZORPAY",
+        cause,
+      );
+    }
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(
-        `RazorpayX API error: ${error.error?.description || response.statusText}`,
+      // Razorpay's error envelope is `{ error: { code, description, reason } }`.
+      // The old throw kept only `description`, so callers could not tell a
+      // 401 on bad credentials from a 400 on a malformed fund account from a
+      // 502 worth retrying — every failure read as one opaque string. Carry
+      // the gateway's own code and the HTTP status through instead.
+      const parsed: unknown = await response.json().catch(() => null);
+      const gatewayError =
+        parsed &&
+        typeof parsed === "object" &&
+        "error" in parsed &&
+        typeof (parsed as { error: unknown }).error === "object"
+          ? ((parsed as { error: { code?: string; description?: string } })
+              .error ?? {})
+          : {};
+      throw new PaymentError(
+        `RazorpayX API error (HTTP ${response.status}) on ${method} ${endpoint}: ${
+          gatewayError.description || response.statusText || "no description"
+        }`,
+        gatewayError.code || `RAZORPAYX_HTTP_${response.status}`,
+        "RAZORPAY",
+        parsed,
       );
     }
 
@@ -473,7 +527,20 @@ export class RazorpayPayoutsService {
   }
 
   /**
-   * Map RazorpayX payout status to our internal status
+   * Map RazorpayX payout status to our internal status.
+   *
+   * The four terminal RazorpayX states are `processed`, `rejected`,
+   * `cancelled`, `reversed` and `failed`; `queued`, `pending` and `processing`
+   * are intermediate.
+   * https://razorpay.com/docs/x/payouts/status-details/
+   *
+   * #1377 — `failed` used to fall through to the `default` arm and be read as
+   * PENDING, i.e. as "still in flight". A payout that the bank refused would
+   * therefore never reach FAILED, so its earnings stayed BATCHED instead of
+   * being returned to READY and the consultant was never paid and never
+   * re-queued. The default arm is kept for genuinely unknown strings, where
+   * PENDING is the right answer because it keeps the reconciler polling
+   * instead of settling state on a guess.
    */
   mapPayoutStatus(
     status: RazorpayPayoutStatus,
@@ -488,6 +555,7 @@ export class RazorpayPayoutsService {
         return "COMPLETED";
       case "reversed":
       case "rejected":
+      case "failed":
         return "FAILED";
       case "cancelled":
         return "CANCELLED";
