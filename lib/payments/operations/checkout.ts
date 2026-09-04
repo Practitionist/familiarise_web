@@ -3382,9 +3382,10 @@ export async function handleCheckout(
             // payment-intent id in `sourceRef` so refund / reconciliation
             // jobs can join back to the gateway txn without scanning the
             // Payment table. `amount` is the post-credit gateway charge,
-            // mirroring the field-level comment on `Payment.amount`. The
-            // REFERRAL_CREDIT leg (if any) is written by
-            // `applyCreditsToPayment` further down in this same TX.
+            // mirroring the field-level comment on `Payment.amount`, so this
+            // one leg alone carries the funding identity: the REFERRAL_CREDIT
+            // leg `applyCreditsToPayment` writes further down in this same TX
+            // is excluded from the sum rather than added to it (#1347).
             if (!isOrgSponsoredPayment && amount > 0) {
               await tx.paymentLeg.create({
                 data: {
@@ -3465,7 +3466,9 @@ export async function handleCheckout(
             }
 
             // Invariant sweep: every Payment should have legs that sum to
-            // `Payment.amount` (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). We
+            // `Payment.amount`, excluding REFERRAL_CREDIT, which is already
+            // netted out of it (#1347) —
+            // `docs/enterprise/10-money-and-ledger/09-payment-legs.md`. We
             // log-only here rather than throw because the hot checkout
             // path is the worst place to discover a leg-accounting drift
             // — a surprise 500 blocks real bookings. A mismatch signals
