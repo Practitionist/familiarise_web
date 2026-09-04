@@ -9,7 +9,9 @@
  * `?limit=` exists because a Netlify ticker calls this route on a short
  * schedule and cannot spend a function's whole budget on one sweep. It bounds
  * both passes, so a small value means "take a small bite of each backlog"
- * rather than starving one of them.
+ * rather than starving one of them. It can only lower the channel pass: that
+ * pass keeps its own ceiling in appointments and in buyer-level Stream calls,
+ * because one appointment can carry hundreds of buyers. #1391
  */
 
 import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
@@ -45,6 +47,8 @@ export const { GET, POST } = cleanupRoute({
     stillBlocked: r.stillBlocked,
     channelsEnsured: r.channelsEnsured,
     channelsFailed: r.channelsFailed,
+    channelBuyerOps: r.channelBuyerOps,
+    channelsDeferred: r.channelsDeferred,
   }),
   // A channel this run could not create is a buyer with no conversation, which
   // an operator has to see; the next run retries it, so it is not a failure.

@@ -21,6 +21,13 @@
  * `addUserToEventChannel` both upsert — so the live path and the sweep can race
  * each other without consequence.
  *
+ * A row that fails is deliberately left in the queue rather than marked
+ * terminal, because every reason it can fail for is repairable — a missing
+ * consultant, an appointment relation that is still NULL, a Stream outage — and
+ * writing a terminal marker would abandon a row that a later data repair would
+ * have made succeed. The sweep's seven-day window is what bounds the cost of
+ * retrying it. #1391
+ *
  * The stamp is per APPOINTMENT, and for a `WEBINAR` or `CLASS` — the two types
  * many buyers share — that is not the same grain as the work. Once the sixth
  * buyer's capture stamps the row, a seventh buyer whose `addUserToEventChannel`

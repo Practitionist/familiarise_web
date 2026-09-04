@@ -260,6 +260,8 @@ const REFUND_TIMEOUT_MS = 30_000;
 
 /** Razorpay: at least 10 chars, only letters, digits, hyphens and underscores. */
 const IDEMPOTENCY_KEY_MIN_LENGTH = 10;
+/** That documented rule as a whole-string match, so a key is accepted or refused, never rewritten. */
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{10,}$/;
 
 type RazorpayRefundResponse = {
   id: string;
@@ -310,22 +312,24 @@ async function postRefund({
     "Content-Type": "application/json",
   };
   // Every refund is asking for exactly-once semantics, so the header is never
-  // optional. If the key doesn't survive sanitization we must NOT quietly send
-  // the request without it — that downgrades a refund to at-least-once delivery
-  // against a customer's card, with no signal that it happened. Refuse instead;
-  // every real caller passes `Refund.id` (a uuid), so this only fires on a
-  // programming error.
-  const sanitizedKey = idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "");
-  if (sanitizedKey.length < IDEMPOTENCY_KEY_MIN_LENGTH) {
+  // optional, and a bad key is rejected rather than repaired. Rewriting it is
+  // the more dangerous option: stripping the characters Razorpay rejects is
+  // lossy, so two distinct keys can collapse onto one header value and the
+  // second refund would come back as a replay of the first. Sending nothing is
+  // worse still — that downgrades a refund to at-least-once delivery against a
+  // customer's card with no signal it happened. So fail closed; every real
+  // caller passes `Refund.id`, so this only fires on a programming error. #1352
+  if (!IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
     throw new RefundError(
-      `Refund idempotency key "${idempotencyKey}" is unusable after sanitization ` +
-        `(${sanitizedKey.length} of the required ${IDEMPOTENCY_KEY_MIN_LENGTH} chars). ` +
+      `Refund idempotency key "${idempotencyKey}" is not a valid Razorpay key ` +
+        `(at least ${IDEMPOTENCY_KEY_MIN_LENGTH} chars of letters, digits, ` +
+        `hyphens and underscores only). ` +
         `Refusing to issue a non-idempotent refund.`,
-      "INVALID_IDEMPOTENCY_KEY",
+      "REFUND_IDEMPOTENCY_KEY_INVALID",
       "RAZORPAY",
     );
   }
-  headers["X-Refund-Idempotency"] = sanitizedKey;
+  headers["X-Refund-Idempotency"] = idempotencyKey;
 
   const body = JSON.stringify({ ...(amount ? { amount } : {}), notes });
   const url = `${RAZORPAY_API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`;

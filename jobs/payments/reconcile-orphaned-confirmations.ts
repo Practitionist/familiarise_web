@@ -20,7 +20,8 @@ async function main(): Promise<void> {
     const result = await reconcileOrphanedConfirmations();
     console.log(
       `Done. scanned=${result.scanned} confirmed=${result.confirmed} stillBlocked=${result.stillBlocked} ` +
-        `channelsEnsured=${result.channelsEnsured} channelsFailed=${result.channelsFailed}`,
+        `channelsEnsured=${result.channelsEnsured} channelsFailed=${result.channelsFailed} ` +
+        `channelBuyerOps=${result.channelBuyerOps} channelsDeferred=${result.channelsDeferred}`,
     );
     Sentry.logger.info("job:reconcile-orphaned-confirmations finished", {
       scanned: result.scanned,
@@ -28,6 +29,8 @@ async function main(): Promise<void> {
       stillBlocked: result.stillBlocked,
       channelsEnsured: result.channelsEnsured,
       channelsFailed: result.channelsFailed,
+      channelBuyerOps: result.channelBuyerOps,
+      channelsDeferred: result.channelsDeferred,
     });
   } finally {
     await disconnectDatabase();

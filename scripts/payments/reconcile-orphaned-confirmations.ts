@@ -39,7 +39,19 @@ export interface OrphanedConfirmationResult {
   channelsEnsured: number;
   /** #1356 — appointments still without a channel; retried next run. */
   channelsFailed: number;
+  /** #1391 — buyer-level Stream operations the channel pass spent this run. */
+  channelBuyerOps: number;
+  /** #1391 — selected appointments the buyer-operation budget left for the next run. */
+  channelsDeferred: number;
 }
+
+// #1391 — the channel pass needs a ceiling of its own, in the unit it actually
+// spends: one outbound Stream round trip per paid buyer, at Stream's latency,
+// against the Netlify ticker's 26 s function ceiling. The operator's `limit`
+// governs the confirmation pass, but it reaches 500 and a webinar appointment
+// can carry hundreds of buyers, so `limit` alone bounds nothing here. #1356
+const CHANNEL_PASS_MAX_APPOINTMENTS = 100;
+const CHANNEL_PASS_MAX_BUYER_OPS = 500;
 
 // #476 — fail-closed: re-driving a confirmation twice is guarded by the
 // idempotent slot flip, but the entry must not run unlocked regardless.
@@ -61,8 +73,12 @@ async function reconcileOrphanedConfirmationsUnlocked(
   // #1356 — the channel pass is bounded separately and much lower: each entry
   // is an outbound Stream round trip, and the caller that matters is a Netlify
   // ticker with a function ceiling, not a GitHub Actions job with minutes to
-  // spend. An explicit `limit` from that caller governs both passes.
-  const channelLimit = opts.limit ?? 50;
+  // spend. An explicit `limit` from that caller lowers this pass too, but can
+  // never raise it past the ceiling above.
+  const channelLimit = Math.min(
+    opts.limit ?? 50,
+    CHANNEL_PASS_MAX_APPOINTMENTS,
+  );
   const cutoff = new Date(Date.now() - graceMinutes * 60_000);
 
   const orphans = await prisma.payment.findMany({
@@ -147,14 +163,26 @@ async function reconcileOrphanedConfirmationsUnlocked(
       payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
       slotsOfAppointment: { none: { isTentative: true, deletedAt: null } },
     },
-    select: { id: true },
+    select: {
+      id: true,
+      // The unit the budget is spent in. `ensureChannelsForAppointment` makes
+      // one Stream call per SUCCEEDED payment, so this count — the same
+      // predicate it loads buyers with — is what a row costs to drive.
+      _count: {
+        select: {
+          payment: { where: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+        },
+      },
+    },
     orderBy: { createdAt: "asc" },
     take: channelLimit,
   });
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
-  for (const appointment of unchanneled) {
+  let channelBuyerOps = 0;
+  let channelsDeferred = 0;
+  for (const [index, appointment] of unchanneled.entries()) {
     try {
       const result = await ensureChannelsForAppointment(appointment.id);
       if (result.ensured) {
@@ -175,11 +203,30 @@ async function reconcileOrphanedConfirmationsUnlocked(
         err,
       );
     }
+
+    // Charged after the attempt, and a failed attempt still costs its calls.
+    // Charging afterwards also means the head of the queue always moves: an
+    // appointment whose buyer count exceeds the whole budget is driven once
+    // rather than starved forever. Rows past this point keep
+    // `chatChannelEnsuredAt: null`, and the next run picks them up oldest-first
+    // exactly where this one stopped — no cursor to persist.
+    channelBuyerOps += appointment._count.payment;
+    if (channelBuyerOps >= CHANNEL_PASS_MAX_BUYER_OPS) {
+      channelsDeferred = unchanneled.length - (index + 1);
+      if (channelsDeferred > 0) {
+        console.log(
+          `💬 Buyer-operation budget spent (${channelBuyerOps}/${CHANNEL_PASS_MAX_BUYER_OPS}); ` +
+            `${channelsDeferred} appointment(s) deferred to the next run`,
+        );
+      }
+      break;
+    }
   }
 
   console.log(
     `🩹 Orphaned confirmations: scanned=${orphans.length} confirmed=${confirmed} stillBlocked=${stillBlocked} ` +
-      `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed}`,
+      `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed} ` +
+      `channelBuyerOps=${channelBuyerOps} channelsDeferred=${channelsDeferred}`,
   );
   return {
     success: true,
@@ -188,6 +235,8 @@ async function reconcileOrphanedConfirmationsUnlocked(
     stillBlocked,
     channelsEnsured,
     channelsFailed,
+    channelBuyerOps,
+    channelsDeferred,
   };
 }
 

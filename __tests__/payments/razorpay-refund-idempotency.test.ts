@@ -112,22 +112,28 @@ describe("X-Refund-Idempotency header", () => {
         amount: 5000,
         idempotencyKey: "short",
       }),
-    ).rejects.toThrow(/unusable after sanitization/);
+    ).rejects.toThrow(/not a valid Razorpay key/);
 
     // And crucially: no request was sent, so no money moved.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("strips characters Razorpay rejects", async () => {
+  it("rejects a key containing characters Razorpay does not allow", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
-    await createRazorpayRefund({
-      paymentIntentId: "order_1",
-      amount: 5000,
-      idempotencyKey: "refund:abc/def ghi+jkl",
-    });
+    // Sanitizing instead of rejecting is lossy: "refund:abc/def" and
+    // "refund/abc:def" both reduce to "refundabcdef", so two distinct refunds
+    // would share one header value and Razorpay would answer the second with
+    // the first one's result.
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: 5000,
+        idempotencyKey: "refund:abc/def ghi+jkl",
+      }),
+    ).rejects.toThrow(/not a valid Razorpay key/);
 
-    expect(headersOf()["X-Refund-Idempotency"]).toBe("refundabcdefghijkl");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reuses the same key across a retry of the same logical refund", async () => {
