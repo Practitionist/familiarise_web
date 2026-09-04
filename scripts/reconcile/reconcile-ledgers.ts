@@ -125,12 +125,14 @@ export type Finding = {
     // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
     // transaction: the cash left but the payable was never cleared in the journal.
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
-    // #1408 — an OrganizationPayout carrying a clawback amount with no
-    // `clawback:*` reversal transaction against it. Only reversePayoutClawback
-    // posts one, and it does so best-effort inside a try/catch; the two other
-    // writers of `clawbackAmountPaise` (refund.ts and booking-refund.ts) post
-    // nothing at all. The money row and the journal are a dual write with no
-    // transaction spanning them, so this is the detector for the gap.
+    // #1408 — an OrganizationPayout whose `clawbackAmountPaise` exceeds the
+    // CASH DEBIT its `clawback:*` postings actually recorded. Only
+    // reversePayoutClawback posts one, and it does so best-effort inside a
+    // try/catch; the two other writers of `clawbackAmountPaise` (refund.ts and
+    // booking-refund.ts) post nothing at all. The money row and the journal are
+    // a dual write with no transaction spanning them, so this is the detector
+    // for the gap — total (nothing posted) and partial (a later clawback's
+    // posting lost) share the kind and differ only in `deltaPaise`.
     | "LEDGER_DUAL_WRITE_GAP"
     // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
     // The JS boundary converts BigInt → number; past 2^53−1 that conversion
@@ -190,6 +192,49 @@ export type ReconcileReport = {
   };
   findings: Finding[];
 };
+
+/**
+ * #1408 — the clawback dual-write gap, compared on AMOUNTS rather than on the
+ * presence of a posting. `clawbackAmountPaise` is a running total: a payout
+ * clawed back twice whose second posting was swallowed still carries a
+ * `clawback:*` transaction, so a payout-id Set reads it as clean. The CASH
+ * DEBIT is the authoritative leg — it is the money that came back — so the sum
+ * of those legs is what the stamped counter is measured against. Pure, so the
+ * pin can drive it without standing up a whole reconciler run.
+ */
+export function clawbackDualWriteGapFindings(
+  payouts: {
+    id: string;
+    organizationId: string;
+    clawbackAmountPaise: number | bigint;
+  }[],
+  postedPaiseByPayout: Map<string, number>,
+): Finding[] {
+  const out: Finding[] = [];
+  for (const po of payouts) {
+    const expected = Number(po.clawbackAmountPaise);
+    const actual = postedPaiseByPayout.get(po.id) ?? 0;
+    // Shortfall only. A ledger that posted MORE than was stamped is the
+    // opposite defect and does not belong under this kind's note.
+    if (actual >= expected) continue;
+    out.push({
+      kind: "LEDGER_DUAL_WRITE_GAP",
+      organizationId: po.organizationId,
+      payoutId: po.id,
+      expectedPaise: expected,
+      actualPaise: actual,
+      deltaPaise: expected - actual,
+      details: {
+        scope: "org-payout-clawback",
+        note:
+          actual === 0
+            ? "OrganizationPayout.clawbackAmountPaise > 0 but no clawback:* ledger transaction against this payout."
+            : "OrganizationPayout.clawbackAmountPaise exceeds the summed CASH DEBIT of its clawback:* postings — a later clawback's dual write was lost.",
+      },
+    });
+  }
+  return out;
+}
 
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: read-only auditor, lock is belt-and-braces.
@@ -950,7 +995,9 @@ async function runReconcileLedgersUnlocked(
   // failure, and refund.ts / booking-refund.ts never post it at all. The
   // stamped payout then claims cash was recovered that the journal has never
   // seen. Matched on the soft link plus the `clawback:` key prefix because the
-  // full key embeds the refund id, which the payout row does not carry.
+  // full key embeds the refund id, which the payout row does not carry — and
+  // compared on summed amounts, not presence, since the counter is cumulative
+  // and a second clawback's lost posting hides behind the first one's.
   {
     const clawedBackPayouts = await prisma.organizationPayout.findMany({
       where: {
@@ -963,7 +1010,7 @@ async function runReconcileLedgersUnlocked(
       // Chunked IN to stay under the bind-param cap, like the sibling lookups
       // below; a full-scope run can carry more payout ids than one statement.
       const CLAWBACK_CHUNK = 5_000;
-      const clawedBackWithTxn = new Set<string>();
+      const clawbackPostedByPayout = new Map<string, number>();
       for (let i = 0; i < clawedBackPayouts.length; i += CLAWBACK_CHUNK) {
         const clawbackTxns = await prisma.ledgerTransaction.findMany({
           where: {
@@ -974,28 +1021,32 @@ async function runReconcileLedgersUnlocked(
             },
             idempotencyKey: { startsWith: "clawback:" },
           },
-          select: { payoutId: true },
+          select: {
+            payoutId: true,
+            entries: {
+              where: { direction: "DEBIT", account: { kind: "CASH" } },
+              select: { amountPaise: true },
+            },
+          },
         });
         for (const t of clawbackTxns) {
-          if (t.payoutId) clawedBackWithTxn.add(t.payoutId);
+          if (!t.payoutId) continue;
+          const posted = t.entries.reduce(
+            (sum, e) => sum + Number(e.amountPaise),
+            0,
+          );
+          clawbackPostedByPayout.set(
+            t.payoutId,
+            (clawbackPostedByPayout.get(t.payoutId) ?? 0) + posted,
+          );
         }
       }
-      for (const po of clawedBackPayouts) {
-        if (!clawedBackWithTxn.has(po.id)) {
-          findings.push({
-            kind: "LEDGER_DUAL_WRITE_GAP",
-            organizationId: po.organizationId,
-            payoutId: po.id,
-            expectedPaise: po.clawbackAmountPaise,
-            actualPaise: 0,
-            deltaPaise: po.clawbackAmountPaise,
-            details: {
-              scope: "org-payout-clawback",
-              note: "OrganizationPayout.clawbackAmountPaise > 0 but no clawback:* ledger transaction against this payout.",
-            },
-          });
-        }
-      }
+      findings.push(
+        ...clawbackDualWriteGapFindings(
+          clawedBackPayouts,
+          clawbackPostedByPayout,
+        ),
+      );
     }
   }
 
