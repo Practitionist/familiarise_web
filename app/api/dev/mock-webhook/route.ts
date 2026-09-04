@@ -63,12 +63,16 @@ interface MockWebhookResponse {
  * production deployment into an unauthenticated "confirm any payment" endpoint.
  * That disjunct is gone. The gate is now build-time posture only: a production
  * build cannot be opened up by configuration.
+ *
+ * The `VERCEL_ENV === "preview"` disjunct went the same way, for the same
+ * reason: it was a second runtime toggle contradicting the sentence above, and
+ * on a preview built against the one shared Supabase project it would have
+ * meant an unauthenticated "confirm any payment" endpoint over real rows. It
+ * was never load-bearing here — this app deploys on Netlify, which sets no
+ * `VERCEL_ENV`, so the branch had been dead since it was written.
  */
 function isDevelopment(): boolean {
-  return (
-    process.env.NODE_ENV === "development" ||
-    process.env.VERCEL_ENV === "preview"
-  );
+  return process.env.NODE_ENV === "development";
 }
 
 // ============================================

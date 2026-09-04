@@ -349,9 +349,30 @@ async function postRefund({
       return (await res.json()) as RazorpayRefundResponse;
     }
 
-    if (res.status === 409 && attempt === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      continue;
+    // #1451 — Razorpay answers 409 for TWO conditions and only one of them is
+    // worth waiting on: "Another request with the same idempotency key is
+    // still in progress" (the concurrent duplicate this loop exists for)
+    // versus "Different request with the same idempotency key has already been
+    // processed" — a key collision that will answer 409 for as long as the key
+    // lives, so retrying it only buys a second wasted second and reports the
+    // wrong cause. The key material itself is never rewritten (see above); the
+    // collision is surfaced under its own code so it reads as our bug.
+    if (res.status === 409) {
+      const conflict = await res.json().catch(() => null);
+      const conflictBody = readRazorpayErrorBody(conflict);
+      const keyReused = /different request/i.test(
+        conflictBody?.description ?? "",
+      );
+      if (attempt === 0 && !keyReused) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      throw new RefundError(
+        conflictBody?.description ??
+          "Razorpay refund is still in flight for this idempotency key",
+        keyReused ? "REFUND_IDEMPOTENCY_KEY_REUSED" : "REFUND_IN_FLIGHT",
+        "RAZORPAY",
+      );
     }
 
     // Razorpay's error body is `{ error: { code, description } }` — the shape
@@ -362,7 +383,7 @@ async function postRefund({
     }
     throw new RefundError(
       `Razorpay refund failed with HTTP ${res.status}`,
-      res.status === 409 ? "REFUND_IN_FLIGHT" : "UNKNOWN_ERROR",
+      "UNKNOWN_ERROR",
       "RAZORPAY",
     );
   }

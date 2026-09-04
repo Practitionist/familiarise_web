@@ -2117,6 +2117,12 @@ export async function handleRazorpayPayoutWebhook(
     processed: "COMPLETED",
     reversed: "FAILED",
     rejected: "FAILED",
+    // #1451 — RazorpayX answers a bank-level failure with `failed`, and the missing
+    // entry fell through to the `|| "PENDING"` default: a `payout.failed`
+    // delivery left the consultant payout in flight and its earnings BATCHED
+    // forever, because the un-batch back to READY only runs on the FAILED
+    // branch of handlePayoutWebhook. The Stripe twin below already maps it.
+    failed: "FAILED",
     cancelled: "CANCELLED",
   };
 

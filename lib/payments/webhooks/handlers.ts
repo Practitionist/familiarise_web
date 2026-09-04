@@ -222,22 +222,37 @@ async function withPhase2Deadline<T>(
  * FAILED or SUCCEEDED — before this webhook arrived. The caller writes nothing
  * and still acknowledges the delivery; this records the evidence an operator
  * needs to reconcile the captured funds by hand.
+ *
+ * The status is re-read rather than taken from the caller's pre-read, following
+ * the same doctrine confirmApprovalStatus already applies below (#844): the
+ * pre-read can have raced the very transition that made the CAS miss, and the
+ * state named in this report is what an operator reconciles against. Callers
+ * pass their own client — `tx` inside the Serializable transaction, `prisma`
+ * for the post-rollback GiST branch — because a global-client read inside a
+ * transaction deadlocks on a single-connection pool (#1435).
  */
-function reportTerminalCaptureRace(params: {
+async function reportTerminalCaptureRace(params: {
+  db: Tx | typeof prisma;
   paymentId: string;
   orderId: string;
-  currentStatus: PaymentStatus;
+  /** Pre-read status; used only when the re-read finds nothing. */
+  observedStatus: PaymentStatus;
   reason: string;
-}): void {
+}): Promise<void> {
+  const fresh = await params.db.payment.findUnique({
+    where: { id: params.paymentId },
+    select: { paymentStatus: true },
+  });
+  const currentStatus = fresh?.paymentStatus ?? params.observedStatus;
   void recordSystemError({
     organizationId: null,
     category: "PAYMENT",
-    summary: `Capture for order ${params.orderId} landed on a ${params.currentStatus} payment — status left alone, refund by hand`,
+    summary: `Capture for order ${params.orderId} landed on a ${currentStatus} payment — status left alone, refund by hand`,
     err: new Error("CAPTURE_AFTER_TERMINAL_PAYMENT"),
     context: {
       paymentId: params.paymentId,
       orderId: params.orderId,
-      currentStatus: params.currentStatus,
+      currentStatus,
       reason: params.reason,
     },
   }).catch(() => {});
@@ -249,7 +264,7 @@ function reportTerminalCaptureRace(params: {
       extra: {
         paymentId: params.paymentId,
         orderId: params.orderId,
-        currentStatus: params.currentStatus,
+        currentStatus,
         reason: params.reason,
       },
     },
@@ -369,10 +384,11 @@ export async function handlePaymentSuccess(
               },
             });
             if (stamped.count === 0) {
-              reportTerminalCaptureRace({
+              await reportTerminalCaptureRace({
+                db: tx,
                 paymentId: payment.id,
                 orderId: paymentIntentId,
-                currentStatus: payment.paymentStatus,
+                observedStatus: payment.paymentStatus,
                 reason: `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
               });
             }
@@ -446,10 +462,11 @@ export async function handlePaymentSuccess(
               },
             });
             if (recoveryStamped.count === 0) {
-              reportTerminalCaptureRace({
+              await reportTerminalCaptureRace({
+                db: tx,
                 paymentId: payment.id,
                 orderId: paymentIntentId,
-                currentStatus: payment.paymentStatus,
+                observedStatus: payment.paymentStatus,
                 reason: `metadata validation failed: ${errorMessage}`,
               });
             }
@@ -507,10 +524,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             },
           });
           if (confirmed.count === 0) {
-            reportTerminalCaptureRace({
+            await reportTerminalCaptureRace({
+              db: tx,
               paymentId: payment.id,
               orderId: paymentIntentId,
-              currentStatus: payment.paymentStatus,
+              observedStatus: payment.paymentStatus,
               reason:
                 "capture arrived after the payment reached a terminal state",
             });
@@ -659,10 +677,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       },
     });
     if (restamped.count === 0) {
-      reportTerminalCaptureRace({
+      await reportTerminalCaptureRace({
+        db: prisma,
         paymentId: loser.id,
         orderId: paymentIntentId,
-        currentStatus: loser.paymentStatus,
+        observedStatus: loser.paymentStatus,
         reason:
           "legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap)",
       });
