@@ -49,10 +49,17 @@ const initializeStripeClient = () => {
   // money. Before launch the production site also legitimately runs on test
   // keys, so STRIPE_ALLOW_TEST_KEYS_IN_PRODUCTION=true downgrades the throw to
   // a loud error log; the variable must go away with the first LIVE keys.
+  //
+  // Both test-mode prefixes count: `rk_test_` is a RESTRICTED test key, which
+  // Stripe recommends for exactly this server-side use, so it is the prefix a
+  // security-conscious operator is most likely to paste in. Matching only
+  // `sk_test_` would let the more careful mistake through the guard.
+  const isTestModeKey =
+    apiKey.startsWith("sk_test_") || apiKey.startsWith("rk_test_");
   if (
     process.env.NODE_ENV === "production" &&
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    /^sk_test_/.test(apiKey)
+    isTestModeKey
   ) {
     if (process.env.STRIPE_ALLOW_TEST_KEYS_IN_PRODUCTION === "true") {
       console.error(
@@ -61,7 +68,7 @@ const initializeStripeClient = () => {
       );
     } else {
       throw new PaymentError(
-        "STRIPE_SECRET_KEY is set to a Stripe TEST key (sk_test_…) while NODE_ENV=production. " +
+        "STRIPE_SECRET_KEY is set to a Stripe TEST key (sk_test_… / rk_test_…) while NODE_ENV=production. " +
           "Live checkout, refunds and webhooks cannot run against Stripe test mode. " +
           "Fix: replace STRIPE_SECRET_KEY with the account's LIVE key " +
           "(dashboard.stripe.com → Developers → API keys, live mode) and redeploy.",
@@ -255,7 +262,10 @@ export async function cancelStripePayment(
       }
     }
     console.error(`Failed to cancel Stripe payment ${paymentIntentId}:`, error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
   }
 }
 
@@ -298,9 +308,15 @@ export async function createStripeRefund({
   // `amount || undefined` turned 0 and undefined into "refund everything".
   // Every caller computes an explicit paise figure; an absent or zero one is a
   // bug upstream, and silently promoting it to a full refund spends real money.
-  if (amount === undefined || amount <= 0) {
+  //
+  // #1351 — `<= 0` alone still admits NaN, Infinity and fractions, none of
+  // which compare false against zero. Stripe takes an integer minor unit, so
+  // those reach the API and come back as a generic gateway error the caller
+  // books as a rail failure rather than the upstream arithmetic bug it is.
+  // Same shape as the ledger's posting guard in lib/payments/ledger/post.ts.
+  if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
     throw new RefundError(
-      `Refund amount must be a positive number of paise (got ${String(amount)})`,
+      `Refund amount must be a positive whole number of paise (got ${String(amount)})`,
       "INVALID_AMOUNT",
       "STRIPE",
     );
@@ -346,7 +362,10 @@ export async function createStripeRefund({
     // handleStripeRefundError would flatten them to UNKNOWN_ERROR.
     if (error instanceof RefundError) throw error;
     console.error("Stripe refund creation failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -376,7 +395,10 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
     };
   } catch (error) {
     console.error("Stripe refund retrieval failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -412,7 +434,10 @@ export async function listStripeRefunds(
     }));
   } catch (error) {
     console.error("Stripe refunds list failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -457,7 +482,10 @@ export async function getStripeDispute(
     } else {
       console.error("Stripe dispute retrieval failed:", error);
     }
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }
@@ -512,7 +540,10 @@ export async function submitStripeDisputeEvidence({
     };
   } catch (error) {
     console.error("Stripe dispute evidence submission failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }
@@ -546,7 +577,10 @@ export async function listStripeDisputes(
     }));
   } catch (error) {
     console.error("Stripe disputes list failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }
@@ -578,7 +612,9 @@ function mapStripeRefundStatus(status: string | null): RefundStatus {
       // Reconcile re-polls PENDING, so an unknown status self-corrects on the
       // next pass — but the value itself must be visible, or a new Stripe
       // status ships as a silent permanent PENDING.
-      console.warn(`[stripe] Unknown refund status "${status}" — treating as PENDING`);
+      console.warn(
+        `[stripe] Unknown refund status "${status}" — treating as PENDING`,
+      );
       return "PENDING";
   }
 }

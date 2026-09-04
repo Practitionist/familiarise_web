@@ -196,6 +196,24 @@ function readErrorCode(error: Error): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/**
+ * Resolve an error's machine-readable `code` to a classification, or
+ * `undefined` when the code is absent or not one we recognise. Kept out of
+ * `classifyError` so that function stays under the cognitive-complexity bar.
+ */
+function classifyByErrorCode(error: Error): ClassifiedError | undefined {
+  const code = readErrorCode(error);
+  if (!code) return undefined;
+  const typed = BUSINESS_ERROR_CODES.find((entry) => entry.code === code);
+  if (!typed) return undefined;
+  return {
+    errorMessage: error.message,
+    errorType: typed.errorType,
+    isBusinessError: true,
+    httpStatus: typed.httpStatus,
+  };
+}
+
 // ============================================================================
 // Classifier
 // ============================================================================
@@ -233,18 +251,8 @@ export function classifyError(
   const msg = error.message;
 
   // 1. Typed errors win over every message pattern below.
-  const code = readErrorCode(error);
-  const typed = code
-    ? BUSINESS_ERROR_CODES.find((entry) => entry.code === code)
-    : undefined;
-  if (typed) {
-    return {
-      errorMessage: msg,
-      errorType: typed.errorType,
-      isBusinessError: true,
-      httpStatus: typed.httpStatus,
-    };
-  }
+  const typed = classifyByErrorCode(error);
+  if (typed) return typed;
 
   // 2. Check infrastructure patterns (these override user message)
   for (const { patterns, errorType, userMessage } of INFRA_ERROR_PATTERNS) {
