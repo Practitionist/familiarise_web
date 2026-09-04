@@ -49,7 +49,11 @@
  *     re-derive these for any rows still on stub defaults.
  */
 
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -1071,7 +1075,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
       console.log(
         `[OrgPayoutService] markOrgPayoutCompleted no-op: payout ${payoutId} status=${current.status}`,
       );
-      return { wasNoOp: true, status: current.status, notify: null };
+      return {
+        wasNoOp: true,
+        status: current.status,
+        notify: null,
+        missingTdsRate: null,
+      };
     }
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
@@ -1155,7 +1164,17 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     // E-03/E-04: a batch that never completes never withheld anything, so a
     // TDSRecord created at batch time would put money on the quarterly return
     // that the government was never paid.
-    if (orgTds > 0 && payout.tdsRateAppliedBps) {
+    // #1354 — `tdsRateAppliedBps` is nullable only because it was added after
+    // some payouts had already been batched, and those rows are its entire
+    // population; pre-MVP data is reset before launch so nothing is backfilled,
+    // and every payout batched from this PR onwards carries the rate. Rather
+    // than let `TDSRecord.tdsRateBps` go nullable (or reconstruct the rate from
+    // tdsAmountPaise/gross, which cannot invert the floor in computeTdsForPayout)
+    // the missed filing row is reported loudly below — a durable guard that
+    // costs the schema nothing.
+    const orgTdsRateBps = payout.tdsRateAppliedBps;
+    const hasOrgTdsRate = orgTdsRateBps !== null && orgTdsRateBps > 0;
+    if (orgTds > 0 && hasOrgTdsRate) {
       // Delete-then-write, matching the consultant rail: a payout can go
       // COMPLETED after having been FAILED and re-batched, and the org unique
       // (organizationId, FY, quarter, orgPayoutId, isReversal) would otherwise
@@ -1196,7 +1215,7 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         organizationId: payout.organizationId,
         financialYear,
         tdsDeducted: orgTds,
-        tdsRateBps: payout.tdsRateAppliedBps,
+        tdsRateBps: orgTdsRateBps,
         cumulativeAmountCredited,
         orgPayoutId: payoutId,
         quarter,
@@ -1214,8 +1233,40 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         netPayoutPaise: payout.netPayoutPaise,
         currency: payout.currency,
       },
+      // Reported AFTER the commit: the withholding is already deposited to
+      // TDS_PAYABLE and the completion must stand, so this is an alert, never
+      // a rollback.
+      missingTdsRate:
+        orgTds > 0 && !hasOrgTdsRate
+          ? { organizationId: payout.organizationId, tdsAmountPaise: orgTds }
+          : null,
     };
   });
+
+  if (result.missingTdsRate) {
+    const summary =
+      "org payout completed with withheld TDS but no applied rate; TDSRecord not written";
+    const context = {
+      orgPayoutId: payoutId,
+      organizationId: result.missingTdsRate.organizationId,
+      tdsAmountPaise: result.missingTdsRate.tdsAmountPaise,
+    };
+    // Never throws by contract, and the `.catch` keeps a failed sink from
+    // turning a settled payout into an error for the webhook caller.
+    await recordSystemError({
+      organizationId: result.missingTdsRate.organizationId,
+      category: "PAYOUT",
+      summary: `ORG_PAYOUT_TDS_RATE_MISSING — ${summary}`,
+      err: new Error(summary),
+      context,
+    }).catch(() => {});
+    reportSentryMessage(summary, {
+      subsystem: "payments",
+      op: "markOrgPayoutCompleted",
+      level: "warning",
+      extra: context,
+    });
+  }
 
   if (result.notify) {
     await notifyOrgPayoutCompleted(result.notify.organizationId, {
