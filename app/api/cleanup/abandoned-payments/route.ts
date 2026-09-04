@@ -5,7 +5,7 @@ import {
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
 } from "@/scripts/payments/cleanup-abandoned-payments";
-import { parseLimitParam } from "@/lib/cron/cleanup-route";
+import { InvalidLimitError, parseLimitParam } from "@/lib/cron/cleanup-route";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -32,7 +32,11 @@ export async function POST(req: NextRequest) {
 
     Sentry.logger.info("cron:cleanup-abandoned-payments started");
 
-    // Run both cleanup tasks
+    // Run both cleanup tasks. `limit` is passed to each pass IN FULL, not
+    // split or subtracted between them: it bounds each pass's own query so a
+    // single pass fits the ticker's 26s function ceiling, and the unbounded
+    // GitHub Actions run is the backstop that drains whatever a bounded tick
+    // leaves behind (ADR 27).
     const limit = parseLimitParam(req);
     const paymentResult = await cleanupAbandonedPayments({ limit });
     const consultationResult = await cleanupExpiredApprovalPendingPayments({
@@ -55,6 +59,9 @@ export async function POST(req: NextRequest) {
     // skips with a 409 instead of double-running.
     if (error instanceof CronLockHeldError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof InvalidLimitError) {
+      return NextResponse.json({ error: "INVALID_LIMIT" }, { status: 400 });
     }
     if (error instanceof MaintenanceActiveError) {
       return NextResponse.json(

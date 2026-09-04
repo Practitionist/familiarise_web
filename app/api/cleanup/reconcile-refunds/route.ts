@@ -22,6 +22,7 @@ export const { GET, POST } = cleanupRoute({
     failedCount: r.failedCount,
     skippedCount: r.skippedCount,
   }),
-  status: () => 200,
+  // #1390 review — the constant 200 masked a caught job error (success:false)
+  // as healthy; the default statusFor already reads result.success.
   failureMessage: "Failed to reconcile refunds",
 });

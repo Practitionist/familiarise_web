@@ -39,7 +39,13 @@ export interface RefundReconciliationResult {
 }
 
 export interface ReconcilePendingRefundsOptions {
-  /** #1356 — applied to both passes below; undefined keeps today's unbounded scan. */
+  /**
+   * #1356 — applied to EACH pass below in full, not split or subtracted
+   * between them: it bounds each pass's own query so a single pass fits the
+   * ticker's 26s function ceiling, and the unbounded GitHub Actions run is
+   * the backstop that drains whatever a bounded tick leaves behind (ADR 27).
+   * Undefined keeps today's unbounded scan.
+   */
   limit?: number;
 }
 
@@ -98,9 +104,13 @@ async function reconcilePendingRefundsUnlocked(
     include: {
       payment: true,
     },
-    orderBy: {
-      createdAt: "asc",
-    },
+    // Least-recently-touched first, id tie-break. Neither branch below that
+    // leaves a row PENDING (ambiguous / still within grace) writes back to
+    // it, so under a bounded run the same cohort can recur every tick; a
+    // persisted retry timestamp was deliberately NOT added here (pre-MVP,
+    // no-backfill posture) and starvation is capped by the unbounded GitHub
+    // Actions run, which always drains the full backlog.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: opts.limit,
   });
 
@@ -241,7 +251,10 @@ async function reconcilePendingRefundsUnlocked(
       createdAt: { lt: thresholdDate },
     },
     include: { payment: { select: { paymentGateway: true } } },
-    orderBy: { createdAt: "asc" },
+    // Same starvation reasoning as the placeholder pass above: "still
+    // settling" leaves the row untouched, so order least-recently-touched
+    // first rather than by creation.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: opts.limit,
   });
 

@@ -130,6 +130,9 @@ function logCleanupSummary(
 function findAbandonedAppointments(limit?: number) {
   return prisma.appointment.findMany({
     take: limit,
+    // Oldest-first with an id tie-break: a bounded run must not leave the
+    // same stale holds behind every tick while newer ones get processed.
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     where: {
       payment: {
         some: {
@@ -574,6 +577,8 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
     // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
     const expiredConsultations = await prisma.consultation.findMany({
       take: opts.limit,
+      // Oldest-first with an id tie-break: see findAbandonedAppointments above.
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       where: {
         status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
         appointment: {
