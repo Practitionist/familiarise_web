@@ -48,6 +48,8 @@ model User {
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
   Payment                 Payment[]
+  // #1365 — B2C tax invoices issued to this buyer.
+  consumerInvoices        ConsumerInvoice[]
 
   // Relations
   consultantProfile     ConsultantProfile?
@@ -982,9 +984,13 @@ model Organization {
   billingAccount   BillingAccount? @relation(fields: [billingAccountId], references: [id])
 
   // Hosting side (canHost=true)
-  payoutAccount OrganizationPayoutAccount?
-  payouts       OrganizationPayout[]
-  earnings      OrganizationEarnings[]
+  payoutAccount  OrganizationPayoutAccount?
+  payouts        OrganizationPayout[]
+  earnings       OrganizationEarnings[]
+  // #1354 — statutory withholding on the org rail. Restrict on both sides: a
+  // deleted org must not orphan a row the quarterly return has to file.
+  tdsRecords     TDSRecord[]
+  tdsAdjustments TdsAdjustment[]
 
   // BetterAuth (kept for invite-token flow)
   members     Member[]
@@ -1338,6 +1344,10 @@ enum PayoutRecipient {
 model OrganizationTaxInfo {
   organizationId  String          @id
   organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // #1354 — the deductee name a TDS return carries has to be the name on the
+  // PAN. `Organization.name` is the trade name and is user-editable, so the
+  // return falls back to it only when this is unset.
+  legalName       String?
   gstin           String?         @db.VarChar(15)
   gstStateCode    String?         @db.VarChar(2)
   gstRegStatus    GstRegStatus    @default(UNREGISTERED)
@@ -2018,6 +2028,13 @@ model OrganizationPayout {
 
   // India statutory (fields final; cron + derivation stubbed in v1)
   tdsSectionApplied String? // "194J" | "194O" | "194C"
+  // #1354 — the rate and the FY the withholding was reckoned in, mirroring
+  // ConsultantPayout. The TDSRecord written at COMPLETED reads both, so
+  // without them a re-derivation at completion time could pick a different
+  // rate (rate cards are effective-dated) or file the row under the wrong FY
+  // when a batch built in March settles in April.
+  tdsRateAppliedBps Int?
+  tdsFinancialYear  String?
   tdsAmountPaise    BigInt?
   mustPayByDate     DateTime?           @db.Timestamptz // derived from MSME 15/45-day rule
   // #781 §A — rail the batch was (or will be) submitted on.
@@ -2063,7 +2080,8 @@ model OrganizationPayout {
   /// present so two cron runs cannot both insert the same key.
   idempotencyKey String? @unique
 
-  earnings OrganizationEarnings[]
+  earnings   OrganizationEarnings[]
+  tdsRecords TDSRecord[]
 
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -2212,10 +2230,16 @@ model OrganizationInvoice {
   /// set when overdue triggered the (config-gated) booking-suspend cascade.
   dunningSuspendedAt    DateTime?
 
+  /// #1370 — stamped by the monthly outward-supplies register export so a
+  /// re-run does not re-stamp an already-reported document. The CSV is always
+  /// a full-period snapshot, so this is a reporting marker, not a filter.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, invoiceNumber])
+  @@index([gstr1ExportedAt])
   // CR #1243 — keyset pagination for the invoices CSV export.
   @@index([organizationId, createdAt, id])
   @@index([organizationId, status, dueDate])
@@ -2287,6 +2311,163 @@ model OrgCreditNoteCounter {
 
   @@id([organizationId, fiscalYear])
   @@map("org_credit_note_counters")
+}
+
+/// #1365 — the statutory tax invoice a personal (B2C) buyer is owed for a
+/// single Payment. The platform bills as PRINCIPAL supplier (ADR 26), so every
+/// consumer supply is our outward supply and needs its own Rule 46 document.
+///
+/// This is deliberately NOT a nullable-FK variant of OrganizationInvoice.
+/// That model's required organization, billingAccount and dueDate are
+/// load-bearing for dunning, and its per-org gapless unique is load-bearing
+/// for the IRP e-invoice series; a B2C invoice has no org, no due date (it is
+/// paid before it is issued) and needs ONE platform-wide series instead of one
+/// series per buyer. Forcing both shapes into one model would make every one of
+/// those columns optional and silently weaken the B2B guarantees.
+///
+/// Document only: this model posts nothing to the ledger and derives no tax
+/// from a rate. The tax heads are split out of the tax the buyer was actually
+/// charged at checkout, so the document agrees with GST_PAYABLE to the paise.
+model ConsumerInvoice {
+  id        String  @id @default(cuid())
+  paymentId String  @unique
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  invoiceNumber String @unique
+  fiscalYear    Int
+
+  // Supplier + buyer snapshots. A tax invoice must keep saying what it said on
+  // the day it was issued, so neither side is read through a live relation.
+  supplierName      String
+  supplierGstin     String  @db.VarChar(15)
+  supplierAddress   String
+  supplierStateCode String  @db.VarChar(2)
+  buyerName         String
+  buyerEmail        String
+  buyerAddress      String?
+  buyerStateCode    String? @db.VarChar(2)
+
+  /// How the place of supply was decided — an audit trail for the s.12(2)(b)
+  /// default, which is indistinguishable from a declared home-state supply
+  /// once it is written down.
+  placeOfSupplySource PlaceOfSupplySource
+  placeOfSupply       String?             @db.VarChar(2)
+
+  taxableValuePaise BigInt
+  cgstPaise         BigInt @default(0)
+  sgstPaise         BigInt @default(0)
+  igstPaise         BigInt @default(0)
+  totalPaise        BigInt
+
+  currency   Currency @default(INR)
+  sacCode    String   @default("999293")
+  /// Rate in basis points, recorded for the document only. The tax heads are
+  /// never re-derived from it.
+  taxRateBps Int      @default(1800)
+
+  supplyDate DateTime @db.Timestamptz
+  issuedAt   DateTime @db.Timestamptz
+
+  pdfStoragePath  String?
+  pdfGeneratedAt  DateTime? @db.Timestamptz
+  /// Stamped by the monthly outward-supplies register export so a re-run does
+  /// not re-stamp; the CSV itself is always a full-period snapshot.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
+  /// Rule 46 requires the recipient's name, address and state on a B2C invoice
+  /// of ₹50,000 or more. We still mint the invoice — a missing address is not a
+  /// reason to leave a buyer without a document — and flag it for follow-up.
+  needsBuyerAddress Boolean @default(false)
+
+  creditNotes ConsumerCreditNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, issuedAt])
+  @@index([fiscalYear, issuedAt])
+  @@index([gstr1ExportedAt])
+  /// The monthly register scans on `issuedAt` alone; the composite indexes
+  /// above both lead with a column that query does not constrain, so without
+  /// this it sequentially scans every consumer invoice ever issued.
+  @@index([issuedAt])
+}
+
+/// #1365 — CGST s.34 credit note against a ConsumerInvoice, minted when a B2C
+/// payment is refunded or a chargeback is lost. The invoice is never deleted
+/// or rewritten; the credit note is what reverses it.
+model ConsumerCreditNote {
+  id               String @id @default(cuid())
+  creditNoteNumber String @unique
+  fiscalYear       Int
+
+  consumerInvoiceId String
+  consumerInvoice   ConsumerInvoice @relation(fields: [consumerInvoiceId], references: [id], onDelete: Restrict)
+
+  /// Exactly one trigger keys the note. Both are @unique, so a webhook
+  /// redelivery or a cron retry re-reads the existing note instead of minting a
+  /// second one and burning a gapless number.
+  refundId  String? @unique
+  disputeId String? @unique
+  reason    String?
+
+  taxableValuePaise BigInt
+  cgstPaise         BigInt @default(0)
+  sgstPaise         BigInt @default(0)
+  igstPaise         BigInt @default(0)
+  totalPaise        BigInt
+
+  issuedAt DateTime @db.Timestamptz
+
+  pdfStoragePath  String?
+  pdfGeneratedAt  DateTime? @db.Timestamptz
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consumerInvoiceId])
+  @@index([fiscalYear, issuedAt])
+  @@index([gstr1ExportedAt])
+  /// Same period scan as ConsumerInvoice, same reason.
+  @@index([issuedAt])
+}
+
+/// Platform-wide (not per-org) gapless invoice sequence, same atomic
+/// upsert-and-return-the-pre-increment pattern as OrgInvoiceCounter.
+///
+/// A sentinel "platform" Organization row reusing OrgInvoiceCounter was
+/// rejected: OrgInvoiceCounter.organizationId is a real FK to Organization, so
+/// the sentinel would surface in org lists, member counts and payout runs, and
+/// every org-scoped query would need to remember to exclude it.
+model PlatformInvoiceCounter {
+  fiscalYear Int      @id
+  nextSeq    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@map("platform_invoice_counters")
+}
+
+/// Rule 53 requires the credit-note series to run independently of the invoice
+/// series, so this is a second counter rather than a shared one.
+model PlatformCreditNoteCounter {
+  fiscalYear Int      @id
+  nextSeq    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@map("platform_credit_note_counters")
+}
+
+/// Which rule decided the place of supply on a consumer invoice. The statutory
+/// default matters for audit: under s.12(2)(b) IGST Act a B2C supply with no
+/// address of the recipient on record is supplied at the SUPPLIER's location,
+/// which is the opposite of the B2B unknown-state fallback to IGST.
+enum PlaceOfSupplySource {
+  DECLARED_AT_CHECKOUT
+  PROFILE_ON_RECORD
+  SUPPLIER_DEFAULT_12_2_B
 }
 
 model PurchaseOrder {
@@ -2981,6 +3162,12 @@ model ConsulteeProfile {
   // Enterprise: optional org memberships as MEMBER/LEARNER role.
   memberships   Membership[] @relation("ConsulteeMembership")
   isIndependent Boolean      @default(true)
+
+  /// #1365 — the buyer's GST state (2-digit numeric), remembered from checkout
+  /// so a repeat buyer is never asked twice. Sec 12(2)(b) IGST Act makes this
+  /// optional: null means the supply is placed at the supplier's own location,
+  /// which is the statutory default, not a missing value to chase.
+  billingStateCode String? @db.VarChar(2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4885,9 +5072,12 @@ model Payment {
   // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
   // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
   consumerStateCode    String? @db.VarChar(2)
-  // #778 §D — GST TCS u/s 52 collected on this payment (we're likely an e-commerce
-  // operator owing 1% on registered consultants). paise; #780 widens to BigInt.
-  // Collection + GSTR-8 filing flag-gated/deferred pending CA signoff.
+  // #778 §D — GST TCS u/s 52 collected on this payment. The rate is 0.5%
+  // (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024, Notification
+  // 15/2024-CT — halved from the 1% this comment used to state. paise; #780
+  // widens to BigInt. #1360 — collection stays CA-gated because the platform
+  // bills as PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE
+  // booked in earnings-service), so §52 does not currently bite.
   gstTcsCollectedPaise BigInt?
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4899,6 +5089,9 @@ model Payment {
 
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
+
+  // #1365 — the statutory B2C tax invoice for this payment, at most one.
+  consumerInvoice ConsumerInvoice?
 
   // Payout relations
   earnings     ConsultantEarnings[]
@@ -4929,7 +5122,9 @@ model Payment {
 
   // Stackable funding. A Payment may be split across multiple sources
   // — e.g. ₹500 referral credit + ₹1,500 card. When `legs.length > 0`,
-  // sum(legs.amountPaise) MUST equal `amount`. Single-source checkouts
+  // sum(legs.amountPaise) over non-reversal, non-REFERRAL_CREDIT legs MUST
+  // equal `amount` — the credit is already netted out of it (#1347).
+  // Single-source checkouts
   // leave `legs` empty (back-compat: old Payments had no legs and worked
   // off `amount` + `paymentMethod` alone).
   legs PaymentLeg[]
@@ -4985,8 +5180,11 @@ model Payment {
 //   { source: REFERRAL_CREDIT, amountPaise:  50000, sourceRef: <ReferralCreditUsage.id> }
 //   { source: WALLET,          amountPaise: 100000, sourceRef: <ProgramAssignment.id> }
 //
-// Invariant: sum(non-reversal legs.amountPaise) == Payment.amount when legs
-// are present (LICENSE legs contribute 0 so they don't skew the total).
+// Invariant: sum(non-reversal, non-REFERRAL_CREDIT legs.amountPaise) ==
+// Payment.amount when legs are present (LICENSE legs contribute 0 so they
+// don't skew the total). REFERRAL_CREDIT is excluded because Payment.amount
+// is already the post-credit gateway charge, so counting the leg would demand
+// the same credit twice (#1347).
 // *_REVERSAL legs are negative refund counter-entries netting against their
 // original sibling — |reversal| never exceeds the original (#786).
 model PaymentLeg {
@@ -5211,7 +5409,11 @@ model ConsultantEarnings {
   consultantSharePaise BigInt // Consultant cut (80%)
   refundedShareAmount  BigInt  @default(0) // Cumulative refunded amount in paise
   // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
-  // govt, reconciled into GstTcsBatch). paise; #780 widens to BigInt. Impl deferred.
+  // govt, reconciled into GstTcsBatch) at 0.5% (0.25% CGST + 0.25% SGST, or
+  // 0.5% IGST) w.e.f. 10-Jul-2024, Notification 15/2024-CT. paise; #780 widens
+  // to BigInt. #1360 — impl stays CA-gated because the platform bills as
+  // PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
+  // earnings-service), so §52 does not currently bite.
   gstTcsAccruedPaise   BigInt?
 
   // Collaborator support
@@ -5370,8 +5572,12 @@ model ConsultantTaxInfo {
 }
 
 model TDSRecord {
-  id                  String @id @default(cuid())
-  consultantProfileId String
+  id                  String  @id @default(cuid())
+  // #1354 — the deductee is a consultant XOR a host organisation. Both are
+  // nullable so one table carries both rails; `tds_record_deductee_xor` in
+  // prisma/sql/check-constraints.sql is what makes "exactly one" structural.
+  consultantProfileId String?
+  organizationId      String?
   financialYear       String // "2026-27" format (Apr-Mar)
   quarter             Int // 1=Apr-Jun, 2=Jul-Sep, 3=Oct-Dec, 4=Jan-Mar
 
@@ -5384,9 +5590,12 @@ model TDSRecord {
   // post-consolidation; org payouts already stamp the section on OrganizationPayout.
   tdsSection               String?
 
-  // Link to the payout that triggered this deduction
-  payoutId   String?
-  earningsId String?
+  // Link to the payout that triggered this deduction. #1354 — one column per
+  // rail rather than a polymorphic id, so both stay real foreign keys;
+  // `tds_record_payout_rail_matches` stops a row citing the other rail's payout.
+  payoutId    String?
+  orgPayoutId String?
+  earningsId  String?
 
   // Reversal flag (for refund-triggered TDS reversals — negative tdsDeducted)
   isReversal Boolean @default(false)
@@ -5401,8 +5610,10 @@ model TDSRecord {
   certificateNumber String?
   ackNumber         String?
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
-  payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
+  consultantProfile ConsultantProfile?  @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  organization      Organization?       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  payout            ConsultantPayout?   @relation(fields: [payoutId], references: [id])
+  orgPayout         OrganizationPayout? @relation(fields: [orgPayoutId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5418,11 +5629,24 @@ model TDSRecord {
   /// distinct, so rows with a null `payoutId` (adjustments not tied to a
   /// disbursement) are unaffected — those are guarded by the Serializable
   /// transaction in recordTdsReversal.
+  ///
+  /// #1354 — the org rail gets its OWN unique rather than joining the
+  /// consultant one. A single key spanning both rails would be useless in
+  /// exactly the way that matters: Postgres treats NULLs as distinct, so
+  /// `(NULL, "2026-27", 2, NULL, orgPayoutId, false)` never conflicts with
+  /// itself and every org row would dedupe against nothing. Two keys, one per
+  /// rail, each with its own rail's payout column, each doing real work.
+  /// Nothing here says a row belongs to exactly one rail — that is
+  /// `tds_record_deductee_xor` + `tds_record_payout_rail_matches` in
+  /// prisma/sql/check-constraints.sql, because Prisma cannot express a CHECK.
   @@unique([consultantProfileId, financialYear, quarter, payoutId, isReversal])
+  @@unique([organizationId, financialYear, quarter, orgPayoutId, isReversal])
   @@index([consultantProfileId, financialYear])
+  @@index([organizationId, financialYear])
   @@index([financialYear, quarter])
   @@index([reportedInForm26Q])
   @@index([payoutId])
+  @@index([orgPayoutId])
 }
 
 // #778 §D / #784 — effective-dated TDS rate lookup, law-aware. The Income-tax
@@ -5523,12 +5747,16 @@ model CreditNote {
   irpLastAttemptAt DateTime?
   irpRetryCount    Int       @default(0)
 
+  /// #1370 — see OrganizationInvoice.gstr1ExportedAt.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, creditNoteNumber])
   @@index([organizationId, fiscalYear])
   @@index([invoiceId])
+  @@index([gstr1ExportedAt])
 }
 
 // #778 §D — IRP document type for the note. DBN reserved for supplementary
@@ -5542,12 +5770,17 @@ enum CreditNoteDocType {
 // when previously-withheld TDS is reversed on refund. Schema now; FVU export (§F)
 // deferred.
 model TdsAdjustment {
-  id                  String            @id @default(cuid())
-  consultantProfileId String
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  id                  String             @id @default(cuid())
+  // #1354 — deductee is a consultant XOR a host organisation, mirroring
+  // TDSRecord. `tds_adjustment_deductee_xor` enforces the "exactly one".
+  consultantProfileId String?
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  organizationId      String?
+  organization        Organization?      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   // What this adjusts.
   tdsRecordId         String?
   payoutId            String?
+  orgPayoutId         String?
   refundId            String? // triggering refund
 
   financialYear String // "2026-27"
@@ -5561,14 +5794,19 @@ model TdsAdjustment {
   createdAt DateTime @default(now())
 
   @@index([consultantProfileId, financialYear])
+  @@index([organizationId, financialYear])
   @@index([payoutId])
 }
 
-// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. We're very likely an
-// e-commerce operator owing 1% TCS on registered consultants. Per-payment
-// collection (Payment.gstTcsCollectedPaise) + per-earning accrual
+// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. Were we an
+// e-commerce operator collecting on registered consultants, the rate would be
+// 0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024,
+// Notification 15/2024-CT — this block used to say 1%, the pre-July-2024 rate.
+// Per-payment collection (Payment.gstTcsCollectedPaise) + per-earning accrual
 // (ConsultantEarnings.gstTcsAccruedPaise) reconcile into one batch per month.
-// Collection + filing flag-gated pending CA signoff (§F).
+// #1360 — collection + filing stay CA-gated because the platform bills as
+// PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
+// earnings-service), so §52 does not currently bite.
 enum GstTcsBatchStatus {
   OPEN
   FILED

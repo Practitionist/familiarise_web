@@ -107,6 +107,13 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   mintInvoiceRefundCreditNote: jest.fn(),
   mintRefundCreditNote: jest.fn().mockResolvedValue({ creditNoteId: null }),
 }));
+// #1365 — the chargeback path now mints the B2C credit note beside the org one.
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerCreditNote: jest
+    .fn()
+    .mockResolvedValue({ consumerCreditNoteId: null }),
+  mintConsumerInvoice: jest.fn().mockResolvedValue({ consumerInvoiceId: null }),
+}));
 
 // ---------------------------------------------------------------------------
 // Row types — exactly the fields the handler reads/writes. Fixtures are these

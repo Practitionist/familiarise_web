@@ -197,6 +197,26 @@ export function PaymentDetailPage({
                 </p>
               </div>
             )}
+            {/* #1365 — the statutory B2C tax invoice. Absent for org-funded
+                payments, which are invoiced to the organization instead. */}
+            <div>
+              <Label className="text-muted-foreground">Tax invoice</Label>
+              {payment.consumerInvoice ? (
+                <div className="mt-1 flex items-center gap-3">
+                  <span className="font-mono text-sm text-foreground">
+                    {payment.consumerInvoice.invoiceNumber}
+                  </span>
+                  <a
+                    href={`/api/payments/${payment.id}/invoice/pdf`}
+                    className="text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                  >
+                    Download
+                  </a>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">Not issued</p>
+              )}
+            </div>
           </CardContent>
         </Card>
 

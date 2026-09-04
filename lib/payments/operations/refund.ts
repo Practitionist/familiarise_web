@@ -65,6 +65,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
+import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -1164,6 +1165,15 @@ export async function applyRefundCascade(
   // retry) is safe.
   // -----------------------------------------------------------------------
   const refundCreditNote = await mintRefundCreditNote(tx, {
+    paymentId: payment.id,
+    refundId: input.refundId,
+    amountPaise: input.amountPaise,
+    reason: input.reason,
+  });
+
+  // #1365 — the B2C sibling: a personal buyer's invoice is reversed by its own
+  // s.34 credit note on the platform series, never by deleting the invoice.
+  await mintConsumerCreditNote(tx, {
     paymentId: payment.id,
     refundId: input.refundId,
     amountPaise: input.amountPaise,

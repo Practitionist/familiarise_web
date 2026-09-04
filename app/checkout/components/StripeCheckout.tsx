@@ -4,17 +4,27 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
-import { loadStripe } from "@stripe/stripe-js";
+import { loadStripe, type Stripe } from "@stripe/stripe-js";
 import { useState } from "react";
 import {
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
  mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
 
-// Initialize Stripe with publishable key
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
-console.log("Stripe key exists:", !!stripeKey);
-const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
+
+// #1351 — resolved on first render behind the fence, not at module load:
+// importing this file used to fetch js.stripe.com and publish the key on every
+// checkout page, including the ones where the disabled rail never mounts.
+let stripePromise: Promise<Stripe | null> | null = null;
+
+function getStripePromise(): Promise<Stripe | null> | null {
+  if (process.env.NEXT_PUBLIC_STRIPE_ENABLED !== "true" || !stripeKey) {
+    return null;
+  }
+  stripePromise ??= loadStripe(stripeKey);
+  return stripePromise;
+}
 
 interface StripePaymentSuccess {
   message: string;
@@ -55,13 +65,14 @@ export default function StripeCheckout({
   // useState's lazy initializer runs once, unlike a useRef(arg) expression
   // which would mint a key every render.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const stripeLoader = getStripePromise();
 
   const handleCheckout = async () => {
     // Before the spinner, so an abort leaves the button exactly as it was.
     if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
     try {
-      if (!stripePromise) {
+      if (!stripeLoader) {
         const errorMsg = !stripeKey
           ? "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method."
           : "The Stripe payment system failed to start. Please refresh the page and try again, or contact support if the problem persists.";
@@ -74,7 +85,7 @@ export default function StripeCheckout({
         return;
       }
 
-      const stripe = await stripePromise;
+      const stripe = await stripeLoader;
 
       if (!stripe) {
         toast({

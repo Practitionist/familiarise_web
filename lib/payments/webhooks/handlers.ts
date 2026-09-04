@@ -39,6 +39,7 @@ import {
 import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
+import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
@@ -925,11 +926,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     );
   }
 
-  // Personal-consultee per-Payment invoice generation was removed in
-  // the v0 lockdown (#768). Org-funded checkouts continue to roll up
-  // into OrganizationInvoice via the INVOICE cycle cron; personal-card
-  // consultees request a receipt via support@familiarise.work until v1.1
-  // re-introduces a per-Payment surface.
+  // #1365 — the personal-consultee tax invoice the v0 lockdown (#768) removed.
+  // The platform bills as principal supplier (ADR 26), so a consumer who was
+  // charged 18% GST is owed a Rule 46 document; org-funded checkouts still roll
+  // up into OrganizationInvoice and the mint no-ops for them by design.
+  await mintConsumerInvoiceBestEffort({ paymentId });
 
   // --- Novu notifications (M5 FIX: moved outside transaction) ---
   try {
