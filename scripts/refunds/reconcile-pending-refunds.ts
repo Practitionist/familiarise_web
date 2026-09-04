@@ -38,6 +38,17 @@ export interface RefundReconciliationResult {
   timestamp: string;
 }
 
+export interface ReconcilePendingRefundsOptions {
+  /**
+   * #1356 — applied to EACH pass below in full, not split or subtracted
+   * between them: it bounds each pass's own query so a single pass fits the
+   * ticker's 26s function ceiling, and the unbounded GitHub Actions run is
+   * the backstop that drains whatever a bounded tick leaves behind (ADR 27).
+   * Undefined keeps today's unbounded scan.
+   */
+  limit?: number;
+}
+
 /**
  * Map gateway refund status to Prisma RefundStatus
  */
@@ -61,15 +72,19 @@ export interface RefundReconciliationResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function reconcilePendingRefunds(): Promise<RefundReconciliationResult> {
+export async function reconcilePendingRefunds(
+  opts: ReconcilePendingRefundsOptions = {},
+): Promise<RefundReconciliationResult> {
   return withCronLock(
     "reconcile-pending-refunds",
     { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => reconcilePendingRefundsUnlocked(),
+    () => reconcilePendingRefundsUnlocked(opts),
   );
 }
 
-async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationResult> {
+async function reconcilePendingRefundsUnlocked(
+  opts: ReconcilePendingRefundsOptions = {},
+): Promise<RefundReconciliationResult> {
   const thresholdDate = new Date(Date.now() - RECONCILIATION_THRESHOLD_MS);
   const errors: string[] = [];
   let reconciledCount = 0;
@@ -89,9 +104,14 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
     include: {
       payment: true,
     },
-    orderBy: {
-      createdAt: "asc",
-    },
+    // Least-recently-touched first, id tie-break. Neither branch below that
+    // leaves a row PENDING (ambiguous / still within grace) writes back to
+    // it, so under a bounded run the same cohort can recur every tick; a
+    // persisted retry timestamp was deliberately NOT added here (pre-MVP,
+    // no-backfill posture) and starvation is capped by the unbounded GitHub
+    // Actions run, which always drains the full backlog.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: opts.limit,
   });
 
   console.log(
@@ -231,12 +251,14 @@ async function reconcilePendingRefundsUnlocked(): Promise<RefundReconciliationRe
       createdAt: { lt: thresholdDate },
     },
     include: { payment: { select: { paymentGateway: true } } },
-    orderBy: { createdAt: "asc" },
+    // Same starvation reasoning as the placeholder pass above: "still
+    // settling" leaves the row untouched, so order least-recently-touched
+    // first rather than by creation.
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+    take: opts.limit,
   });
 
-  console.log(
-    `Found ${pendingRealId.length} real-id PENDING refunds to poll`,
-  );
+  console.log(`Found ${pendingRealId.length} real-id PENDING refunds to poll`);
   totalProcessed += pendingRealId.length;
 
   for (const refund of pendingRealId) {

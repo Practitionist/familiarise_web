@@ -29,6 +29,12 @@ export interface ReleaseResult {
   errors: string[];
 }
 
+export interface ReleaseEarningsOptions {
+  /** #1356 — caps the batch for the Netlify ticker; undefined releases the
+   * whole PENDING/past-hold set, as today. */
+  limit?: number;
+}
+
 /**
  * Release earnings that have passed their hold period
  *
@@ -42,13 +48,17 @@ export interface ReleaseResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
-export async function releaseEarningsFromHold(): Promise<ReleaseResult> {
+export async function releaseEarningsFromHold(
+  opts: ReleaseEarningsOptions = {},
+): Promise<ReleaseResult> {
   return withCronLock("release-earnings", { failMode: "closed" }, () =>
-    releaseEarningsFromHoldUnlocked(),
+    releaseEarningsFromHoldUnlocked(opts),
   );
 }
 
-async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
+async function releaseEarningsFromHoldUnlocked(
+  opts: ReleaseEarningsOptions = {},
+): Promise<ReleaseResult> {
   console.log("💰 Starting earnings release from hold...");
 
   const result: ReleaseResult = {
@@ -67,6 +77,12 @@ async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
     // (already-READY rows are skipped); the transaction keeps the logged snapshot
     // equal to what was actually transitioned. A serialization conflict aborts this
     // run; the next hourly run reaps the rows.
+    //
+    // #1356 — the read is capped with `take: opts.limit` for the Netlify
+    // ticker, so the claim below updates by the same id set the read
+    // returned rather than repeating the open-ended predicate; otherwise a
+    // capped read would under-report a release that actually touched every
+    // matching row.
     const { earningsToRelease, releasedCount } = await prisma.$transaction(
       async (tx) => {
         const rows = await tx.consultantEarnings.findMany({
@@ -82,12 +98,13 @@ async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
             },
             payment: { select: { id: true, amount: true } },
           },
+          take: opts.limit,
         });
 
         const updated = await tx.consultantEarnings.updateMany({
           where: {
+            id: { in: rows.map((r) => r.id) },
             status: EarningStatus.PENDING,
-            holdUntil: { lte: now },
           },
           data: {
             status: EarningStatus.READY,
@@ -96,7 +113,11 @@ async function releaseEarningsFromHoldUnlocked(): Promise<ReleaseResult> {
 
         return { earningsToRelease: rows, releasedCount: updated.count };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 15_000,
+      },
     );
 
     console.log(

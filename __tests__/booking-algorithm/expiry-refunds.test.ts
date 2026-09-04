@@ -148,15 +148,89 @@ describe("expiry sweep refunds (PR 2c)", () => {
       .calls[1][0];
     expect(cohortCall.where.status).toBe(AppointmentStatus.APPROVED);
     expect(JSON.stringify(cohortCall.where.NOT)).toContain("isTentative");
-    // The transition guard rides the WHERE.
+    // Through the CAS helper now (#1423): the from-set rides the WHERE as a
+    // list, and the cohort's own predicate is repeated at write time.
     expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: AppointmentStatus.APPROVED,
+          id: "sub-immortal",
+          status: { in: [AppointmentStatus.APPROVED] },
+          NOT: expect.anything(),
         }),
         data: { status: "EXPIRED" },
       }),
     );
+    expect(result.subscriptionsExpired).toBe(1);
+    expect(result.refundsIssued).toBe(1);
+  });
+
+  /**
+   * #1423 — the PENDING arm re-ran the 30-day predicate in the write instead
+   * of naming the rows it had read, so the expired set and the refunded set
+   * could diverge: a subscription that crossed the cutoff between the two
+   * statements was expired without a refund and without an audit row, and the
+   * next run (which reads PENDING only) never saw it again.
+   */
+  it("expires only the rows it read, and every expired row gets history and a refund", async () => {
+    const readRow = {
+      id: "sub-read",
+      requestedAt: new Date("2026-01-01"),
+      requestedBy: { user: { name: "Buyer", email: "" } },
+      subscriptionPlan: {
+        consultantProfile: { user: { name: "Consultant", email: "" } },
+      },
+    };
+    (prisma.subscription.findMany as unknown as jest.Mock)
+      .mockResolvedValueOnce([readRow]) // PENDING cohort
+      .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
+    // "sub-latecomer" crosses the 30-day line between the read and the write.
+    // A predicate-shaped write would sweep it up; an id-scoped CAS cannot.
+    (prisma.subscription.updateMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { id?: string } }) => ({
+        count: where.id === "sub-read" ? 1 : 0,
+      }),
+    );
+    (prisma.appointment.findMany as unknown as jest.Mock).mockResolvedValue([
+      {
+        id: "apt-read",
+        payment: [{ id: "pay-read", paymentStatus: "SUCCEEDED" }],
+      },
+    ]);
+    refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
+
+    const result = await expireStaleRequests();
+
+    // Every terminal write names exactly one id from the read set.
+    const terminalWrites = (
+      prisma.subscription.updateMany as jest.Mock
+    ).mock.calls
+      .map(([args]) => args)
+      .filter((args) => args?.data?.status === AppointmentStatus.EXPIRED);
+    expect(terminalWrites).toHaveLength(1);
+    expect(terminalWrites[0].where.id).toBe("sub-read");
+    expect(terminalWrites[0].where.status).toEqual({
+      in: [AppointmentStatus.PENDING],
+    });
+
+    // The CAS helper wrote the audit row the bulk update never did.
+    expect(prisma.bookingStatusHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          entity: "SUBSCRIPTION",
+          entityId: "sub-read",
+          toStatus: AppointmentStatus.EXPIRED,
+          reason: expect.stringContaining("PENDING"),
+        }),
+      }),
+    );
+
+    // Refunds are handed the ids the helper transitioned, not the read set.
+    expect(prisma.appointment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { subscriptionId: { in: ["sub-read"] } },
+      }),
+    );
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
     expect(result.subscriptionsExpired).toBe(1);
     expect(result.refundsIssued).toBe(1);
   });
