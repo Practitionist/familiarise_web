@@ -62,10 +62,10 @@ const PENDING_EXPIRATION_DAYS = 30;
 // Also expire APPROVED_PENDING_PAYMENT after 7 days
 const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 
-// Per-run cap, same shape as cleanup-tentative-slots' MAX_SLOTS_PER_RUN: the
-// lapsed pay-link arm now expires one request per transaction instead of one
-// bulk statement, so an unbounded cohort times the function out before it
-// pages. Oldest-first, so consecutive hourly runs drain a backlog.
+// Per-run cap, same shape as cleanup-tentative-slots' MAX_SLOTS_PER_RUN:
+// every arm now expires one request per transaction instead of one bulk
+// statement, so an unbounded cohort times the function out before it pages.
+// Oldest-first, so consecutive hourly runs drain a backlog.
 const MAX_REQUESTS_PER_RUN = 500;
 // Slot rows released per run by the stale-RESCHEDULED pass; the next run continues.
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
@@ -254,23 +254,28 @@ async function expirePendingSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
+  // Same live-proposal exclusion as consultations: a full-subscription
+  // reschedule re-enters PENDING, and its open proposal must resolve through
+  // the reschedule machine (accept/decline/withdraw/expire), not be swept out
+  // from under it. Hoisted because the condition has to hold at WRITE time,
+  // so it rides the CAS WHERE below as well as the cohort read.
+  const NO_LIVE_PROPOSAL = {
+    appointments: {
+      none: {
+        rescheduleRequests: {
+          some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+        },
+      },
+    },
+  };
+
   try {
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
-        // Same live-proposal exclusion as consultations: a full-subscription
-        // reschedule re-enters PENDING, and its open proposal must resolve
-        // through the reschedule machine (accept/decline/withdraw/expire),
-        // not be swept out from under it.
-        appointments: {
-          none: {
-            rescheduleRequests: {
-              some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-            },
-          },
-        },
+        ...NO_LIVE_PROPOSAL,
       },
       include: {
         requestedBy: {
@@ -284,7 +289,13 @@ async function expirePendingSubscriptions(): Promise<{
           },
         },
       },
+      // #1423 — this arm is now one transaction per subscription rather than a
+      // single bulk statement, so it takes the same per-run cap and
+      // oldest-first drain as every other cohort in this file.
+      orderBy: { requestedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
     });
+    warnIfCapped("subscription", staleSubscriptions.length);
 
     console.log(
       `Found ${staleSubscriptions.length} subscriptions in PENDING for >${PENDING_EXPIRATION_DAYS} days`,
@@ -301,32 +312,53 @@ async function expirePendingSubscriptions(): Promise<{
       console.log(`   Requested at: ${subscription.requestedAt.toISOString()}`);
     }
 
-    // Bulk update to EXPIRED
-    const result = await prisma.subscription.updateMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
-        appointments: {
-          none: {
-            rescheduleRequests: {
-              some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+    // #1423 — the write used to re-run the 30-day predicate instead of naming
+    // the rows the read returned, so the expired set and the refunded set were
+    // different sets: a subscription that crossed the cutoff between the read
+    // and the write was expired here, left out of refundPaymentsForExpired
+    // below, and never seen again (the next run reads PENDING only) — paid,
+    // expired, silently unrefunded. It also bypassed
+    // transitionSubscriptionRequest, so no bookingStatusHistory row was
+    // written for the expiry. Each row now moves through the CAS helper by id,
+    // and only the ids the helper actually transitioned are refunded.
+    const expiredIds: string[] = [];
+    let skipped = 0;
+    for (const subscription of staleSubscriptions) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            // The cutoff and the proposal guard are repeated here because both
+            // must still hold at write time (doctrine rule 1).
+            where: {
+              id: subscription.id,
+              requestedAt: { lt: expirationDate },
+              ...NO_LIVE_PROPOSAL,
             },
-          },
-        },
-      },
-      data: {
-        status: AppointmentStatus.EXPIRED,
-      },
-    });
+            to: AppointmentStatus.EXPIRED,
+            // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
+            // owns the PENDING cutoff only.
+            fromIn: [AppointmentStatus.PENDING],
+            actorUserId: null,
+            reason: `Auto-expired: PENDING for more than ${PENDING_EXPIRATION_DAYS} days`,
+          }),
+        );
+        expiredIds.push(subscription.id);
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        skipped++;
+      }
+    }
 
-    console.log(`✅ Expired ${result.count} PENDING subscriptions`);
+    console.log(
+      `✅ Expired ${expiredIds.length} PENDING subscriptions` +
+        (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
+    );
 
-    const staleIds = staleSubscriptions.map((r) => r.id);
-    const refunds = await refundPaymentsForExpired("subscription", staleIds);
+    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
     errors.push(...refunds.failureMsgs);
 
     return {
-      expired: result.count,
+      expired: expiredIds.length,
       issued: refunds.issued,
       failures: refunds.failures,
       errors,
@@ -421,24 +453,35 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
+  // Zero live confirmed sessions anywhere on the booking. Hoisted so the CAS
+  // WHERE below re-states it: a session allocated between the read and the
+  // write must take its subscription out of this cohort (#1423).
+  const NO_LIVE_SESSION = {
+    NOT: {
+      appointments: {
+        some: {
+          slotsOfAppointment: {
+            some: { isTentative: false, deletedAt: null },
+          },
+        },
+      },
+    },
+  };
+
   try {
     const stale = await prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.APPROVED,
         updatedAt: { lt: cutoff },
-        // Zero live confirmed sessions anywhere on the booking.
-        NOT: {
-          appointments: {
-            some: {
-              slotsOfAppointment: {
-                some: { isTentative: false, deletedAt: null },
-              },
-            },
-          },
-        },
+        ...NO_LIVE_SESSION,
       },
       select: { id: true },
+      // Same per-run cap and oldest-first drain as the cohorts above, now that
+      // this arm expires one subscription per transaction (#1423).
+      orderBy: { updatedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
     });
+    warnIfCapped("subscription", stale.length);
 
     if (stale.length === 0)
       return { expired: 0, issued: 0, failures: 0, errors };
@@ -446,21 +489,49 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     console.log(
       `Found ${stale.length} APPROVED subscriptions with zero allocated sessions for >${PENDING_EXPIRATION_DAYS} days`,
     );
-    const staleIds = stale.map((r) => r.id);
 
-    const result = await prisma.subscription.updateMany({
-      where: { id: { in: staleIds }, status: AppointmentStatus.APPROVED },
-      data: { status: AppointmentStatus.EXPIRED },
-    });
+    // #1423 — the bulk write bypassed transitionSubscriptionRequest, so a
+    // refunded expiry left no bookingStatusHistory row, and `result.count`
+    // could fall short of `staleIds` while every read id was refunded anyway —
+    // a refund against a subscription this run never expired. Each row now
+    // moves through the CAS helper, and the refund is handed exactly the ids
+    // the helper transitioned.
+    const expiredIds: string[] = [];
+    let skipped = 0;
+    for (const subscription of stale) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            where: {
+              id: subscription.id,
+              updatedAt: { lt: cutoff },
+              ...NO_LIVE_SESSION,
+            },
+            to: AppointmentStatus.EXPIRED,
+            // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
+            // is the abandoned-APPROVED shape only.
+            fromIn: [AppointmentStatus.APPROVED],
+            actorUserId: null,
+            reason: `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`,
+          }),
+        );
+        expiredIds.push(subscription.id);
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        skipped++;
+      }
+    }
+
     console.log(
-      `✅ Expired ${result.count} APPROVED-unallocated subscriptions`,
+      `✅ Expired ${expiredIds.length} APPROVED-unallocated subscriptions` +
+        (skipped > 0 ? ` (${skipped} moved on before the write)` : ""),
     );
 
-    const refunds = await refundPaymentsForExpired("subscription", staleIds);
+    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
     errors.push(...refunds.failureMsgs);
 
     return {
-      expired: result.count,
+      expired: expiredIds.length,
       issued: refunds.issued,
       failures: refunds.failures,
       errors,
@@ -616,9 +687,11 @@ async function expirePaymentPendingRequests(): Promise<{
  * Main function to expire all stale requests
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+// mutual exclusion. #1341 — fail-closed: this sweep refunds SUCCEEDED
+// payments through the refund front door, so an unlocked double-run risks a
+// double refund; a missed run pages instead.
 export async function expireStaleRequests(): Promise<ExpireStaleRequestsResult> {
-  return withCronLock("expire-stale-requests", { failMode: "open" }, () =>
+  return withCronLock("expire-stale-requests", { failMode: "closed" }, () =>
     expireStaleRequestsUnlocked(),
   );
 }
@@ -692,7 +765,12 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   return {
     success: allErrors.length === 0,
     consultationsExpired: consultationResult.expired,
-    subscriptionsExpired: subscriptionResult.expired,
+    // #1423 — both subscription arms count here. The APPROVED-unallocated arm
+    // used to be invisible in this field: the PENDING arm's bulk statement ran
+    // unconditionally and its `count` was reported as the whole total, so the
+    // summary never matched what the run actually expired.
+    subscriptionsExpired:
+      subscriptionResult.expired + approvedUnallocated.expired,
     paymentPendingExpired: totalPaymentPending,
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:
