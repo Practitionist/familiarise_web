@@ -75,6 +75,9 @@ export interface TdsReturnDraft {
   warnings: string[];
 }
 
+/** India has no DST, so the offset is a constant rather than a tz lookup. */
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
 /**
  * IST fiscal quarters: Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec, Q4 Jan–Mar.
  * Accepts any instant inside the quarter.
@@ -83,7 +86,7 @@ export function indianFyQuarterOf(instantUTC: Date): {
   financialYear: string;
   quarter: number;
 } {
-  const ist = new Date(instantUTC.getTime() + 5.5 * 60 * 60 * 1000);
+  const ist = new Date(instantUTC.getTime() + IST_OFFSET_MS);
   const y = ist.getUTCFullYear();
   const m = ist.getUTCMonth() + 1; // 1..12
   // Indian FY runs Apr→Mar; FY label uses the START calendar year ("2026-27").
@@ -93,6 +96,30 @@ export function indianFyQuarterOf(instantUTC: Date): {
     financialYear: `${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, "0")}`,
     quarter,
   };
+}
+
+/**
+ * The fiscal quarter that had already CLOSED at `instantUTC`.
+ *
+ * #1354 — a return is filed for a finished quarter, so the run that fires on
+ * the fifth of the month after a quarter ends must not target the quarter that
+ * contains today: on 5 April that is FY 2026-27 Q1, five days old, instead of
+ * the FY 2025-26 Q4 that is actually due. Stepping back to the instant before
+ * the current quarter opened lands inside the closed one whatever the month.
+ */
+export function closedIndianFyQuarterOf(instantUTC: Date): {
+  financialYear: string;
+  quarter: number;
+} {
+  const ist = new Date(instantUTC.getTime() + IST_OFFSET_MS);
+  // Quarters open in Apr, Jul, Oct and Jan, i.e. every third month from Apr.
+  const monthsIntoQuarter = (((ist.getUTCMonth() - 3) % 3) + 3) % 3;
+  const quarterStartIstMs = Date.UTC(
+    ist.getUTCFullYear(),
+    ist.getUTCMonth() - monthsIntoQuarter,
+    1,
+  );
+  return indianFyQuarterOf(new Date(quarterStartIstMs - IST_OFFSET_MS - 1));
 }
 
 /**

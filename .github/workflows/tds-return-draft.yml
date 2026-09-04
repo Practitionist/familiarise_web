@@ -15,15 +15,19 @@ on:
     # closes (Jan/Apr/Jul/Oct), which puts the draft in front of finance before
     # the India business day and well inside the 31st-of-the-month filing
     # window. Hour 01 UTC carries one other cron, at minute 00.
+    #
+    # CR #1354 r1 — with no inputs the job targets the quarter that CLOSED, so
+    # this trigger date and the exported period agree. Deriving the period from
+    # "today" made the 5 April run export five days of the new FY.
     - cron: "20 1 5 1,4,7,10 *"
   workflow_dispatch:
     inputs:
       financialYear:
-        description: 'Financial year, e.g. "2026-27" (defaults to the current Indian FY)'
+        description: 'Financial year, e.g. "2026-27" (defaults to the FY of the quarter that closed)'
         required: false
         type: string
       quarter:
-        description: "Fiscal quarter 1-4 (defaults to the quarter containing today)"
+        description: "Fiscal quarter 1-4 (defaults to the quarter that closed)"
         required: false
         type: string
 

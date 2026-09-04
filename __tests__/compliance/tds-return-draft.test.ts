@@ -10,6 +10,7 @@
 
 import {
   buildTdsReturnDraft,
+  closedIndianFyQuarterOf,
   indianFyQuarterOf,
   type TdsReturnSourceRow,
 } from "@/lib/compliance/tds-return";
@@ -37,16 +38,43 @@ describe("indianFyQuarterOf", () => {
 
   it("a March instant belongs to the PREVIOUS FY label (IST-aware)", () => {
     // 19:00Z = Apr 1 00:30 IST → NEW fiscal year already.
-    expect(indianFyQuarterOf(new Date("2026-03-31T19:00:00Z")).financialYear).toBe(
-      "2026-27",
-    );
+    expect(
+      indianFyQuarterOf(new Date("2026-03-31T19:00:00Z")).financialYear,
+    ).toBe("2026-27");
     // 18:29:59Z is still Mar 31 23:59 IST → prior-FY Q4; 18:30Z tips over.
     expect(indianFyQuarterOf(new Date("2026-03-31T18:29:59Z")).quarter).toBe(4);
     expect(indianFyQuarterOf(new Date("2026-03-31T18:30:01Z")).quarter).toBe(1);
     // 17:00Z = 22:30 IST on Mar 31 → previous FY.
-    expect(indianFyQuarterOf(new Date("2026-03-31T17:00:00Z")).financialYear).toBe(
-      "2025-26",
-    );
+    expect(
+      indianFyQuarterOf(new Date("2026-03-31T17:00:00Z")).financialYear,
+    ).toBe("2025-26");
+  });
+});
+
+describe("closedIndianFyQuarterOf", () => {
+  it("targets the quarter that ended, not the one containing the run (#1354)", () => {
+    // The workflow fires 01:20 UTC on the 5th of Jan/Apr/Jul/Oct.
+    expect(closedIndianFyQuarterOf(new Date("2027-04-05T01:20:00Z"))).toEqual({
+      financialYear: "2026-27",
+      quarter: 4,
+    });
+    expect(closedIndianFyQuarterOf(new Date("2027-01-05T01:20:00Z"))).toEqual({
+      financialYear: "2026-27",
+      quarter: 3,
+    });
+    expect(closedIndianFyQuarterOf(new Date("2026-07-05T01:20:00Z"))).toEqual({
+      financialYear: "2026-27",
+      quarter: 1,
+    });
+    expect(closedIndianFyQuarterOf(new Date("2026-10-05T01:20:00Z"))).toEqual({
+      financialYear: "2026-27",
+      quarter: 2,
+    });
+    // Mid-quarter re-run: still the last CLOSED quarter, never the open one.
+    expect(closedIndianFyQuarterOf(new Date("2026-05-20T09:00:00Z"))).toEqual({
+      financialYear: "2025-26",
+      quarter: 4,
+    });
   });
 });
 
