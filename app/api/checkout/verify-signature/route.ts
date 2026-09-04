@@ -215,24 +215,30 @@ export async function POST(req: NextRequest) {
     //
     // Handlers are idempotent and Serializable, so a concurrent webhook either
     // loses the SSI race and retries into a no-op or wins and makes this one.
-    // #1353 3.3 — the audit trail has to distinguish a capture the CLIENT
-    // confirmed from one the WEBHOOK confirmed. Both run the identical
-    // pipeline, so afterwards the Payment row looks the same either way, and
-    // when the two disagree — a confirmation with no matching webhook, or one
-    // that arrived impossibly fast — there was no record of which door the
-    // money came through. Fire-and-forget: an audit insert must not fail a
-    // confirmation.
-    void recordSystemEvent({
-      category: "PAYMENT",
-      message: "client-side payment confirmation",
-      correlationId: razorpay_order_id,
-      context: {
-        paymentId: payment.id,
-        gatewayPaymentId: razorpay_payment_id,
-      },
-    }).catch(() => {});
-
     after(async () => {
+      // #1353 3.3 — the audit trail has to distinguish a capture the CLIENT
+      // confirmed from one the WEBHOOK confirmed. Both run the identical
+      // pipeline, so afterwards the Payment row looks the same either way, and
+      // when the two disagree — a confirmation with no matching webhook, or one
+      // that arrived impossibly fast — there was no record of which door the
+      // money came through.
+      //
+      // Inside `after()` and awaited, not floated next to the response: a
+      // detached promise on Netlify races the freeze that follows the response,
+      // so the very confirmations worth auditing — the slow ones — were the
+      // ones whose row could be dropped. `after()` holds the invocation open,
+      // and the `.catch` keeps this best-effort, so awaiting costs one insert
+      // of post-response latency and can never fail a confirmation.
+      await recordSystemEvent({
+        category: "PAYMENT",
+        message: "client-side payment confirmation",
+        correlationId: razorpay_order_id,
+        context: {
+          paymentId: payment.id,
+          gatewayPaymentId: razorpay_payment_id,
+        },
+      }).catch(() => {});
+
       try {
         await routeCapturedPayment({
           orderId: razorpay_order_id,

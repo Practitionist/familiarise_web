@@ -20,6 +20,18 @@
  * Everything here is idempotent — `createDirectMessageChannel` and
  * `addUserToEventChannel` both upsert — so the live path and the sweep can race
  * each other without consequence.
+ *
+ * The stamp is per APPOINTMENT, and for a `WEBINAR` or `CLASS` — the two types
+ * many buyers share — that is not the same grain as the work. Once the sixth
+ * buyer's capture stamps the row, a seventh buyer whose `addUserToEventChannel`
+ * throws is no longer in the sweep's queue, because that queue selects on the
+ * stamp being NULL. What catches them is `syncUserEventChannels` on their next
+ * dashboard load: unlike the DM case in #1134 P1-15, the `Webinar`/`Class` row
+ * plainly exists, so the sync can derive their membership from it and add them.
+ * So the sweep is the durable re-drive for the first buyer of any appointment
+ * and for every buyer of the 1:1 types, and the dashboard sync is the net for a
+ * later event buyer. Making the sweep cover that case too means moving the
+ * marker to the buyer grain; see the #1391 review thread.
  */
 import prisma from "@/lib/prisma";
 import { addUserToEventChannel } from "@/actions/stream/chat/event-channel.action";

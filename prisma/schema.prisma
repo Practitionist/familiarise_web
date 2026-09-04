@@ -4062,6 +4062,14 @@ model Appointment {
   // organizationId != null`; these composites let it probe instead of scan.
   @@index([subscriptionId, organizationId])
   @@index([classId, organizationId])
+  // #1356 — the chat-leg work queue. The reconcile sweep asks for
+  // `chatChannelEnsuredAt IS NULL AND deletedAt IS NULL AND createdAt >= cutoff`
+  // ordered by createdAt, and nothing above serves that: the leading column is
+  // the stamp, which every other index ignores. Postgres cannot express the
+  // partial index this really wants through Prisma, but leading with the two
+  // equality columns gets the same seek, and the queue shrinks to the rows that
+  // genuinely failed once the stamp is written on the happy path.
+  @@index([chatChannelEnsuredAt, deletedAt, createdAt])
   // #1169 PR 9 — `deletedAt: null` rides nearly every hot filter unindexed.
   @@index([deletedAt])
 }
