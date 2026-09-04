@@ -24,7 +24,7 @@ import {
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { CheckoutTotalRow } from "@/app/checkout/components/FxEstimateNote";
+import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { useSession } from "@/lib/auth-client";
 import {
   ConsultantProfile,
@@ -827,12 +827,26 @@ export default function ConsultationCheckoutPage({
                 </div>
               )}
               <Separator className="bg-border" />
-              <CheckoutTotalRow
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-                formatPrice={formatPrice}
-                isLicenseCovered={isLicenseCovered}
-              />
+              <div className="flex items-center justify-between font-semibold">
+                <div>Total</div>
+                <div>
+                  {isLicenseCovered
+                    ? formatPrice(0)
+                    : formatPrice(pricing.total)}
+                </div>
+              </div>
+              {!isLicenseCovered && (
+                <FxEstimateNote
+                  totalPaise={pricing.total}
+                  organizationId={selectedOrganizationId}
+                />
+              )}
+              {isLicenseCovered && (
+                <p className="text-xs text-emerald-600">
+                  Session value {formatPrice(pricing.total)} — covered by
+                  enterprise license
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
