@@ -51,6 +51,8 @@ Section 12(2)(b) of the IGST Act says that where the recipient's address is not 
 
 `deriveConsumerInvoiceTax` is a pure function that implements this. It never re-derives tax from a rate; the taxable value is the charged total minus the charged tax, so the document agrees with the `GST_PAYABLE` credit to the paise.
 
+The supplier's own state is settled before that derivation runs. `resolveSupplierStateCode` reads the first two digits of `PLATFORM_GSTIN`, which are the state of registration by law, and falls back to `SUPPLIER_STATE_CODE` only when the GSTIN carries none. The same resolved value is handed to the derivation and stored on the row, so the heads on the document can never disagree with the state printed beside them. When the GSTIN and the environment variable name different states the mint fails closed exactly as a missing GSTIN does: no document is issued, a Sentry warning and a `SystemEvent` name both values, and the monthly register healer re-attempts the payment once the configuration is fixed.
+
 | Buyer state            | Result                                                                                                                  | `placeOfSupplySource`                          |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | Same as the supplier's | CGST and SGST, split with CGST floored and SGST absorbing the odd paise                                                 | `DECLARED_AT_CHECKOUT` or `PROFILE_ON_RECORD`  |
@@ -72,7 +74,11 @@ At mint time the resolution order is the declaration on the payment, then the pr
 
 A refund never deletes or rewrites the invoice. `mintConsumerCreditNote` issues a section 34 credit note beside it, and the pair is what reconciles.
 
-The reversal is strictly proportional over the tax-inclusive total, capped at the invoice total so a goodwill top-up cannot credit more tax than was charged, and it keeps the same tax head the invoice used. A credit note may not move a supply from one head to another.
+The reversal is strictly proportional over the tax-inclusive total and it keeps the same tax head the invoice used, because a credit note may not move a supply from one head to another.
+
+The cap is cumulative rather than per-note. `mintConsumerCreditNote` sums the `totalPaise` of every note already issued against the invoice, inside the same transaction, and credits at most the remainder. This matters because a partial refund and a later lost chargeback are two different idempotency keys against one invoice, so neither one's probe short-circuits the other; without the cumulative cap the pair could reverse more than the platform ever charged and understate the period's output tax. When the invoice is already credited in full the note is refused, a `SystemEvent` is recorded so an operator sees it, and the caller receives a null identifier.
+
+The heads are prorated from the invoice's total tax and then split again by the same floor-CGST rule the invoice itself used, rather than each head being prorated on its own. Flooring three heads independently leaves the stored row short of its own total by a paise or two, which the register reports as a reconciliation warning. Prorating once and letting the taxable value absorb the residual makes the identity `taxable + CGST + SGST + IGST == total` hold by construction, and no head on a note can exceed the corresponding head on the invoice.
 
 It is called from two places, mirroring the org-side `mintRefundCreditNote` it sits beside: Step 7.5 of the refund cascade in `lib/payments/operations/refund.ts`, and the lost-chargeback branch of `app/api/webhooks/utils.ts`. Both are idempotent on their own trigger, so a webhook redelivery or a cron retry re-reads the existing note.
 
