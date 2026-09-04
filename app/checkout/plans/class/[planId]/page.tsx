@@ -33,6 +33,7 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
@@ -772,6 +773,7 @@ export default function ClassCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              <FxEstimateNote totalPaise={pricing.total} />
             </div>
           </CardContent>
         </Card>

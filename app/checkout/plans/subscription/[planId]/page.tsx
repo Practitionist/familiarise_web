@@ -21,6 +21,7 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import {
   ConsultantProfile,
   ConsultantReview,
@@ -831,6 +832,7 @@ export default function SubscriptionCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              <FxEstimateNote totalPaise={pricing.total} />
             </div>
           </CardContent>
         </Card>

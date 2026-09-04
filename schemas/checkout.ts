@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { AppointmentsType } from "@prisma/client";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import {
+  SUPPORTED_CURRENCY_CODES,
+  toSupportedCurrency,
+} from "@/lib/currency-codes";
 
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
@@ -84,7 +88,13 @@ export const checkoutSchema = z
     // original response for a duplicate instead of minting a second order.
     clientIdempotencyKey: z.string().min(8).max(128).optional(),
     paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
-    displayCurrency: z.string().length(3).optional(), // Currency shown in the checkout UI
+    // #1396 — this lands in `Payment.displayCurrencyAtCheckout` and it comes
+    // from localStorage. `z.string().length(3)` let any three letters through
+    // and `Intl.NumberFormat` renders an invented code without complaint
+    // ("XYZ 1,234.50"), so junk persisted onto a money row. Allowlisted against
+    // the same codes the navbar offers; the list is shared so the two cannot
+    // drift. This is a DISPLAY currency — settlement stays INR-only (ADR 15).
+    displayCurrency: z.enum(SUPPORTED_CURRENCY_CODES).optional(),
     notes: z.string().optional(),
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with
@@ -319,7 +329,7 @@ export const createCheckoutData = (params: {
     schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,
     schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,
-    displayCurrency: params.displayCurrency?.toUpperCase(),
+    displayCurrency: toSupportedCurrency(params.displayCurrency),
     notes: params.notes,
     useReferralCredits: params.useReferralCredits,
     organizationId: params.organizationId,

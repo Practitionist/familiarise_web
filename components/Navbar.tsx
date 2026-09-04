@@ -44,6 +44,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { useCurrency, SUPPORTED_CURRENCIES } from "@/hooks/useCurrency";
+import { RATE_PROVIDER_NAME, RATE_PROVIDER_URL } from "@/lib/currency-codes";
 import { resolveAuthView, useRememberedAuth } from "@/hooks/useRememberedAuth";
 import { hasDarkHero, isChromeHidden } from "@/lib/navigation/public-chrome";
 import { useAnnouncementBar } from "@/providers/AnnouncementBarProvider";
@@ -533,7 +534,7 @@ const Navbar = () => {
   const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-  const { currency, symbol, setCurrency } = useCurrency();
+  const { currency, symbol, setCurrency, isEstimate } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
 
   // Route lists live in lib/navigation/public-chrome.ts — they were duplicated
@@ -680,6 +681,27 @@ const Navbar = () => {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              {/* #1396 — ExchangeRate-API's Open Access licence requires this
+                  attribution wherever its rates are shown, and the switcher is
+                  where a visitor turns those rates on. Rendered only while the
+                  prices really are converted: `isEstimate` is false for INR and
+                  false during the no-rate degrade, when nothing on the page is
+                  the provider's work. */}
+              {isEstimate && (
+                <a
+                  href={RATE_PROVIDER_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`hidden xl:inline text-[10px] leading-none whitespace-nowrap underline underline-offset-2 ${
+                    showDarkStyle
+                      ? "text-zinc-400 hover:text-zinc-200"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Rates by {RATE_PROVIDER_NAME}
+                </a>
+              )}
 
               {authView.mode === "unknown" ? (
                 <div className="flex items-center gap-3">
@@ -892,6 +914,17 @@ const Navbar = () => {
                       </button>
                     ))}
                   </div>
+                  {/* Same licence term as the desktop switcher above. */}
+                  {isEstimate && (
+                    <a
+                      href={RATE_PROVIDER_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-[10px] text-zinc-500 underline underline-offset-2 hover:text-zinc-300"
+                    >
+                      Rates by {RATE_PROVIDER_NAME}
+                    </a>
+                  )}
                 </div>
               </div>
 

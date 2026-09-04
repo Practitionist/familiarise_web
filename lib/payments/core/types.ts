@@ -103,36 +103,6 @@ export interface DisputeResult {
 }
 
 // ============================================================================
-// Helper Types
-// ============================================================================
-
-/** Supported currency codes for payment gateway amount conversion. */
-type SupportedCurrency =
-  | "USD"
-  | "EUR"
-  | "GBP"
-  | "JPY"
-  | "INR"
-  | "AUD"
-  | "CAD"
-  | "SGD"
-  | "AED"
-  | "NGN";
-
-export const CURRENCY_MULTIPLIERS: Record<SupportedCurrency, number> = {
-  USD: 100, // cents
-  EUR: 100, // cents
-  GBP: 100, // pence
-  JPY: 1, // yen has no smaller unit
-  INR: 100, // paise
-  AUD: 100, // cents
-  CAD: 100, // cents
-  SGD: 100, // cents
-  AED: 100, // fils
-  NGN: 100, // kobo
-};
-
-// ============================================================================
 // Error Types
 // ============================================================================
 

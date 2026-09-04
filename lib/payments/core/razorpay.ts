@@ -10,6 +10,7 @@ import {
   RefundError,
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -161,6 +162,13 @@ export async function createRazorpayOrder({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  // #1396 — first statement in the function, ahead of the client lookup, so a
+  // non-INR currency cannot reach the SDK even on a misconfigured instance.
+  // Only the booking checkout was guarded upstream; the org wallet top-up
+  // minted `{ amount: paise, currency: BillingAccount.currency }`, so a USD
+  // billing account turned a ₹1,000 top-up into a $1,000 order.
+  assertInrSettlement(currency, "create a Razorpay order", "RAZORPAY");
+
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new PaymentError(
