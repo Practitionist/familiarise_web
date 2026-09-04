@@ -40,7 +40,6 @@ export function createHandleApiError(
   };
 }
 
-
 // #828 — one key per logical checkout attempt (stable across double-clicks
 // and network retries within a mount; a fresh mount = a fresh attempt). The
 // server CASes on Payment.clientIdempotencyKey and replays the original
@@ -81,7 +80,10 @@ export async function makeCheckoutRequest(
  * commits or releases within seconds — yet they used to dead-end as terminal
  * error toasts while the buyer watched a hot slot slip away.
  */
-const BUSY_ERROR_TYPES = new Set(["EVENT_CHECKOUT_BUSY", "CONSULTEE_BOOKING_BUSY"]);
+const BUSY_ERROR_TYPES = new Set([
+  "EVENT_CHECKOUT_BUSY",
+  "CONSULTEE_BOOKING_BUSY",
+]);
 
 /** Never wait longer than this server-advised pause (function-ceiling friendly). */
 const MAX_BUSY_WAIT_SECONDS = 20;
@@ -114,11 +116,18 @@ export async function fetchCheckoutWithBusyRetry(
     return response;
   }
   const retryAfter = Number(body?.retryAfter);
-  if (!body?.errorType || !BUSY_ERROR_TYPES.has(body.errorType) || !Number.isFinite(retryAfter)) {
+  if (
+    !body?.errorType ||
+    !BUSY_ERROR_TYPES.has(body.errorType) ||
+    !Number.isFinite(retryAfter)
+  ) {
     return response;
   }
 
-  const waitSeconds = Math.min(Math.max(1, Math.round(retryAfter)), MAX_BUSY_WAIT_SECONDS);
+  const waitSeconds = Math.min(
+    Math.max(1, Math.round(retryAfter)),
+    MAX_BUSY_WAIT_SECONDS,
+  );
   notifyBusy(waitSeconds);
   await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
 
@@ -127,15 +136,15 @@ export async function fetchCheckoutWithBusyRetry(
 }
 
 /** Shared copy for the during-wait notice so all four surfaces sound alike. */
-export function busyRetryToast(
-  waitSeconds: number,
-): { title: string; description: string } {
+export function busyRetryToast(waitSeconds: number): {
+  title: string;
+  description: string;
+} {
   return {
     title: "Almost got it — someone is one step ahead",
     description: `Your card has not been charged. Retrying automatically in ${waitSeconds}s…`,
   };
 }
-
 
 // Common success handling logic for different appointment types
 export function createHandleCheckoutSuccess(
@@ -243,6 +252,19 @@ export async function handleUnifiedCheckout(
   }
 }
 
+// #1437 — WALLET/INVOICE/LICENSE org funding, zero-amount (credits) and mock
+// payments all confirm synchronously server-side with a synthetic id and no
+// gateway order/client secret. Opening Razorpay/Stripe on that id 400s and
+// shows a false "Payment Failed" alert over a booking that already
+// succeeded, so every gateway component must check this before opening.
+export function checkoutNeedsGateway(data: {
+  skipPayment?: boolean;
+  isZeroAmountPayment?: boolean;
+  [key: string]: unknown;
+}): boolean {
+  return !(data.skipPayment || data.isZeroAmountPayment);
+}
+
 // Gateway configuration for UI rendering
 export const paymentGateways = [
   {
@@ -270,7 +292,12 @@ export function createStripeCheckoutHandlers(
       });
       window.location.href = "/checkout/checkout-success";
     },
-    onPaymentError: (error: { message?: string; code?: string; errorType?: string; error?: string }) => {
+    onPaymentError: (error: {
+      message?: string;
+      code?: string;
+      errorType?: string;
+      error?: string;
+    }) => {
       // Booking-conflict errors from /api/checkout (slot taken/relinquished,
       // event expired) carry our own errorType — route them through the precise
       // toast map instead of the gateway card-decline heuristics.

@@ -8,8 +8,10 @@ import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
 import {
   busyRetryToast,
+  checkoutNeedsGateway,
   fetchCheckoutWithBusyRetry,
- mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+  mintClientIdempotencyKey,
+} from "@/app/checkout/plans/utils";
 
 interface RazorpayPaymentResponse {
   razorpay_payment_id: string;
@@ -54,7 +56,10 @@ interface RazorpayOptions {
 }
 
 interface RazorpayInstance {
-  on: (event: string, handler: (response: RazorpayFailedResponse) => void) => void;
+  on: (
+    event: string,
+    handler: (response: RazorpayFailedResponse) => void,
+  ) => void;
   open: () => void;
 }
 
@@ -66,7 +71,9 @@ declare global {
 
 interface RazorpayCheckoutProps {
   checkoutData: CheckoutInput;
-  onPaymentSuccess: (response: RazorpayPaymentResponse | { message: string }) => void;
+  onPaymentSuccess: (
+    response: RazorpayPaymentResponse | { message: string },
+  ) => void;
   onPaymentError: (error: RazorpayPaymentError) => void;
   disabled?: boolean;
   userName?: string;
@@ -159,12 +166,14 @@ export default function RazorpayCheckout({
         return;
       }
 
-      // FIX #520: Zero-amount payments (credits covered full cost) — no gateway needed
-      if (data.isZeroAmountPayment) {
+      // #1437 — WALLET/INVOICE/LICENSE org funding and zero-amount/mock
+      // payments confirm synchronously; the response carries no gateway
+      // order, so open() must never run for them.
+      if (!checkoutNeedsGateway(data)) {
         onPaymentSuccess({
           message:
             data.message ||
-            "Payment completed via referral credits. Appointment booked successfully.",
+            "Your booking is confirmed. Redirecting to your dashboard...",
         });
         return;
       }
@@ -211,7 +220,12 @@ export default function RazorpayCheckout({
             }
           } catch (verifyErr) {
             // Network failure — don't block; webhook is the ultimate authority
-            Sentry.captureException(verifyErr instanceof Error ? verifyErr : new Error(String(verifyErr)), { tags: { subsystem: "payments" } });
+            Sentry.captureException(
+              verifyErr instanceof Error
+                ? verifyErr
+                : new Error(String(verifyErr)),
+              { tags: { subsystem: "payments" } },
+            );
             console.error("Signature verification request failed:", verifyErr);
           }
           onPaymentSuccess(response);
@@ -248,9 +262,15 @@ export default function RazorpayCheckout({
       rzp.open();
       gatewayOpened = true;
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "payments" } },
+      );
       onPaymentError({
-        description: error instanceof Error ? error.message : "An unexpected error occurred",
+        description:
+          error instanceof Error
+            ? error.message
+            : "An unexpected error occurred",
       });
     } finally {
       if (!gatewayOpened) setIsProcessing(false);

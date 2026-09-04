@@ -2763,6 +2763,10 @@ export async function handleCheckout(
         amount: Number(reusableOrder.amount),
         currency: reusableOrder.currency,
         isMockPayment: reusableOrder.isMockPayment,
+        // #1437 — PENDING reuse is always a real gateway hold (mock/zero/
+        // org-sponsored payments never land in PENDING, see the comment
+        // above findReusablePendingOrderPayment), so the page must open it.
+        skipPayment: reusableOrder.isMockPayment,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -3693,11 +3697,20 @@ export async function handleCheckout(
           ? "Payment completed via referral credits. Appointment booked successfully."
           : isMockPayment
             ? "Mock payment completed and appointment created successfully"
-            : "Payment intent created. Complete payment to book appointment.",
+            : isOrgSponsoredPayment
+              ? "Payment completed via organization funding. Appointment booked successfully."
+              : "Payment intent created. Complete payment to book appointment.",
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,
         isZeroAmountPayment,
+        // #1437 — WALLET/INVOICE/LICENSE org funding also confirms
+        // synchronously with a synthetic org_* id and no gateway order;
+        // isMockPayment/isZeroAmountPayment don't cover it, so the client
+        // was opening Razorpay on an id the gateway had never heard of.
+        // Matches checkout-replay.ts's SUCCEEDED-branch field name.
+        skipPayment:
+          isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
