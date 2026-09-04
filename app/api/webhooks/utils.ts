@@ -35,6 +35,7 @@ import {
   mintInvoiceRefundCreditNote,
   mintRefundCreditNote,
 } from "@/lib/payments/operations/refund";
+import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { applyReversal } from "@/lib/payments/operations/reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -967,8 +968,16 @@ export async function handleRefundCreated(
       // error=true which the sweeper skips (it only re-drives error=null) — both
       // are permanent death on Razorpay (no redelivery after a 200). Instead
       // DEFER: on Razorpay the dispatcher skips the mark and the sweeper re-drives
-      // until the payment lands (or the terminal age cap gives up). Stripe retries
-      // natively on a 5xx and doesn't read this return, so keep throwing there.
+      // until the payment lands (or the terminal age cap gives up).
+      //
+      // Stripe keeps throwing, and the asymmetry is deliberate rather than
+      // leftover: sweep-stuck-webhook-events.ts selects
+      // `provider: { in: ["razorpay", "stream"] }`, so a deferred Stripe event
+      // has NO actor — it would sit processed=false/error=null forever after a
+      // 200 told Stripe to stop retrying. The throw returns 5xx, and Stripe's
+      // native retry schedule (~3 days) is the re-drive. Extracting a Stripe
+      // dispatch and adding it to the sweep is the precondition for unifying
+      // these two branches.
       const deferReason = `refund-before-capture: payment not yet recorded for refund ${refundId} (paymentIntent=${paymentIntentId}, providerPaymentId=${providerPaymentId})`;
       if (gateway === "RAZORPAY") {
         return new DeferSignal(deferReason);
@@ -1653,6 +1662,17 @@ export async function handleDisputeUpdated(
         // like a refund would. Idempotent on CreditNote.disputeId; no-op for
         // non-invoiced (B2C card) payments.
         await mintRefundCreditNote(tx, {
+          paymentId: dispute.paymentId,
+          disputeId: dispute.id,
+          amountPaise: dispute.amountPaise,
+          reason: `chargeback lost (dispute ${disputeId})`,
+        });
+
+        // #1365 — the B2C sibling. A personal buyer's tax invoice is reversed
+        // by its own s.34 credit note on the platform series; idempotent on
+        // ConsumerCreditNote.disputeId, and a no-op when no consumer invoice
+        // was ever issued for the payment.
+        await mintConsumerCreditNote(tx, {
           paymentId: dispute.paymentId,
           disputeId: dispute.id,
           amountPaise: dispute.amountPaise,
