@@ -88,11 +88,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
   // the override for local runs (`netlify dev`) and any deploy where URL
   // resolves somewhere other than this app.
-  const baseUrl = (
-    process.env.CRON_TICK_BASE_URL ||
-    process.env.URL ||
-    ""
-  ).replace(/\/+$/, "");
+  // S8786 — a quantified trailing-slash regex risks catastrophic
+  // backtracking; strip one slash at a time instead.
+  let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
+  while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   const started = Date.now();
 
   const settled = await Promise.allSettled(
