@@ -560,15 +560,42 @@ export async function listRazorpayRefunds(
 // Error Handlers
 // ============================================================================
 
-function handleRazorpayError(error: unknown): PaymentError {
-  if (error && typeof error === "object" && "error" in error) {
-    const razorpayError = error as {
-      error: { code?: string; description?: string };
-    };
+/**
+ * #1353 — `"error" in error` also passes for `{ error: undefined }`, and the
+ * envelope really does arrive that way; reading `.code` off it then throws a
+ * TypeError that escapes the handler entirely (E2E 2026-09-04: reconcile-refunds
+ * lost 4 of 8 rows to it instead of classifying them). Returns the body only
+ * when its fields are readable, so callers fall through to their generic error.
+ */
+function readRazorpayErrorBody(
+  error: unknown,
+): { code?: string; description?: string } | null {
+  if (!error || typeof error !== "object" || !("error" in error)) {
+    return null;
+  }
 
-    const code = razorpayError.error.code || "UNKNOWN_ERROR";
-    const description =
-      razorpayError.error.description || "Failed to create order";
+  const body = (error as { error: unknown }).error;
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const { code, description } = body as {
+    code?: unknown;
+    description?: unknown;
+  };
+
+  return {
+    // A non-string code would break the `.includes` branching below.
+    code: typeof code === "string" ? code : undefined,
+    description: typeof description === "string" ? description : undefined,
+  };
+}
+
+function handleRazorpayError(error: unknown): PaymentError {
+  const razorpayError = readRazorpayErrorBody(error);
+  if (razorpayError) {
+    const code = razorpayError.code || "UNKNOWN_ERROR";
+    const description = razorpayError.description || "Failed to create order";
 
     if (code.includes("BAD_REQUEST_ERROR")) {
       return new PaymentError(
@@ -607,14 +634,10 @@ function handleRazorpayRefundError(error: unknown): RefundError {
     return error;
   }
 
-  if (error && typeof error === "object" && "error" in error) {
-    const razorpayError = error as {
-      error: { code?: string; description?: string };
-    };
-
-    const code = razorpayError.error.code || "UNKNOWN_ERROR";
-    const description =
-      razorpayError.error.description || "Failed to process refund";
+  const razorpayError = readRazorpayErrorBody(error);
+  if (razorpayError) {
+    const code = razorpayError.code || "UNKNOWN_ERROR";
+    const description = razorpayError.description || "Failed to process refund";
 
     return new RefundError(description, code, "RAZORPAY", error);
   }

@@ -29,6 +29,7 @@ jest.mock("razorpay", () => {
 });
 
 import { createRazorpayRefund } from "@/lib/payments/core/razorpay";
+import { RefundError } from "@/lib/payments/core/types";
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as unknown as typeof fetch;
@@ -239,6 +240,29 @@ describe("error passthrough", () => {
     ).rejects.toMatchObject({
       code: "BAD_REQUEST_ERROR",
       message: "The amount is more than the refundable amount",
+    });
+  });
+
+  it("classifies an envelope with no error body instead of throwing a TypeError", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: undefined }),
+    });
+
+    // #1353 — the `"error" in error` guard passed on this shape and then read
+    // `.code` off undefined, so reconcile-refunds died on the TypeError instead
+    // of recording a classified failure (E2E 2026-09-04).
+    const thrown = await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+    }).catch((error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(RefundError);
+    expect(thrown).toMatchObject({
+      code: "UNKNOWN_ERROR",
+      message: "Failed to process refund",
     });
   });
 });
