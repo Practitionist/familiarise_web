@@ -1,10 +1,23 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
+
+// #1396 — every checkout page and both gateway components caught an
+// unexpected error the same way; centralising it removed the repeated
+// three-line block flagged as duplication rather than leaving the copies.
+export function reportPaymentsError(error: unknown): void {
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    {
+      tags: { subsystem: "payments" },
+    },
+  );
+}
 
 export function loadScript(src: string): Promise<boolean> {
   return new Promise((resolve, reject) => {

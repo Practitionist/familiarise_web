@@ -90,7 +90,13 @@ export async function createStripeCheckoutSession({
   // statement here. `unit_amount` below is INR paise no matter what this
   // argument says, so lower-casing an unvalidated code into
   // `price_data.currency` would price the order in a foreign subunit.
-  assertInrSettlement(currency, "create a Stripe checkout session", "STRIPE");
+  // #1396 — use the canonical code the guard just normalised, not the raw
+  // (possibly padded/lowercased) input.
+  const settlementCurrency = assertInrSettlement(
+    currency,
+    "create a Stripe checkout session",
+    "STRIPE",
+  );
 
   const stripeClient = getStripeClient();
   if (!stripeClient) {
@@ -116,7 +122,7 @@ export async function createStripeCheckoutSession({
       line_items: [
         {
           price_data: {
-            currency: currency.toLowerCase(),
+            currency: settlementCurrency.toLowerCase(),
             product_data: {
               name: `${metadata.appointmentType} Appointment`,
               description: `Appointment booking for ${metadata.appointmentType}`,
@@ -205,7 +211,10 @@ export async function cancelStripePayment(
       }
     }
     console.error(`Failed to cancel Stripe payment ${paymentIntentId}:`, error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
   }
 }
 
@@ -253,7 +262,10 @@ export async function createStripeRefund({
     };
   } catch (error) {
     console.error("Stripe refund creation failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -283,7 +295,10 @@ export async function getStripeRefund(refundId: string): Promise<RefundResult> {
     };
   } catch (error) {
     console.error("Stripe refund retrieval failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -319,7 +334,10 @@ export async function listStripeRefunds(
     }));
   } catch (error) {
     console.error("Stripe refunds list failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeRefundError(error);
   }
 }
@@ -364,7 +382,10 @@ export async function getStripeDispute(
     } else {
       console.error("Stripe dispute retrieval failed:", error);
     }
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }
@@ -419,7 +440,10 @@ export async function submitStripeDisputeEvidence({
     };
   } catch (error) {
     console.error("Stripe dispute evidence submission failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }
@@ -453,7 +477,10 @@ export async function listStripeDisputes(
     }));
   } catch (error) {
     console.error("Stripe disputes list failed:", error);
-    reportSentryError(error, { subsystem: "payments", tags: { provider: "stripe" } });
+    reportSentryError(error, {
+      subsystem: "payments",
+      tags: { provider: "stripe" },
+    });
     throw handleStripeDisputeError(error);
   }
 }

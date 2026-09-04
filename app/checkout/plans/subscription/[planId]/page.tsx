@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +43,7 @@ import {
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
+  reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
@@ -204,10 +204,7 @@ export default function SubscriptionCheckoutPage({
           );
         }
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -359,10 +356,7 @@ export default function SubscriptionCheckoutPage({
           handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           toast({
@@ -416,10 +410,7 @@ export default function SubscriptionCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error

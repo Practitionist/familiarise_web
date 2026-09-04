@@ -11,6 +11,7 @@ import {
   checkoutNeedsGateway,
   fetchCheckoutWithBusyRetry,
   mintClientIdempotencyKey,
+  reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 
 interface RazorpayPaymentResponse {
@@ -116,20 +117,6 @@ export default function RazorpayCheckout({
     // (dismiss, failure, verified success) may re-enable it.
     let gatewayOpened = false;
     try {
-      const isLoaded = await loadScript(
-        "https://checkout.razorpay.com/v1/checkout.js",
-      );
-
-      if (!isLoaded) {
-        toast({
-          title: "Payment System Not Loading",
-          description:
-            "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
-          variant: "destructive",
-        });
-        return;
-      }
-
       // B5 — a structured BUSY 409 (event mutex held / same account on
       // another device) auto-retries ONCE after the server-advised pause
       // instead of dead-ending; the stable idempotency key keeps the retry
@@ -183,6 +170,23 @@ export default function RazorpayCheckout({
           title: "Payment System Configuration Error",
           description:
             "The Razorpay payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // #1396 — the hold already exists server-side; a CDN failure here is
+      // the same state a buyer produces by closing the modal, so leave it
+      // to the abandoned-payments sweep instead of cancelling client-side.
+      const isLoaded = await loadScript(
+        "https://checkout.razorpay.com/v1/checkout.js",
+      );
+
+      if (!isLoaded) {
+        toast({
+          title: "Payment System Not Loading",
+          description:
+            "The Razorpay payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
           variant: "destructive",
         });
         return;
@@ -262,10 +266,7 @@ export default function RazorpayCheckout({
       rzp.open();
       gatewayOpened = true;
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "payments" } },
-      );
+      reportPaymentsError(error);
       onPaymentError({
         description:
           error instanceof Error

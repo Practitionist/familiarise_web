@@ -4,19 +4,18 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
-import { loadStripe } from "@stripe/stripe-js";
 import { useState } from "react";
 import {
   busyRetryToast,
   checkoutNeedsGateway,
   fetchCheckoutWithBusyRetry,
   mintClientIdempotencyKey,
+  reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 
-// Initialize Stripe with publishable key
+// #1396 — this flow redirects to a Stripe-hosted checkoutUrl, so Stripe.js
+// is never loaded; only the publishable key's presence is checked here.
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
-console.log("Stripe key exists:", !!stripeKey);
-const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 
 interface StripePaymentSuccess {
   message: string;
@@ -63,29 +62,15 @@ export default function StripeCheckout({
     if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
     try {
-      if (!stripePromise) {
-        const errorMsg = !stripeKey
-          ? "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method."
-          : "The Stripe payment system failed to start. Please refresh the page and try again, or contact support if the problem persists.";
+      if (!stripeKey) {
+        const errorMsg =
+          "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.";
         toast({
           title: "Payment System Configuration Error",
           description: errorMsg,
           variant: "destructive",
         });
         onPaymentError({ message: errorMsg });
-        return;
-      }
-
-      const stripe = await stripePromise;
-
-      if (!stripe) {
-        toast({
-          title: "Payment System Not Loading",
-          description:
-            "The Stripe payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
-          variant: "destructive",
-        });
-        onPaymentError({ message: "Stripe failed to load" });
         return;
       }
 
@@ -186,10 +171,7 @@ export default function StripeCheckout({
         });
       }
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "payments" } },
-      );
+      reportPaymentsError(error);
       onPaymentError({
         message:
           error instanceof Error ? error.message : "An unknown error occurred",

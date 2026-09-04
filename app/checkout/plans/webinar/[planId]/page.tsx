@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +27,7 @@ import {
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
+  reportPaymentsError,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
@@ -195,10 +195,7 @@ export default function WebinarCheckoutPage({
           );
         }
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -302,10 +299,7 @@ export default function WebinarCheckoutPage({
           isMockPayment,
         );
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           // Provide more informative error messages based on the error type
@@ -443,10 +437,7 @@ export default function WebinarCheckoutPage({
         );
         _setReviews(reviewsData);
       } catch (error) {
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          { tags: { subsystem: "payments" } },
-        );
+        reportPaymentsError(error);
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error

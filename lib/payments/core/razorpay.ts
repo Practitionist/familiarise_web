@@ -167,7 +167,13 @@ export async function createRazorpayOrder({
   // Only the booking checkout was guarded upstream; the org wallet top-up
   // minted `{ amount: paise, currency: BillingAccount.currency }`, so a USD
   // billing account turned a ₹1,000 top-up into a $1,000 order.
-  assertInrSettlement(currency, "create a Razorpay order", "RAZORPAY");
+  // #1396 — use the canonical code the guard just normalised, not the raw
+  // (possibly padded/lowercased) input, so the SDK always sees "INR".
+  const settlementCurrency = assertInrSettlement(
+    currency,
+    "create a Razorpay order",
+    "RAZORPAY",
+  );
 
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
@@ -194,7 +200,7 @@ export async function createRazorpayOrder({
         withRazorpaySdkTimeout("orders.create", () =>
           razorpayClient.orders.create({
             amount: amount, // already in smallest currency unit (paise)
-            currency,
+            currency: settlementCurrency,
             notes: metadata,
             // PM-11 — Date.now() collides for two orders in the same ms; the uuid
             // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.

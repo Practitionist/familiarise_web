@@ -48,12 +48,15 @@ export function toCurrencyEnum(raw: string | null | undefined): Currency {
  * `toCurrencyEnum` normalises first, so a code we cannot even represent fails
  * the same way as a representable-but-unsettleable one: both are non-INR
  * settlement attempts and both must stop at this boundary.
+ *
+ * Returns the canonical `Currency.INR` so callers forward the normalised
+ * code to the gateway instead of the raw (possibly padded/lowercased) input.
  */
 export function assertInrSettlement(
   currency: string,
   operation: string,
   gateway?: PaymentGateway,
-): void {
+): Currency {
   let normalized: Currency | null = null;
   try {
     normalized = toCurrencyEnum(currency);
@@ -70,6 +73,7 @@ export function assertInrSettlement(
       gateway,
     );
   }
+  return normalized;
 }
 
 /**

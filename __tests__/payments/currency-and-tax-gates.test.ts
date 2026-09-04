@@ -133,10 +133,12 @@ describe("settlement is INR at the gateway boundary (#1396)", () => {
     ).not.toThrow();
   });
 
-  it("normalises before deciding, so lower case and padding still pass", () => {
-    expect(() =>
-      assertInrSettlement(" inr ", "create a test order"),
-    ).not.toThrow();
+  it("normalises before deciding, so lower case and padding still pass, and hands back the canonical code", () => {
+    let result: string | undefined;
+    expect(() => {
+      result = assertInrSettlement(" inr ", "create a test order");
+    }).not.toThrow();
+    expect(result).toBe("INR");
   });
 
   it.each(["USD", "EUR", "GBP", "AED"])(
