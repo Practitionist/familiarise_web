@@ -427,18 +427,14 @@ ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
 -- could settle on either split. The route is Serializable + retried now; this
 -- index is the structural guarantee behind it. Three of the four scope columns
 -- are nullable and Postgres treats NULL key columns as distinct, which is
--- exactly the case that must NOT be exempt, so the key is built on COALESCE
--- expressions instead of the bare columns ("planType" is an enum, hence the
--- ::text cast).
+-- exactly the case that must NOT be exempt, so NULL key columns
+-- are treated as equal via NULLS NOT DISTINCT (Postgres 15+); an enum-to-text
+-- COALESCE expression is not IMMUTABLE and Postgres refuses it in an index.
 DROP INDEX IF EXISTS "rate_card_one_open_window";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "rate_card_one_open_window"
-  ON "RateCard" (
-    (COALESCE("ownerOrgId", '')),
-    (COALESCE("ownerContractId", '')),
-    (COALESCE("planType"::text, '')),
-    (COALESCE("planId", ''))
-  )
+  ON "RateCard" ("ownerOrgId", "ownerContractId", "planType", "planId")
+  NULLS NOT DISTINCT
   WHERE "effectiveTo" IS NULL;
 
 -- SPLIT
