@@ -66,7 +66,7 @@ Each `Payment` carries zero or more `PaymentLeg` rows (append-only; `prisma/sche
 
 Legs are **append-only** — a refund never mutates the original leg; it upserts a negative `*_REVERSAL` sibling (`lib/payments/operations/refund.ts:778`). The `@@unique([paymentId, source])` constraint means one reversal leg per source; subsequent partial refunds decrement the existing reversal leg via `update: { amountPaise: { decrement: reverse } }`.
 
-Invariant: `sum(non-reversal legs.amountPaise) == Payment.amount` when legs are present (LICENSE legs contribute 0).
+Invariant: `sum(non-reversal, non-REFERRAL_CREDIT legs.amountPaise) == Payment.amount` when legs are present (LICENSE legs contribute 0). The referral credit sits outside the sum because `Payment.amount` is the post-credit gateway charge, so the credit has already been deducted from it and counting the leg as well would demand it twice (#1347). See [payment legs §3](../enterprise/10-money-and-ledger/09-payment-legs.md#3-invariants).
 
 ---
 

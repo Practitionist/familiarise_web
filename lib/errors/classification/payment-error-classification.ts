@@ -26,6 +26,15 @@ export const ErrorTypes = {
   REFUND_BLOCKED: "REFUND_BLOCKED_ERROR",
   LOCK_CONTENTION: "LOCK_CONTENTION_ERROR",
   UNSUPPORTED_CONFIG: "UNSUPPORTED_CONFIG_ERROR",
+  GATEWAY_UNAVAILABLE: "GATEWAY_UNAVAILABLE_ERROR",
+  // #1426 — CONSENT_REQUIRED/CONSENT_WITHDRAWN flow through classifyByErrorCode
+  // below, so their value only has to be unique. WALLET_FROZEN never reaches
+  // classifyByErrorCode (app/api/checkout/route.ts intercepts WalletFrozenError
+  // by instanceof and hardcodes `errorType: "WALLET_FROZEN"` in the response
+  // JSON), so this value must equal that literal or the toast map misses it.
+  WALLET_FROZEN: "WALLET_FROZEN",
+  CONSENT_REQUIRED: "CONSENT_REQUIRED_ERROR",
+  CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -156,6 +165,83 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
 ] as const;
 
 // ============================================================================
+// Typed error codes
+// ============================================================================
+
+/**
+ * Errors that carry a machine-readable `code` are classified on that code
+ * rather than on their prose, so rewording a message can never re-route it.
+ *
+ * #1351 — a rail this deployment fences off, and a gateway that exists in the
+ * enum with nothing behind it, are both the caller asking for a payment method
+ * we do not offer. That is a rejection the buyer can act on by choosing another
+ * method, not the 500 the message-only classifier fell through to.
+ */
+export const BUSINESS_ERROR_CODES: ReadonlyArray<{
+  code: string;
+  errorType: ErrorType;
+  httpStatus: number;
+}> = [
+  {
+    code: "GATEWAY_DISABLED",
+    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
+    httpStatus: 422,
+  },
+  {
+    code: "UNSUPPORTED_GATEWAY",
+    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
+    httpStatus: 422,
+  },
+  // #1426 — the wallet-freeze and consent guards throw with these codes
+  // (lib/payments/operations/checkout.ts:881, :1556, :2538) but had no
+  // BUSINESS_ERROR_CODES row, so classifyError's message-only fallback
+  // mislabelled them 500 instead of the buyer-actionable rejection they are.
+  {
+    code: "WALLET_FROZEN",
+    errorType: ErrorTypes.WALLET_FROZEN,
+    httpStatus: 409,
+  },
+  {
+    code: "CONSENT_REQUIRED",
+    errorType: ErrorTypes.CONSENT_REQUIRED,
+    httpStatus: 403,
+  },
+  {
+    code: "CONSENT_WITHDRAWN",
+    errorType: ErrorTypes.CONSENT_WITHDRAWN,
+    httpStatus: 403,
+  },
+] as const;
+
+/**
+ * Read a string `code` off an error without importing the class that set it —
+ * the toast map re-exports this module into client bundles, so it must stay
+ * free of server-side payment imports.
+ */
+function readErrorCode(error: Error): string | undefined {
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * Resolve an error's machine-readable `code` to a classification, or
+ * `undefined` when the code is absent or not one we recognise. Kept out of
+ * `classifyError` so that function stays under the cognitive-complexity bar.
+ */
+function classifyByErrorCode(error: Error): ClassifiedError | undefined {
+  const code = readErrorCode(error);
+  if (!code) return undefined;
+  const typed = BUSINESS_ERROR_CODES.find((entry) => entry.code === code);
+  if (!typed) return undefined;
+  return {
+    errorMessage: error.message,
+    errorType: typed.errorType,
+    isBusinessError: true,
+    httpStatus: typed.httpStatus,
+  };
+}
+
+// ============================================================================
 // Classifier
 // ============================================================================
 
@@ -191,7 +277,11 @@ export function classifyError(
 
   const msg = error.message;
 
-  // 1. Check infrastructure patterns first (these override user message)
+  // 1. Typed errors win over every message pattern below.
+  const typed = classifyByErrorCode(error);
+  if (typed) return typed;
+
+  // 2. Check infrastructure patterns (these override user message)
   for (const { patterns, errorType, userMessage } of INFRA_ERROR_PATTERNS) {
     if (patterns.some((p) => msg.includes(p))) {
       return {
@@ -203,7 +293,7 @@ export function classifyError(
     }
   }
 
-  // 2. Check business-logic patterns (pass through original message)
+  // 3. Check business-logic patterns (pass through original message)
   const lowerMsg = msg.toLowerCase();
   for (const { pattern, errorType } of BUSINESS_ERROR_PATTERNS) {
     if (lowerMsg.includes(pattern)) {
@@ -221,7 +311,7 @@ export function classifyError(
     }
   }
 
-  // 3. Unrecognised — treat as unexpected
+  // 4. Unrecognised — treat as unexpected
   return {
     errorMessage: msg,
     errorType: ErrorTypes.UNKNOWN,

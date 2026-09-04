@@ -278,17 +278,28 @@ export function checkoutNeedsGateway(data: {
   return !(data.skipPayment || data.isZeroAmountPayment);
 }
 
-// Gateway configuration for UI rendering
+// Gateway configuration for UI rendering. The four checkout pages each carried
+// their own copy of this array with `isActive: true` hardcoded on both entries,
+// so the fence had to be applied in four places to hold. One list now.
+//
+// #1351 — Stripe is a contingency rail kept in the tree in case RBI rules
+// change, not a live payment method: without NEXT_PUBLIC_STRIPE_ENABLED=true
+// the card renders the disabled "Coming Soon" button and no StripeCheckout
+// mounts. The server-side fence (STRIPE_ENABLED, assertGatewayUsable) is the
+// one that actually protects money; this only keeps the UI honest, because a
+// NEXT_PUBLIC_ value is inlined into the client bundle and a buyer can edit it.
 export const paymentGateways = [
   {
     name: "Stripe",
     description: "Card payments (international)",
     gateway: "STRIPE" as const,
+    isActive: process.env.NEXT_PUBLIC_STRIPE_ENABLED === "true",
   },
   {
     name: "Razorpay",
     description: "UPI, cards & bank transfer",
     gateway: "RAZORPAY" as const,
+    isActive: true,
   },
 ];
 

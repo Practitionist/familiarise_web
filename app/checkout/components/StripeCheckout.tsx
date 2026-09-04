@@ -13,8 +13,13 @@ import {
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 
-// #1396 — this flow redirects to a Stripe-hosted checkoutUrl, so Stripe.js
-// is never loaded; only the publishable key's presence is checked here.
+// #1396 — this flow redirects to a Stripe-hosted checkoutUrl, so Stripe.js is
+// never loaded and the publishable key's presence is the only thing worth
+// checking here. This subsumes #1351's lazy `loadStripe` behind the fence: not
+// importing the SDK at all is strictly stronger than importing it late, and
+// the rail stays fenced where it matters — the gateway list hides the card
+// without NEXT_PUBLIC_STRIPE_ENABLED, and `assertGatewayUsable` refuses the
+// route server-side.
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
 
 interface StripePaymentSuccess {

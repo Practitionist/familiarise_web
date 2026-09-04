@@ -3,12 +3,16 @@
  *
  * Automatically selects the optimal payment gateway based on buyer country.
  * Strategy: Razorpay for everything, domestic and international alike. Stripe
- * is a fallback used only when the client explicitly asks for it.
+ * is a fenced contingency rail: an explicit request is honoured only when
+ * STRIPE_ENABLED=true, and auto-routing never selects it (#1351).
  *
  * Every route below mints an ordinary INR order. An overseas buyer pays that
  * INR order with an overseas card, and their issuer converts; the platform
  * never denominates anything in a foreign currency, which is why
  * `assertInrSettlement` can be an unconditional assertion at order creation.
+ * The "IBT for international" wording this replaces (#1386) described a
+ * bank-transfer product, not a checkout rail — #1396 established that no
+ * separate international route exists.
  *
  * Cost comparison:
  * - Razorpay domestic: 2% + GST (~2.36%)
@@ -45,7 +49,8 @@ export interface GatewayRoutingResult {
  * 1. India buyers → Razorpay domestic (cheapest, UPI support)
  * 2. International buyers → Razorpay, still on an INR order, paid by an
  *    overseas card at Razorpay's international card pricing (~3% + GST)
- * 3. Client explicitly requests STRIPE → honor it (for testing/edge cases)
+ * 3. Client explicitly requests STRIPE → honour it only when the fence is
+ *    open (STRIPE_ENABLED=true); assertGatewayUsable throws otherwise
  * 4. Fallback: Razorpay
  */
 export function routeGateway(params: {
@@ -54,16 +59,20 @@ export function routeGateway(params: {
 }): GatewayRoutingResult {
   const { buyerCountry, requestedGateway } = params;
 
-  // `SupportedCheckoutGateway` already excludes the post-MVP stubs, so this is
-  // unreachable through a type-checked caller. It exists because the value
-  // originates in a JSON request body: if the Zod enum in schemas/checkout.ts
-  // is ever widened to the full Prisma enum "for convenience", the type stops
-  // protecting us and a stub reaches order creation. Failing here is cheap.
+  // `SupportedCheckoutGateway` already excludes the post-MVP stubs, so the stub
+  // half of this is unreachable through a type-checked caller. It exists
+  // because the value originates in a JSON request body: if the Zod enum in
+  // schemas/checkout.ts is ever widened to the full Prisma enum "for
+  // convenience", the type stops protecting us and a stub reaches order
+  // creation. The Stripe half is reachable today — STRIPE is a valid checkout
+  // gateway in the schema — and is what fences the contingency rail.
   if (requestedGateway) {
     assertGatewayUsable(requestedGateway, "route a checkout");
   }
 
-  // Honor explicit STRIPE request (for testing or when Razorpay is unavailable)
+  // Honour an explicit STRIPE request. Only reachable when STRIPE_ENABLED=true;
+  // the guard above has already thrown otherwise (#1351). Auto-routing below
+  // never picks Stripe, so this branch is the sole way to reach it.
   if (requestedGateway === "STRIPE") {
     return {
       gateway: "STRIPE",

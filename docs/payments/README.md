@@ -16,6 +16,7 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 | 04  | [Abandoned Solutions](./04-abandoned-solutions.md)       | Previous approaches and why they were abandoned                                            |
 | 05  | [B2C/B2B Funding Seam](./05-b2c-b2b-funding-seam.md)     | Where the consumer and organisation funding paths meet and diverge                         |
 | 06  | [High-Level Design](./06-high-level-design.md)           | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers |
+| 07  | [B2C Tax Invoices](./07-b2c-tax-invoice.md)              | Consumer tax invoices, credit notes, and the outward-supplies register                     |
 
 ## Subsections
 

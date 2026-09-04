@@ -209,6 +209,18 @@ const nextConfig = {
     ],
   },
 
+  // #1365 — the consumer invoice and credit-note PDFs register a Devanagari
+  // face from `public/fonts/`. The tracer follows imports, and a font read at
+  // render time through `path.join(process.cwd(), …)` is invisible to it, so
+  // the file would be absent from the deployed function and every Hindi or
+  // Marathi buyer name would render as boxes. Name the routes explicitly.
+  outputFileTracingIncludes: {
+    "/api/payments/[paymentId]/invoice/pdf": ["./public/fonts/**"],
+    "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
+      "./public/fonts/**",
+    ],
+  },
+
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg
   serverExternalPackages: [

@@ -27,6 +27,7 @@ import {
   createRazorpayCheckoutHandlers,
   createStripeCheckoutHandlers,
   handleUnifiedCheckout,
+  paymentGateways,
   reportPaymentsError,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
@@ -34,6 +35,10 @@ import { useCurrency } from "@/hooks/useCurrency";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import {
+  BillingStateSelect,
+  useBillingState,
+} from "@/app/checkout/components/BillingStateSelect";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
@@ -112,6 +117,9 @@ export default function ClassCheckoutPage({
   const [isApplyingDiscount, setIsApplyingDiscount] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [useReferralCredits, setUseReferralCredits] = useState(false);
+  // #1365 — GST place of supply. Blank is the statutory s.12(2)(b) default, so
+  // this never blocks checkout.
+  const billingState = useBillingState(checkoutTaxContext.billingStateCode);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
@@ -262,6 +270,7 @@ export default function ClassCheckoutPage({
             ? false
             : useReferralCredits,
           organizationId: selectedOrganizationId ?? undefined,
+          ...billingState.bodyField,
         });
 
         await handleUnifiedCheckout(
@@ -322,6 +331,7 @@ export default function ClassCheckoutPage({
       appliedDiscount,
       useReferralCredits,
       selectedOrganizationId,
+      billingState.bodyField,
       validatedSearchParams,
       currency,
       availableClassId,
@@ -597,6 +607,11 @@ export default function ClassCheckoutPage({
           }}
         />
         <Separator className="bg-border" />
+        <BillingStateSelect
+          value={billingState.value}
+          onChange={billingState.onChange}
+        />
+        <Separator className="bg-border" />
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
@@ -778,20 +793,7 @@ export default function ClassCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          {[
-            {
-              name: "Stripe",
-              description: "Card payments (international)",
-              gateway: "STRIPE" as const,
-              isActive: true,
-            },
-            {
-              name: "Razorpay",
-              description: "UPI, cards & bank transfer",
-              gateway: "RAZORPAY" as const,
-              isActive: true,
-            },
-          ].map((gateway) => (
+          {paymentGateways.map((gateway) => (
             <Card key={gateway.name} className="border-border">
               <CardHeader>
                 <CardTitle className="text-foreground">
@@ -826,6 +828,7 @@ export default function ClassCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            ...billingState.bodyField,
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
@@ -844,6 +847,7 @@ export default function ClassCheckoutPage({
                               ? false
                               : useReferralCredits,
                             organizationId: selectedOrganizationId ?? undefined,
+                            ...billingState.bodyField,
                           })}
                           onPaymentSuccess={stripeHandlers.onPaymentSuccess}
                           onPaymentError={stripeHandlers.onPaymentError}

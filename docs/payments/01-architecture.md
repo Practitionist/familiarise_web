@@ -19,7 +19,17 @@
 
 ## Overview
 
-The payment system uses **Razorpay** as the sole active payment gateway, with Stripe retained as a secondary rail for Connect transfers. `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it; `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the list, and `assertGatewayUsable` refuses one at runtime. The gateway comparison that led here is recorded in [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md). It handles four appointment types:
+The payment system uses **Razorpay** as the sole active payment gateway. Stripe is implemented but fenced off, and `DODO_PAYMENTS` exists in the `PaymentGateway` enum as a post-MVP placeholder with no implementation behind it. `POST_MVP_GATEWAY_STUBS` in `lib/payments/constants.ts` is the placeholder list, and `assertGatewayUsable` in `lib/payments/validation/gateway-guards.ts` refuses both a placeholder and a fenced-off gateway at runtime. The gateway comparison that led here is recorded in [gateways/gateway-evaluation-mar-2026.md](./gateways/gateway-evaluation-mar-2026.md).
+
+| Gateway           | Status                  | How it is gated                                                                                                                                                                                                                                                                                                             |
+| ----------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Razorpay**      | Live, primary           | No flag. `routeGateway` selects it for every buyer country, domestic directly and international over IBT.                                                                                                                                                                                                                   |
+| **Stripe**        | Implemented, fenced off | `STRIPE_ENABLED=true` on the server and `NEXT_PUBLIC_STRIPE_ENABLED=true` in the checkout UI. Auto-routing never selects it; only an explicit request reaches it, and `assertGatewayUsable` throws a `DisabledGatewayError` when the flag is unset. Refunds of existing Stripe payments are deliberately outside the fence. |
+| **Dodo Payments** | Schema placeholder      | Listed in `POST_MVP_GATEWAY_STUBS`. Any use throws `UnsupportedGatewayError`.                                                                                                                                                                                                                                               |
+
+Stripe is retained as a contingency rail in case RBI rules make Razorpay unusable for a class of collections, and for Connect transfers if international payouts are ever turned on. It is not a live payment method, so no customer should ever see the Stripe button.
+
+The system handles four appointment types:
 
 | Type             | Description          | Slot Handling                      |
 | ---------------- | -------------------- | ---------------------------------- |

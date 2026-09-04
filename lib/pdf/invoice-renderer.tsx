@@ -29,7 +29,25 @@ import {
   StyleSheet,
   renderToBuffer,
 } from "@react-pdf/renderer";
-import type { OrgInvoiceStatus, Currency, IrpStatus } from "@prisma/client";
+import type {
+  OrgInvoiceStatus,
+  Currency,
+  IrpStatus,
+  PlaceOfSupplySource,
+} from "@prisma/client";
+import {
+  StatutoryDocumentFrame,
+  statutoryStyles,
+  formatStatutoryDate,
+  taxTotalLines,
+  type StatutorySupplier,
+  type StatutoryBuyer,
+} from "./statutory-document-frame";
+
+// The Devanagari face used by the consumer documents is registered once in
+// ./statutory-document-frame. Re-exported here because that is where callers
+// have always imported it from.
+export { BODY_FONT } from "./statutory-document-frame";
 
 // ============================================================================
 // Shared formatting helpers
@@ -412,5 +430,99 @@ export async function renderOrgInvoicePdf(
   data: OrgInvoicePdfData,
 ): Promise<Buffer> {
   const buffer = await renderToBuffer(<OrgInvoiceDocument data={data} />);
+  return Buffer.from(buffer);
+}
+
+// ============================================================================
+// Consumer (B2C ConsumerInvoice) — types, styles, document (#1365)
+// ============================================================================
+
+export type ConsumerInvoicePdfData = {
+  invoiceNumber: string;
+  issuedAt: Date;
+  supplyDate: Date;
+  currency: Currency;
+  sacCode: string;
+  taxRateBps: number;
+  taxableValuePaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  totalPaise: number;
+  placeOfSupply: string | null;
+  placeOfSupplySource: PlaceOfSupplySource;
+  /** What was supplied. Falls back to a generic consulting-services line when
+   *  the booking is gone. */
+  description?: string | null;
+  supplier: StatutorySupplier;
+  buyer: StatutoryBuyer;
+};
+
+/** Rule 46 requires the place of supply on the face of the invoice, and an
+ *  officer reading a defaulted one deserves to know it was defaulted. */
+const SECTION_12_2_B_FOOTNOTE =
+  "Place of supply determined under s.12(2)(b) IGST Act (no address of the recipient on record).";
+
+export function ConsumerInvoiceDocument({
+  data,
+}: {
+  readonly data: ConsumerInvoicePdfData;
+}) {
+  return (
+    <Document>
+      <Page size="A4" style={statutoryStyles.page}>
+        <StatutoryDocumentFrame
+          title="TAX INVOICE"
+          documentNumber={data.invoiceNumber}
+          currency={data.currency}
+          supplier={data.supplier}
+          buyer={data.buyer}
+          buyerHeading="Bill to"
+          details={[
+            {
+              label: "Invoice date",
+              value: formatStatutoryDate(data.issuedAt),
+            },
+            {
+              label: "Date of supply",
+              value: formatStatutoryDate(data.supplyDate),
+            },
+            { label: "Place of supply", value: data.placeOfSupply ?? "—" },
+            { label: "Reverse charge", value: "No" },
+          ]}
+          itemsHeading="Supply"
+          codeHeading="SAC"
+          items={[
+            {
+              description:
+                data.description ??
+                "Consulting services booked on the platform",
+              code: data.sacCode,
+              amountPaise: data.taxableValuePaise,
+            },
+          ]}
+          totals={[
+            { label: "Taxable value", paise: data.taxableValuePaise },
+            ...taxTotalLines(data),
+          ]}
+          grandTotalLabel="Total"
+          grandTotalPaise={data.totalPaise}
+          footnote={
+            data.placeOfSupplySource === "SUPPLIER_DEFAULT_12_2_B"
+              ? SECTION_12_2_B_FOOTNOTE
+              : null
+          }
+          footer={`System-generated tax invoice — does not require a signature per Notification No. 61/2020-Central Tax. ${data.supplier.name} · GSTIN ${data.supplier.gstin}`}
+        />
+      </Page>
+    </Document>
+  );
+}
+
+/** Render a ConsumerInvoice to a Buffer. */
+export async function renderConsumerInvoicePdf(
+  data: ConsumerInvoicePdfData,
+): Promise<Buffer> {
+  const buffer = await renderToBuffer(<ConsumerInvoiceDocument data={data} />);
   return Buffer.from(buffer);
 }
