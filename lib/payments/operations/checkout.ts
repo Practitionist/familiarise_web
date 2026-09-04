@@ -70,7 +70,7 @@ import {
 } from "@/lib/payments/pricing/derive-checkout-amount";
 import {
   createEarningsFromPayment,
-  type AppointmentType,
+  resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
 import { walletDebit } from "@/lib/api/organizations/wallet";
 import {
@@ -93,6 +93,7 @@ import {
   notifyOverageDueAfterCommit,
   type PendingOverageNotification,
 } from "@/lib/payments/billing/overage-settlement";
+import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -146,6 +147,23 @@ type SubscriptionCheckoutResult = {
 // ============================================================================
 
 /**
+ * #1437 — Razorpay caps an order's `notes` at 15 keys and 256 characters per
+ * value, and this object is that payload (Stripe's own limits are far looser,
+ * so the tighter gateway sets the shape for both).
+ *
+ * Two consequences are handled here. The buyer's booking note is truncated
+ * rather than forwarded verbatim: `checkoutSchema` already rejects anything
+ * longer, and the full text is persisted on the Payment and Appointment rows,
+ * so this copy exists only for the gateway dashboard and losing its tail costs
+ * nothing — whereas exceeding the limit costs the buyer the whole purchase.
+ * And `discountCode` was dropped: the org-sponsored event case emitted exactly
+ * 15 keys, leaving no headroom for the next one, and the discount is already
+ * reflected in the order amount and recorded on the Payment row, while nothing
+ * in the webhook path ever reads it back out of the gateway.
+ */
+const GATEWAY_NOTE_MAX_CHARS = 256;
+
+/**
  * Build payment metadata for both payment intents and webhook handlers
  * Ensures consistency between payment creation and mock payment flows.
  *
@@ -155,7 +173,7 @@ type SubscriptionCheckoutResult = {
  * and gives invoice-fraud reconcilers a server-side proof that the
  * booker's claimed org matches the gateway's record.
  */
-function buildPaymentMetadata(
+export function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
   orgContext?: {
@@ -174,8 +192,7 @@ function buildPaymentMetadata(
     slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId || "",
     schedulingPeriodStartsAt: data.schedulingPeriodStartsAt || "",
     schedulingPeriodEndsAt: data.schedulingPeriodEndsAt || "",
-    discountCode: data.discountCode || "",
-    notes: data.notes || "",
+    notes: (data.notes || "").slice(0, GATEWAY_NOTE_MAX_CHARS),
     ...(data.eventId && { eventId: data.eventId }),
     ...(orgContext?.organizationId && {
       organizationId: orgContext.organizationId,
@@ -828,6 +845,9 @@ export async function calculateAmountAndValidate(
       currency,
       discountCodeId,
       consulteeProfileId: user.consulteeProfile.id,
+      // #1365 — the buyer's remembered GST state, resolved in the same lookup
+      // that resolves the consultee so the invoice mint needs no extra read.
+      consulteeBillingStateCode: user.consulteeProfile.billingStateCode,
       creditsApplied,
       buyerCountry,
       isInternational,
@@ -2670,6 +2690,7 @@ export async function handleCheckout(
       currency,
       discountCodeId,
       consulteeProfileId,
+      consulteeBillingStateCode,
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
@@ -2859,6 +2880,10 @@ export async function handleCheckout(
         amount: Number(reusableOrder.amount),
         currency: reusableOrder.currency,
         isMockPayment: reusableOrder.isMockPayment,
+        // #1437 — PENDING reuse is always a real gateway hold (mock/zero/
+        // org-sponsored payments never land in PENDING, see the comment
+        // above findReusablePendingOrderPayment), so the page must open it.
+        skipPayment: reusableOrder.isMockPayment,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -3134,11 +3159,32 @@ export async function handleCheckout(
                 isInternational,
                 displayCurrencyAtCheckout,
                 exchangeRateAtCheckout,
+                // #1365 — GST place of supply for the tax invoice: what the
+                // buyer declared here, else what their profile already holds,
+                // else null (the s.12(2)(b) supplier-state default).
+                consumerStateCode:
+                  validatedData.consumerStateCode ??
+                  consulteeBillingStateCode ??
+                  null,
                 // Enterprise (Arch 4): org tag for reporting / billing.
                 organizationId,
                 billingAccountId,
               },
             });
+
+            // #1365 — remember a newly declared billing state on the profile so
+            // a repeat buyer is never asked for it twice. Same transaction as
+            // the Payment: the declaration and the supply it applies to are one
+            // fact. updateMany, so a missing profile is a no-op, not a throw.
+            if (
+              validatedData.consumerStateCode &&
+              validatedData.consumerStateCode !== consulteeBillingStateCode
+            ) {
+              await tx.consulteeProfile.updateMany({
+                where: { userId },
+                data: { billingStateCode: validatedData.consumerStateCode },
+              });
+            }
 
             // #1319 A9 — stamp the funding Payment on the participant rows and,
             // when no gateway leg follows (mock / zero-amount / org-sponsored),
@@ -3382,9 +3428,10 @@ export async function handleCheckout(
             // payment-intent id in `sourceRef` so refund / reconciliation
             // jobs can join back to the gateway txn without scanning the
             // Payment table. `amount` is the post-credit gateway charge,
-            // mirroring the field-level comment on `Payment.amount`. The
-            // REFERRAL_CREDIT leg (if any) is written by
-            // `applyCreditsToPayment` further down in this same TX.
+            // mirroring the field-level comment on `Payment.amount`, so this
+            // one leg alone carries the funding identity: the REFERRAL_CREDIT
+            // leg `applyCreditsToPayment` writes further down in this same TX
+            // is excluded from the sum rather than added to it (#1347).
             if (!isOrgSponsoredPayment && amount > 0) {
               await tx.paymentLeg.create({
                 data: {
@@ -3465,7 +3512,9 @@ export async function handleCheckout(
             }
 
             // Invariant sweep: every Payment should have legs that sum to
-            // `Payment.amount` (`docs/enterprise/10-money-and-ledger/09-payment-legs.md`). We
+            // `Payment.amount`, excluding REFERRAL_CREDIT, which is already
+            // netted out of it (#1347) —
+            // `docs/enterprise/10-money-and-ledger/09-payment-legs.md`. We
             // log-only here rather than throw because the hot checkout
             // path is the worst place to discover a leg-accounting drift
             // — a surprise 500 blocks real bookings. A mismatch signals
@@ -3575,103 +3624,20 @@ export async function handleCheckout(
 
         // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
         try {
-          const paymentWithAppointment = await prisma.payment.findUnique({
-            where: { paymentIntent: paymentResponse!.id },
-            include: {
-              appointment: {
-                include: {
-                  consultation: {
-                    include: {
-                      consultationPlan: {
-                        include: { consultantProfile: true },
-                      },
-                    },
-                  },
-                  subscription: {
-                    include: {
-                      subscriptionPlan: {
-                        include: { consultantProfile: true },
-                      },
-                    },
-                  },
-                  webinar: {
-                    select: {
-                      id: true,
-                      webinarPlanId: true,
-                      webinarPlan: {
-                        include: { consultantProfile: true },
-                      },
-                    },
-                  },
-                  class: {
-                    select: {
-                      id: true,
-                      classPlanId: true,
-                      classPlan: {
-                        include: { consultantProfile: true },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          });
+          const resolved = await resolvePaymentForEarnings(
+            { paymentIntent: paymentResponse!.id },
+            validatedData.appointmentType,
+          );
 
-          if (paymentWithAppointment?.appointment) {
-            const consultantProfile =
-              paymentWithAppointment.appointment.consultation?.consultationPlan
-                ?.consultantProfile ||
-              paymentWithAppointment.appointment.subscription?.subscriptionPlan
-                ?.consultantProfile ||
-              paymentWithAppointment.appointment.webinar?.webinarPlan
-                ?.consultantProfile ||
-              paymentWithAppointment.appointment.class?.classPlan
-                ?.consultantProfile;
+          if (resolved) {
+            await createEarningsFromPayment({
+              payment: resolved.paymentForEarnings,
+              appointmentType: resolved.earningsAppointmentType,
+            });
 
-            if (consultantProfile) {
-              const appointmentTypeMap: Record<string, AppointmentType> = {
-                CONSULTATION: "CONSULTATION",
-                SUBSCRIPTION: "SUBSCRIPTION",
-                WEBINAR: "WEBINAR",
-                CLASS: "CLASS",
-              };
-
-              const earningsAppointmentType =
-                appointmentTypeMap[validatedData.appointmentType] ||
-                "CONSULTATION";
-
-              const paymentForEarnings = {
-                ...paymentWithAppointment,
-                appointment: {
-                  ...paymentWithAppointment.appointment,
-                  consultantProfile: { id: consultantProfile.id },
-                  webinar: paymentWithAppointment.appointment.webinar
-                    ? {
-                        webinarPlanId:
-                          paymentWithAppointment.appointment.webinar
-                            .webinarPlanId,
-                      }
-                    : null,
-                  class: paymentWithAppointment.appointment.class
-                    ? {
-                        classPlanId:
-                          paymentWithAppointment.appointment.class.classPlanId,
-                      }
-                    : null,
-                },
-              };
-
-              await createEarningsFromPayment({
-                payment: paymentForEarnings as Parameters<
-                  typeof createEarningsFromPayment
-                >[0]["payment"],
-                appointmentType: earningsAppointmentType,
-              });
-
-              console.log(
-                `💰 Mock payment earnings created for consultant ${consultantProfile.id}`,
-              );
-            }
+            console.log(
+              `💰 Mock payment earnings created for consultant ${resolved.consultantProfileId}`,
+            );
           }
         } catch (earningsError) {
           // C-01 #837 — payment + booking are committed but earnings + the
@@ -3699,6 +3665,13 @@ export async function handleCheckout(
           );
         }
 
+        // #1365 — these payments never see a capture webhook, so the tax
+        // invoice has to be minted here too. Org-sponsored payments no-op
+        // inside the minter by design; they are invoiced on the org series.
+        await mintConsumerInvoiceBestEffort({
+          paymentIntent: paymentResponse!.id,
+        });
+
         // FIX #437: Consultant qualifying action (receiving first paid booking)
         try {
           await processConsultantBookingReferral(
@@ -3724,11 +3697,20 @@ export async function handleCheckout(
           ? "Payment completed via referral credits. Appointment booked successfully."
           : isMockPayment
             ? "Mock payment completed and appointment created successfully"
-            : "Payment intent created. Complete payment to book appointment.",
+            : isOrgSponsoredPayment
+              ? "Payment completed via organization funding. Appointment booked successfully."
+              : "Payment intent created. Complete payment to book appointment.",
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,
         isZeroAmountPayment,
+        // #1437 — WALLET/INVOICE/LICENSE org funding also confirms
+        // synchronously with a synthetic org_* id and no gateway order;
+        // isMockPayment/isZeroAmountPayment don't cover it, so the client
+        // was opening Razorpay on an id the gateway had never heard of.
+        // Matches checkout-replay.ts's SUCCEEDED-branch field name.
+        skipPayment:
+          isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);
