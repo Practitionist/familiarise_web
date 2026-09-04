@@ -35,6 +35,22 @@ export function pdfStoragePathFor(
   return `${organizationId}/${invoiceId}.pdf`;
 }
 
+/**
+ * Storage path for a consumer (B2C) invoice or credit-note PDF — #1365.
+ *
+ * Deliberately the SAME private bucket as the org documents, under a
+ * `consumer/` prefix keyed by buyer. A second bucket would need its own
+ * creation, its own policies and its own retention runbook to hold objects
+ * with identical sensitivity and an identical access rule (signed URL, minted
+ * only after the route has authorised the caller).
+ */
+export function consumerPdfStoragePathFor(
+  userId: string,
+  docId: string,
+): string {
+  return `consumer/${userId}/${docId}.pdf`;
+}
+
 export async function uploadInvoicePdf(args: {
   storagePath: string;
   buffer: Buffer;

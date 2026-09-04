@@ -63,6 +63,12 @@ interface PaymentItem {
   refundedPaise: number;
   /** Server-derived: REFUNDED | PARTIALLY_REFUNDED | PaymentStatus. */
   displayStatus: string;
+  /** #1365 — the statutory tax invoice, when one was issued for this payment. */
+  consumerInvoice: {
+    id: string;
+    invoiceNumber: string;
+    issuedAt: string;
+  } | null;
   receiptUrl: string | null;
   expiresAt: string | null;
   createdAt: string;
@@ -201,6 +207,32 @@ function getExpiryInfo(payment: PaymentItem): {
     relative: formatRelativeTime(expiresAt),
     isExpired: expiresAt <= new Date(),
   };
+}
+
+/**
+ * #1365 — the buyer's own tax invoice for a payment. Defined at module scope
+ * rather than inside the tab so it is not re-created on every render (S6478).
+ * An empty cell means the booking was org-sponsored and is invoiced to the
+ * organization instead, which is the correct answer rather than a missing
+ * document.
+ */
+function renderInvoiceCell(payment: PaymentItem) {
+  if (!payment.consumerInvoice) {
+    return <span className="text-muted-foreground/70">&mdash;</span>;
+  }
+  return (
+    <a
+      href={`/api/payments/${payment.id}/invoice/pdf`}
+      className="whitespace-nowrap text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
+    >
+      {/* Explicit separator: JSX strips the newline between a text node and
+          the element after it, so the words would otherwise run together. */}
+      Download{" "}
+      <span className="text-xs text-muted-foreground">
+        {payment.consumerInvoice.invoiceNumber}
+      </span>
+    </a>
+  );
 }
 
 export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
@@ -389,6 +421,11 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           </ul>
         );
       },
+    },
+    {
+      key: "invoice",
+      header: "Tax invoice",
+      cell: renderInvoiceCell,
     },
     {
       key: "expires",

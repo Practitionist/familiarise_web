@@ -419,6 +419,26 @@ ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
   CHECK (pg_column_size("payload") <= 65536);
 
 -- SPLIT
+-- #1365 — B2C tax invoices are documents, not postings, so nothing else asserts
+-- their arithmetic. A negative head on a statutory document is unfilable.
+ALTER TABLE "ConsumerInvoice" DROP CONSTRAINT IF EXISTS "consumer_invoice_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsumerInvoice" ADD CONSTRAINT "consumer_invoice_amounts_nonnegative"
+  CHECK ("taxableValuePaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0 AND "igstPaise" >= 0 AND "totalPaise" >= 0);
+-- SPLIT
+-- A supply is either intra-state (CGST+SGST) or inter-state (IGST); an invoice
+-- carrying both heads names two mutually exclusive places of supply at once.
+ALTER TABLE "ConsumerInvoice" DROP CONSTRAINT IF EXISTS "consumer_invoice_tax_head_xor";
+-- SPLIT
+ALTER TABLE "ConsumerInvoice" ADD CONSTRAINT "consumer_invoice_tax_head_xor"
+  CHECK ("igstPaise" = 0 OR ("cgstPaise" = 0 AND "sgstPaise" = 0));
+-- SPLIT
+ALTER TABLE "ConsumerCreditNote" DROP CONSTRAINT IF EXISTS "consumer_credit_note_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsumerCreditNote" ADD CONSTRAINT "consumer_credit_note_amounts_nonnegative"
+  CHECK ("taxableValuePaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0 AND "igstPaise" >= 0 AND "totalPaise" >= 0);
+
+-- SPLIT
 -- ============================================================================
 -- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
 -- Each of these can fail against pre-reset data (existing nulls, historical
