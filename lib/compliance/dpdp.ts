@@ -84,7 +84,7 @@
  */
 
 import { createHash } from "node:crypto";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import type { PurposeCode } from "./purpose-codes";
 
 /**
@@ -183,15 +183,24 @@ export function buildConsentArtifact(
  *   - If the most recent artifact is past its retention window → false
  *     (operator must refresh the consent before re-enabling processing).
  *   - Otherwise → true.
+ *
+ * `db` defaults to the global client but MUST be the transaction client when
+ * the caller is already inside an interactive `$transaction`. Netlify runs
+ * `PG_POOL_MAX=1`, so a read issued on the global client while a transaction
+ * holds the pool's only connection waits for a second connection that can
+ * never arrive and dies at the 3 s pg connect timeout (#1421).
  */
-export async function checkConsent(params: {
-  userId: string;
-  purposeCode: PurposeCode;
-}): Promise<boolean> {
+export async function checkConsent(
+  params: {
+    userId: string;
+    purposeCode: PurposeCode;
+  },
+  db: Tx | typeof prisma = prisma,
+): Promise<boolean> {
   const { userId, purposeCode } = params;
   const now = new Date();
 
-  const artifact = await prisma.consentArtifact.findFirst({
+  const artifact = await db.consentArtifact.findFirst({
     where: {
       userId,
       purposeCodes: { has: purposeCode },
@@ -277,7 +286,8 @@ export async function withdrawConsent(params: {
   // when. The checkout path (validateSlotAvailability) independently
   // checks this consent fail-closed at booking time.
   if (purposeCode === "SESSION_BOOKING" && count > 0) {
-    const { recordSystemEvent } = await import("@/lib/enterprise/system-events");
+    const { recordSystemEvent } =
+      await import("@/lib/enterprise/system-events");
     void recordSystemEvent({
       organizationId: null,
       category: "CONSENT",
