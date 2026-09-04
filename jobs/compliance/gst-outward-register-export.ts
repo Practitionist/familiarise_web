@@ -278,105 +278,144 @@ async function collectRows(
   return rows;
 }
 
-async function main() {
-  runJob("gst-outward-register-export", async () => {
-    await abortIfMaintenance("gst-outward-register-export");
-    // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
-    // allocates numbers from a gapless statutory series, and two concurrent
-    // runs would both probe a payment as un-invoiced, both take a number, and
-    // one would lose the unique — leaving a permanent gap in the series. Not
-    // producing the register is recoverable; a gap is not.
-    await withCronLock(
-      "gst-outward-register-export",
-      { failMode: "closed" },
-      async () => {
-        const { periodStart, periodEnd } = resolvePeriod();
+export interface GstOutwardRegisterExportResult {
+  success: boolean;
+  period: string;
+  csvPath: string | null;
+  mintedByHealer: number;
+  skippedByHealer: number;
+  documentCount: number;
+  warnings: number;
+}
 
-        const healed = await ensureConsumerInvoicesForPeriod(
-          periodStart,
-          periodEnd,
+/**
+ * The whole export, callable from either entry point (#1370).
+ *
+ * The GitHub Actions wrapper below and the CRON_SECRET HTTP twin at
+ * `app/api/cleanup/gst-outward-register-export` share this one body, so the
+ * healer, the stamp transaction and — critically — the fail-closed lock cannot
+ * drift between them.
+ *
+ * @param opts.writeCsv The Actions run writes the file for the artifact upload.
+ *   The HTTP twin has nowhere to put it (a serverless filesystem is read-only
+ *   and nothing would collect it), so it healstamps and reports without writing.
+ */
+export async function runGstOutwardRegisterExport(
+  opts: { writeCsv?: boolean } = {},
+): Promise<GstOutwardRegisterExportResult> {
+  const writeCsv = opts.writeCsv ?? true;
+  // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
+  // allocates numbers from a gapless statutory series, and two concurrent
+  // runs would both probe a payment as un-invoiced, both take a number, and
+  // one would lose the unique — leaving a permanent gap in the series. Not
+  // producing the register is recoverable; a gap is not.
+  return await withCronLock(
+    "gst-outward-register-export",
+    { failMode: "closed" },
+    async () => {
+      const { periodStart, periodEnd } = resolvePeriod();
+
+      const healed = await ensureConsumerInvoicesForPeriod(
+        periodStart,
+        periodEnd,
+      );
+      if (healed.minted > 0) {
+        console.warn(
+          `[gst-register] WARN minted ${healed.minted} consumer invoice(s) that checkout did not — ` +
+            `investigate the mint path if this count stays non-zero.`,
         );
-        if (healed.minted > 0) {
-          console.warn(
-            `[gst-register] WARN minted ${healed.minted} consumer invoice(s) that checkout did not — ` +
-              `investigate the mint path if this count stays non-zero.`,
-          );
-          Sentry.logger.warn("job:gst-register-healed-invoices", {
-            minted: healed.minted,
-          });
-        }
+        Sentry.logger.warn("job:gst-register-healed-invoices", {
+          minted: healed.minted,
+        });
+      }
 
-        const rows = await collectRows(periodStart, periodEnd);
-        const register = buildOutwardRegister(rows, periodStart, periodEnd);
+      const rows = await collectRows(periodStart, periodEnd);
+      const register = buildOutwardRegister(rows, periodStart, periodEnd);
 
-        const outPath =
+      let outPath: string | null = null;
+      if (writeCsv) {
+        outPath =
           process.env.GST_REGISTER_CSV_OUT ?? "gst-outward-register.csv";
         fs.writeFileSync(
           outPath,
           buildOutwardRegisterCsv(register.rows),
           "utf8",
         );
+      }
 
-        for (const warning of register.warnings) {
-          console.warn(`[gst-register] WARN ${warning}`);
-        }
-        if (register.warnings.length > 0) {
-          Sentry.logger.warn("job:gst-register-warnings", {
-            period: register.periodLabel,
-            count: register.warnings.length,
-          });
-        }
+      for (const warning of register.warnings) {
+        console.warn(`[gst-register] WARN ${warning}`);
+      }
+      if (register.warnings.length > 0) {
+        Sentry.logger.warn("job:gst-register-warnings", {
+          period: register.periodLabel,
+          count: register.warnings.length,
+        });
+      }
 
-        // Stamp what was reported, in one transaction, guarded on the stamp being
-        // null — so a second run in the same month reports the same documents
-        // again without moving anyone's first-reported timestamp.
-        const stampedAt = new Date();
-        const periodWindow = { gte: periodStart, lt: periodEnd };
-        await prisma.$transaction([
-          prisma.consumerInvoice.updateMany({
-            where: { issuedAt: periodWindow, gstr1ExportedAt: null },
-            data: { gstr1ExportedAt: stampedAt },
-          }),
-          prisma.organizationInvoice.updateMany({
-            where: {
-              issuedAt: periodWindow,
-              status: { notIn: [...UNISSUED_ORG_INVOICE_STATUSES] },
-              gstr1ExportedAt: null,
-            },
-            data: { gstr1ExportedAt: stampedAt },
-          }),
-          prisma.consumerCreditNote.updateMany({
-            where: { issuedAt: periodWindow, gstr1ExportedAt: null },
-            data: { gstr1ExportedAt: stampedAt },
-          }),
-          prisma.creditNote.updateMany({
-            where: {
-              status: "ISSUED",
-              issuedAt: periodWindow,
-              gstr1ExportedAt: null,
-            },
-            data: { gstr1ExportedAt: stampedAt },
-          }),
-        ]);
+      // Stamp what was reported, in one transaction, guarded on the stamp being
+      // null — so a second run in the same month reports the same documents
+      // again without moving anyone's first-reported timestamp.
+      const stampedAt = new Date();
+      const periodWindow = { gte: periodStart, lt: periodEnd };
+      await prisma.$transaction([
+        prisma.consumerInvoice.updateMany({
+          where: { issuedAt: periodWindow, gstr1ExportedAt: null },
+          data: { gstr1ExportedAt: stampedAt },
+        }),
+        prisma.organizationInvoice.updateMany({
+          where: {
+            issuedAt: periodWindow,
+            status: { notIn: [...UNISSUED_ORG_INVOICE_STATUSES] },
+            gstr1ExportedAt: null,
+          },
+          data: { gstr1ExportedAt: stampedAt },
+        }),
+        prisma.consumerCreditNote.updateMany({
+          where: { issuedAt: periodWindow, gstr1ExportedAt: null },
+          data: { gstr1ExportedAt: stampedAt },
+        }),
+        prisma.creditNote.updateMany({
+          where: {
+            status: "ISSUED",
+            issuedAt: periodWindow,
+            gstr1ExportedAt: null,
+          },
+          data: { gstr1ExportedAt: stampedAt },
+        }),
+      ]);
 
-        // One summary line, no PII: counts and totals only.
-        console.log(
-          JSON.stringify({
-            event: "gst_outward_register_exported",
-            period: register.periodLabel,
-            csvPath: outPath,
-            mintedByHealer: healed.minted,
-            skippedByHealer: healed.skipped,
-            ...register.totals,
-            warnings: register.warnings.length,
-          }),
-        );
-      },
-    );
-  });
+      // One summary line, no PII: counts and totals only.
+      console.log(
+        JSON.stringify({
+          event: "gst_outward_register_exported",
+          period: register.periodLabel,
+          csvPath: outPath,
+          mintedByHealer: healed.minted,
+          skippedByHealer: healed.skipped,
+          ...register.totals,
+          warnings: register.warnings.length,
+        }),
+      );
+
+      return {
+        success: true,
+        period: register.periodLabel,
+        csvPath: outPath,
+        mintedByHealer: healed.minted,
+        skippedByHealer: healed.skipped,
+        documentCount: register.totals.documentCount,
+        warnings: register.warnings.length,
+      };
+    },
+  );
 }
 
-main().catch((err) => {
-  console.error("[gst-register] fatal:", err);
-  process.exit(1);
-});
+// Direct execution is the GitHub Actions entry point; the HTTP twin imports the
+// core above, so this must never run on import.
+if (require.main === module) {
+  runJob("gst-outward-register-export", async () => {
+    await abortIfMaintenance("gst-outward-register-export");
+    await runGstOutwardRegisterExport();
+  });
+}

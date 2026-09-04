@@ -50,6 +50,7 @@ export async function GET(
               issuedAt: true,
               currency: true,
               sacCode: true,
+              taxRateBps: true,
               placeOfSupply: true,
               supplierName: true,
               supplierGstin: true,
@@ -83,6 +84,10 @@ export async function GET(
         originalInvoiceDate: invoice.issuedAt,
         placeOfSupply: invoice.placeOfSupply,
         sacCode: invoice.sacCode,
+        // The rate comes off the ORIGINAL invoice, never a current constant: a
+        // note issued after a rate change still reverses the rate that was
+        // charged.
+        taxRateBps: invoice.taxRateBps,
         supplier: {
           name: invoice.supplierName,
           gstin: invoice.supplierGstin,

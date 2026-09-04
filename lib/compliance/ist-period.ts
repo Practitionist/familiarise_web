@@ -44,5 +44,12 @@ export function parseIsoDateOverride(raw: string, envName: string): Date {
   if (Number.isNaN(parsed.getTime())) {
     throw new TypeError(`${envName} is not a real date; got "${raw}"`);
   }
+  // The NaN check alone is not enough: the ISO parser ROLLS OVER a day that is
+  // out of range for its month, so "2026-02-30" silently becomes 2026-03-02 and
+  // the operator exports a period they never asked for. Round-tripping the
+  // parsed instant back to YYYY-MM-DD is the cheapest way to catch that.
+  if (parsed.toISOString().slice(0, 10) !== raw) {
+    throw new TypeError(`${envName} is not a real calendar date; got "${raw}"`);
+  }
   return parsed;
 }

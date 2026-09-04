@@ -174,6 +174,8 @@ The three that remain are deliberate.
 
 The same sweep closed the other half of the hole. The forty-odd HTTP twins under `app/api/cleanup/` import these job cores directly and had no guard at all, so an ops trigger ran the job straight through an OFFLINE window. They cannot call `abortIfMaintenance()`, whose `process.exit(0)` would take the Next instance down with the request, so they call `assertNotInMaintenance()` instead: the same phase rule, surfaced as a `MaintenanceActiveError` the handler answers with 503.
 
+The GST outward-supplies register export joined that cohort in #1370. Its twin lives at `app/api/cleanup/gst-outward-register-export` and imports `runGstOutwardRegisterExport` from the job module, which is where the fail-closed `gst-outward-register-export` lock is taken, so an HTTP call that overlaps the scheduled run answers 409 instead of racing the gapless invoice series. The one thing the twin does differently is that it does not write the CSV: a serverless filesystem is read-only and nothing would collect the file, so the HTTP path heals the missing invoices, stamps `gstr1ExportedAt` and reports the counts, while the Actions run remains the way a CA actually obtains the file.
+
 ## Locking
 
 `withCronLock` (`lib/cron/with-cron-lock.ts`) provides distributed mutual exclusion keyed `cron:lock:<jobName>`, with a fifteen-minute TTL by default and thirty-five minutes for the payout and reconcile family. It exists because the same job can be entered three ways — the schedule, a manual `workflow_dispatch`, and an authenticated HTTP call — and jobs whose side effects are only partially idempotent must not run twice concurrently.

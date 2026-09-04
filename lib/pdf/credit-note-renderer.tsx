@@ -63,10 +63,11 @@ export type CreditNotePdfData = {
 };
 
 function formatMoney(paise: number, currency: Currency): string {
-  return new Intl.NumberFormat(
-    currency === "INR" ? "en-IN" : "en-US",
-    { style: "currency", currency, minimumFractionDigits: 2 },
-  ).format(paise / 100);
+  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+  }).format(paise / 100);
 }
 
 function fmt(d: Date | null | undefined): string {
@@ -87,7 +88,11 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 15, fontWeight: "bold" },
   subtitle: { fontSize: 9, color: "#555", marginTop: 3 },
-  kv: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 },
+  kv: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 3,
+  },
   k: { color: "#666" },
   v: { fontWeight: "bold" },
   sectionTitle: {
@@ -107,7 +112,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", padding: 6, borderBottom: "0.5 solid #eee" },
   colDesc: { flex: 2 },
   colNum: { flex: 1, textAlign: "right" },
-  totalsRow: { flexDirection: "row", justifyContent: "flex-end", marginTop: 10 },
+  totalsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 10,
+  },
   totalsBox: { width: 220 },
   totalLine: {
     flexDirection: "row",
@@ -139,7 +148,11 @@ function Kv({
   );
 }
 
-export function OrgCreditNoteDocument({ data }: { readonly data: CreditNotePdfData }) {
+export function OrgCreditNoteDocument({
+  data,
+}: {
+  readonly data: CreditNotePdfData;
+}) {
   // CR #1234 — a CN spanning multiple rates would render an aggregate ratio
   // ("11.5%") as if it were a statutory rate. Label it honestly as an
   // EFFECTIVE rate; per-line statutory breakdowns land with the CN data model.
@@ -284,6 +297,10 @@ export type ConsumerCreditNotePdfData = {
   originalInvoiceDate: Date;
   placeOfSupply: string | null;
   sacCode: string;
+  /** The ORIGINAL invoice's rate. Rule 46 read with s.34 requires the note to
+   *  state the rate of the tax it reverses, and a credit note may never move a
+   *  supply to a different rate. */
+  taxRateBps: number;
   supplier: StatutorySupplier;
   buyer: StatutoryBuyer;
 };

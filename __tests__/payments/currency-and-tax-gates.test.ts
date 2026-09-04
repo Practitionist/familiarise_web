@@ -167,4 +167,21 @@ describe("B2C place of supply (s.12(2)(b))", () => {
       tax.taxableValuePaise + tax.cgstPaise + tax.sgstPaise + tax.igstPaise,
     ).toBe(tax.totalPaise);
   });
+
+  it("gives the odd paise of an uneven tax to SGST", () => {
+    // Every other fixture here charges an even tax, so the floor-CGST rule is
+    // indistinguishable from a plain halving. This pins the residual: the two
+    // heads must still sum to the tax the buyer was actually charged, because
+    // that figure is what settlement credited to GST_PAYABLE.
+    const tax = deriveConsumerInvoiceTax({
+      totalPaise: 118_001,
+      taxAmountPaise: 18_001,
+      buyerStateCode: "29",
+      supplierStateCode: "KA",
+      buyerCountry: "IN",
+    });
+    expect(tax.cgstPaise).toBe(9_000);
+    expect(tax.sgstPaise).toBe(9_001);
+    expect(tax.cgstPaise + tax.sgstPaise).toBe(18_001);
+  });
 });

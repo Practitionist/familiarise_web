@@ -1,6 +1,18 @@
 import { z } from "zod";
 import { AppointmentsType } from "@prisma/client";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { GST_STATE_OPTIONS } from "@/lib/compliance/state-codes";
+
+/**
+ * The 2-digit GST state codes that actually exist, derived from the same map
+ * the checkout picker renders. `.length(2)` alone let "00" or "99" through, and
+ * `numericStateCode` passes any two digits straight to `placeOfSupply` — so an
+ * invalid code reached a statutory document as a real-looking state and the
+ * register filed it under a state that does not exist, without even a warning.
+ */
+const GST_STATE_CODES: ReadonlySet<string> = new Set(
+  GST_STATE_OPTIONS.map((option) => option.code),
+);
 
 // Base schemas for individual components
 export const appointmentTypeSchema = z.enum([
@@ -89,7 +101,13 @@ export const checkoutSchema = z
     // Optional by design: Sec 12(2)(b) IGST Act places a B2C supply at the
     // supplier's own location when no address is on record, so a blank field
     // is the statutory default rather than a missing answer.
-    consumerStateCode: z.string().length(2).optional(),
+    consumerStateCode: z
+      .string()
+      .length(2)
+      .refine((code) => GST_STATE_CODES.has(code), {
+        message: "Not a valid GST state code",
+      })
+      .optional(),
     notes: z.string().optional(),
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with

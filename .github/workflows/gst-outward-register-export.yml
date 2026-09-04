@@ -18,6 +18,11 @@ on:
         required: false
         type: string
 
+# The job reads the repository and nothing else; the credentials it needs are
+# the database, Redis and GST ones below, not the Actions token.
+permissions:
+  contents: read
+
 jobs:
   gst-outward-register-export:
     runs-on: ubuntu-latest
@@ -43,6 +48,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # The Actions token is never used after checkout, and leaving it in
+          # .git/config lets any later step — or an uploaded artifact — carry it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5

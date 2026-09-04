@@ -2373,6 +2373,10 @@ model ConsumerInvoice {
   @@index([userId, issuedAt])
   @@index([fiscalYear, issuedAt])
   @@index([gstr1ExportedAt])
+  /// The monthly register scans on `issuedAt` alone; the composite indexes
+  /// above both lead with a column that query does not constrain, so without
+  /// this it sequentially scans every consumer invoice ever issued.
+  @@index([issuedAt])
 }
 
 /// #1365 — CGST s.34 credit note against a ConsumerInvoice, minted when a B2C
@@ -2411,6 +2415,8 @@ model ConsumerCreditNote {
   @@index([consumerInvoiceId])
   @@index([fiscalYear, issuedAt])
   @@index([gstr1ExportedAt])
+  /// Same period scan as ConsumerInvoice, same reason.
+  @@index([issuedAt])
 }
 
 /// Platform-wide (not per-org) gapless invoice sequence, same atomic
