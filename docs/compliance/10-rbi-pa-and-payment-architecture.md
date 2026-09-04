@@ -42,7 +42,7 @@ Consumer → Razorpay PG (PA license) → Practitionist operating account (we ar
 
 - We are NOT using Razorpay Route — `razorpayContactId` + `razorpayFundAccountId` are RazorpayX Bulk Payouts identifiers, NOT Route sub-merchant IDs.
 - We are NOT using a nodal account — funds land in the platform's operating account.
-- We make a separate, licensed payout via RazorpayX (which has its own RBI authorisation as a Full-fledged Money Changers / Authorised Payment System Operator).
+- We make a separate, licensed payout via RazorpayX. Razorpay holds RBI payment-aggregator authorisation — final online PA authorisation was reported in December 2023, cross-border PA authorisation followed in December 2025, and the offline PA-P licence followed in January 2026 — and RazorpayX payouts are executed from the platform's own current account through Razorpay's partner banks, not from PA escrow.
 
 ## Why Path C is likely permitted
 
@@ -124,6 +124,7 @@ The chartered accountant engagement this section calls for now has a concrete qu
 1. Confirm Path C (Razorpay PG as the merchant of record, RazorpayX payouts as a separately licensed rail) is permitted for a consulting marketplace under the RBI PA Directions 2025, as this document's §B already asks.
 2. Answer the five questions in [ADR 26](./../enterprise/70-design-decisions/26-gst-principal-model.md#questions-for-the-chartered-accountant): whether Principal-for-GST paired with 194-O-operator-for-income-tax holds together, how a platform-funded referral credit should be treated for taxable value, the correct SAC code, whether the Section 12(2)(b) supplier-state default is acceptable, and whether Section 52 TCS registration is required at all under this model.
 3. Weigh in on #1388, the specific code-path question about referral credits being applied after tax at checkout (`deriveCheckoutAmount`), which nothing in the code changes until it is answered.
+4. Confirm which authorisation RazorpayX payouts operate under and whether any additional registration is needed for platform-initiated payouts to consultants.
 
 ## Required
 

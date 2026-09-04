@@ -78,14 +78,14 @@ Commission invoices to consultants should use SAC 9962 for marketplace commissio
 
 ### Section 194-O (TDS by E-Commerce Operator)
 
-| Parameter                       | Value                                                            |
-| ------------------------------- | ---------------------------------------------------------------- |
-| TDS Rate (from Oct 1, 2024)     | **0.1%** (reduced from 1%)                                       |
-| Threshold (Individual/HUF)      | Rs 5 lakh gross sales/year (if PAN/Aadhaar furnished)            |
-| Threshold (Companies/Firms/LLP) | **No threshold** — TDS from first rupee                          |
-| No PAN/Aadhaar rate             | **5%** (per Section 206AA)                                       |
-| Calculated on                   | Gross amount (including GST, shipping charges)                   |
-| Filing                          | Quarterly in **Form 26Q** (residents) or **27Q** (non-residents) |
+| Parameter                       | Value                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| TDS Rate (from Oct 1, 2024)     | **0.1%** (reduced from 1%)                                                                        |
+| Threshold (Individual/HUF)      | Rs 5 lakh gross sales/year (if PAN/Aadhaar furnished)                                             |
+| Threshold (Companies/Firms/LLP) | **No threshold** — TDS from first rupee                                                           |
+| No PAN/Aadhaar rate             | **5%** (per Section 206AA)                                                                        |
+| Calculated on                   | Gross amount (including GST, shipping charges)                                                    |
+| Filing                          | Quarterly in **Form 140** (formerly 26Q, residents) or **Form 144** (formerly 27Q, non-residents) |
 
 ### Section 194J (Professional Services TDS)
 
@@ -98,14 +98,14 @@ Commission invoices to consultants should use SAC 9962 for marketplace commissio
 
 ### TDS Filing Calendar
 
-| Due Date                                    | Action                | Form        |
-| ------------------------------------------- | --------------------- | ----------- |
-| 7th of each month                           | TDS deposit           | Challan 281 |
-| July 31                                     | Q1 return (Apr–Jun)   | 26Q         |
-| October 31                                  | Q2 return (Jul–Sep)   | 26Q         |
-| January 31                                  | Q3 return (Oct–Dec)   | 26Q         |
-| May 31                                      | Q4 return (Jan–Mar)   | 26Q         |
-| Within 15 days of quarterly filing due date | Issue TDS certificate | Form 16A    |
+| Due Date                                    | Action                | Form                    |
+| ------------------------------------------- | --------------------- | ----------------------- |
+| 7th of each month                           | TDS deposit           | Challan 281             |
+| July 31                                     | Q1 return (Apr–Jun)   | Form 140                |
+| October 31                                  | Q2 return (Jul–Sep)   | Form 140                |
+| January 31                                  | Q3 return (Oct–Dec)   | Form 140                |
+| May 31                                      | Q4 return (Jan–Mar)   | Form 140                |
+| Within 15 days of quarterly filing due date | Issue TDS certificate | Form 131 (formerly 16A) |
 
 Late filing penalty: Rs 200/day (capped at total TDS amount).
 
@@ -188,14 +188,14 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 
 ### From Day 1
 
-| Obligation                                       | Rate | Filing                      |
-| ------------------------------------------------ | ---- | --------------------------- |
-| GST Registration (as ECO, no turnover threshold) | N/A  | Must register before launch |
-| TCS collection on net taxable supplies           | 0.5% | GSTR-8 by 10th monthly      |
-| TDS u/s 194-O on gross e-commerce payments       | 0.1% | Form 26Q quarterly          |
-| TDS u/s 194J on consultant payouts > Rs 50K/yr   | 10%  | Form 26Q quarterly          |
-| GST on platform commission                       | 18%  | GSTR-1/GSTR-3B monthly      |
-| Export zero-rating (international buyers)        | 0%   | Verify buyer location       |
+| Obligation                                                                                                                                                                                                                                                                                               | Rate | Filing                                          |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------------------------------------------- |
+| GST Registration (as ECO, no turnover threshold)                                                                                                                                                                                                                                                         | N/A  | Must register before launch                     |
+| TCS collection on net taxable supplies — **CA-gated, not applicable today.** The platform bills as principal under ADR 26, so Section 52 TCS does not apply and no TCS is collected; this row is a facilitator-model reference that only becomes live if a chartered accountant overturns that decision. | 0.5% | GSTR-8 by 10th monthly (facilitator model only) |
+| TDS u/s 194-O on gross e-commerce payments                                                                                                                                                                                                                                                               | 0.1% | Form 140 quarterly                              |
+| TDS u/s 194J on consultant payouts > Rs 50K/yr                                                                                                                                                                                                                                                           | 10%  | Form 140 quarterly                              |
+| GST on platform commission                                                                                                                                                                                                                                                                               | 18%  | GSTR-1/GSTR-3B monthly                          |
+| Export zero-rating (international buyers)                                                                                                                                                                                                                                                                | 0%   | Verify buyer location                           |
 
 ### For International Transactions
 
@@ -214,33 +214,33 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 
 ## The Jargon Decoder
 
-| Scary Term                  | What It Actually Means                                                                                                              |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| GST (18%)                   | Sales tax. We add it on top of the price for Indian buyers.                                                                         |
-| Zero-rated export           | Fancy way of saying "no tax for international buyers"                                                                               |
-| TDS (Section 194J)          | When we pay consultants, we hold back 10% as their prepaid income tax and send it to the government. Only kicks in after ₹50K/year. |
-| PAN                         | Like a tax SSN. If consultant doesn't give us one, we deduct 20% instead of 10% (penalty rate).                                     |
-| eFIRC                       | A receipt proving we received foreign money legally. Razorpay generates this automatically. We don't write code for it.             |
-| LUT (Letter of Undertaking) | A form filed with GST authorities saying "we export services, don't charge us GST on those." One-time filing, not code.             |
-| SAC Code (999293)           | Category code for "consulting services" — goes on invoices. Already hardcoded.                                                      |
-| Form 26Q                    | Quarterly report to government: "here's all the TDS we deducted." Our admin API provides the data, CA files the form.               |
-| FEMA                        | Foreign exchange law. As long as we use Razorpay (RBI-licensed), we're compliant. Not our problem in code.                          |
-| TCS                         | Tax Collected at Source — 0.5% the platform collects from supplier on behalf of government. Different from TDS.                     |
-| Section 194-O               | E-commerce specific TDS — 0.1% on gross sales. Separate from 194J.                                                                  |
-| PA-CB                       | Payment Aggregator — Cross Border license from RBI. Needed to process international payments. Razorpay has one.                     |
+| Scary Term                  | What It Actually Means                                                                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GST (18%)                   | Sales tax. We add it on top of the price for Indian buyers.                                                                                                                                                                          |
+| Zero-rated export           | Fancy way of saying "no tax for international buyers"                                                                                                                                                                                |
+| TDS (Section 194J)          | When we pay consultants, we hold back 10% as their prepaid income tax and send it to the government. Only kicks in after ₹50K/year.                                                                                                  |
+| PAN                         | Like a tax SSN. If consultant doesn't give us one, we deduct 20% instead of 10% (penalty rate).                                                                                                                                      |
+| eFIRC                       | A receipt proving we received foreign money legally. Razorpay generates this automatically. We don't write code for it.                                                                                                              |
+| LUT (Letter of Undertaking) | A form filed with GST authorities saying "we export services, don't charge us GST on those." One-time filing, not code.                                                                                                              |
+| SAC Code (999293)           | The consumer invoice model's default classification code (`ConsumerInvoice.sacCode`), with **998311** as the alternative pending the CA's answer (#1369) — both carry 18% GST. Goes on invoices.                                     |
+| Form 140 (formerly 26Q)     | Quarterly report to government: "here's all the TDS we deducted." Our admin API provides the data, CA files the form.                                                                                                                |
+| FEMA                        | Foreign exchange law. As long as we use Razorpay (RBI-licensed), we're compliant. Not our problem in code.                                                                                                                           |
+| TCS                         | Tax Collected at Source — 0.5% the platform would collect from supplier on behalf of government under the facilitator model. CA-gated and not applicable today because the platform bills as principal (ADR 26). Different from TDS. |
+| Section 194-O               | E-commerce specific TDS — 0.1% on gross sales. Separate from 194J.                                                                                                                                                                   |
+| PA-CB                       | Payment Aggregator — Cross Border license from RBI. Needed to process international payments. Razorpay has one.                                                                                                                      |
 
 ---
 
 ## Recommended Financial SaaS Stack
 
-| Need                  | Recommendation                                 | Cost               | Why                                                                              |
-| --------------------- | ---------------------------------------------- | ------------------ | -------------------------------------------------------------------------------- |
-| Accounting            | Zoho Books                                     | Rs 1,249/mo        | GST-compliant, auto-reconciliation with Razorpay, TDS management, multi-currency |
-| GST Filing            | ClearTax or Zoho Books built-in                | Varies             | Auto GSTR-1/3B/8 filing, e-invoicing                                             |
-| TDS Filing            | RazorpayX (auto-TDS) + ClearTax                | Included/varies    | RazorpayX auto-deducts/deposits TDS, generates Form 16A                          |
-| Invoicing             | Zoho Invoice (free up to 1,000/yr) or built-in | Free–low           | GST-compliant invoices with SAC codes                                            |
-| Reconciliation        | Razorpay Dashboard + Zoho Books sync           | Included           | Auto-match payments to invoices                                                  |
-| International payouts | Wise Business (later)                          | ~1.6% per transfer | Best FX rates, API available, for paying international consultants               |
+| Need                  | Recommendation                                 | Cost               | Why                                                                                                                                 |
+| --------------------- | ---------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Accounting            | Zoho Books                                     | Rs 1,249/mo        | GST-compliant, auto-reconciliation with Razorpay, TDS management, multi-currency                                                    |
+| GST Filing            | ClearTax or Zoho Books built-in                | Varies             | Auto GSTR-1/3B filing, e-invoicing; GSTR-8 tooling is conditional on the facilitator model reversing ADR 26 and is not needed today |
+| TDS Filing            | RazorpayX (auto-TDS) + ClearTax                | Included/varies    | RazorpayX auto-deducts/deposits TDS, generates Form 131                                                                             |
+| Invoicing             | Zoho Invoice (free up to 1,000/yr) or built-in | Free–low           | GST-compliant invoices with SAC codes                                                                                               |
+| Reconciliation        | Razorpay Dashboard + Zoho Books sync           | Included           | Auto-match payments to invoices                                                                                                     |
+| International payouts | Wise Business (later)                          | ~1.6% per transfer | Best FX rates, API available, for paying international consultants                                                                  |
 
 ### Phased Approach
 
@@ -279,7 +279,7 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 - [ ] EU VAT registration (only if EU sales exceed thresholds)
 - [ ] Australian GST (only if AU sales > AUD 75K/year)
 - [ ] International consultant payouts (provider not yet selected; Section 195 withholding is unimplemented, see payout-service.ts)
-- [ ] Form 16A auto-generation for consultants (annual TDS certificate)
+- [ ] Form 131 (formerly 16A) auto-generation for consultants (annual TDS certificate)
 
 ### 🚫 NOT Our Problem
 

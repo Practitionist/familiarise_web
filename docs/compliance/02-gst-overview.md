@@ -15,7 +15,7 @@ GST has four interlocking obligations for an e-commerce operator (us):
 
 1. **GST registration (Sec 24(x))** — mandatory for the platform regardless of turnover.
 2. **Tax invoice (Rule 46)** — must be issued for every taxable supply; specific format + HSN/SAC + place-of-supply rules. _(Rate context, verified 2026-06-05: the GST 2.0 rationalization — 56th GST Council, 3-Sep-2025, effective 22-Sep-2025 — collapsed the four-slab structure into two main slabs **5% + 18%** (plus 40% sin/luxury); the 12% and 28% slabs were removed. **Professional / consulting / commercial-training services stay at 18%** — so the CGST 9% + SGST 9% / IGST 18% derivation below is unchanged.)_
-3. **TCS Section 52** — the platform must collect **0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST)** on the **net taxable value** of supplies of registered consultants and file **GSTR-8** monthly. _(Halved from 1% by Notification 15/2024-Central Tax + the parallel IGST/UTGST notifications, w.e.f. 10 Jul 2024 — verified 2026-06-05.)_
+3. **TCS Section 52 (facilitator-model reference only, not a current obligation)** — under the e-commerce-operator/facilitator framing, the platform would collect **0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST)** on the **net taxable value** of supplies of registered consultants and file **GSTR-8** monthly. Under the principal-supplier model this document now uses (ADR 26, #1360), the platform is the supplier of record, so Section 52 TCS does not apply and is not collected; this obligation is CA-gated and only becomes live if a chartered accountant overturns the principal-supplier decision. _(Rate context if reversed: halved from 1% by Notification 15/2024-Central Tax + the parallel IGST/UTGST notifications, w.e.f. 10 Jul 2024 — verified 2026-06-05.)_
 4. **E-invoicing (Notif 10/2023)** — mandatory for any registered person with aggregate annual turnover (AATO) ≥ ₹5 cr (threshold unchanged as of 2026-06-05); voluntary B2C pilot launched Sep 2024. _(Separate 30-day IRP-reporting cut-off applies at AATO ≥ ₹10 cr since 1-Apr-2025.)_
 
 Plus the orthogonal obligations:
@@ -119,8 +119,7 @@ Phased — TCS first because it has a deadline (monthly):
 - A B2C purchase by a Karnataka consumer of a Karnataka-registered consultant: invoice shows CGST 9% + SGST 9%, place of supply = KA.
 - Same purchase by a Tamil Nadu consumer: invoice shows IGST 18%, place of supply = TN.
 - Same purchase by a US consumer: invoice shows zero GST, "Zero-rated export under IGST Sec 16", LUT number on the invoice.
-- A purchase by any consumer of a GST-registered consultant emits `Payment.gstTcsCollectedPaise` = **0.5%** of net (0.25% CGST + 0.25% SGST intra-state, or 0.5% IGST inter-state).
-- Monthly cron writes a `GstTcsBatch` per consultant; GSTR-8 export passes GSTN sandbox validation.
+- **CA-gated, not applicable today:** if a chartered accountant overturns the principal-supplier model (ADR 26), a purchase by any consumer of a GST-registered consultant would emit `Payment.gstTcsCollectedPaise` = **0.5%** of net (0.25% CGST + 0.25% SGST intra-state, or 0.5% IGST inter-state), and a monthly cron would write a `GstTcsBatch` per consultant whose GSTR-8 export passes GSTN sandbox validation. Under the current principal-supplier model neither field is populated and no GSTR-8 is filed.
 - A refund post-invoice issues a GST credit note (see doc 05).
 
 ## Don't build
