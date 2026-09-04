@@ -267,7 +267,7 @@ The status-level invoice transition is the coarse view (`PAID → REFUNDED` for 
 
 ## 8b. Consumer invoices (B2C) — #1365
 
-Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/06-b2c-tax-invoice.md).
+Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/07-b2c-tax-invoice.md).
 
 The two families are deliberately separate models rather than one model with nullable columns. `OrganizationInvoice` requires an organization, a billing account and a due date, and those columns are load-bearing for dunning and for the IRP e-invoice payload; a consumer invoice has none of them, is paid before it is issued, and runs on one platform-wide gapless series instead of one series per organization. Collapsing them would make every one of those columns optional and would quietly weaken the B2B guarantees this page describes.
 
