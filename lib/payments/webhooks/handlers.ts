@@ -47,7 +47,7 @@ import { ZodError } from "zod";
 import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
 import {
   createEarningsFromPayment,
-  type AppointmentType,
+  resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
 import {
   notifyPaymentSuccess,
@@ -839,100 +839,20 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
   // --- Earnings creation ---
   try {
-    const paymentWithAppointment = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: {
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: { consultantProfile: true },
-                },
-              },
-            },
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: { consultantProfile: true },
-                },
-              },
-            },
-            webinar: {
-              select: {
-                id: true,
-                webinarPlanId: true,
-                webinarPlan: {
-                  include: { consultantProfile: true },
-                },
-              },
-            },
-            class: {
-              select: {
-                id: true,
-                classPlanId: true,
-                classPlan: {
-                  include: { consultantProfile: true },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
+    const resolved = await resolvePaymentForEarnings(
+      { id: paymentId },
+      metadata.appointmentType,
+    );
 
-    if (paymentWithAppointment?.appointment) {
-      const consultantProfile =
-        paymentWithAppointment.appointment.consultation?.consultationPlan
-          ?.consultantProfile ||
-        paymentWithAppointment.appointment.subscription?.subscriptionPlan
-          ?.consultantProfile ||
-        paymentWithAppointment.appointment.webinar?.webinarPlan
-          ?.consultantProfile ||
-        paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
+    if (resolved) {
+      await createEarningsFromPayment({
+        payment: resolved.paymentForEarnings,
+        appointmentType: resolved.earningsAppointmentType,
+      });
 
-      if (consultantProfile) {
-        const appointmentTypeMap: Record<string, AppointmentType> = {
-          CONSULTATION: "CONSULTATION",
-          SUBSCRIPTION: "SUBSCRIPTION",
-          WEBINAR: "WEBINAR",
-          CLASS: "CLASS",
-        };
-
-        const earningsAppointmentType =
-          appointmentTypeMap[metadata.appointmentType] || "CONSULTATION";
-
-        const paymentForEarnings = {
-          ...paymentWithAppointment,
-          appointment: {
-            ...paymentWithAppointment.appointment,
-            consultantProfile: { id: consultantProfile.id },
-            webinar: paymentWithAppointment.appointment.webinar
-              ? {
-                  webinarPlanId:
-                    paymentWithAppointment.appointment.webinar.webinarPlanId,
-                }
-              : null,
-            class: paymentWithAppointment.appointment.class
-              ? {
-                  classPlanId:
-                    paymentWithAppointment.appointment.class.classPlanId,
-                }
-              : null,
-          },
-        };
-
-        await createEarningsFromPayment({
-          payment: paymentForEarnings as Parameters<
-            typeof createEarningsFromPayment
-          >[0]["payment"],
-          appointmentType: earningsAppointmentType,
-        });
-
-        console.log(
-          `💰 Earnings record created for payment ${paymentId}, consultant ${consultantProfile.id}`,
-        );
-      }
+      console.log(
+        `💰 Earnings record created for payment ${paymentId}, consultant ${resolved.consultantProfileId}`,
+      );
     }
   } catch (earningsError) {
     // C-01 #837 — payment + booking are committed but earnings + the BOOKING

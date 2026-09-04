@@ -53,6 +53,31 @@ export interface OrphanedConfirmationResult {
 const CHANNEL_PASS_MAX_APPOINTMENTS = 100;
 const CHANNEL_PASS_MAX_BUYER_OPS = 500;
 
+// #1439 — pulled out of the channel pass's loop body to keep that loop's
+// cognitive complexity readable; the budget accounting and the
+// ensured/failed counters stay with the caller since they govern the loop's
+// own control flow (the deferred-budget break), not this one appointment's
+// outcome.
+async function ensureChannelForOrphan(appointmentId: string): Promise<boolean> {
+  try {
+    const result = await ensureChannelsForAppointment(appointmentId);
+    if (result.ensured) {
+      console.log(`💬 Ensured chat channel for appointment ${appointmentId}`);
+      return true;
+    }
+    console.warn(
+      `💬 Could not ensure chat channel for appointment ${appointmentId}: ${result.reason}`,
+    );
+    return false;
+  } catch (err) {
+    console.error(
+      `❌ Chat-channel ensure failed for appointment ${appointmentId}:`,
+      err,
+    );
+    return false;
+  }
+}
+
 // #476 — fail-closed: re-driving a confirmation twice is guarded by the
 // idempotent slot flip, but the entry must not run unlocked regardless.
 export async function reconcileOrphanedConfirmations(
@@ -183,25 +208,10 @@ async function reconcileOrphanedConfirmationsUnlocked(
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
-    try {
-      const result = await ensureChannelsForAppointment(appointment.id);
-      if (result.ensured) {
-        channelsEnsured += 1;
-        console.log(
-          `💬 Ensured chat channel for appointment ${appointment.id}`,
-        );
-      } else {
-        channelsFailed += 1;
-        console.warn(
-          `💬 Could not ensure chat channel for appointment ${appointment.id}: ${result.reason}`,
-        );
-      }
-    } catch (err) {
+    if (await ensureChannelForOrphan(appointment.id)) {
+      channelsEnsured += 1;
+    } else {
       channelsFailed += 1;
-      console.error(
-        `❌ Chat-channel ensure failed for appointment ${appointment.id}:`,
-        err,
-      );
     }
 
     // Charged after the attempt, and a failed attempt still costs its calls.

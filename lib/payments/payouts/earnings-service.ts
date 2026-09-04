@@ -379,6 +379,116 @@ async function resolveOrgSplit(
 // Earnings Service Functions
 // ============================================
 
+const EARNINGS_APPOINTMENT_TYPE_MAP: Record<string, AppointmentType> = {
+  CONSULTATION: "CONSULTATION",
+  SUBSCRIPTION: "SUBSCRIPTION",
+  WEBINAR: "WEBINAR",
+  CLASS: "CLASS",
+};
+
+export interface ResolvedEarningsPayment {
+  paymentForEarnings: CreateEarningsParams["payment"];
+  earningsAppointmentType: AppointmentType;
+  consultantProfileId: string;
+}
+
+/**
+ * #1439 — the webhook success path and the checkout mock/zero/sponsored path
+ * both create earnings straight after confirming a payment, and both need
+ * the same appointment -> consultantProfile resolution across the four plan
+ * kinds. Shared here so the include and the profile-selection precedence
+ * can't drift between the two call sites. Returns null when there is no
+ * appointment or no resolvable consultant profile — the caller skips
+ * earnings creation in that case, same as before this was extracted.
+ */
+export async function resolvePaymentForEarnings(
+  where: Prisma.PaymentWhereUniqueInput,
+  rawAppointmentType: string,
+): Promise<ResolvedEarningsPayment | null> {
+  const paymentWithAppointment = await prisma.payment.findUnique({
+    where,
+    include: {
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          webinar: {
+            select: {
+              id: true,
+              webinarPlanId: true,
+              webinarPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+          class: {
+            select: {
+              id: true,
+              classPlanId: true,
+              classPlan: {
+                include: { consultantProfile: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!paymentWithAppointment?.appointment) return null;
+
+  const consultantProfile =
+    paymentWithAppointment.appointment.consultation?.consultationPlan
+      ?.consultantProfile ||
+    paymentWithAppointment.appointment.subscription?.subscriptionPlan
+      ?.consultantProfile ||
+    paymentWithAppointment.appointment.webinar?.webinarPlan
+      ?.consultantProfile ||
+    paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
+
+  if (!consultantProfile) return null;
+
+  const earningsAppointmentType =
+    EARNINGS_APPOINTMENT_TYPE_MAP[rawAppointmentType] || "CONSULTATION";
+
+  const paymentForEarnings = {
+    ...paymentWithAppointment,
+    appointment: {
+      ...paymentWithAppointment.appointment,
+      consultantProfile: { id: consultantProfile.id },
+      webinar: paymentWithAppointment.appointment.webinar
+        ? {
+            webinarPlanId:
+              paymentWithAppointment.appointment.webinar.webinarPlanId,
+          }
+        : null,
+      class: paymentWithAppointment.appointment.class
+        ? {
+            classPlanId: paymentWithAppointment.appointment.class.classPlanId,
+          }
+        : null,
+    },
+  } as CreateEarningsParams["payment"];
+
+  return {
+    paymentForEarnings,
+    earningsAppointmentType,
+    consultantProfileId: consultantProfile.id,
+  };
+}
+
 /**
  * Create earnings record from a successful payment
  * Called from payment success webhook
