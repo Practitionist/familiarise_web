@@ -24,16 +24,16 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-| ID   | Severity | Issue                                                                                                                                |
-| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| K-01 | **P0**   | `OrgKybVerification.kybVerifiedAt` / Sumsub fields — **not a hard gate** on INVOICE booking, invoice issue, or funding-source switch |
-| K-02 | **P1**   | `assertVerifiedDomainOrThrow` for INVOICE_FUNDING **defined but unwired** on critical routes                                         |
-| K-03 | **P1**   | IRP uploader gated / stub without ClearTax — B2B ITC buyers may require IRN                                                          |
-| K-04 | **P1**   | Manual invoice POST / rollup paths weak on `requireActive` vs top-up which requires ACTIVE                                           |
-| K-05 | **P2**   | MSME `mustPayByDate` alerts live; §16 interest not accrued; deadline semantics soft                                                  |
-| K-06 | **P2**   | `TdsAdjustment` / Form 26Q export largely schema-only                                                                                |
-| K-07 | **P2**   | Dual TDS engines vs B2C deprecated path — keep B2B on `lib/compliance/tds.ts` only                                                   |
-| K-08 | **P2**   | Invoice GST not always per-line; credit-note length limits                                                                           |
+| ID   | Severity | Issue                                                                                                                                                 |
+| ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| K-01 | **P0**   | `OrgKybVerification.kybVerifiedAt` / Sumsub fields — **not a hard gate** on INVOICE booking, invoice issue, or funding-source switch                  |
+| K-02 | ✅ fixed | `assertVerifiedDomainOrThrow` for INVOICE_FUNDING — the 2026-09-03 verdict pass confirmed FIXED-BY #991: INVOICE now hard-requires a verified domain. |
+| K-03 | **P1**   | IRP uploader gated / stub without ClearTax — B2B ITC buyers may require IRN                                                                           |
+| K-04 | **P1**   | Manual invoice POST / rollup paths weak on `requireActive` vs top-up which requires ACTIVE                                                            |
+| K-05 | **P2**   | MSME `mustPayByDate` alerts live; §16 interest not accrued; deadline semantics soft                                                                   |
+| K-06 | **P2**   | `TdsAdjustment` / Form 26Q export largely schema-only                                                                                                 |
+| K-07 | ❌ stale | Dual TDS engines vs B2C deprecated path — the 2026-09-03 verdict pass marked this stale: 194-O is already live via `computeTdsForPayout`.             |
+| K-08 | **P2**   | Invoice GST not always per-line; credit-note length limits                                                                                            |
 
 Working well: GST derive helper, sequential invoice numbers, org payout TDS 194-O compute, MSME alert cron, credit note mint on refund.
 

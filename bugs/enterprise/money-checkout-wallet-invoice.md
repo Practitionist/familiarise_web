@@ -21,14 +21,14 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-| ID   | Severity | Issue                                                                                                                                                |
-| ---- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C-01 | **P0**   | Wallet/legs commit in checkout tx; earnings + `BOOKING` journal in a later swallowed try/catch → transient `WALLET_BALANCE_DRIFT` / missing earnings |
-| C-02 | **P1**   | Payment leg sum mismatch is **warn-only** at checkout (nightly reconcile catches)                                                                    |
-| C-03 | **P1**   | INVOICE booking allowed for `PENDING_VERIFICATION` under ₹50k-ish governance cap without hard KYB                                                    |
-| C-04 | **P2**   | CHARGE_MEMBER on non-INVOICE parent fail-closed (#715) — correct but misconfig hard-fails                                                            |
-| C-05 | **P2**   | Auto-top-up schema present; cron is **notify-only** (#777)                                                                                           |
-| C-06 | **P2**   | Dunning reminders live; booking suspend behind `ENABLE_DUNNING_SUSPEND` (off)                                                                        |
+| ID   | Severity | Issue                                                                                                                                                                         |
+| ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C-01 | ✅ fixed | Wallet/legs vs earnings + `BOOKING` journal — the 2026-09-03 verdict pass confirmed FIXED-BY #994; checkout and the journal are no longer split across a swallowed try/catch. |
+| C-02 | **P1**   | Payment leg sum mismatch is **warn-only** at checkout (nightly reconcile catches)                                                                                             |
+| C-03 | **P1**   | INVOICE booking allowed for `PENDING_VERIFICATION` under ₹50k-ish governance cap without hard KYB                                                                             |
+| C-04 | **P2**   | CHARGE_MEMBER on non-INVOICE parent fail-closed (#715) — correct but misconfig hard-fails                                                                                     |
+| C-05 | **P2**   | Auto-top-up schema present; cron is **notify-only** (#777)                                                                                                                    |
+| C-06 | **P2**   | Dunning reminders live; booking suspend behind `ENABLE_DUNNING_SUSPEND` (off)                                                                                                 |
 
 Working well: wallet `updateMany WHERE balance >= amount`; in-tx INVOICE exposure re-check; LICENSE metering without money legs; Redis + Serializable for slots/capacity.
 

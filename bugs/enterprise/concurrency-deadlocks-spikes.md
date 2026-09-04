@@ -36,16 +36,16 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-| ID   | Severity | Issue                                                                                                                     |
-| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
-| X-01 | **P1**   | Chaos **14c unstaged** — N+1 seat assign, invoice generate-vs-void, wallet top-up replay not in go/no-go suite            |
-| X-02 | **P1**   | SSO settings have `version` column but PATCH is **last-write-wins** (multi-admin)                                         |
-| X-03 | **P1**   | SCIM provisioning **bypasses** unverified 5-seat invite governance                                                        |
-| X-04 | **P1**   | Docs claim `revokeSession` on member removal — **not implemented**; 5-min cookie membership lag                           |
-| X-05 | **P2**   | No contractual seat ceiling at assign — counter honest, commercial cap absent                                             |
-| X-06 | **P2**   | JIT SSO auto-join may not bump `sessionGeneration` — sidebar lag                                                          |
-| X-07 | **P2**   | Long Serializable checkout + Redis event lock → timeouts under spike (pool #368), looks like deadlock                     |
-| X-08 | **P2**   | CREDIT_POOL lacks reserve-hold-TTL pattern used in industry credit engines — fine now, fragile at massive parallel enroll |
+| ID   | Severity | Issue                                                                                                                                                                                                                   |
+| ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| X-01 | **P1**   | Chaos **14c unstaged** — N+1 seat assign, invoice generate-vs-void, wallet top-up replay not in go/no-go suite                                                                                                          |
+| X-02 | ✅ fixed | SSO settings PATCH — the 2026-09-03 verdict pass confirmed FIXED-BY #985: PATCH now uses `expectedVersion` CAS.                                                                                                         |
+| X-03 | ✅ fixed | SCIM provisioning vs unverified 5-seat invite governance — the 2026-09-03 verdict pass confirmed FIXED-BY #985.                                                                                                         |
+| X-04 | ✅ fixed | `revokeSession` on member removal — the 2026-09-03 verdict pass confirmed FIXED-BY #985 (comment corrected to the real session-generation bump; true revoke is blocked on the BetterAuth admin plugin, follow-up #725). |
+| X-05 | **P2**   | No contractual seat ceiling at assign — counter honest, commercial cap absent                                                                                                                                           |
+| X-06 | **P2**   | JIT SSO auto-join may not bump `sessionGeneration` — sidebar lag                                                                                                                                                        |
+| X-07 | **P2**   | Long Serializable checkout + Redis event lock → timeouts under spike (pool #368), looks like deadlock                                                                                                                   |
+| X-08 | **P2**   | CREDIT_POOL lacks reserve-hold-TTL pattern used in industry credit engines — fine now, fragile at massive parallel enroll                                                                                               |
 
 ## Unhappy paths & multi-device psychology
 

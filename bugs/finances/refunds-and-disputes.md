@@ -22,10 +22,10 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-- Cascade is strong, but some tax adjustment rows (`TdsAdjustment` / `GstTcsAdjustment`) are documented as incompletely wired from refund in compliance shipping checklist.
+- Cascade is strong; the tax adjustment rows (`TdsAdjustment` / `GstTcsAdjustment`) were documented elsewhere as incompletely wired from refund, but the 2026-09-03 verdict pass found this overstated — both are wired from `refund.ts` (`recordTdsReversal` at refund.ts:593, `gstTcsAdjustment.create` at refund.ts:723); only the monthly `GstTcsBatch` collection is deferred.
 - Overage member credit-back (#715) refuses some non-invoice reversals — certain refunds may block.
 - Org payout already COMPLETED → clawback is not auto-recovered from consultant/org bank.
-- Double-booking loser may hold a SUCCEEDED payment with tentative slot — refund may be ops-manual (#830).
+- Double-booking loser holding a SUCCEEDED payment with a tentative slot — the 2026-09-03 verdict pass confirmed this FIXED-BY #990.
 - Chargeback evidence SLAs (documented ~7 days) may not be operationalized in admin UI timers.
 
 ## Unhappy paths & user psychology

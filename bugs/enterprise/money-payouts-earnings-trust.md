@@ -26,10 +26,10 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 | ID   | Severity | Issue                                                                                                                                                             |
 | ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E-01 | **P0**   | `PENDING_TRUST` scopes **host** `orgSplit.organizationId`, not sponsoring `payment.organizationId` — ghost INVOICE sponsor + ACTIVE host still accrues host share |
-| E-02 | **P0**   | Marketplace / consultant earnings for unverified INVOICE org bookings are **not parked** — platform can owe experts for unpaid sponsor invoices                   |
-| E-03 | **P1**   | Earnings flipped to **PAID when batch is created**, before gateway wire / COMPLETED                                                                               |
-| E-04 | **P1**   | `ENABLE_LIVE_PAYOUTS` off → batches exist, no UTR — trust erosion if UI says paid                                                                                 |
+| E-01 | ✅ fixed | `PENDING_TRUST` scoping — the 2026-09-03 verdict pass confirmed FIXED-BY #991: it now scopes the sponsoring `payment.organizationId`, not the host.               |
+| E-02 | ✅ fixed | Marketplace / consultant earnings for unverified INVOICE org bookings — the 2026-09-03 verdict pass confirmed FIXED-BY #991: these now park.                      |
+| E-03 | ✅ fixed | Earnings-flip timing — the 2026-09-03 verdict pass confirmed FIXED-BY #993: earnings go BATCHED at batch creation and only PAID after the gateway wire completes. |
+| E-04 | ✅ fixed | `ENABLE_LIVE_PAYOUTS` off + no UTR — the 2026-09-03 verdict pass confirmed FIXED-BY #993, tied to the same BATCHED-status change as E-03.                         |
 | E-05 | **P2**   | Org clawback after COMPLETED payout is manual; TDS org-side reversal incomplete                                                                                   |
 | E-06 | **P2**   | No RazorpayX balance pre-check before batch                                                                                                                       |
 | E-07 | **P2**   | Poller vs webhook reverse-status edge cases on payouts                                                                                                            |

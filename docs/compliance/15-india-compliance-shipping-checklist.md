@@ -58,17 +58,17 @@ MUST item is the actual law of the land in 2026.
 
 ## §3 — DEFER indefinitely (no current requirement)
 
-| #   | Item                                                    | Justification                                                                                                                                     |
-| --- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3.1 | **FEMA Form 15CA / 15CB**                               | No non-resident consultants on platform yet. Fields exist in `OrganizationPayout` schema; populate manually when first cross-border payout ships. |
-| 3.2 | **FIRC + RBI PA-CB compliance**                         | Same — domestic-only today.                                                                                                                       |
-| 3.3 | **SOC 2 Type II certification**                         | First enterprise buyer's procurement will ask; 6-month effort. Hold until concrete ask.                                                           |
-| 3.4 | **ISO 27001 prep**                                      | Less common ask in India B2B. Defer past SOC 2.                                                                                                   |
-| 3.5 | **Programs v2 runtime (PROJECT, RETAINER, AOR, EOR)**   | Enum values reserved; API returns 400 `PROGRAM_TYPE_NOT_AVAILABLE`. Wait for design-partner demand.                                               |
-| 3.6 | **Multi-currency on BillingAccount / Invoice / Payout** | INR-only today. Open separate epic with ExchangeRateSnapshot model when first cross-border B2B buyer signs.                                       |
-| 3.7 | **Custom RBAC (CustomRole + Permission tables)**        | Fixed `MemberRole` enum sufficient for design partners.                                                                                           |
-| 3.8 | **SCIM 2.0 provisioning**                               | `/api/.../scim/*` placeholder returns 501. Wait for SCIM-aware IdP-demanding buyer.                                                               |
-| 3.9 | **Consumer Protection Grievance Officer UI**            | Minimal compliance: contact page + email intake suffices for MVP under 30-day resolution rule.                                                    |
+| #   | Item                                                    | Justification                                                                                                                                                                                                                 |
+| --- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.1 | **FEMA Form 15CA / 15CB**                               | No non-resident consultants on platform yet. Fields exist in `OrganizationPayout` schema; populate manually when first cross-border payout ships.                                                                             |
+| 3.2 | **FIRC + RBI PA-CB compliance**                         | Same — domestic-only today.                                                                                                                                                                                                   |
+| 3.3 | **SOC 2 Type II certification**                         | First enterprise buyer's procurement will ask; 6-month effort. Hold until concrete ask.                                                                                                                                       |
+| 3.4 | **ISO 27001 prep**                                      | Less common ask in India B2B. Defer past SOC 2.                                                                                                                                                                               |
+| 3.5 | **Programs v2 runtime (PROJECT, RETAINER, AOR, EOR)**   | Enum values reserved; API returns 400 `PROGRAM_TYPE_NOT_AVAILABLE`. Wait for design-partner demand.                                                                                                                           |
+| 3.6 | **Multi-currency on BillingAccount / Invoice / Payout** | INR-only today. Open separate epic with ExchangeRateSnapshot model when first cross-border B2B buyer signs.                                                                                                                   |
+| 3.7 | **Custom RBAC (CustomRole + Permission tables)**        | Fixed `MemberRole` enum sufficient for design partners.                                                                                                                                                                       |
+| 3.8 | **SCIM 2.0 provisioning**                               | ✅ Shipped (2026-09-03) — no longer deferred. `lib/scim/` implements Users CRUD, bearer-token authentication, group mapping and deprovisioning behind `app/scim/v2/`, and `ScimToken.expiresAt` is enforced on every request. |
+| 3.9 | **Consumer Protection Grievance Officer UI**            | Minimal compliance: contact page + email intake suffices for MVP under 30-day resolution rule.                                                                                                                                |
 
 ---
 

@@ -294,16 +294,16 @@ One huge file with subscription/one-off branching, slot locking, wallet vs inten
 
 ## Phase 2 — Code Simplification Summary
 
-| #                               | Action                                    | Files              | Δ LoC       | Priority |
-| ------------------------------- | ----------------------------------------- | ------------------ | ----------- | -------- |
-| 1                               | Delete `payout-service.ts`                | 1 file deleted     | -910        | HIGH     |
-| 2                               | Stub SCIM to 501                          | 4 files → 1 file   | -484        | MEDIUM   |
-| 3                               | Delete `ENABLE_TDS_ADMIN_VIEW` flag       | scattered          | -20         | LOW      |
-| 4                               | Delete `ENABLE_HRIS` flag                 | scattered          | -20         | LOW      |
-| 5                               | Unify role predicates → capability matrix | 2 files refactored | -200        | MEDIUM   |
-| 6                               | Split SlotAllocationService               | 3 files → 5 files  | 0 net       | OPTIONAL |
-| 7                               | Refactor checkout into handlers           | 1 file → 5 files   | 0 net       | DEFER    |
-| **Phase 1 total (high+medium)** |                                           |                    | **~-1,614** |          |
+| #                               | Action                                                                       | Files              | Δ LoC       | Priority |
+| ------------------------------- | ---------------------------------------------------------------------------- | ------------------ | ----------- | -------- |
+| 1                               | Delete `payout-service.ts`                                                   | 1 file deleted     | -910        | HIGH     |
+| 2                               | ~~Stub SCIM to 501~~ (superseded — SCIM 2.0 shipped in full, see note above) | 4 files → 1 file   | -484        | MEDIUM   |
+| 3                               | Delete `ENABLE_TDS_ADMIN_VIEW` flag                                          | scattered          | -20         | LOW      |
+| 4                               | Delete `ENABLE_HRIS` flag                                                    | scattered          | -20         | LOW      |
+| 5                               | Unify role predicates → capability matrix                                    | 2 files refactored | -200        | MEDIUM   |
+| 6                               | Split SlotAllocationService                                                  | 3 files → 5 files  | 0 net       | OPTIONAL |
+| 7                               | Refactor checkout into handlers                                              | 1 file → 5 files   | 0 net       | DEFER    |
+| **Phase 1 total (high+medium)** |                                                                              |                    | **~-1,614** |          |
 
 ---
 
@@ -399,7 +399,7 @@ Don't do these speculatively. Wait for a real feature to justify.
 | Proposal                     | Schema-locked?      | Algorithm change?         | Customer impact | LoC    | Recommended for PR #655? |
 | ---------------------------- | ------------------- | ------------------------- | --------------- | ------ | ------------------------ |
 | Delete `payout-service.ts`   | ✅ no schema change | ✅ pure dead-code removal | None            | -910   | **YES**                  |
-| Stub SCIM                    | ✅ no schema change | ✅ runtime swap           | None (no users) | -484   | **YES**                  |
+| ~~Stub SCIM~~ (superseded)   | ✅ no schema change | ✅ runtime swap           | None (no users) | -484   | **NO — SCIM shipped**    |
 | Delete dead flags            | ✅ no schema change | ✅ env var removal        | None            | -40    | **YES**                  |
 | Merge ledger docs            | ✅ no code change   | N/A                       | None            | -89    | **YES**                  |
 | Delete 7 stale/cosmetic docs | ✅ no code change   | N/A                       | None            | -1,113 | **YES**                  |
@@ -461,7 +461,7 @@ After Phase 1:
 - [ ] `npx tsc --noEmit` clean
 - [ ] `npx jest` — all suites pass (currently 61 suites / 990 tests; expect same count post-deletion, minus SCIM tests if any were present)
 - [ ] Manual smoke: SPONSOR org create → invite LEARNER → book CLASS → engagementsUsed increments correctly
-- [ ] Manual smoke: hit `/api/organizations/[orgId]/scim/Users` → expect 501
+- [ ] ~~Manual smoke: hit `/api/organizations/[orgId]/scim/Users` → expect 501~~ (superseded — SCIM shipped; verify Users CRUD, bearer-token auth, group mapping, deprovisioning and `ScimToken.expiresAt` enforcement instead)
 
 ---
 

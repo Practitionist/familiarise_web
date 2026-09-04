@@ -27,10 +27,10 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Live payout disbursement is feature-flagged off by default — earnings accrue without real money movement until ops flips the flag.
 - Ledger and plan pricing are **INR settlement only**; display FX fields exist for international buyers but are audit cosmetics (#783).
 - Phase-2 webhook side effects (earnings, notifications) sit outside the confirmation transaction — temporary inconsistency until crons heal.
-- Amount mismatch on capture marks recovery flags but does not auto-refund.
-- Dual TDS engines: B2B uses `lib/compliance/tds.ts` (194-O); B2C consultant path still touches deprecated `lib/payments/tax/tds-service.ts` (194J rates) — **P0** if B2C payouts go live.
-- Lemon Squeezy / XFlow checkout throw `NOT_IMPLEMENTED`; webhook routes still exist.
-- Day-pass product appears in Razorpay skill docs only — no Prisma model.
+- Amount mismatch on capture — the 2026-09-03 verdict pass confirmed this FIXED-BY #990 (auto-refund + Sentry paging, with manual-recovery as the fallback).
+- Dual TDS engines — the 2026-09-03 verdict pass marked this stale: consultant withholding is already 194-O via `computeTdsForPayout` (payout-service.ts:592-607); the B2C-on-194J path described here does not exist in current code.
+- Lemon Squeezy / XFlow checkout — the 2026-09-03 verdict pass confirmed this FIXED-BY #984 (removed; Stripe kept as the live rail; Dodo Payments added post-MVP).
+- Day-pass product doc-only — the 2026-09-03 verdict pass confirmed this FIXED-BY #984 (the doc mentions were removed).
 
 ## Unhappy paths & user psychology
 

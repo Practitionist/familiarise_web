@@ -28,20 +28,20 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-| Item                           | State                              | Risk if ignored                  |
-| ------------------------------ | ---------------------------------- | -------------------------------- |
-| `ENABLE_LIVE_PAYOUTS`          | Off by default                     | Consultants unpaid               |
-| `ENABLE_IRP_UPLOADER`          | Off / needs ClearTax               | Non-compliant e-invoice at scale |
-| Lemon Squeezy / XFlow          | `NOT_IMPLEMENTED` + webhook routes | Dead routes / secret surface     |
-| Multi-currency ledger #783     | Deferred                           | Blocks true intl settlement      |
-| Section 195 / non-resident     | Blocked                            | Intl consultants cannot cash out |
-| Overage #715 paths             | Partial                            | Some refunds/reversals refuse    |
-| GST TCS collection             | Schema only                        | GSTR-8 gap                       |
-| Day pass product               | Skills/docs only                   | Product confusion                |
-| Paid trial checkout            | Partial schema                     | Trial→pay funnel broken          |
-| Org Stripe Connect             | Deferred                           | Dual-rail complexity             |
-| Payment cancellation helper    | Warn-only for unknown IDs          | Orphan intents                   |
-| Export tax evidence (FIRC/LUT) | TODO in tax-engine                 | Audit weakness                   |
+| Item                           | State                                                           | Risk if ignored                  |
+| ------------------------------ | --------------------------------------------------------------- | -------------------------------- |
+| `ENABLE_LIVE_PAYOUTS`          | Off by default                                                  | Consultants unpaid               |
+| `ENABLE_IRP_UPLOADER`          | Off / needs ClearTax                                            | Non-compliant e-invoice at scale |
+| Lemon Squeezy / XFlow          | ✅ FIXED-BY #984 (hard-removed)                                 | n/a                              |
+| Multi-currency ledger #783     | Deferred                                                        | Blocks true intl settlement      |
+| Section 195 / non-resident     | Blocked                                                         | Intl consultants cannot cash out |
+| Overage #715 paths             | Partial                                                         | Some refunds/reversals refuse    |
+| GST TCS collection             | Schema only                                                     | GSTR-8 gap                       |
+| Day pass product               | ✅ FIXED-BY #984 (doc mentions removed)                         | n/a                              |
+| Paid trial checkout            | ❌ overstated — `trialPriceInPaise` is wired through checkout   | n/a                              |
+| Org Stripe Connect             | Deferred                                                        | Dual-rail complexity             |
+| Payment cancellation helper    | ❌ overstated — `reconcile-orphaned-confirmations` backstops it | n/a                              |
+| Export tax evidence (FIRC/LUT) | TODO in tax-engine                                              | Audit weakness                   |
 
 Dec 2025 P0 checkout bugs appear fixed in code — the tracking file `tasks/payment-workflow-critical-bugs.md` was retired with the `tasks/` folder (commit e9471aea), closing that drift.
 
@@ -58,12 +58,12 @@ Dec 2025 P0 checkout bugs appear fixed in code — the tracking file `tasks/paym
    - B) Quarantine behind `DEPRECATED_GATEWAYS`
    - C) Keep Stripe test-only
 
-**Recommendation: B.** Quarantine unused gateways behind a deprecation flag to shrink secret/webhook surface without a risky big-bang delete of shared types.
+**Historical recommendation (2026-07-12): B.** Quarantine unused gateways behind a deprecation flag to shrink secret/webhook surface without a risky big-bang delete of shared types.
 
 - Not A: Hard delete can break residual imports and webhook routes before the evaluation cleanup is complete.
 - Not C: Leaving Stripe “test-only” still keeps dual-rail complexity and asymmetric sync behavior in prod codepaths.
 
-> 🎯 Locked: Lemon/XFlow were hard-removed (#984); Stripe is KEPT as a live rail (not quarantined); Dodo Payments is the sanctioned post-MVP second gateway.
+> 🎯 Locked: this superseded the recommendation above — Lemon/XFlow were hard-removed (#984), not quarantined; Stripe is KEPT as a live rail; Dodo Payments is the sanctioned post-MVP second gateway.
 
 2. **Single source of truth for “finance ready for prod” checklist?**
    - A) This bugs pack + shipping checklist sign-off slots

@@ -44,7 +44,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Subscription status vs per-session slot state after partial reschedule (#448).
 - Rating denormalization vs review rows.
 - Novu vs Resend delivery split brain.
-- SCIM/docs vs live implementation; payment critical-bugs task file vs fixed code; consent “stub” comments vs live checks.
+- SCIM/docs vs live implementation drift (doc drift only — SCIM is implemented). Payment critical-bugs task file vs fixed code and consent “stub” comments vs live checks are both resolved per the verdict table above.
 
 ### Dual sources of truth
 
@@ -79,7 +79,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
    > 🎯 Locked: Phase-2 stays by-design ACK-before-complete with a sweeper/cron backstop; not moved into the confirm txn (B) and no new outbox this wave.
 
-   **Recommendation: C.** Use an outbox (or explicit pending status) for Phase-2 earnings/notifications so users see “processing” instead of silent skew.
+   **Historical recommendation (2026-07-12): C.** Use an outbox (or explicit pending status) for Phase-2 earnings/notifications so users see “processing” instead of silent skew. This was superseded by the 2026-09-03 Locked decision above, which keeps ACK-before-complete with no new outbox this wave.
    - Not A: a status page alone still leaves confirm→side-effect gaps invisible in-product
    - Not B: stuffing earnings into confirm lengthens ACK windows and timeouts
 

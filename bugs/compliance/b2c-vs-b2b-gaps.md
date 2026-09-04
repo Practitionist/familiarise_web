@@ -21,9 +21,9 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-- Dual TDS engines (#778 planned consolidation).
+- Dual TDS engines (#778 planned consolidation). The 2026-09-03 verdict pass marked this stale: the consultant path already runs 194-O via `computeTdsForPayout`, so `tds-service.ts` is FY-helper/audit-only, not a live second engine.
 - No GSTR-8 aggregator job.
-- Refund tax adjustment wiring gaps.
+- Refund tax adjustment wiring gaps. The 2026-09-03 verdict pass marked this overstated: `TdsAdjustment` (reversal) and `GstTcsAdjustment` are both wired from `refund.ts`; only the monthly `GstTcsBatch` collection is deferred.
 - Seller disclosure (legal name, address, GSTIN on public profiles) incomplete for e-commerce rules.
 - RBI PA Path C needs legal confirmation (finance pack).
 - Form 26Q/140 automation missing before quarterly deadlines.

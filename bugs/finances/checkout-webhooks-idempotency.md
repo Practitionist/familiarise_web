@@ -24,9 +24,9 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 - Async `after()` processing means ACK-before-complete; stuck events rely on `sweep-stuck-webhook-events` cron (minutes-level gap).
 - Refund-before-capture race uses `DeferSignal` — correct but easy to mis-ops if sweeper cadence slips.
-- Amount parity failure can leave funds captured while booking blocked (`REQUIRES_MANUAL_RECOVERY`).
-- Stripe path processes sync (no `after()`) — asymmetric timeout/retry behavior vs Razorpay.
-- `allocationIdempotencyKey` on appointments is schema-only (#837) — allocate double-submit not fully covered by payment idempotency.
+- Amount parity failure leaving funds captured while booking is blocked — the 2026-09-03 verdict pass confirmed this FIXED-BY #990 (auto-refund + Sentry paging).
+- Stripe path processes sync (no `after()`) — asymmetric timeout/retry behavior vs Razorpay; kept by decision, the asymmetry is accepted rather than removed.
+- `allocationIdempotencyKey` on appointments — the 2026-09-03 verdict pass confirmed this FIXED-BY #988 (#837): it is now wired via the `Idempotency-Key` header on the allocate routes, not schema-only.
 
 ## Unhappy paths & user psychology
 

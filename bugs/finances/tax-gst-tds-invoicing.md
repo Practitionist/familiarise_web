@@ -24,9 +24,9 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## Known gaps / bugs
 
-- **P0:** B2C consultant TDS may still use deprecated 194J@10% path vs required 194-O@0.1% for e-commerce operator style flows.
+- B2C consultant TDS on the deprecated 194J@10% path — the 2026-09-03 verdict pass marked this stale: 194-O is already live via `computeTdsForPayout` (payout-service.ts:592-607).
 - GST TCS / GSTR-8 batching not wired (`GstTcsBatch` schema-only).
-- Refund tax cascade incomplete for some adjustment models.
+- Refund tax cascade incomplete for some adjustment models — the 2026-09-03 verdict pass marked this overstated: `TdsAdjustment` and `GstTcsAdjustment` are both wired from `refund.ts`.
 - Form 15CA/CB stub returns nulls — cross-border payouts blocked/deferred.
 - IRN filing gated; ClearTax credentials required.
 - HSN defaults static; webinar/class may need different codes.

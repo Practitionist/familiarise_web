@@ -6,7 +6,7 @@ The diagrams describe the code as it stands after the 2026-09-03 finance train (
 
 ## 1. B2C: a consultee pays for a session
 
-The first diagram follows a single booking from the checkout request to the moment every side effect exists. The synchronous part is one Serializable database transaction taken under a Redis slot lock; it writes the Payment, its funding legs and the appointment hold together, so either all three exist or none does. The gateway then calls back asynchronously, and the webhook row is saved before the request is acknowledged, which is what makes the inbox an outbox: nothing needs to be re-sent by Razorpay for the platform to finish the job. One writer, running in one transaction, moves the money state and posts the ledger. Everything after that commit is best effort and is re-driven by the sweeps at the bottom.
+The first diagram follows a single booking from the checkout request to the moment every side effect exists. The synchronous part is one Serializable database transaction taken under a Redis slot lock; it writes the Payment, its funding legs and the appointment hold together, so either all three exist or none does. The gateway then calls back asynchronously, and the webhook row is saved before the request is acknowledged, which makes the inbound event durable: the platform can redrive the persisted row without requiring Razorpay to resend it. One writer, running in one transaction, moves the money state and posts the ledger. Everything after that commit is best effort and is re-driven by the sweeps at the bottom.
 
 ```mermaid
 flowchart TB
@@ -54,7 +54,7 @@ flowchart TB
   PAY -. "never paid" .-> S4
 ```
 
-Three guarantees follow from this shape. The buyer's money state is exact at the moment the writer commits, because the Payment, the appointment, the earnings and the ledger entries are in the same transaction. Only side effects are eventually consistent, and with the ticker in place they lag by at most five minutes. Every sweep is idempotent, so a sweep and a webhook retry racing each other cannot double-post anything.
+Three guarantees follow from this shape. The buyer's money state is exact at the moment the writer commits, because the Payment, the appointment, the earnings and the ledger entries are in the same transaction. Side effects are eventually consistent and are retried by the listed sweeps where a sweep exists; the five-minute ticker cadence is the normal retry interval, not a hard completion bound. Every sweep is idempotent, so a sweep and a webhook retry racing each other cannot double-post anything.
 
 ## 2. B2C: refunds and consultant payouts
 

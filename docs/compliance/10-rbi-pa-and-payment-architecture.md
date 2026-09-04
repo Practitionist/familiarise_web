@@ -99,14 +99,14 @@ This is a forward-looking note: the auto-top-up cron exists in schema, but live 
 
 ## Current code
 
-| Item                                               | What it does                                                                      | State   |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- | ------- |
-| `lib/payments/payouts/razorpay-payouts.ts`         | RazorpayX Bulk Payouts API client                                                 | ✅ live |
-| `lib/payments/payouts/stripe-connect.ts`           | Stripe Connect for cross-border consultant payouts                                | ✅ live |
-| `lib/payments/payouts/payout-service.ts` (B2C)     | Consultant payout pipeline                                                        | ✅ live |
-| `lib/payments/payouts/org-payout-service.ts` (B2B) | Org payout pipeline                                                               | ✅ live |
-| Razorpay PG checkout                               | ✅ live                                                                           |         |
-| Architecture memo                                  | **Missing** — there's no doc explicitly stating "we are on Path C and here's why" | 🟡      |
+| Item                                               | What it does                                                                                   | State   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
+| `lib/payments/payouts/razorpay-payouts.ts`         | RazorpayX Bulk Payouts API client                                                              | ✅ live |
+| `lib/payments/payouts/stripe-connect.ts`           | Stripe Connect for cross-border consultant payouts                                             | ✅ live |
+| `lib/payments/payouts/payout-service.ts` (B2C)     | Consultant payout pipeline                                                                     | ✅ live |
+| `lib/payments/payouts/org-payout-service.ts` (B2B) | Org payout pipeline                                                                            | ✅ live |
+| Razorpay PG checkout                               | ✅ live                                                                                        |         |
+| Architecture memo                                  | **Written (2026-09-03)** — this document is the memo stating "we are on Path C and here's why" | ✅      |
 
 ## Gap
 

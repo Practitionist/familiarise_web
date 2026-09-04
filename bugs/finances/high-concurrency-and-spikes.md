@@ -24,7 +24,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 - Event checkout fail-closed on Redis outage (503) — correct for seats, harsh for conversion at peak.
 - Consultation path relies more on DB GiST if Redis fails — asymmetric.
 - Cron jitter (Actions) means tentative cleanup / sweeper delay under load.
-- Hot consultant auto-allocate lock serializes an entire consultant — bottleneck during flash sales.
+- Hot consultant auto-allocate lock serializing an entire consultant — the 2026-09-03 verdict pass confirmed this FIXED-BY #988 (#860 sharded locks); auto-allocate keeps the consultant key by design, with the GiST constraint as a backstop.
 
 ## Unhappy paths & user psychology
 

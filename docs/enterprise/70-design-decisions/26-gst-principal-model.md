@@ -19,15 +19,19 @@ The 2026-09-03 financial audit assumed the facilitator reading for GST as well a
 The platform bills as **principal supplier for GST**. Concretely:
 
 1. GST stays at 18% on the full discounted price, booked to `GST_PAYABLE` at settlement, exactly as today.
-2. The platform issues a numbered **B2C tax invoice** for every consumer supply and a **credit note** for every refund (`ConsumerInvoice`, `ConsumerCreditNote`, platform-wide gapless series under CGST Rule 46 and Rule 53), alongside the existing org invoices for sponsored supplies.
+2. The platform will issue a numbered **B2C tax invoice** for every consumer supply and a **credit note** for every refund (`ConsumerInvoice`, `ConsumerCreditNote`, platform-wide gapless series under CGST Rule 46 and Rule 53), alongside the existing org invoices for sponsored supplies. This is design intent, not yet shipped: the models do not exist in the schema as of this ADR and land with PR-E (`feat/finance-b2c-tax-invoice`, in flight).
 3. Place of supply for a consumer is the declared or remembered billing state; when no address is on record, it defaults to the **supplier's state under Section 12(2)(b)** of the IGST Act, which makes the supply intra-state (CGST + SGST). This is the opposite of the B2B derivation's IGST fallback, which stays as an audit signal for org invoices.
 4. GST-TCS under Section 52 **does not apply** on this model and is not collected. The dormant schema (`Payment.gstTcsCollectedPaise`, `GstTcsBatch`, the GSTR-8 draft builder) stays in place, correctly annotated at 0.5%, and is only wired if the CA overturns this decision.
 5. The platform's own outward-supply return is produced as a period **register export** (all tax invoices and credit notes, with place of supply and tax heads) that the CA files GSTR-1 and GSTR-3B from. No in-app GSTR JSON builders.
 6. Income tax is unchanged: 194-O at 0.1% with the three-limb ₹5 lakh exemption, withheld on both the consultant and the host-org payout rails and reported on Form 140 (formerly 26Q) with Section 393 payment codes.
 
+## Alternatives considered
+
+The facilitator model — GST only on the platform's commission, 0.5% Section 52 TCS collected on registered consultants' sales, and monthly GSTR-8 filing — was rejected because it does not match the code that already exists: checkout has always charged 18% GST on the full discounted price and the booking journal has always credited `GST_PAYABLE` for that full amount, which is principal-supplier behaviour, not facilitator behaviour. Adopting the facilitator reading now would mean re-deriving every historical GST figure, wiring the dormant TCS schema, and building GSTR-8 tooling that the platform does not currently need — a pricing, invoice and ledger re-architecture rather than a continuation of the current design. It remains the fallback if the CA rejects the principal-supplier pairing (see Consequences below).
+
 ## Consequences
 
-Every consumer payment now leaves a statutory document trail the buyer can download, which closes the "incomplete information" gap in the money journey. The register export gives the CA one file per month instead of a database query. Consultants who hold a GSTIN invoice the platform, not the buyer; that is a contractual and onboarding matter, not a code path, and belongs in the consultant terms.
+Every consumer payment will leave a statutory document trail the buyer can download once the B2C tax-invoice work lands, which closes the "incomplete information" gap in the money journey; that work (`ConsumerInvoice`, `ConsumerCreditNote`) is in flight and not yet in the schema (tracked as PR-E, `feat/finance-b2c-tax-invoice`). The register export gives the CA one file per month instead of a database query, once it ships alongside the invoices. Consultants who hold a GSTIN invoice the platform, not the buyer; that is a contractual and onboarding matter, not a code path, and belongs in the consultant terms.
 
 The pairing of principal-for-GST with operator-for-income-tax is defensible but unusual, and it is the first question on the CA list below. If the CA rejects it, the facilitator model is a pricing, invoice and ledger re-architecture (GST only on the platform fee, TCS on registered consultants, GSTR-8 monthly) and would be a new ADR.
 
