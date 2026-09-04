@@ -175,6 +175,48 @@ type PaymentSuccessTxResult =
       doubleBookingBlocked: boolean;
     };
 
+/**
+ * Report a capture that landed on a payment which is no longer PENDING.
+ *
+ * Every status stamp below rides a CAS (`updateMany` with `paymentStatus` in
+ * the WHERE), so a zero count means the row reached a terminal state — EXPIRED,
+ * FAILED or SUCCEEDED — before this webhook arrived. The caller writes nothing
+ * and still acknowledges the delivery; this records the evidence an operator
+ * needs to reconcile the captured funds by hand.
+ */
+function reportTerminalCaptureRace(params: {
+  paymentId: string;
+  orderId: string;
+  currentStatus: PaymentStatus;
+  reason: string;
+}): void {
+  void recordSystemError({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Capture for order ${params.orderId} landed on a ${params.currentStatus} payment — status left alone, refund by hand`,
+    err: new Error("CAPTURE_AFTER_TERMINAL_PAYMENT"),
+    context: {
+      paymentId: params.paymentId,
+      orderId: params.orderId,
+      currentStatus: params.currentStatus,
+      reason: params.reason,
+    },
+  }).catch(() => {});
+  reportSentryMessage(
+    "Capture landed on a terminal payment — status not restamped",
+    {
+      subsystem: "payments",
+      level: "warning",
+      extra: {
+        paymentId: params.paymentId,
+        orderId: params.orderId,
+        currentStatus: params.currentStatus,
+        reason: params.reason,
+      },
+    },
+  );
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -271,8 +313,12 @@ export async function handlePaymentSuccess(
             // #837 — mark SUCCEEDED (gateway truth) + stamp REQUIRES_MANUAL_RECOVERY as
             // the FALLBACK. Phase 2 auto-refunds the wrong-amount capture; the manual
             // marker only survives if that refund call itself throws.
-            await tx.payment.update({
-              where: { id: payment.id },
+            // #1439 — the stamp is a CAS: a late capture on an EXPIRED order
+            // resurrected it to SUCCEEDED and its tentative hold leaked, so the
+            // status rides the WHERE (ADR 21). Count 0 = already terminal:
+            // write nothing, report, and still acknowledge the webhook.
+            const stamped = await tx.payment.updateMany({
+              where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 // #1353 — this branch auto-refunds in Phase 2, so it is the one
@@ -283,6 +329,14 @@ export async function handlePaymentSuccess(
                 description: `REQUIRES_MANUAL_RECOVERY: capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p. Booking NOT confirmed; auto-refund attempted.`,
               },
             });
+            if (stamped.count === 0) {
+              reportTerminalCaptureRace({
+                paymentId: payment.id,
+                orderId: paymentIntentId,
+                currentStatus: payment.paymentStatus,
+                reason: `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
+              });
+            }
             console.error(
               JSON.stringify({
                 event: "CRITICAL_PAYMENT_AMOUNT_MISMATCH",
@@ -338,8 +392,12 @@ export async function handlePaymentSuccess(
 
             // FIX Issue #8: Enhanced alerting for metadata validation failures
             // This is a CRITICAL condition - customer charged but no appointment created!
-            await tx.payment.update({
-              where: { id: payment.id },
+            // #1439 — the stamp is a CAS: a late capture on an EXPIRED order
+            // resurrected it to SUCCEEDED and its tentative hold leaked, so the
+            // status rides the WHERE (ADR 21). Count 0 = already terminal:
+            // write nothing, report, and still acknowledge the webhook.
+            const recoveryStamped = await tx.payment.updateMany({
+              where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 // #1353 — a manual recovery here usually ends in a refund; give
@@ -348,6 +406,14 @@ export async function handlePaymentSuccess(
                 description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
               },
             });
+            if (recoveryStamped.count === 0) {
+              reportTerminalCaptureRace({
+                paymentId: payment.id,
+                orderId: paymentIntentId,
+                currentStatus: payment.paymentStatus,
+                reason: `metadata validation failed: ${errorMessage}`,
+              });
+            }
 
             // CRITICAL ALERT - Log in structured format for monitoring systems
             console.error(
@@ -389,13 +455,28 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             return null; // Exit early — requires manual intervention
           }
 
-          await tx.payment.update({
-            where: { id: payment.id },
+          // #1439 — the confirmation stamp is a CAS for the same reason as the
+          // two recovery branches above, and it is the one a REPLAY now reaches
+          // (the dev replay route used to fail metadata validation). Confirming
+          // an EXPIRED payment would flip a hold the abandoned-payments sweep
+          // has already released, so a terminal row is reported, not booked.
+          const confirmed = await tx.payment.updateMany({
+            where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
             data: {
               paymentStatus: PaymentStatus.SUCCEEDED,
               ...capturedGatewayId,
             },
           });
+          if (confirmed.count === 0) {
+            reportTerminalCaptureRace({
+              paymentId: payment.id,
+              orderId: paymentIntentId,
+              currentStatus: payment.paymentStatus,
+              reason:
+                "capture arrived after the payment reached a terminal state",
+            });
+            return null; // Signal: nothing to confirm, skip Phase 2
+          }
 
           let appointment;
           if (payment.appointmentId) {
@@ -515,15 +596,19 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     if (!isExclusionViolation(err)) throw err;
     const loser = await prisma.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
-      select: { id: true },
+      select: { id: true, paymentStatus: true },
     });
     if (!loser) throw err;
     // Description stays HONEST at each step (CodeRabbit triage): "refund
     // pending" while the gateway call is in flight — if it fails, the record
     // must not claim money the buyer has not received. The success branch
     // below rewrites it to "Auto-refunded".
-    await prisma.payment.update({
-      where: { id: loser.id },
+    // #1439 — third recovery stamp of the same shape, so it takes the same CAS.
+    // The failed tx rolled the confirmation back, so the row is PENDING again
+    // unless it went terminal underneath us; if it did, refundPayment would
+    // reject it anyway (PAYMENT_NOT_SUCCEEDED), so report and stop.
+    const restamped = await prisma.payment.updateMany({
+      where: { id: loser.id, paymentStatus: PaymentStatus.PENDING },
       data: {
         paymentStatus: PaymentStatus.SUCCEEDED,
         // #1353 — the rolled-back tx took the id with it, and this branch
@@ -534,6 +619,16 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           "Refund pending: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
       },
     });
+    if (restamped.count === 0) {
+      reportTerminalCaptureRace({
+        paymentId: loser.id,
+        orderId: paymentIntentId,
+        currentStatus: loser.paymentStatus,
+        reason:
+          "legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap)",
+      });
+      return;
+    }
     void recordSystemError({
       organizationId: null,
       category: "PAYMENT",

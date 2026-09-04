@@ -25,7 +25,7 @@ import prisma from "@/lib/prisma";
 import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 import { refundEarnings } from "@/lib/payments/payouts/earnings-service";
 import { handlePayoutWebhook } from "@/lib/payments/payouts/payout-service";
-import { PaymentGateway, PaymentStatus, EarningStatus } from "@prisma/client";
+import { PaymentGateway, EarningStatus } from "@prisma/client";
 
 // ============================================
 // Types
@@ -158,7 +158,10 @@ async function handleMockPaymentCaptured(
   const metadata: Record<string, string> = {
     appointmentId: payment.appointmentId || "",
     appointmentType: payment.appointment?.appointmentType || "CONSULTATION",
-    consulteeId: payment.userId || "",
+    // #1439 — the schema's key is `userId`; under `consulteeId` every replay
+    // failed validation and took the manual-recovery branch instead of
+    // confirming the booking.
+    userId: payment.userId || "",
     consultantId: getConsultantProfileId(),
   };
 
