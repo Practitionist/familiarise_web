@@ -20,6 +20,7 @@ export const { GET, POST } = cleanupRoute({
     skippedCount: r.skippedCount,
     errorCount: r.errorCount,
   }),
-  status: () => 200,
+  // #1390 review — the constant 200 masked errorCount>0 runs as healthy; the
+  // default statusFor already reads result.success.
   failureMessage: "Failed to sync payment earnings",
 });

@@ -121,5 +121,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
   };
   console.log(JSON.stringify(body));
 
-  return jsonResponse(body, 200);
+  // #1390 review — a 200 here reads as a healthy invocation to Netlify's
+  // function metrics/retries even when a target failed; failed sweeps still
+  // get picked up by the Actions backstop, but the tick itself should not
+  // self-report healthy.
+  return jsonResponse(body, failed.length > 0 ? 500 : 200);
 }
