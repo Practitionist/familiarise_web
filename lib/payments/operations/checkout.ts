@@ -854,13 +854,21 @@ export async function validateSlotAvailability(
   // SESSION_BOOKING consent must not receive new bookings. Fail-closed:
   // no artifact or withdrawn artifact ⇒ block.
   if (consultantUserId) {
-    const { checkConsent } = await import("@/lib/compliance/dpdp");
-    const { PURPOSE_CODES } = await import("@/lib/compliance/purpose-codes");
+    // #1421 — `tx`, not the global client. Every caller of this helper is
+    // already inside an interactive transaction, and under PG_POOL_MAX=1 that
+    // transaction holds the pool's only connection: a global-client read here
+    // waits for a connection that cannot be freed until the transaction it is
+    // blocking commits, so checkout died at the 3 s pg connect timeout with
+    // "timeout exceeded when trying to connect". The dynamic imports this
+    // block used to carry are gone too; both symbols are static imports above.
     if (
-      !(await checkConsent({
-        userId: consultantUserId,
-        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
-      }))
+      !(await checkConsent(
+        {
+          userId: consultantUserId,
+          purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+        },
+        tx,
+      ))
     ) {
       throw Object.assign(
         new Error(
@@ -1525,10 +1533,15 @@ async function revalidateInsideLock(
         }
       }
       if (
-        !(await checkConsent({
-          userId,
-          purposeCode: PURPOSE_CODES.SESSION_BOOKING,
-        }))
+        // #1421 — same pool-starvation rule as validateSlotAvailability: this
+        // runs inside revalidateInsideLock's transaction.
+        !(await checkConsent(
+          {
+            userId,
+            purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+          },
+          tx,
+        ))
       ) {
         throw Object.assign(
           new Error(
