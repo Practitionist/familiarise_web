@@ -104,7 +104,11 @@ type PaymentLegInput =
       referralCreditUsageId: string;
     }
   | {
-      source: "WALLET" | "INVOICE_ACCRUAL" | "OVERAGE_INVOICE_ACCRUAL" | "LICENSE";
+      source:
+        | "WALLET"
+        | "INVOICE_ACCRUAL"
+        | "OVERAGE_INVOICE_ACCRUAL"
+        | "LICENSE";
       amountPaise: number;
       programAssignmentId: string;
     };
@@ -230,9 +234,17 @@ export function checkPaymentLegsSumToAmount(args: {
   for (const leg of args.legs) {
     if (!isReversalLegSource(leg.source)) continue;
     const sibling = args.legs
-      .filter((l) => l.source === REVERSAL_LEG_PAIRS[leg.source as keyof typeof REVERSAL_LEG_PAIRS])
+      .filter(
+        (l) =>
+          l.source ===
+          REVERSAL_LEG_PAIRS[leg.source as keyof typeof REVERSAL_LEG_PAIRS],
+      )
       .reduce((acc, l) => acc + l.amountPaise, 0);
-    if (leg.amountPaise > 0 || -leg.amountPaise > sibling) {
+    // #1347 — `>= 0`, not `> 0`: a zero reversal is an orphan counter-entry
+    // with no economic content, and `assert_payment_legs_ok` rejects it. The
+    // checker read zero as benign, so the two reached opposite verdicts on the
+    // one value neither writer emits (refund.ts skips `reverse <= 0`).
+    if (leg.amountPaise >= 0 || -leg.amountPaise > sibling) {
       return {
         paymentAmountPaise: args.paymentAmountPaise,
         legSumPaise: legSum,

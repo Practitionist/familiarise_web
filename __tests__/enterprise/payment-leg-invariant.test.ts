@@ -206,20 +206,19 @@ describe("checkPaymentLegsSumToAmount — zero-value LICENSE exemption", () => {
     expect(mismatch!.legSumPaise).toBe(250000);
   });
 
-  it("exempts a license booking whose accrual reversal nets it back to nothing", () => {
-    // Reversal sources are filtered out before the sum runs, so a refunded
-    // license booking is still judged on its original legs alone. The reversal
-    // is written as plain 0 rather than -0: the two compare equal, so a -0
-    // fixture proves nothing the 0 one does not.
-    expect(
-      checkPaymentLegsSumToAmount({
-        paymentAmountPaise: 500000,
-        legs: [
-          { source: "LICENSE", amountPaise: 0 },
-          { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: 0 },
-        ],
-      }),
-    ).toBeNull();
+  it("rejects a zero accrual reversal on a license booking", () => {
+    // #1347 — zero is rejected on BOTH sides: the checker and
+    // `assert_payment_legs_ok` agree a reversal must be strictly negative, so
+    // a zero one is an orphan counter-entry rather than a benign no-op. The
+    // sum carve still suppresses the sum comparison; it never reaches here.
+    const mismatch = checkPaymentLegsSumToAmount({
+      paymentAmountPaise: 500000,
+      legs: [
+        { source: "LICENSE", amountPaise: 0 },
+        { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: 0 },
+      ],
+    });
+    expect(mismatch?.reason).toBe("REVERSAL_PAIR_VIOLATION");
   });
 
   it("does NOT exempt a LICENSE leg that carries a non-zero amount", () => {
