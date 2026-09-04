@@ -7,6 +7,66 @@ import { RATE_PROVIDER_NAME, RATE_PROVIDER_URL } from "@/lib/currency-codes";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 /**
+ * The disclosure sentence for one (currency, total, funding source) triple.
+ *
+ * #1414 — extracted from the component body as a chain of early returns. As a
+ * nested ternary it tripped the quality gate twice, and the zero-total case
+ * below had nowhere to go: referral credits that cover a booking in full skip
+ * the gateway entirely, so the default sentence promised a gateway charge that
+ * never happens.
+ */
+function estimateLead(
+  currency: string,
+  totalPaise: number,
+  fundingSource: string | null,
+) {
+  const inr = formatCurrencyAmount(totalPaise, "INR");
+
+  if (totalPaise <= 0) {
+    return (
+      <>
+        Estimated in {currency}. Nothing is payable for this booking, so no
+        gateway payment is required.
+      </>
+    );
+  }
+
+  if (fundingSource === "WALLET") {
+    return (
+      <>
+        Estimated in {currency}. Your organisation&rsquo;s wallet will be
+        debited {inr} in INR; no card is charged.
+      </>
+    );
+  }
+
+  if (fundingSource === "INVOICE") {
+    return (
+      <>
+        Estimated in {currency}. {inr} in INR will be billed to your
+        organisation&rsquo;s invoice account; no card is charged.
+      </>
+    );
+  }
+
+  if (fundingSource === "LICENSE") {
+    return (
+      <>
+        Estimated in {currency}. The session value is {inr} in INR and is
+        covered by your enterprise licence.
+      </>
+    );
+  }
+
+  return (
+    <>
+      Estimated in {currency}. You will be charged {inr} in INR by the payment
+      gateway; your card issuer&rsquo;s rate applies.
+    </>
+  );
+}
+
+/**
  * #1396 — every order-summary line on the four checkout pages, the Total
  * included, is rendered through `useCurrency().formatPrice`, which multiplies
  * INR paise by a live rate and stamps a foreign symbol on the result. The
@@ -51,33 +111,9 @@ export function FxEstimateNote({
 
   if (!isEstimate) return null;
 
-  const inr = formatCurrencyAmount(totalPaise, "INR");
-  const lead =
-    fundingSource === "WALLET" ? (
-      <>
-        Estimated in {currency}. Your organisation&rsquo;s wallet will be
-        debited {inr} in INR; no card is charged.
-      </>
-    ) : fundingSource === "INVOICE" ? (
-      <>
-        Estimated in {currency}. {inr} in INR will be billed to your
-        organisation&rsquo;s invoice account; no card is charged.
-      </>
-    ) : fundingSource === "LICENSE" ? (
-      <>
-        Estimated in {currency}. The session value is {inr} in INR and is
-        covered by your enterprise licence.
-      </>
-    ) : (
-      <>
-        Estimated in {currency}. You will be charged {inr} in INR by the payment
-        gateway; your card issuer&rsquo;s rate applies.
-      </>
-    );
-
   return (
     <p className="text-xs text-muted-foreground">
-      {lead} Rates by{" "}
+      {estimateLead(currency, totalPaise, fundingSource)} Rates by{" "}
       <a
         href={RATE_PROVIDER_URL}
         target="_blank"

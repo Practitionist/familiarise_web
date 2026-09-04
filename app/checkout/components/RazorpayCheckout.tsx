@@ -178,9 +178,17 @@ export default function RazorpayCheckout({
       // #1396 — the hold already exists server-side; a CDN failure here is
       // the same state a buyer produces by closing the modal, so leave it
       // to the abandoned-payments sweep instead of cancelling client-side.
-      const isLoaded = await loadScript(
-        "https://checkout.razorpay.com/v1/checkout.js",
-      );
+      // #1414 — loadScript REJECTS on script.onerror, so `!isLoaded` alone
+      // never saw a blocked or failed CDN load; it fell through to the outer
+      // catch and the buyer got the generic message instead of this one.
+      let isLoaded = false;
+      try {
+        isLoaded = await loadScript(
+          "https://checkout.razorpay.com/v1/checkout.js",
+        );
+      } catch (scriptError) {
+        reportPaymentsError(scriptError);
+      }
 
       if (!isLoaded) {
         toast({

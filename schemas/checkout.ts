@@ -95,7 +95,16 @@ export const checkoutSchema = z
     // the same codes the navbar offers; the list is shared so the two cannot
     // drift. This is a DISPLAY currency — settlement stays INR-only (ADR 15).
     displayCurrency: z.enum(SUPPORTED_CURRENCY_CODES).optional(),
-    notes: z.string().optional(),
+    // #1437 — this note is forwarded verbatim into the Razorpay order's
+    // `notes` payload, where a value may not exceed 256 characters. Over that
+    // the gateway refuses to create the order and the buyer simply cannot pay,
+    // so bound it here with a message they can act on. The metadata builder
+    // truncates as a second line of defence; the full note is still persisted
+    // on the Payment and Appointment rows.
+    notes: z
+      .string()
+      .max(256, "Booking notes must be 256 characters or fewer")
+      .optional(),
     useReferralCredits: z.boolean().optional(), // Apply available referral credits
     // Enterprise: optional org context. When set, the payment is tagged with
     // organizationId and billing is routed per the BillingAccount's

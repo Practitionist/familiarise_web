@@ -74,6 +74,23 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
+// #1414 — lifted out of handleCheckout, which SonarCloud measured at
+// cognitive complexity 17 against a ceiling of 15. This branch reads which of
+// the three gatewayless confirmations happened; it needs nothing from the
+// component's scope.
+function gatewaylessConfirmationText(data: {
+  isZeroAmountPayment?: boolean;
+  isMockPayment?: boolean;
+}): string {
+  if (data.isZeroAmountPayment) {
+    return "Payment completed via referral credits. Your consultation has been confirmed.";
+  }
+  if (data.isMockPayment) {
+    return "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.";
+  }
+  return "Your consultation has been confirmed. Check your dashboard for details.";
+}
+
 export default function ConsultationCheckoutPage({
   params,
   searchParams,
@@ -361,11 +378,7 @@ export default function ConsultationCheckoutPage({
         ) {
           toast({
             title: "✅ Consultation Booked Successfully!",
-            description: data.isZeroAmountPayment
-              ? "Payment completed via referral credits. Your consultation has been confirmed."
-              : data.isMockPayment
-                ? "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details."
-                : "Your consultation has been confirmed. Check your dashboard for details.",
+            description: gatewaylessConfirmationText(data),
             variant: "default",
           });
 

@@ -752,7 +752,9 @@ const Navbar = () => {
       </nav>
 
       {/* Mobile Drawer — CSS transitions only; framer-motion was pulled into
-          every public page via the root navbar for enter/exit polish. */}
+          every public page via the root navbar for enter/exit polish.
+          #1414 — both entrances are motion-safe: gated; with reduced motion
+          requested they render in their final position, unanimated. */}
       {isOpen && (
         <>
           {/* Backdrop — native button so keyboard/AT get a real interactive
@@ -760,12 +762,12 @@ const Navbar = () => {
           <button
             type="button"
             aria-label="Close menu"
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden animate-in fade-in duration-150"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1001] lg:hidden motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150"
             onClick={closeMenu}
           />
 
           {/* Drawer */}
-          <div className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left animate-in slide-in-from-left duration-300">
+          <div className="lg:hidden fixed top-0 left-0 h-full w-[85%] max-w-sm bg-zinc-950 z-[1002] shadow-2xl safe-top safe-bottom safe-left motion-safe:animate-in motion-safe:slide-in-from-left motion-safe:duration-300">
             {/* Drawer Header */}
             <div className="flex justify-between items-center p-5 border-b border-zinc-800">
               <div className="relative h-8 w-28">
@@ -778,6 +780,8 @@ const Navbar = () => {
                 />
               </div>
               <button
+                type="button"
+                aria-label="Close menu"
                 onClick={closeMenu}
                 className="w-9 h-9 flex items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-white"
               >

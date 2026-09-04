@@ -578,17 +578,39 @@ export async function listRazorpayRefunds(
 function handleRazorpayError(error: unknown): PaymentError {
   if (error && typeof error === "object" && "error" in error) {
     const razorpayError = error as {
-      error: { code?: string; description?: string };
+      error: { code?: string; description?: string; reason?: string };
     };
 
     const code = razorpayError.error.code || "UNKNOWN_ERROR";
     const description =
       razorpayError.error.description || "Failed to create order";
 
+    // #1437 — BAD_REQUEST_ERROR is Razorpay's generic 4xx class: a bad
+    // amount, an over-long note, a malformed receipt and genuinely bad
+    // credentials all arrive under it. Reporting every one of them as an
+    // auth failure sent operators to rotate keys that were fine, and hid the
+    // one field the gateway actually named. Only the auth-shaped payloads
+    // (HTTP 401, or a description/reason that says so) keep that wording.
     if (code.includes("BAD_REQUEST_ERROR")) {
+      const statusCode = (error as { statusCode?: number }).statusCode;
+      const reason = razorpayError.error.reason || "";
+      const looksLikeAuthFailure =
+        statusCode === 401 ||
+        /authentic/i.test(description) ||
+        /authentic/i.test(reason);
+
+      if (looksLikeAuthFailure) {
+        return new PaymentError(
+          "Authentication failed - Invalid Razorpay credentials",
+          "AUTH_ERROR",
+          "RAZORPAY",
+          error,
+        );
+      }
+
       return new PaymentError(
-        "Authentication failed - Invalid Razorpay credentials",
-        "AUTH_ERROR",
+        `Razorpay rejected the request: ${description}`,
+        "GATEWAY_REJECTED",
         "RAZORPAY",
         error,
       );

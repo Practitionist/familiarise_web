@@ -80,14 +80,32 @@ export async function getExchangeRates(): Promise<Record<string, number>> {
     throw new Error(`Failed to fetch exchange rates: ${res.status}`);
   }
 
-  const data = await res.json();
-  if (data.result !== "success") {
+  // #1414 — only `fetch` was inside a fallback. A 200 carrying malformed JSON
+  // threw out of `res.json()` past every `servableStaleRates()` branch, so
+  // /api/currency answered 500 while a perfectly young cache sat right here;
+  // a 200 with no `rates` object published `undefined` as the rate table.
+  // Parse and validate under the same degradation rule as the transport.
+  let data: { result?: string; rates?: unknown };
+  try {
+    data = await res.json();
+  } catch (error) {
+    const stale = servableStaleRates();
+    if (stale) return stale;
+    throw error;
+  }
+
+  const rates = data?.rates;
+  const ratesAreUsable =
+    typeof rates === "object" &&
+    rates !== null &&
+    Object.keys(rates).length > 0;
+  if (data?.result !== "success" || !ratesAreUsable) {
     const stale = servableStaleRates();
     if (stale) return stale;
     throw new Error("Exchange rate API returned an error");
   }
 
-  cachedRates = data.rates as Record<string, number>;
+  cachedRates = rates as Record<string, number>;
   cachedAt = now;
   return cachedRates;
 }
