@@ -48,6 +48,20 @@ describe("#1408 — cumulative clawback postings vs the stamped counter", () => 
     ).toEqual([]);
   });
 
+  // Shortfall-only, so a non-positive counter is never a gap. The reconciler
+  // query already filters `clawbackAmountPaise > 0`; this pins the guard in the
+  // helper so a future caller with a looser query cannot manufacture findings.
+  it("a zero or negative stamped counter is never flagged", () => {
+    for (const clawbackAmountPaise of [0, -1]) {
+      expect(
+        clawbackDualWriteGapFindings(
+          [{ ...PAYOUT, clawbackAmountPaise }],
+          new Map(),
+        ),
+      ).toEqual([]);
+    }
+  });
+
   it("nothing posted at all → the total gap, same kind", () => {
     const findings = clawbackDualWriteGapFindings([PAYOUT], new Map());
 

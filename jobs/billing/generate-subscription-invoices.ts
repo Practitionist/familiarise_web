@@ -300,8 +300,10 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         // One capture, not two: recordSystemError escalates to Sentry itself,
         // and its escalation drops `context`, so the collision extras would
         // only survive on the reportSentryError event above. The durable row
-        // is written through recordSystemEvent directly instead.
-        void recordSystemEvent({
+        // is written through recordSystemEvent directly instead. Awaited: the
+        // insert rides this job's Prisma client, and a fire-and-forget one
+        // loses the audit row to the `$disconnect()` at the end of `main`.
+        await recordSystemEvent({
           organizationId: sub.contract.organization.id,
           category: "INVOICE",
           severity: "ERROR",

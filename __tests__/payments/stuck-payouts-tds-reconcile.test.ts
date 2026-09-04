@@ -145,6 +145,27 @@ describe("PM-15 — stuck-payout reconcile delegates to handlePayoutWebhook", ()
     );
   });
 
+  // #1407 — RazorpayX `failed` (bank refused a queued payout) had no arm here
+  // while Stripe's did, so the payout fell through as an unknown status and was
+  // skipped: PROCESSING forever, earnings still linked to money that never left.
+  it("gateway `failed` → delegates FAILED, not skipped as an unknown status", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "failed", failure_reason: "account closed" }),
+    });
+
+    const result = await handleStuckPayouts();
+
+    expect(handlePayoutWebhook).toHaveBeenCalledWith(
+      "RAZORPAY",
+      "pout_live_1",
+      "FAILED",
+      "account closed",
+      undefined,
+    );
+    expect(result.skippedCount).toBe(0);
+  });
+
   it("still-processing payout → no delegation (status unchanged)", async () => {
     (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
       ok: true,
