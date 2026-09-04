@@ -10,6 +10,10 @@ on:
     - cron: "25 3 * * *"
   workflow_dispatch: # allow manual trigger after rotating a cert
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   sso-cert-expiry-alert:
     runs-on: ubuntu-latest

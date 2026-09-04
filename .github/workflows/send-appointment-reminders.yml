@@ -7,6 +7,10 @@ on:
     - cron: "47 * * * *"
   workflow_dispatch: # Allow manual triggering
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   send-appointment-reminders:
     runs-on: ubuntu-latest

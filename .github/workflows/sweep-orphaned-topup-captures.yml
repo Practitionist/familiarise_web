@@ -9,6 +9,10 @@ on:
     - cron: "23-59/30 * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   sweep-orphaned-topup-captures:
     runs-on: ubuntu-latest

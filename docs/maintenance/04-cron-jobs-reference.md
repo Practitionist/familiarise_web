@@ -189,6 +189,8 @@ The same sweep closed the other half of the hole. The forty-odd HTTP twins under
 
 It is a mutual-exclusion tool and nothing more. Data correctness comes from compare-and-set transitions and unique constraints, never from this lock, because Redis and PostgreSQL are separate failure domains and the lock can be lost without the database noticing. ADR 13 records that reasoning in full.
 
+Every scheduled workflow also declares a workflow-level `concurrency: { group: ${{ github.workflow }}, cancel-in-progress: false }`, a second and redundant guard at the Actions layer that queues an overlapping run rather than killing one mid-flight; `withCronLock` remains the correctness guard, and `__tests__/maintenance/cron-lock-registry.test.ts` asserts the concurrency block is present on every scheduled entry so the two guards cannot drift apart.
+
 Four scheduled workflows do not use it, each for a stated reason.
 
 | Workflow               | Mechanism                    | Why not `withCronLock`                                                                                                                                                                                                                 |

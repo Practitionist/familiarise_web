@@ -36,6 +36,10 @@ on:
       - ".github/workflows/stream-webhook-drift.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 # Read-only: the check mode makes no Stream write and no repository write.
 permissions:
   contents: read
