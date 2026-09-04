@@ -37,6 +37,14 @@ export interface RecordOverageInput {
   paymentGateway: PaymentGateway;
 }
 
+/** The member-due bell, deferred until the caller's transaction has committed. */
+export interface PendingOverageNotification {
+  userId: string;
+  programAssignmentId: string;
+  marginalPaise: number;
+  overageEventId: string;
+}
+
 /**
  * Record one over-cap booking. Assumes the caller already metered the booking
  * and saw `wasOverage = true` (BLOCK behaviour throws inside the metering
@@ -47,10 +55,14 @@ export interface RecordOverageInput {
  * Throws `PROGRAM_CAP_EXHAUSTED` (httpStatus 402) when the circuit breaker
  * vetoes — same shape as the BLOCK path so the dashboard can explain the
  * cycle ceiling vs the per-member allocation.
+ *
+ * Returns the member-due bell to ring, or null when there is nothing to tell
+ * anyone. The caller rings it AFTER its transaction commits — see
+ * `notifyOverageDueAfterCommit`.
  */
 export async function recordOverageAtCheckout(
   input: RecordOverageInput,
-): Promise<void> {
+): Promise<PendingOverageNotification | null> {
   const {
     tx,
     programAssignmentId,
@@ -146,17 +158,20 @@ export async function recordOverageAtCheckout(
     );
     // Modelled outcome (the circuit breaker working as designed), not a
     // fault — captured for volume/pattern visibility only.
-    reportSentryError(capExhaustedErr, { subsystem: "payments", expected: true });
+    reportSentryError(capExhaustedErr, {
+      subsystem: "payments",
+      expected: true,
+    });
     throw capExhaustedErr;
   }
 
-  if (marginalPaise <= 0) return;
+  if (marginalPaise <= 0) return null;
 
   const bu = await tx.bookingUtilization.findUnique({
     where: { paymentId },
     select: { id: true },
   });
-  if (!bu) return;
+  if (!bu) return null;
 
   if (overage.chargeTo === "MEMBER") {
     // Instant member charge. The booking proceeds; create a parent-linked
@@ -239,37 +254,18 @@ export async function recordOverageAtCheckout(
       });
     }
 
-    // Tell the member they owe the marginal + deep-link to the pay surface.
-    // Fire-and-forget on the outer prisma (committed-state lookup; not part of
-    // this rolling-back-able tx).
-    void prisma.programAssignment
-      .findUnique({
-        where: { id: programAssignmentId },
-        select: {
-          program: {
-            select: {
-              name: true,
-              contract: {
-                select: { organization: { select: { name: true } } },
-              },
-            },
-          },
-        },
-      })
-      .then((ctx) => {
-        if (!ctx) return;
-        return notifyOrgProgramOverageDue(userId, {
-          orgName: ctx.program.contract.organization.name,
-          programName: ctx.program.name,
-          amountPaise: marginalPaise,
-          payUrl: `/dashboard/overage?charge=${memberOverageEvent.id}`,
-        });
-      })
-      .catch((notifyErr) => {
-        console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
-        reportSentryError(notifyErr, { subsystem: "payments", level: "warning" });
-      });
-    return;
+    // Tell the member they owe the marginal + deep-link to the pay surface —
+    // handed back for the caller to ring post-commit rather than rung here.
+    // #1435 — the lookup this bell needs runs on the global client, and under
+    // PG_POOL_MAX=1 a global-client query issued inside the transaction queues
+    // behind the transaction's own connection and dies at the 3 s pg connect
+    // timeout, which the .catch swallowed: the bell was lost silently.
+    return {
+      userId,
+      programAssignmentId,
+      marginalPaise,
+      overageEventId: memberOverageEvent.id,
+    };
   }
 
   if (overage.chargeTo === "ORG") {
@@ -325,4 +321,46 @@ export async function recordOverageAtCheckout(
       },
     });
   }
+
+  // CHARGE_ORG bills through the monthly rollup; nobody is told anything now.
+  return null;
+}
+
+/**
+ * Ring the member-due bell for a committed overage. Fire-and-forget: a booking
+ * that is already paid for must not fail because a notification did not go out.
+ */
+export function notifyOverageDueAfterCommit(
+  pending: PendingOverageNotification,
+): void {
+  void prisma.programAssignment
+    .findUnique({
+      where: { id: pending.programAssignmentId },
+      select: {
+        program: {
+          select: {
+            name: true,
+            contract: {
+              select: { organization: { select: { name: true } } },
+            },
+          },
+        },
+      },
+    })
+    .then((ctx) => {
+      if (!ctx) return;
+      return notifyOrgProgramOverageDue(pending.userId, {
+        orgName: ctx.program.contract.organization.name,
+        programName: ctx.program.name,
+        amountPaise: pending.marginalPaise,
+        payUrl: `/dashboard/overage?charge=${pending.overageEventId}`,
+      });
+    })
+    .catch((notifyErr) => {
+      console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
+      reportSentryError(notifyErr, {
+        subsystem: "payments",
+        level: "warning",
+      });
+    });
 }
