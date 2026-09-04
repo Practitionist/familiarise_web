@@ -66,7 +66,16 @@ export async function ensureChannelsForAppointment(
 ): Promise<EnsureChannelsResult> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: {
+    // #1446 — a `select`, not a six-relation `include`. This read runs in
+    // `after()` against the instance's only connection (PG_POOL_MAX=1) with an
+    // inbound request queued behind it, and the step uses nothing but ids, org
+    // ids and the consultant's `userId` — the whole plan and profile rows were
+    // being dragged over the wire for a field each.
+    select: {
+      id: true,
+      appointmentType: true,
+      // Read by `bookingOrgId` below as the appointment-level fallback.
+      organizationId: true,
       // The buyers, not "the buyer": a webinar or class appointment is shared
       // by everyone who registered for it, so the seat that needs a channel is
       // whichever one is missing. Only SUCCEEDED payments count — a tentative
@@ -77,16 +86,24 @@ export async function ensureChannelsForAppointment(
         orderBy: { createdAt: "asc" },
       },
       consultation: {
-        include: {
+        select: {
+          id: true,
           consultationPlan: {
-            include: { consultantProfile: true },
+            select: {
+              organizationId: true,
+              consultantProfile: { select: { userId: true } },
+            },
           },
         },
       },
       subscription: {
-        include: {
+        select: {
+          id: true,
           subscriptionPlan: {
-            include: { consultantProfile: true },
+            select: {
+              organizationId: true,
+              consultantProfile: { select: { userId: true } },
+            },
           },
           // The org-tagged sibling, not the appointment being paid for.
           // `appointment` is one appointment of many under a subscription and
@@ -108,16 +125,18 @@ export async function ensureChannelsForAppointment(
         },
       },
       webinar: {
-        include: {
+        select: {
+          id: true,
           webinarPlan: {
-            include: { consultantProfile: true },
+            select: { consultantProfile: { select: { userId: true } } },
           },
         },
       },
       class: {
-        include: {
+        select: {
+          id: true,
           classPlan: {
-            include: { consultantProfile: true },
+            select: { consultantProfile: { select: { userId: true } } },
           },
         },
       },
@@ -126,7 +145,7 @@ export async function ensureChannelsForAppointment(
       // resolution below yields undefined, the guard fails, and the TRIAL
       // branch never executes for the only appointments that can reach it.
       trialSession: {
-        include: { consultantProfile: true },
+        select: { consultantProfile: { select: { userId: true } } },
       },
     },
   });

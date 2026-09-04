@@ -176,6 +176,45 @@ type PaymentSuccessTxResult =
     };
 
 /**
+ * #1446 — Phase 2 runs inside `after()`, on the same warm instance that is
+ * already serving the next inbound request, and PG_POOL_MAX=1 means the two
+ * share one Prisma connection. Two unawaited 39 s Novu triggers held the event
+ * loop and the socket while the chat-channel step waited for that connection
+ * and died at the 3 s connect timeout. So every outbound Phase-2 step is
+ * bounded and the notifications are awaited before the channel read begins.
+ * Money is committed by this point, so a step that runs out of time is dropped
+ * rather than retried inline: the reconcile sweep re-drives what is durable.
+ */
+const PHASE_2_DEADLINE_MS = 5_000;
+
+/**
+ * Resolve to `undefined` when `work` outlives the deadline, never throwing for
+ * the timeout itself. The underlying call is not cancelled — nothing here can
+ * cancel a socket — it is simply no longer waited on, which is what keeps the
+ * connection free for the step behind it.
+ */
+async function withPhase2Deadline<T>(
+  work: Promise<T>,
+  label: string,
+  ms: number = PHASE_2_DEADLINE_MS,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(
+        `⚠️ Phase 2 step exceeded its ${ms}ms deadline and was abandoned: ${label}`,
+      );
+      resolve(undefined);
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
  * Report a capture that landed on a payment which is no longer PENDING.
  *
  * Every status stamp below rides a CAS (`updateMany` with `paymentStatus` in
@@ -1023,18 +1062,24 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     // consultant and consultee land in different personal trees.
     const dashboardUrl = notificationHref(orgId, "appointments");
 
+    // #1446 — collected, not fired and forgotten: they are awaited together
+    // below, before the channel step touches the pool's only connection.
+    const notifications: Promise<unknown>[] = [];
+
     // Notify consultee of successful payment
-    void Promise.resolve(
-      notifyPaymentSuccess(userId, {
-        ...scope,
-        amount,
-        currency,
-        consultantName: consultantNameForNotif,
-        appointmentType: metadata.appointmentType,
-        planTitle: metadata.planId || planTitle,
-        dashboardUrl,
-      }),
-    ).catch(() => {});
+    notifications.push(
+      Promise.resolve(
+        notifyPaymentSuccess(userId, {
+          ...scope,
+          amount,
+          currency,
+          consultantName: consultantNameForNotif,
+          appointmentType: metadata.appointmentType,
+          planTitle: metadata.planId || planTitle,
+          dashboardUrl,
+        }),
+      ),
+    );
 
     // Notify both consultant and consultee of the booked appointment
     const notifUserIds = [userId];
@@ -1071,19 +1116,30 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       // returns (Novu wrappers swallow internally; test doubles return
       // undefined), so a synchronous throw can't become an unhandled
       // rejection inside this handler.
-      void Promise.resolve(
-        notifyAppointmentBooked(notifUserIds, {
-          ...scope,
-          appointmentId,
-          dateTime: firstSlot.startsAt.toISOString(),
-          appointmentType: metadata.appointmentType,
-          consultantName: consultantNameForNotif,
-          consulteeName: userName || "User",
-          planTitle: metadata.planId || planTitle,
-          dashboardUrl,
-        }),
-      ).catch(() => {});
+      notifications.push(
+        Promise.resolve(
+          notifyAppointmentBooked(notifUserIds, {
+            ...scope,
+            appointmentId,
+            dateTime: firstSlot.startsAt.toISOString(),
+            appointmentType: metadata.appointmentType,
+            consultantName: consultantNameForNotif,
+            consulteeName: userName || "User",
+            planTitle: metadata.planId || planTitle,
+            dashboardUrl,
+          }),
+        ),
+      );
     }
+
+    // #1446 — best-effort still, but bounded and finished BEFORE the channel
+    // step: `allSettled` swallows a rejected trigger (the Novu wrappers already
+    // log and report it) and the deadline drops one that hangs.
+    await Promise.allSettled(
+      notifications.map((notification, i) =>
+        withPhase2Deadline(notification, `novu-trigger[${i}] ${paymentId}`),
+      ),
+    );
   } catch (novuError) {
     reportSentryError(novuError, { subsystem: "payments", level: "warning" });
     console.error(
@@ -1103,7 +1159,21 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // buyer silently never having a chat.
   void (async () => {
     try {
-      const result = await ensureChannelsForAppointment(appointmentId);
+      // #1446 — the step opens with a DB read, so it is the first thing to die
+      // when the single connection is busy. Bounded: on timeout
+      // `chatChannelEnsuredAt` stays NULL, which is exactly the queue that
+      // reconcile-orphaned-confirmations drains.
+      const result = await withPhase2Deadline(
+        ensureChannelsForAppointment(appointmentId),
+        `ensureChannelsForAppointment(${appointmentId})`,
+      );
+      if (!result) {
+        streamLogger.warn(
+          "Stream channel step hit its deadline — stamp left NULL for the reconcile sweep",
+          { appointmentId, userId, deadlineMs: PHASE_2_DEADLINE_MS },
+        );
+        return;
+      }
       if (!result.ensured) {
         streamLogger.warn(
           "Stream channels not ensured on payment success — left for the reconcile sweep",

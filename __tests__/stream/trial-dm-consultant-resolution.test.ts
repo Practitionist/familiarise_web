@@ -118,8 +118,12 @@ describe("the handler actually does this", () => {
     // Without the include, the rung below reads a relation Prisma never
     // loaded — always undefined, and no type error to say so.
     expect(source).toContain("trialSession: {");
+    // #1446 narrowed the read to a `select` of the ids the step uses, so the
+    // relation is now loaded with its own `select` rather than `: true`. The
+    // contract the pin states is unchanged: trialSession is loaded, WITH its
+    // consultant.
     expect(source).toMatch(
-      /trialSession:\s*\{\s*include:\s*\{\s*consultantProfile:\s*true/,
+      /trialSession:\s*\{\s*(?:include|select):\s*\{\s*consultantProfile:/,
     );
   });
 
