@@ -70,6 +70,14 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Configuration Not Supported",
     description: null, // Use the server's specific message
   },
+  // #1351 — the server message names the env flag that fences the rail, which
+  // is operator detail, so this entry carries its own description instead of
+  // passing that through to the buyer.
+  [ErrorTypes.GATEWAY_UNAVAILABLE]: {
+    title: "This payment method is not available",
+    description:
+      "This payment method isn't available right now. Please go back and choose a different one.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message
