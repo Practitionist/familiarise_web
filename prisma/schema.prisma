@@ -48,6 +48,8 @@ model User {
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
   Payment                 Payment[]
+  // #1365 — B2C tax invoices issued to this buyer.
+  consumerInvoices        ConsumerInvoice[]
 
   // Relations
   consultantProfile     ConsultantProfile?
@@ -2212,10 +2214,16 @@ model OrganizationInvoice {
   /// set when overdue triggered the (config-gated) booking-suspend cascade.
   dunningSuspendedAt    DateTime?
 
+  /// #1370 — stamped by the monthly outward-supplies register export so a
+  /// re-run does not re-stamp an already-reported document. The CSV is always
+  /// a full-period snapshot, so this is a reporting marker, not a filter.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, invoiceNumber])
+  @@index([gstr1ExportedAt])
   // CR #1243 — keyset pagination for the invoices CSV export.
   @@index([organizationId, createdAt, id])
   @@index([organizationId, status, dueDate])
@@ -2287,6 +2295,163 @@ model OrgCreditNoteCounter {
 
   @@id([organizationId, fiscalYear])
   @@map("org_credit_note_counters")
+}
+
+/// #1365 — the statutory tax invoice a personal (B2C) buyer is owed for a
+/// single Payment. The platform bills as PRINCIPAL supplier (ADR 26), so every
+/// consumer supply is our outward supply and needs its own Rule 46 document.
+///
+/// This is deliberately NOT a nullable-FK variant of OrganizationInvoice.
+/// That model's required organization, billingAccount and dueDate are
+/// load-bearing for dunning, and its per-org gapless unique is load-bearing
+/// for the IRP e-invoice series; a B2C invoice has no org, no due date (it is
+/// paid before it is issued) and needs ONE platform-wide series instead of one
+/// series per buyer. Forcing both shapes into one model would make every one of
+/// those columns optional and silently weaken the B2B guarantees.
+///
+/// Document only: this model posts nothing to the ledger and derives no tax
+/// from a rate. The tax heads are split out of the tax the buyer was actually
+/// charged at checkout, so the document agrees with GST_PAYABLE to the paise.
+model ConsumerInvoice {
+  id        String  @id @default(cuid())
+  paymentId String  @unique
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  invoiceNumber String @unique
+  fiscalYear    Int
+
+  // Supplier + buyer snapshots. A tax invoice must keep saying what it said on
+  // the day it was issued, so neither side is read through a live relation.
+  supplierName      String
+  supplierGstin     String  @db.VarChar(15)
+  supplierAddress   String
+  supplierStateCode String  @db.VarChar(2)
+  buyerName         String
+  buyerEmail        String
+  buyerAddress      String?
+  buyerStateCode    String? @db.VarChar(2)
+
+  /// How the place of supply was decided — an audit trail for the s.12(2)(b)
+  /// default, which is indistinguishable from a declared home-state supply
+  /// once it is written down.
+  placeOfSupplySource PlaceOfSupplySource
+  placeOfSupply       String?             @db.VarChar(2)
+
+  taxableValuePaise BigInt
+  cgstPaise         BigInt @default(0)
+  sgstPaise         BigInt @default(0)
+  igstPaise         BigInt @default(0)
+  totalPaise        BigInt
+
+  currency   Currency @default(INR)
+  sacCode    String   @default("999293")
+  /// Rate in basis points, recorded for the document only. The tax heads are
+  /// never re-derived from it.
+  taxRateBps Int      @default(1800)
+
+  supplyDate DateTime @db.Timestamptz
+  issuedAt   DateTime @db.Timestamptz
+
+  pdfStoragePath  String?
+  pdfGeneratedAt  DateTime? @db.Timestamptz
+  /// Stamped by the monthly outward-supplies register export so a re-run does
+  /// not re-stamp; the CSV itself is always a full-period snapshot.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
+  /// Rule 46 requires the recipient's name, address and state on a B2C invoice
+  /// of ₹50,000 or more. We still mint the invoice — a missing address is not a
+  /// reason to leave a buyer without a document — and flag it for follow-up.
+  needsBuyerAddress Boolean @default(false)
+
+  creditNotes ConsumerCreditNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, issuedAt])
+  @@index([fiscalYear, issuedAt])
+  @@index([gstr1ExportedAt])
+  /// The monthly register scans on `issuedAt` alone; the composite indexes
+  /// above both lead with a column that query does not constrain, so without
+  /// this it sequentially scans every consumer invoice ever issued.
+  @@index([issuedAt])
+}
+
+/// #1365 — CGST s.34 credit note against a ConsumerInvoice, minted when a B2C
+/// payment is refunded or a chargeback is lost. The invoice is never deleted
+/// or rewritten; the credit note is what reverses it.
+model ConsumerCreditNote {
+  id               String @id @default(cuid())
+  creditNoteNumber String @unique
+  fiscalYear       Int
+
+  consumerInvoiceId String
+  consumerInvoice   ConsumerInvoice @relation(fields: [consumerInvoiceId], references: [id], onDelete: Restrict)
+
+  /// Exactly one trigger keys the note. Both are @unique, so a webhook
+  /// redelivery or a cron retry re-reads the existing note instead of minting a
+  /// second one and burning a gapless number.
+  refundId  String? @unique
+  disputeId String? @unique
+  reason    String?
+
+  taxableValuePaise BigInt
+  cgstPaise         BigInt @default(0)
+  sgstPaise         BigInt @default(0)
+  igstPaise         BigInt @default(0)
+  totalPaise        BigInt
+
+  issuedAt DateTime @db.Timestamptz
+
+  pdfStoragePath  String?
+  pdfGeneratedAt  DateTime? @db.Timestamptz
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consumerInvoiceId])
+  @@index([fiscalYear, issuedAt])
+  @@index([gstr1ExportedAt])
+  /// Same period scan as ConsumerInvoice, same reason.
+  @@index([issuedAt])
+}
+
+/// Platform-wide (not per-org) gapless invoice sequence, same atomic
+/// upsert-and-return-the-pre-increment pattern as OrgInvoiceCounter.
+///
+/// A sentinel "platform" Organization row reusing OrgInvoiceCounter was
+/// rejected: OrgInvoiceCounter.organizationId is a real FK to Organization, so
+/// the sentinel would surface in org lists, member counts and payout runs, and
+/// every org-scoped query would need to remember to exclude it.
+model PlatformInvoiceCounter {
+  fiscalYear Int      @id
+  nextSeq    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@map("platform_invoice_counters")
+}
+
+/// Rule 53 requires the credit-note series to run independently of the invoice
+/// series, so this is a second counter rather than a shared one.
+model PlatformCreditNoteCounter {
+  fiscalYear Int      @id
+  nextSeq    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@map("platform_credit_note_counters")
+}
+
+/// Which rule decided the place of supply on a consumer invoice. The statutory
+/// default matters for audit: under s.12(2)(b) IGST Act a B2C supply with no
+/// address of the recipient on record is supplied at the SUPPLIER's location,
+/// which is the opposite of the B2B unknown-state fallback to IGST.
+enum PlaceOfSupplySource {
+  DECLARED_AT_CHECKOUT
+  PROFILE_ON_RECORD
+  SUPPLIER_DEFAULT_12_2_B
 }
 
 model PurchaseOrder {
@@ -2981,6 +3146,12 @@ model ConsulteeProfile {
   // Enterprise: optional org memberships as MEMBER/LEARNER role.
   memberships   Membership[] @relation("ConsulteeMembership")
   isIndependent Boolean      @default(true)
+
+  /// #1365 — the buyer's GST state (2-digit numeric), remembered from checkout
+  /// so a repeat buyer is never asked twice. Sec 12(2)(b) IGST Act makes this
+  /// optional: null means the supply is placed at the supplier's own location,
+  /// which is the statutory default, not a missing value to chase.
+  billingStateCode String? @db.VarChar(2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4873,6 +5044,9 @@ model Payment {
   refunds  Refund[] // Refunds associated with this payment
   disputes Dispute[] // Disputes associated with this payment
 
+  // #1365 — the statutory B2C tax invoice for this payment, at most one.
+  consumerInvoice ConsumerInvoice?
+
   // Payout relations
   earnings     ConsultantEarnings[]
   creditUsages ReferralCreditUsage[]
@@ -5501,12 +5675,16 @@ model CreditNote {
   irpLastAttemptAt DateTime?
   irpRetryCount    Int       @default(0)
 
+  /// #1370 — see OrganizationInvoice.gstr1ExportedAt.
+  gstr1ExportedAt DateTime? @db.Timestamptz
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, creditNoteNumber])
   @@index([organizationId, fiscalYear])
   @@index([invoiceId])
+  @@index([gstr1ExportedAt])
 }
 
 // #778 §D — IRP document type for the note. DBN reserved for supplementary
