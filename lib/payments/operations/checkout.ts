@@ -147,6 +147,23 @@ type SubscriptionCheckoutResult = {
 // ============================================================================
 
 /**
+ * #1437 — Razorpay caps an order's `notes` at 15 keys and 256 characters per
+ * value, and this object is that payload (Stripe's own limits are far looser,
+ * so the tighter gateway sets the shape for both).
+ *
+ * Two consequences are handled here. The buyer's booking note is truncated
+ * rather than forwarded verbatim: `checkoutSchema` already rejects anything
+ * longer, and the full text is persisted on the Payment and Appointment rows,
+ * so this copy exists only for the gateway dashboard and losing its tail costs
+ * nothing — whereas exceeding the limit costs the buyer the whole purchase.
+ * And `discountCode` was dropped: the org-sponsored event case emitted exactly
+ * 15 keys, leaving no headroom for the next one, and the discount is already
+ * reflected in the order amount and recorded on the Payment row, while nothing
+ * in the webhook path ever reads it back out of the gateway.
+ */
+const GATEWAY_NOTE_MAX_CHARS = 256;
+
+/**
  * Build payment metadata for both payment intents and webhook handlers
  * Ensures consistency between payment creation and mock payment flows.
  *
@@ -156,7 +173,7 @@ type SubscriptionCheckoutResult = {
  * and gives invoice-fraud reconcilers a server-side proof that the
  * booker's claimed org matches the gateway's record.
  */
-function buildPaymentMetadata(
+export function buildPaymentMetadata(
   data: CheckoutInput,
   userId: string,
   orgContext?: {
@@ -175,8 +192,7 @@ function buildPaymentMetadata(
     slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId || "",
     schedulingPeriodStartsAt: data.schedulingPeriodStartsAt || "",
     schedulingPeriodEndsAt: data.schedulingPeriodEndsAt || "",
-    discountCode: data.discountCode || "",
-    notes: data.notes || "",
+    notes: (data.notes || "").slice(0, GATEWAY_NOTE_MAX_CHARS),
     ...(data.eventId && { eventId: data.eventId }),
     ...(orgContext?.organizationId && {
       organizationId: orgContext.organizationId,
@@ -2864,6 +2880,10 @@ export async function handleCheckout(
         amount: Number(reusableOrder.amount),
         currency: reusableOrder.currency,
         isMockPayment: reusableOrder.isMockPayment,
+        // #1437 — PENDING reuse is always a real gateway hold (mock/zero/
+        // org-sponsored payments never land in PENDING, see the comment
+        // above findReusablePendingOrderPayment), so the page must open it.
+        skipPayment: reusableOrder.isMockPayment,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -3677,11 +3697,20 @@ export async function handleCheckout(
           ? "Payment completed via referral credits. Appointment booked successfully."
           : isMockPayment
             ? "Mock payment completed and appointment created successfully"
-            : "Payment intent created. Complete payment to book appointment.",
+            : isOrgSponsoredPayment
+              ? "Payment completed via organization funding. Appointment booked successfully."
+              : "Payment intent created. Complete payment to book appointment.",
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,
         isZeroAmountPayment,
+        // #1437 — WALLET/INVOICE/LICENSE org funding also confirms
+        // synchronously with a synthetic org_* id and no gateway order;
+        // isMockPayment/isZeroAmountPayment don't cover it, so the client
+        // was opening Razorpay on an id the gateway had never heard of.
+        // Matches checkout-replay.ts's SUCCEEDED-branch field name.
+        skipPayment:
+          isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
       };
     } catch (dbError) {
       console.error("Failed to create payment record:", dbError);

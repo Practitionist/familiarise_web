@@ -973,12 +973,17 @@ AppointmentStatus:
 
 ### Gateway Support Matrix
 
-| Feature             | Stripe | Razorpay            |
-| ------------------- | ------ | ------------------- |
-| Dispute Webhooks    | Yes    | Yes                 |
-| List Disputes API   | Yes    | No (Dashboard only) |
-| Submit Evidence API | Yes    | No (Dashboard only) |
-| Retrieve Dispute    | Yes    | No                  |
+The matrix below covers the dispute surface, where the two gateways differ most, and the settlement currency, where they deliberately do not differ at all.
+
+| Feature              | Stripe                          | Razorpay                        |
+| -------------------- | ------------------------------- | ------------------------------- |
+| Dispute Webhooks     | Yes                             | Yes                             |
+| List Disputes API    | Yes                             | No (Dashboard only)             |
+| Submit Evidence API  | Yes                             | No (Dashboard only)             |
+| Retrieve Dispute     | Yes                             | No                              |
+| Settlement currency  | INR only, enforced at order creation | INR only, enforced at order creation |
+
+Settlement is INR-only by design, per [ADR 15](../enterprise/70-design-decisions/15-currency-as-enum-with-display-fields.md): every stored amount is an integer count of INR paise and the double-entry ledger is INR-denominated. That is enforced rather than assumed. `assertInrSettlement`, in `lib/payments/validation/currency-guards.ts`, is the first statement of both `createRazorpayOrder` and `createStripeCheckoutSession`, and it throws a `PaymentError` with code `NON_INR_SETTLEMENT` for anything else. The assertion sits at the gateway boundary rather than at each caller because callers read a currency out of the database — an organisation's billing account, an invoice's display currency, an overage event — and any one of them forwarding a stale non-INR value would otherwise mint an order denominated in that currency's own subunit while the platform recorded rupees. An international buyer is still served an INR order; their card issuer performs the conversion. See [multi-currency/01-architecture.md](./multi-currency/01-architecture.md) for the display-side story.
 
 ---
 

@@ -10,6 +10,7 @@ import {
   RefundError,
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -161,6 +162,19 @@ export async function createRazorpayOrder({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  // #1396 — first statement in the function, ahead of the client lookup, so a
+  // non-INR currency cannot reach the SDK even on a misconfigured instance.
+  // Only the booking checkout was guarded upstream; the org wallet top-up
+  // minted `{ amount: paise, currency: BillingAccount.currency }`, so a USD
+  // billing account turned a ₹1,000 top-up into a $1,000 order.
+  // #1396 — use the canonical code the guard just normalised, not the raw
+  // (possibly padded/lowercased) input, so the SDK always sees "INR".
+  const settlementCurrency = assertInrSettlement(
+    currency,
+    "create a Razorpay order",
+    "RAZORPAY",
+  );
+
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
     throw new PaymentError(
@@ -186,7 +200,7 @@ export async function createRazorpayOrder({
         withRazorpaySdkTimeout("orders.create", () =>
           razorpayClient.orders.create({
             amount: amount, // already in smallest currency unit (paise)
-            currency,
+            currency: settlementCurrency,
             notes: metadata,
             // PM-11 — Date.now() collides for two orders in the same ms; the uuid
             // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
@@ -594,7 +608,7 @@ export async function listRazorpayRefunds(
  */
 function readRazorpayErrorBody(
   error: unknown,
-): { code?: string; description?: string } | null {
+): { code?: string; description?: string; reason?: string } | null {
   if (!error || typeof error !== "object" || !("error" in error)) {
     return null;
   }
@@ -604,15 +618,18 @@ function readRazorpayErrorBody(
     return null;
   }
 
-  const { code, description } = body as {
+  const { code, description, reason } = body as {
     code?: unknown;
     description?: unknown;
+    reason?: unknown;
   };
 
   return {
     // A non-string code would break the `.includes` branching below.
     code: typeof code === "string" ? code : undefined,
     description: typeof description === "string" ? description : undefined,
+    // #1437 — the auth-shape test below reads it; same string guard.
+    reason: typeof reason === "string" ? reason : undefined,
   };
 }
 
@@ -622,10 +639,32 @@ function handleRazorpayError(error: unknown): PaymentError {
     const code = razorpayError.code || "UNKNOWN_ERROR";
     const description = razorpayError.description || "Failed to create order";
 
+    // #1437 — BAD_REQUEST_ERROR is Razorpay's generic 4xx class: a bad
+    // amount, an over-long note, a malformed receipt and genuinely bad
+    // credentials all arrive under it. Reporting every one of them as an
+    // auth failure sent operators to rotate keys that were fine, and hid the
+    // one field the gateway actually named. Only the auth-shaped payloads
+    // (HTTP 401, or a description/reason that says so) keep that wording.
     if (code.includes("BAD_REQUEST_ERROR")) {
+      const statusCode = (error as { statusCode?: number }).statusCode;
+      const reason = razorpayError.reason || "";
+      const looksLikeAuthFailure =
+        statusCode === 401 ||
+        /authentic/i.test(description) ||
+        /authentic/i.test(reason);
+
+      if (looksLikeAuthFailure) {
+        return new PaymentError(
+          "Authentication failed - Invalid Razorpay credentials",
+          "AUTH_ERROR",
+          "RAZORPAY",
+          error,
+        );
+      }
+
       return new PaymentError(
-        "Authentication failed - Invalid Razorpay credentials",
-        "AUTH_ERROR",
+        `Razorpay rejected the request: ${description}`,
+        "GATEWAY_REJECTED",
         "RAZORPAY",
         error,
       );

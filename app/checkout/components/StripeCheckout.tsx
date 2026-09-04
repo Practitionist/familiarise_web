@@ -4,27 +4,23 @@ import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
-import { loadStripe, type Stripe } from "@stripe/stripe-js";
 import { useState } from "react";
 import {
   busyRetryToast,
+  checkoutNeedsGateway,
   fetchCheckoutWithBusyRetry,
- mintClientIdempotencyKey } from "@/app/checkout/plans/utils";
+  mintClientIdempotencyKey,
+  reportPaymentsError,
+} from "@/app/checkout/plans/utils";
 
+// #1396 — this flow redirects to a Stripe-hosted checkoutUrl, so Stripe.js is
+// never loaded and the publishable key's presence is the only thing worth
+// checking here. This subsumes #1351's lazy `loadStripe` behind the fence: not
+// importing the SDK at all is strictly stronger than importing it late, and
+// the rail stays fenced where it matters — the gateway list hides the card
+// without NEXT_PUBLIC_STRIPE_ENABLED, and `assertGatewayUsable` refuses the
+// route server-side.
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_KEY;
-
-// #1351 — resolved on first render behind the fence, not at module load:
-// importing this file used to fetch js.stripe.com and publish the key on every
-// checkout page, including the ones where the disabled rail never mounts.
-let stripePromise: Promise<Stripe | null> | null = null;
-
-function getStripePromise(): Promise<Stripe | null> | null {
-  if (process.env.NEXT_PUBLIC_STRIPE_ENABLED !== "true" || !stripeKey) {
-    return null;
-  }
-  stripePromise ??= loadStripe(stripeKey);
-  return stripePromise;
-}
 
 interface StripePaymentSuccess {
   message: string;
@@ -65,36 +61,21 @@ export default function StripeCheckout({
   // useState's lazy initializer runs once, unlike a useRef(arg) expression
   // which would mint a key every render.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
-  const stripeLoader = getStripePromise();
 
   const handleCheckout = async () => {
     // Before the spinner, so an abort leaves the button exactly as it was.
     if (onBeforeCheckout && !(await onBeforeCheckout())) return;
     setIsProcessing(true);
     try {
-      if (!stripeLoader) {
-        const errorMsg = !stripeKey
-          ? "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method."
-          : "The Stripe payment system failed to start. Please refresh the page and try again, or contact support if the problem persists.";
+      if (!stripeKey) {
+        const errorMsg =
+          "The Stripe payment system is not properly configured on this website. This is a technical issue on our end. Please contact support for assistance, or try a different payment method.";
         toast({
           title: "Payment System Configuration Error",
           description: errorMsg,
           variant: "destructive",
         });
         onPaymentError({ message: errorMsg });
-        return;
-      }
-
-      const stripe = await stripeLoader;
-
-      if (!stripe) {
-        toast({
-          title: "Payment System Not Loading",
-          description:
-            "The Stripe payment system couldn't load. This may be due to a slow connection or ad blocker. Please check your internet connection, disable any ad blockers, and try again.",
-          variant: "destructive",
-        });
-        onPaymentError({ message: "Stripe failed to load" });
         return;
       }
 
@@ -130,7 +111,12 @@ export default function StripeCheckout({
       // Validate response using schema
       const validationResult = checkoutResponseSchema.safeParse(rawData);
       if (!validationResult.success) {
-        Sentry.captureException(validationResult.error instanceof Error ? validationResult.error : new Error(String(validationResult.error)), { tags: { subsystem: "payments" } });
+        Sentry.captureException(
+          validationResult.error instanceof Error
+            ? validationResult.error
+            : new Error(String(validationResult.error)),
+          { tags: { subsystem: "payments" } },
+        );
         console.error("Invalid checkout response:", validationResult.error);
         console.error("Raw response data:", rawData);
         onPaymentError({ message: "Invalid response from server" });
@@ -144,18 +130,16 @@ export default function StripeCheckout({
         return;
       }
 
-      // Check if payment should be skipped (development mode)
-      if (data.skipPayment) {
-        onPaymentSuccess({ message: "Payment skipped in development mode" });
-        return;
-      }
-
-      // FIX #520: Zero-amount payments (credits covered full cost) — no gateway redirect needed
-      if (data.isZeroAmountPayment) {
+      // #1437 — mock/dev, zero-amount (credits) and org WALLET/INVOICE/
+      // LICENSE funding all confirm synchronously with no gateway redirect;
+      // checkoutNeedsGateway is the one place that decision is made.
+      if (!checkoutNeedsGateway(data)) {
         onPaymentSuccess({
           message:
             data.message ||
-            "Payment completed via referral credits. Appointment booked successfully.",
+            (data.isZeroAmountPayment
+              ? "Payment completed via referral credits. Appointment booked successfully."
+              : "Payment skipped in development mode"),
         });
         return;
       }
@@ -192,7 +176,7 @@ export default function StripeCheckout({
         });
       }
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+      reportPaymentsError(error);
       onPaymentError({
         message:
           error instanceof Error ? error.message : "An unknown error occurred",

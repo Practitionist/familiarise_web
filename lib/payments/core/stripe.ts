@@ -13,6 +13,7 @@ import {
 } from "./types";
 import { RefundStatus, DisputeStatus } from "@prisma/client";
 import { getAppUrl } from "@/lib/url";
+import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
 
 /**
  * Convert Stripe's complex Evidence object to a plain record.
@@ -134,6 +135,18 @@ export async function createStripeCheckoutSession({
   currency,
   metadata,
 }: PaymentIntentParams): Promise<PaymentIntent> {
+  // #1396 — same boundary as the Razorpay sibling, and equally the first
+  // statement here. `unit_amount` below is INR paise no matter what this
+  // argument says, so lower-casing an unvalidated code into
+  // `price_data.currency` would price the order in a foreign subunit.
+  // #1396 — use the canonical code the guard just normalised, not the raw
+  // (possibly padded/lowercased) input.
+  const settlementCurrency = assertInrSettlement(
+    currency,
+    "create a Stripe checkout session",
+    "STRIPE",
+  );
+
   const stripeClient = getStripeClient();
   if (!stripeClient) {
     throw new PaymentError(
@@ -158,7 +171,7 @@ export async function createStripeCheckoutSession({
       line_items: [
         {
           price_data: {
-            currency: currency.toLowerCase(),
+            currency: settlementCurrency.toLowerCase(),
             product_data: {
               name: `${metadata.appointmentType} Appointment`,
               description: `Appointment booking for ${metadata.appointmentType}`,

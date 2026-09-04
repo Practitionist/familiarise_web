@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +20,7 @@ import {
 } from "@/schemas/checkout";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
+import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import {
   BillingStateSelect,
   useBillingState,
@@ -44,9 +44,11 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
-import { mintClientIdempotencyKey,
+import {
+  mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
+  reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 
 // price arrives as number: extended client + JSON serialization (#780)
@@ -210,7 +212,7 @@ export default function SubscriptionCheckoutPage({
           );
         }
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
       } finally {
         setIsLoadingCredits(false);
@@ -244,7 +246,10 @@ export default function SubscriptionCheckoutPage({
   );
 
   const handleCheckout = useCallback(
-    async (gateway: SupportedCheckoutGateway, isMockPayment: boolean = false) => {
+    async (
+      gateway: SupportedCheckoutGateway,
+      isMockPayment: boolean = false,
+    ) => {
       // Block checkout during maintenance mode
       if (isMaintenanceBlocked) {
         toast({
@@ -360,7 +365,7 @@ export default function SubscriptionCheckoutPage({
           handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        reportPaymentsError(error);
         console.error("Checkout error:", error);
         if (error instanceof Error) {
           toast({
@@ -415,7 +420,7 @@ export default function SubscriptionCheckoutPage({
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+        reportPaymentsError(error);
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error
@@ -802,7 +807,9 @@ export default function SubscriptionCheckoutPage({
                           (planData?.data?.sessionDurationInHours || 1)}{" "}
                       hours)
                     </li>
-                    <li>{planData?.data?.sessionsPerWeek || 1} sessions per week</li>
+                    <li>
+                      {planData?.data?.sessionsPerWeek || 1} sessions per week
+                    </li>
                     <li>
                       {planData?.data?.sessionDurationInHours || 1} hour
                       sessions
@@ -846,6 +853,10 @@ export default function SubscriptionCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
             </div>
           </CardContent>
         </Card>
@@ -859,7 +870,9 @@ export default function SubscriptionCheckoutPage({
           {paymentGateways.map((gateway) => (
             <Card key={gateway.gateway} className="border-border">
               <CardHeader>
-                <CardTitle className="text-foreground">{gateway.name}</CardTitle>
+                <CardTitle className="text-foreground">
+                  {gateway.name}
+                </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">

@@ -80,7 +80,6 @@ export async function POST(req: NextRequest) {
         event: "checkout_gateway_routed",
         buyerCountry,
         gateway: gatewayRouting.gateway,
-        isIBT: gatewayRouting.isIBT,
         reason: gatewayRouting.reason,
         timestamp: new Date().toISOString(),
       }),
