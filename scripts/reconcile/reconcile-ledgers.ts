@@ -125,6 +125,13 @@ export type Finding = {
     // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
     // transaction: the cash left but the payable was never cleared in the journal.
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
+    // #1408 — an OrganizationPayout carrying a clawback amount with no
+    // `clawback:*` reversal transaction against it. Only reversePayoutClawback
+    // posts one, and it does so best-effort inside a try/catch; the two other
+    // writers of `clawbackAmountPaise` (refund.ts and booking-refund.ts) post
+    // nothing at all. The money row and the journal are a dual write with no
+    // transaction spanning them, so this is the detector for the gap.
+    | "LEDGER_DUAL_WRITE_GAP"
     // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
     // The JS boundary converts BigInt → number; past 2^53−1 that conversion
     // loses precision (and sumPaise() starts throwing mid-flight). This
@@ -933,6 +940,52 @@ async function runReconcileLedgersUnlocked(
           note: "OrganizationPayout.status=COMPLETED but no ORG_PAYOUT ledger transaction.",
         },
       });
+    }
+  }
+
+  // #1408 — the clawback dual-write. A refund against an already-paid org
+  // payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
+  // but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
+  // reversePayoutClawback posts it inside a try/catch that swallows the
+  // failure, and refund.ts / booking-refund.ts never post it at all. The
+  // stamped payout then claims cash was recovered that the journal has never
+  // seen. Matched on the soft link plus the `clawback:` key prefix because the
+  // full key embeds the refund id, which the payout row does not carry.
+  {
+    const clawedBackPayouts = await prisma.organizationPayout.findMany({
+      where: {
+        clawbackAmountPaise: { gt: 0 },
+        ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+      },
+      select: { id: true, organizationId: true, clawbackAmountPaise: true },
+    });
+    if (clawedBackPayouts.length > 0) {
+      const clawbackTxns = await prisma.ledgerTransaction.findMany({
+        where: {
+          payoutId: { in: clawedBackPayouts.map((po) => po.id) },
+          idempotencyKey: { startsWith: "clawback:" },
+        },
+        select: { payoutId: true },
+      });
+      const clawedBackWithTxn = new Set(
+        clawbackTxns.map((t) => t.payoutId).filter((p): p is string => !!p),
+      );
+      for (const po of clawedBackPayouts) {
+        if (!clawedBackWithTxn.has(po.id)) {
+          findings.push({
+            kind: "LEDGER_DUAL_WRITE_GAP",
+            organizationId: po.organizationId,
+            payoutId: po.id,
+            expectedPaise: po.clawbackAmountPaise,
+            actualPaise: 0,
+            deltaPaise: po.clawbackAmountPaise,
+            details: {
+              scope: "org-payout-clawback",
+              note: "OrganizationPayout.clawbackAmountPaise > 0 but no clawback:* ledger transaction against this payout.",
+            },
+          });
+        }
+      }
     }
   }
 

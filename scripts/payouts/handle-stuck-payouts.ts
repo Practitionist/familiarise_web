@@ -282,18 +282,36 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
           );
         }
       } else {
-        // Reset to APPROVED for retry
-        await prisma.consultantPayout.update({
-          where: { id: payout.id },
+        // #1407 — CAS the retry reset, like every sibling write in this loop.
+        // The interleaving: the cohort is read once, then each payout costs a
+        // gateway HTTP round-trip; while this job is out on an earlier
+        // element, a concurrent process-payouts run or a payout webhook can
+        // move a LATER one. The bare `update` carried no guard, so it stamped
+        // that row back to APPROVED from whatever it had become and the next
+        // batch paid it twice.
+        const reset = await prisma.consultantPayout.updateMany({
+          where: {
+            id: payout.id,
+            status: PayoutStatus.PROCESSING,
+            providerPayoutId: null,
+          },
           data: {
             status: PayoutStatus.APPROVED,
             retryCount: { increment: 1 },
           },
         });
-        retriedCount++;
-        console.log(
-          `   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`,
-        );
+        if (reset.count === 0) {
+          // Whoever moved it owns the row now — never re-arm it from here.
+          skippedCount++;
+          console.log(
+            `   Skipped — raced: a concurrent process-payouts run or payout webhook moved it`,
+          );
+        } else {
+          retriedCount++;
+          console.log(
+            `   Reset to APPROVED for retry (attempt ${payout.retryCount + 1})`,
+          );
+        }
       }
       continue;
     }
