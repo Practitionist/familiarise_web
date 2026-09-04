@@ -88,7 +88,11 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
-import { recordOverageAtCheckout } from "@/lib/payments/billing/overage-settlement";
+import {
+  recordOverageAtCheckout,
+  notifyOverageDueAfterCommit,
+  type PendingOverageNotification,
+} from "@/lib/payments/billing/overage-settlement";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -854,13 +858,21 @@ export async function validateSlotAvailability(
   // SESSION_BOOKING consent must not receive new bookings. Fail-closed:
   // no artifact or withdrawn artifact ⇒ block.
   if (consultantUserId) {
-    const { checkConsent } = await import("@/lib/compliance/dpdp");
-    const { PURPOSE_CODES } = await import("@/lib/compliance/purpose-codes");
+    // #1421 — `tx`, not the global client. Every caller of this helper is
+    // already inside an interactive transaction, and under PG_POOL_MAX=1 that
+    // transaction holds the pool's only connection: a global-client read here
+    // waits for a connection that cannot be freed until the transaction it is
+    // blocking commits, so checkout died at the 3 s pg connect timeout with
+    // "timeout exceeded when trying to connect". The dynamic imports this
+    // block used to carry are gone too; both symbols are static imports above.
     if (
-      !(await checkConsent({
-        userId: consultantUserId,
-        purposeCode: PURPOSE_CODES.SESSION_BOOKING,
-      }))
+      !(await checkConsent(
+        {
+          userId: consultantUserId,
+          purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+        },
+        tx,
+      ))
     ) {
       throw Object.assign(
         new Error(
@@ -1525,10 +1537,15 @@ async function revalidateInsideLock(
         }
       }
       if (
-        !(await checkConsent({
-          userId,
-          purposeCode: PURPOSE_CODES.SESSION_BOOKING,
-        }))
+        // #1421 — same pool-starvation rule as validateSlotAvailability: this
+        // runs inside revalidateInsideLock's transaction.
+        !(await checkConsent(
+          {
+            userId,
+            purposeCode: PURPOSE_CODES.SESSION_BOOKING,
+          },
+          tx,
+        ))
       ) {
         throw Object.assign(
           new Error(
@@ -2303,6 +2320,85 @@ export async function handleClassCheckout(
 // ============================================================================
 
 /**
+ * Ring one org-programme bell for a ProgramAssignment, after the checkout
+ * transaction has settled.
+ *
+ * #1435 — both bells used to run this lookup on the global client from INSIDE
+ * the Serializable transaction. Under PG_POOL_MAX=1 that query queues behind
+ * the transaction's own connection and dies at the 3 s pg connect timeout, and
+ * the .catch below swallowed it, so the bell was lost silently on Netlify.
+ *
+ * Fire-and-forget: a booking must not fail because a notification did not go
+ * out. `Program.organizationId` lives on its parent Contract, not on Program
+ * itself, so the select chain hops Program → Contract → Organization.
+ */
+function dispatchProgramBell(
+  programAssignmentId: string,
+  bell:
+    | { kind: "EXHAUSTED" }
+    | {
+        kind: "CAP_NEAR";
+        engagementsUsed: number;
+        cap: number;
+        usedPct: number;
+      },
+): void {
+  void prisma.programAssignment
+    .findUnique({
+      where: { id: programAssignmentId },
+      select: {
+        membership: {
+          select: {
+            userId: true,
+            user: { select: { name: true, email: true } },
+          },
+        },
+        program: {
+          select: {
+            name: true,
+            contract: {
+              select: {
+                organizationId: true,
+                organization: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+    })
+    .then((ctx) => {
+      if (!ctx) return;
+      const orgId = ctx.program.contract.organizationId;
+      const common = {
+        orgName: ctx.program.contract.organization.name,
+        programName: ctx.program.name,
+        assigneeName: ctx.membership.user.name ?? ctx.membership.user.email,
+        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+      };
+      return bell.kind === "EXHAUSTED"
+        ? notifyOrgProgramExhausted(orgId, ctx.membership.userId, common)
+        : notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
+            ...common,
+            engagementsUsed: bell.engagementsUsed,
+            cap: bell.cap,
+            usedPct: bell.usedPct,
+          });
+    })
+    .catch((notifyErr) => {
+      console.error(
+        bell.kind === "EXHAUSTED"
+          ? "[notifyOrgProgramExhausted] failed:"
+          : "[notifyOrgProgramCapNear] failed:",
+        notifyErr,
+      );
+      reportSentryError(notifyErr, {
+        subsystem: "payments",
+        level: "warning",
+      });
+    });
+}
+
+/**
  * Production checkout flow (real payments)
  * Steps:
  * 1. Validate data and calculate amount
@@ -2847,14 +2943,30 @@ export async function handleCheckout(
     try {
       // #1093 tail — the ONLY Serializable site that wasn't retried: a P2034
       // under hot-webinar contention surfaced as a generic failure instead of
-      // being retried into the sibling's committed state. Anything the body
-      // does on the OUTER prisma client therefore has to be idempotent across
-      // attempts — see capNearNotified.
-      let capNearNotified = false;
+      // being retried into the sibling's committed state.
+      //
+      // #1435 — so the body no longer touches the OUTER prisma client at all.
+      // Every org-programme bell is CAPTURED inside the transaction and rung
+      // once it has settled. The two success-path bells travel out on the
+      // transaction's return value, which by construction is the committing
+      // attempt's, so a P2034 retry cannot ring them twice; the cap-exhausted
+      // bell cannot (it throws), so it rides out on this holder instead.
+      const exhaustedBell: { programAssignmentId: string | null } = {
+        programAssignmentId: null,
+      };
       const result = await withSerializableRetry(async () => {
         await renewOrAbort(perAttemptTtl);
         return prisma.$transaction(
           async (tx) => {
+            // #1435 — this attempt's bells, returned below and rung post-commit.
+            let capNearBell: {
+              programAssignmentId: string;
+              engagementsUsed: number;
+              cap: number;
+              usedPct: number;
+            } | null = null;
+            let overageBell: PendingOverageNotification | null = null;
+
             // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
             // tx. The pre-lock check ran on the global client before this tx, so
             // two concurrent disjoint-slot bookings (which take different per-slot
@@ -3164,65 +3276,12 @@ export async function handleCheckout(
                 });
               } catch (err) {
                 if (err instanceof ProgramAssignmentLimitError) {
-                  // Fire-and-forget bell notification to the assignee + org
-                  // operators. Lookup uses the outer prisma client (not the
-                  // about-to-roll-back `tx`) so the query runs against
-                  // committed state. The TX still rolls back on throw —
-                  // the notification is the correct signal whether or not
-                  // the booking eventually succeeds.
-                  //
-                  // `Program.organizationId` lives on its parent Contract,
-                  // not on Program itself, so the select chain hops
-                  // Program → Contract → Organization.
-                  prisma.programAssignment
-                    .findUnique({
-                      where: { id: programAssignmentId },
-                      select: {
-                        membership: {
-                          select: {
-                            userId: true,
-                            user: { select: { name: true, email: true } },
-                          },
-                        },
-                        program: {
-                          select: {
-                            name: true,
-                            contract: {
-                              select: {
-                                organizationId: true,
-                                organization: { select: { name: true } },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    })
-                    .then((ctx) => {
-                      if (!ctx) return;
-                      const orgId = ctx.program.contract.organizationId;
-                      return notifyOrgProgramExhausted(
-                        orgId,
-                        ctx.membership.userId,
-                        {
-                          orgName: ctx.program.contract.organization.name,
-                          programName: ctx.program.name,
-                          assigneeName:
-                            ctx.membership.user.name ??
-                            ctx.membership.user.email,
-                          dashboardUrl: `/dashboard/organization/${orgId}/programs`,
-                        },
-                      );
-                    })
-                    .catch((notifyErr) => {
-                      console.error(
-                        "[notifyOrgProgramExhausted] failed:",
-                        notifyErr,
-                      );
-                      reportSentryError(notifyErr, {
-                        subsystem: "payments",
-                        level: "warning",
-                      });
-                    });
+                  // The assignee + org operators are told the programme is
+                  // spent. This is the one bell that belongs on the ROLLBACK
+                  // path — the refusal IS the news — so it is rung from the
+                  // retry wrapper's catch rather than after a commit that
+                  // never happens.
+                  exhaustedBell.programAssignmentId = programAssignmentId;
 
                   throw new Error(
                     "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
@@ -3235,9 +3294,8 @@ export async function handleCheckout(
               // the <80% → >=80% transition (not on every booking past 80%).
               // Integer-only threshold cross: before/cap < 0.8 (before*5 <
               // cap*4) AND after/cap >= 0.8 (after*5 >= cap*4). Skipped when
-              // cap is null (unlimited) or 0. Fire-and-forget on the outer
-              // prisma client + same roster as the 100% event — mirrors the
-              // notifyOrgProgramExhausted call below.
+              // cap is null (unlimited) or 0. Captured for post-commit
+              // delivery + same roster as the 100% event.
               {
                 // #775 — LICENSED_SEAT meters in engagements, CREDIT_POOL in
                 // paise (consumedPaise vs creditBudgetPaise). The 80% transition
@@ -3258,71 +3316,18 @@ export async function handleCheckout(
                   capAfter != null &&
                   capAfter > 0 &&
                   before * 5 < capAfter * 4 &&
-                  after * 5 >= capAfter * 4 &&
-                  // #1169 PR 2 — this fires on the OUTER client and is not
-                  // rolled back, so a P2034 retry of this tx would ring the
-                  // 80% bell twice for one booking. Once per request, matching
-                  // the "once per cycle" intent above.
-                  !capNearNotified
+                  after * 5 >= capAfter * 4
                 ) {
-                  capNearNotified = true;
-                  const usedPct = Math.round((after / capAfter) * 100);
-                  const reportUsed = isCredit ? Math.round(after / 100) : after;
-                  const reportCap = isCredit
-                    ? Math.round(capAfter / 100)
-                    : capAfter;
-                  prisma.programAssignment
-                    .findUnique({
-                      where: { id: programAssignmentId },
-                      select: {
-                        membership: {
-                          select: {
-                            userId: true,
-                            user: { select: { name: true, email: true } },
-                          },
-                        },
-                        program: {
-                          select: {
-                            name: true,
-                            contract: {
-                              select: {
-                                organizationId: true,
-                                organization: { select: { name: true } },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    })
-                    .then((ctx) => {
-                      if (!ctx) return;
-                      const orgId = ctx.program.contract.organizationId;
-                      return notifyOrgProgramCapNear(
-                        orgId,
-                        ctx.membership.userId,
-                        {
-                          orgName: ctx.program.contract.organization.name,
-                          programName: ctx.program.name,
-                          assigneeName:
-                            ctx.membership.user.name ??
-                            ctx.membership.user.email,
-                          engagementsUsed: reportUsed,
-                          cap: reportCap,
-                          usedPct,
-                          dashboardUrl: `/dashboard/organization/${orgId}/programs`,
-                        },
-                      );
-                    })
-                    .catch((notifyErr) => {
-                      console.error(
-                        "[notifyOrgProgramCapNear] failed:",
-                        notifyErr,
-                      );
-                      reportSentryError(notifyErr, {
-                        subsystem: "payments",
-                        level: "warning",
-                      });
-                    });
+                  // #1169 PR 2 — the bell must ring once per booking, not once
+                  // per Serializable attempt. The slot is a local of this
+                  // attempt and only the committing attempt's is returned,
+                  // which is what enforces that now.
+                  capNearBell = {
+                    programAssignmentId,
+                    engagementsUsed: isCredit ? Math.round(after / 100) : after,
+                    cap: isCredit ? Math.round(capAfter / 100) : capAfter,
+                    usedPct: Math.round((after / capAfter) * 100),
+                  };
                 }
               }
 
@@ -3347,7 +3352,7 @@ export async function handleCheckout(
                 // persists the OverageEvent + CHARGE_MEMBER side-Payment /
                 // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
                 // the breaker veto.
-                await recordOverageAtCheckout({
+                overageBell = await recordOverageAtCheckout({
                   tx,
                   programAssignmentId,
                   utilization: {
@@ -3496,6 +3501,8 @@ export async function handleCheckout(
             return {
               appointmentId: createdAppointment?.id,
               creditsApplied: actualCreditsApplied,
+              capNearBell,
+              overageBell,
             };
           },
           {
@@ -3507,7 +3514,31 @@ export async function handleCheckout(
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           },
         );
+      }).catch((err) => {
+        // #1435 — post-rollback delivery for the one bell whose news IS the
+        // refusal. Nothing else below is reached when the transaction fails.
+        if (exhaustedBell.programAssignmentId) {
+          dispatchProgramBell(exhaustedBell.programAssignmentId, {
+            kind: "EXHAUSTED",
+          });
+        }
+        throw err;
       });
+
+      // #1435 — post-COMMIT delivery for the bells that describe a booking that
+      // actually happened. See dispatchProgramBell for why neither lookup can
+      // run inside the transaction.
+      if (result.capNearBell) {
+        dispatchProgramBell(result.capNearBell.programAssignmentId, {
+          kind: "CAP_NEAR",
+          engagementsUsed: result.capNearBell.engagementsUsed,
+          cap: result.capNearBell.cap,
+          usedPct: result.capNearBell.usedPct,
+        });
+      }
+      if (result.overageBell) {
+        notifyOverageDueAfterCommit(result.overageBell);
+      }
 
       const logMessage = isZeroAmountPayment
         ? `🎁 Zero-amount payment (credits covered full cost) + appointment created: ${paymentResponse.id}`
