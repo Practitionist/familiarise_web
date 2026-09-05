@@ -7,6 +7,10 @@ on:
     - cron: "11-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   reconcile-refunds:
     runs-on: ubuntu-latest
