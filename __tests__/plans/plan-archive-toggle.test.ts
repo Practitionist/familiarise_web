@@ -173,6 +173,22 @@ describe.each(families)(
       expect(delegate.update).not.toHaveBeenCalled();
     });
 
+    it("an org-governed plan is 403 PLAN_ORG_GOVERNED with no write", async () => {
+      delegate.findUnique.mockResolvedValue({
+        id: "plan-1",
+        archivedAt: null,
+        organizationId: "org-1",
+        consultantProfile: { userId: OWNER_USER_ID },
+      });
+
+      const res = await callRoute({ archived: true });
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.code).toBe("PLAN_ORG_GOVERNED");
+      expect(delegate.update).not.toHaveBeenCalled();
+    });
+
     it("restore clears archivedAt", async () => {
       delegate.findUnique.mockResolvedValue({
         id: "plan-1",

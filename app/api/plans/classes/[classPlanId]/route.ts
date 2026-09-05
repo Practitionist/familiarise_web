@@ -8,6 +8,7 @@ import { getSession } from "@/lib/auth-server";
 import {
   archivedAtForArchive,
   parsePlanArchiveBody,
+  PLAN_ORG_GOVERNED_RESPONSE,
   PLAN_ARCHIVE_RESPONSE_NOTE,
 } from "@/lib/api/plans/archive";
 
@@ -110,6 +111,10 @@ export async function PATCH(
         { error: "You do not have permission to update this class plan" },
         { status: 403 },
       );
+    }
+
+    if (existingPlan.organizationId) {
+      return NextResponse.json(PLAN_ORG_GOVERNED_RESPONSE, { status: 403 });
     }
 
     const classPlan = await prisma.classPlan.update({

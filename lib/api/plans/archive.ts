@@ -60,5 +60,19 @@ export async function parsePlanArchiveBody(
   return { ok: true, archived: parsed.data.archived };
 }
 
+/**
+ * These four routes are the SOLE-OWNER door. A plan carrying an
+ * `organizationId` is governed by the org catalog
+ * (`app/api/organizations/[orgId]/catalog/route.ts`), which checks org
+ * membership and role through `requireOrgAccess` and scopes its write by
+ * `organizationId`; letting the owning consultant through here would withdraw
+ * an org-governed offering with no org authorization at all.
+ */
+export const PLAN_ORG_GOVERNED_RESPONSE = {
+  code: "PLAN_ORG_GOVERNED",
+  error:
+    "This offering is governed by its organisation. Ask an organisation admin to archive or restore it from the organisation catalog.",
+} as const;
+
 export const PLAN_ARCHIVE_RESPONSE_NOTE =
   "Archiving stops new bookings only; existing appointments and payments for this plan are unaffected.";
