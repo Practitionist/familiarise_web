@@ -1,5 +1,5 @@
 ---
-name: stream-sdk
+name: stream
 description: Work on this repo's Stream.io integration — chat channels, video calls, tokens, webhooks, recordings, moderation, and the crons around them. Use when the user says "stream", "chat channel", "DM channel", "meeting", "video call", "call type", "stream token", "recording", "attendance", "no-show", "webhook not firing", or is touching lib/stream/, lib/stream-*.ts, actions/stream/, app/api/stream/, app/meetings/, or components/chat/.
 ---
 
@@ -21,7 +21,7 @@ reading is not enough. Before claiming anything works:
 mcp__streamio__video_query_calls    {"ended_at": {"$exists": false}}
 mcp__streamio__chat_query_channels  {"type": {"$eq": "messaging"}}
 mcp__supabase__execute_sql          -- count MeetingSession/MeetingAttendance/WebhookEvent
-netlify env:list --json             -- the env is not the same as .env
+netlify env:list --json | jq -r 'if type=="object" then keys[] else .[].key end'  -- keys only, never values
 ```
 
 The 2026-08-12 audit found a **total, never-once-worked webhook outage** that no amount of code

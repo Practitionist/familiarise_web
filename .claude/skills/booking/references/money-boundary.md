@@ -28,7 +28,7 @@ stamps the old row `EXPIRED` with `expiresAt: new Date()`, so its hold dies
 immediately rather than at the original deadline. `PaymentStatus` has exactly
 four values — `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED` — with no `CAPTURED`;
 `SUCCEEDED` is the success terminal and `EXPIRED` means timed out rather than
-gateway-rejected. See `booking-availability` for when such a hold stops
+gateway-rejected. See `references/availability.md` for when such a hold stops
 occupying its slot.
 
 ## 2. Mock, zero-amount and org-funded payments share one bypass
@@ -86,7 +86,7 @@ intent prefix: `org_` is `INTERNAL` (an in-ledger reversal against the org's
 wallet, invoice or licence), `free_` is `CREDITS` (referral credits restored,
 no gateway money), everything else is `GATEWAY`. The two front doors are
 `refundBookingPayment` and `refundWholeEventPayments`, plus
-`refundRemovedAttendeeSeat` for one seat; see the `booking-doctrine` skill.
+`refundRemovedAttendeeSeat` for one seat; see the booking doctrine in `../SKILL.md`.
 `refundBookingPayment` refuses a partial `amountPaise` on the credits rail with
 `RefundValidationError` / `INVALID_AMOUNT`.
 
@@ -129,7 +129,7 @@ re-asserted after the lock is held, because a gate that ran before the lock is a
 gate a concurrent writer walked through:
 
 - The slot window against the union of published availability rows, atom by
-  atom (see `booking-availability`).
+  atom (see `references/availability.md`).
 - Slot conflicts, via `validateSlotAvailability`, checkout's own in-transaction
   re-check. It subtracts `buildDeadHoldFilter(new Date())` from the occupancy
   query so a lapsed hold no longer blocks, and the consultee-side conflict reads
@@ -147,4 +147,4 @@ gate a concurrent writer walked through:
 ## 9. The pay-link mint is its own atom
 
 The mint has its own guarded key nested under the approval lock, in the order
-approval → mint; see `booking-concurrency` §1.
+approval → mint; see `references/concurrency.md` §1.
