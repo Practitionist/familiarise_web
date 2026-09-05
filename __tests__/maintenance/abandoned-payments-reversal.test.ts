@@ -51,11 +51,16 @@ jest.mock("../../lib/referrals/service", () => ({
 jest.mock("../../lib/payments/core/razorpay", () => ({
   cancelRazorpayOrder: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("stripe", () => ({
+// #1464 — the sweep reaches Stripe only through the fenced core client, so
+// mocking the core is what proves the fence: a call to `getStripeClient` is a
+// gateway call, and with the fence shut there must not be one.
+const stripeClient = {
+  paymentIntents: { cancel: jest.fn() },
+  checkout: { sessions: { expire: jest.fn() } },
+};
+jest.mock("../../lib/payments/core/stripe", () => ({
   __esModule: true,
-  default: class {
-    paymentIntents = { cancel: jest.fn() };
-  },
+  getStripeClient: jest.fn(() => stripeClient),
 }));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -69,6 +74,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 import prisma from "../../lib/prisma";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
+import { getStripeClient } from "../../lib/payments/core/stripe";
 import {
   cancelGatewayIntents,
   cleanupAbandonedPayments,
@@ -352,5 +358,60 @@ describe("cleanupAbandonedPayments gateway cancel concurrency (#1459)", () => {
 
     expect([...failures.keys()]).toEqual(["pay_1"]);
     expect(failures.get("pay_1")).toBe("gateway refused");
+  });
+});
+
+/**
+ * #1464 — a gateway cancel that failed used to skip the PENDING→EXPIRED CAS
+ * while the credits were still restored and the slot still released, and the
+ * run reported `success: true`. The payment was then invisible to every later
+ * sweep, because nothing about it still looked abandoned.
+ */
+describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
+  const originalStripeEnabled = process.env.STRIPE_ENABLED;
+
+  afterEach(() => {
+    if (originalStripeEnabled === undefined) delete process.env.STRIPE_ENABLED;
+    else process.env.STRIPE_ENABLED = originalStripeEnabled;
+  });
+
+  it("still expires the payment and returns its credits, and fails the run", async () => {
+    (cancelRazorpayOrder as jest.Mock).mockRejectedValue(
+      new Error("gateway refused"),
+    );
+
+    const result = await cleanupAbandonedPayments();
+
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "pay_1", paymentStatus: "PENDING" },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    expect(mockReverse).toHaveBeenCalledWith("pay_1", tx);
+    expect(result.cleanedCount).toBe(1);
+    // Counted, not just listed: `success` is what the HTTP twin turns into a
+    // non-2xx, and the listing alone left the run looking healthy.
+    expect(result.errorCount).toBe(1);
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual([
+      expect.stringContaining("Payment cancellation failed for order_abc"),
+    ]);
+  });
+
+  it("makes no gateway call for a Stripe row while the fence is shut", async () => {
+    delete process.env.STRIPE_ENABLED;
+    const appointment = abandonedConsultation();
+    appointment.payment[0].paymentGateway = "STRIPE";
+    db.appointment.findMany.mockResolvedValue([appointment]);
+
+    const result = await cleanupAbandonedPayments();
+
+    expect(getStripeClient).not.toHaveBeenCalled();
+    // Fenced is "nothing to cancel", not a failure: the row still expires.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "pay_1", paymentStatus: "PENDING" },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    expect(result.errorCount).toBe(0);
+    expect(result.success).toBe(true);
   });
 });

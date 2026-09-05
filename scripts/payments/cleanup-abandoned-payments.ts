@@ -22,7 +22,7 @@ import {
   AppointmentStatus,
   SlotCompletionStatus,
 } from "@prisma/client";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import {
@@ -54,6 +54,74 @@ export interface CleanupAbandonedOptions {
 }
 
 /**
+ * #1386 — the same fence every money path reads, in the same shape
+ * `assertGatewayUsable` and the disputes sweep use: an env read at call time,
+ * because the gateway cores load lazily and jest flips the flag between cases.
+ */
+function isStripeEnabled(): boolean {
+  return process.env.STRIPE_ENABLED === "true";
+}
+
+/**
+ * #1464 — the fence is a property of the deployment, not of a payment, so one
+ * line per run says everything an operator needs; one line per fenced row
+ * would bury the rest of the summary. Reset at the top of each sweep so a
+ * later run still explains itself.
+ */
+let stripeFenceLogged = false;
+
+function logStripeFenceOnce(): void {
+  if (stripeFenceLogged) return;
+  stripeFenceLogged = true;
+  console.log(
+    '⏭️ Leaving Stripe intents alone — STRIPE_ENABLED is not "true" (#1386). ' +
+      "There is nothing to cancel on a gateway this deployment never charged.",
+  );
+}
+
+/**
+ * #1464 — an intent Stripe cannot find, or one that is already in a terminal
+ * state, is nothing to cancel rather than a failure: the hold it represented
+ * is gone, which is exactly what the cancel was for. Matched on the error's
+ * own fields instead of `instanceof Stripe.errors.StripeError` so the check
+ * does not depend on the lazily-imported SDK's class identity.
+ */
+function isNothingToCancel(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (code === "resource_missing") return true;
+  // Stripe's code for "this PaymentIntent is canceled/succeeded already".
+  if (code === "payment_intent_unexpected_state") return true;
+  return error instanceof Error && error.message.includes("already");
+}
+
+/**
+ * Cancel one Stripe intent through the fenced client.
+ *
+ * The id shape decides the call, as in `cancelStripePayment`: checkout
+ * sessions (`cs_…`) are expired and payment intents (`pi_…`) are cancelled.
+ * Anything the gateway genuinely refused is rethrown, because the caller
+ * counts it.
+ */
+async function cancelStripeIntent(
+  stripe: Stripe,
+  paymentIntent: string,
+): Promise<void> {
+  try {
+    if (paymentIntent.startsWith("cs_")) {
+      await stripe.checkout.sessions.expire(paymentIntent);
+    } else {
+      await stripe.paymentIntents.cancel(paymentIntent);
+    }
+    console.log(`✅ Cancelled Stripe payment intent: ${paymentIntent}`);
+  } catch (error) {
+    if (!isNothingToCancel(error)) throw error;
+    console.log(
+      `✅ Stripe intent ${paymentIntent} was already gone — nothing to cancel`,
+    );
+  }
+}
+
+/**
  * Cancel payment intent with the appropriate payment gateway
  */
 export async function cancelPaymentIntent(
@@ -62,15 +130,26 @@ export async function cancelPaymentIntent(
 ): Promise<void> {
   try {
     switch (gateway) {
-      case PaymentGateway.STRIPE:
-        if (process.env.STRIPE_SECRET_KEY) {
-          const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-          await stripe.paymentIntents.cancel(paymentIntent);
-          console.log(`✅ Cancelled Stripe payment intent: ${paymentIntent}`);
-        } else {
-          console.warn("⚠️ STRIPE_SECRET_KEY not configured");
+      case PaymentGateway.STRIPE: {
+        // #1464 — respect the #1386 fence. This arm used to build a raw client
+        // around STRIPE_SECRET_KEY, so it bypassed both the fence and the
+        // test-key guard: with Stripe off, the key is absent or a test key and
+        // the call can only fail, which then blocked the expiry below.
+        if (!isStripeEnabled()) {
+          logStripeFenceOnce();
+          break;
         }
+        // #1376 — gateway cores load at call time, and this module is reached
+        // from the cleanup route's graph.
+        const { getStripeClient } = await import("@/lib/payments/core/stripe");
+        const stripe = getStripeClient();
+        if (!stripe) {
+          console.warn("⚠️ STRIPE_SECRET_KEY not configured");
+          break;
+        }
+        await cancelStripeIntent(stripe, paymentIntent);
         break;
+      }
 
       case PaymentGateway.RAZORPAY:
         await cancelRazorpayOrder(paymentIntent);
@@ -216,33 +295,53 @@ async function anyPaymentSucceeded(
 }
 
 /**
+ * #1464 — where one appointment's failures are collected. `count` is mutated
+ * in place rather than returned, because a gateway cancel is an external call
+ * the caller's transaction cannot roll back: it must still reach `errorCount`
+ * when the unit around it is rolled back and reported as skipped.
+ */
+interface FailureSink {
+  /** Appended to `CleanupResult.errors`. */
+  messages: string[];
+  /** Added to `CleanupResult.errorCount` by the caller. */
+  count: number;
+}
+
+/**
  * Cancel the gateway intent and mark the row EXPIRED (timed out, not a gateway
- * rejection). A gateway failure is recorded and the cleanup continues: the hold
- * still has to be released.
+ * rejection).
+ *
+ * #1464 — the expiry does not depend on the cancel succeeding. Skipping the CAS
+ * on a failed cancel desynchronised the unit: the credits were handed back and
+ * the slot released around a payment left PENDING, which no later sweep could
+ * see, because nothing about it still looked abandoned. Expiring anyway is also
+ * what the Razorpay arm has always done — an order cannot be cancelled, so that
+ * cancel is a no-op — and a capture landing after the row is EXPIRED is the
+ * terminal race #1439 owns. The failure is recorded AND counted, so the run
+ * reports `success: false` and the HTTP twin answers non-2xx.
  */
 async function expirePendingPayments(
   tx: Pick<Tx, "payment">,
   payments: AbandonedPayment[],
-  errors: string[],
+  failures: FailureSink,
 ): Promise<void> {
   // #1459 — the gateway round trips run first and in parallel; the status
   // writes below stay one-at-a-time and in cohort order, because they are the
   // part that has to be a deterministic sequence inside the caller's
-  // transaction. A payment whose cancel failed is reported and skipped, which
-  // is what the sequential version did.
-  const failures = await cancelGatewayIntents(payments);
+  // transaction.
+  const cancelFailures = await cancelGatewayIntents(payments);
 
   for (const payment of payments) {
-    const failure = failures.get(payment.id);
+    const failure = cancelFailures.get(payment.id);
     if (failure !== undefined) {
       console.warn(
         `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
         failure,
       );
-      errors.push(
+      failures.messages.push(
         `Payment cancellation failed for ${payment.paymentIntent}: ${failure}`,
       );
-      continue;
+      failures.count++;
     }
 
     // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
@@ -500,13 +599,13 @@ async function expireRequestAndReleaseSlots(
  */
 async function cleanupAbandonedAppointment(
   appointment: AbandonedAppointment,
-  errors: string[],
+  failures: FailureSink,
 ): Promise<"cleaned" | "skipped"> {
   try {
     return await prisma.$transaction(async (tx) => {
       if (await anyPaymentSucceeded(tx, appointment)) return "skipped" as const;
 
-      await expirePendingPayments(tx, appointment.payment, errors);
+      await expirePendingPayments(tx, appointment.payment, failures);
       await restoreReferralCredits(tx, appointment.payment);
 
       if (appointment.webinar || appointment.class) {
@@ -555,6 +654,7 @@ async function cleanupAbandonedPaymentsUnlocked(
   opts: CleanupAbandonedOptions = {},
 ): Promise<CleanupResult> {
   console.log("🧹 Starting abandoned payment cleanup...");
+  stripeFenceLogged = false;
 
   const result: CleanupResult = {
     success: false,
@@ -574,11 +674,19 @@ async function cleanupAbandonedPaymentsUnlocked(
     );
 
     for (const appointment of abandonedAppointments) {
+      // #1464 — per appointment, so the gateway failures counted below belong
+      // to this one and are not added again for the next.
+      const failures: FailureSink = { messages: result.errors, count: 0 };
       try {
         const outcome = await cleanupAbandonedAppointment(
           appointment,
-          result.errors,
+          failures,
         );
+
+        // A gateway cancel that failed fails the run even though the row was
+        // still expired and its hold released: the intent may still be live at
+        // the gateway, which is something an operator has to see.
+        result.errorCount += failures.count;
 
         if (outcome === "skipped") {
           result.skippedCount++;
@@ -589,7 +697,10 @@ async function cleanupAbandonedPaymentsUnlocked(
           );
         }
       } catch (error) {
-        result.errorCount++;
+        // Both: a gateway cancel that failed pushed its own line into
+        // `errors`, so the count has to match or the summary contradicts the
+        // list it prints.
+        result.errorCount += failures.count + 1;
         const errorMessage = describeError(error);
         console.error(
           `❌ Failed to clean up appointment ${appointment.id}:`,
