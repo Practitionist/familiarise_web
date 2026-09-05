@@ -12,6 +12,10 @@ on:
     - cron: "5-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   retry-failed-emails:
     runs-on: ubuntu-latest
