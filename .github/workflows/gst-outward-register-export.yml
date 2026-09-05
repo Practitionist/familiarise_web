@@ -18,6 +18,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 # The job reads the repository and nothing else; the credentials it needs are
 # the database, Redis and GST ones below, not the Actions token.
 permissions:
