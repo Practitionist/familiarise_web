@@ -44,6 +44,10 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "sync-payment-earnings",
   "generate-subscription-invoices",
   "settle-invoice-accruals",
+  // #1506 — cancels and refunds consultant no-shows through
+  // refundBookingPayment; every job that calls the refund front door belongs
+  // here so DEGRADED maintenance holds it with the other refunding jobs.
+  "detect-consultant-no-shows",
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.
