@@ -35,6 +35,11 @@ const mockTxClient = {
   slotOfAppointment: {
     findFirst: jest.fn(async () => null),
   },
+  // #1463 — the self-hold lookup is a fourth read on this helper's path, and
+  // it must ride the transaction client like every other one.
+  appointment: {
+    findMany: jest.fn(async (): Promise<never[]> => []),
+  },
 };
 
 jest.mock("../../lib/prisma", () => {
@@ -124,7 +129,9 @@ function slotInput(): CheckoutInput {
 }
 
 /** The shape every real caller uses: the helper runs inside an open tx. */
-function validateInsideTransaction(): Promise<void> {
+function validateInsideTransaction(): Promise<{
+  selfHoldAppointmentIds: string[];
+}> {
   return prisma.$transaction(async (tx) =>
     validateSlotAvailability(
       tx as unknown as Tx,
@@ -145,7 +152,9 @@ describe("#1421 checkout does not starve the single-connection pool", () => {
   });
 
   it("runs the consent gate on the transaction client, not the global one", async () => {
-    await expect(validateInsideTransaction()).resolves.toBeUndefined();
+    await expect(validateInsideTransaction()).resolves.toEqual({
+      selfHoldAppointmentIds: [],
+    });
 
     expect(mockTxClient.consentArtifact.findFirst).toHaveBeenCalledTimes(1);
     expect(mockGlobalTouches).toEqual([]);
