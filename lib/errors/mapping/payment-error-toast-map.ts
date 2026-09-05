@@ -132,6 +132,13 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your organisation has an overdue invoice, so new sponsored bookings are paused until it is paid. Ask your billing admin to settle it, or book this session yourself. You were not charged.",
   },
+  // #1477 — the wallet is fine, it is simply short, so the copy asks for the
+  // one action that clears it rather than inviting a retry that cannot succeed.
+  [ErrorTypes.WALLET_INSUFFICIENT_FUNDS]: {
+    title: "Wallet Balance Too Low",
+    description:
+      "Your organisation's wallet does not cover this booking. Ask your billing admin to top it up.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message
