@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import crypto from "node:crypto";
-import { verifyWebhookSignature, logWebhookEvent, isDbHealthy } from "../utils";
+import { logWebhookEvent, isDbHealthy } from "../utils";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import {
   razorpayWebhookEnvelopeSchema,
@@ -12,11 +12,27 @@ import {
 // stuck-webhook sweeper (jobs/cleanup/sweep-stuck-webhook-events) can replay
 // crashed events through the exact same handler routing.
 import { processRazorpayWebhookEvent } from "../razorpay-dispatch";
+import {
+  isPayoutEventName,
+  matchRazorpayWebhookSecret,
+  resolveRazorpayPaymentSecrets,
+  verifyRazorpaySignature,
+} from "./signature";
+
+// #1377 — signature verification needs `node:crypto`, which the edge runtime
+// does not provide. Node is already the App Router default for route handlers;
+// pinning it here means a future project-wide default flip cannot silently
+// break every inbound payment confirmation.
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   Sentry.setTag("subsystem", "payments");
-  if (!secret) {
+
+  // #1377 — the payment-side secrets, current first and (only during a
+  // rotation) the previous one. See resolveRazorpayPaymentSecrets for why the
+  // grace window exists: a hard cutover loses events permanently.
+  const paymentSecrets = resolveRazorpayPaymentSecrets();
+  if (paymentSecrets.length === 0) {
     console.error("RAZORPAY_WEBHOOK_SECRET not configured");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
@@ -29,74 +45,61 @@ export async function POST(req: NextRequest) {
   // is configured, re-verify with it (for payout.* events).
   const razorpayXSecret = process.env.RAZORPAYX_WEBHOOK_SECRET;
 
-  const { isValid, body } = await verifyWebhookSignature(
-    req,
-    secret,
-    "razorpay",
-  );
+  const signature = req.headers.get("x-razorpay-signature");
+  // The HMAC covers the RAW bytes. Read them once here and hand the same
+  // string to every verification attempt — parsing and re-serialising would
+  // reorder keys and break the digest.
+  const body = signature ? await req.text() : "";
 
-  if (!isValid) {
+  const matchedRole = signature
+    ? matchRazorpayWebhookSecret(body, signature, paymentSecrets)
+    : null;
+
+  if (matchedRole === "previous") {
+    // The rotation grace is meant to be short. Every delivery that only the
+    // OLD secret can verify is reported so a variable left behind after the
+    // cutover shows up in the operations timeline instead of quietly
+    // extending the window forever.
+    await recordSystemEvent({
+      category: "WEBHOOK",
+      severity: "WARN",
+      message:
+        "Razorpay webhook verified with RAZORPAY_WEBHOOK_SECRET_PREVIOUS — rotation grace still in use",
+      context: { provider: "razorpay" },
+    });
+  }
+
+  if (!matchedRole) {
     // M2 FIX: Only allow RazorpayX secret fallback for payout.* events.
-    // Parse the body to check event type before re-verifying — this prevents
-    // non-payout events from being accepted with the RazorpayX secret.
-    let isPossiblyPayoutEvent = false;
-    try {
-      const parsed = JSON.parse(body);
-      isPossiblyPayoutEvent =
-        typeof parsed.event === "string" && parsed.event.startsWith("payout.");
-    } catch {
-      // Can't parse — not a valid webhook, reject
-    }
+    // Read the event name from the (still unverified) body first — this
+    // prevents non-payout events from being accepted with the RazorpayX
+    // secret, and can only ever narrow what we accept.
+    const isPossiblyPayoutEvent = signature ? isPayoutEventName(body) : false;
 
-    if (
+    const razorpayXAccepted =
       isPossiblyPayoutEvent &&
-      razorpayXSecret &&
-      razorpayXSecret !== secret
-    ) {
-      const signature = req.headers.get("x-razorpay-signature");
-      if (signature) {
-        const crypto = await import("crypto");
-        const expectedSig = crypto
-          .createHmac("sha256", razorpayXSecret)
-          .update(body)
-          .digest("hex");
-        const sigBuf = Buffer.from(signature, "hex");
-        const expectedBuf = Buffer.from(expectedSig, "hex");
-        const isRazorpayXValid =
-          sigBuf.length === expectedBuf.length &&
-          crypto.timingSafeEqual(sigBuf, expectedBuf);
+      !!signature &&
+      !!razorpayXSecret &&
+      !paymentSecrets.some(
+        (candidate) => candidate.value === razorpayXSecret,
+      ) &&
+      verifyRazorpaySignature(body, signature, razorpayXSecret);
 
-        if (!isRazorpayXValid) {
-          // #776 §K — repeated HMAC failures are a tamper/misconfig signal.
-          await recordSystemEvent({
-            category: "WEBHOOK",
-            severity: "WARN",
-            message:
-              "Razorpay webhook HMAC verification failed (RazorpayX secret)",
-            context: { provider: "razorpayx", event: "payout.*" },
-          });
-          return NextResponse.json(
-            { error: "Invalid signature" },
-            { status: 400 },
-          );
-        }
-        // RazorpayX signature valid for payout event — continue processing
-      } else {
-        return NextResponse.json(
-          { error: "Invalid signature" },
-          { status: 400 },
-        );
-      }
-    } else {
+    if (!razorpayXAccepted) {
       // #776 §K — repeated HMAC failures are a tamper/misconfig signal.
       await recordSystemEvent({
         category: "WEBHOOK",
         severity: "WARN",
-        message: "Razorpay webhook HMAC verification failed",
-        context: { provider: "razorpay" },
+        message: isPossiblyPayoutEvent
+          ? "Razorpay webhook HMAC verification failed (RazorpayX secret)"
+          : "Razorpay webhook HMAC verification failed",
+        context: isPossiblyPayoutEvent
+          ? { provider: "razorpayx", event: "payout.*" }
+          : { provider: "razorpay" },
       });
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
+    // RazorpayX signature valid for payout event — continue processing
   }
 
   // DB health check — return 503 if DB is unreachable so Razorpay retries
@@ -171,7 +174,7 @@ export async function POST(req: NextRequest) {
     eventId,
     eventType,
     event.payload,
-    req.headers.get("x-razorpay-signature") || undefined,
+    signature || undefined,
   );
 
   if (!isNew) {
