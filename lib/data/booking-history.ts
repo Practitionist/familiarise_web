@@ -11,17 +11,21 @@
  *
  * Two rules shape the query below.
  *
- * `BookingStatusHistory.appointmentId` is nullable and, as of this PR, no
- * writer in `lib/booking/transitions.ts`'s call graph passes it: every caller
- * omits `meta.appointmentId`, so the column is NULL on every row in existence.
- * Resolving the trail by that column alone would therefore return nothing. The
- * reader instead collects the appointment's own polymorphic keys — its
- * request/event/trial id, every one of its slot ids, and every reschedule
- * request id — and matches each of them against `entityId` PAIRED with the
- * entity type its writer stamps, because `entityId` alone is unconstrained and
- * would admit a same-id row of another type. The `appointmentId` arm stays in
- * the OR so rows written once the meta is wired through are picked up without
- * a second edit.
+ * `BookingStatusHistory.appointmentId` is nullable, and the `appointmentId` arm
+ * of the OR below is the one that resolves a row directly. As of #1333 every
+ * helper in `lib/booking/transitions.ts` fills it from the row's own pre-image,
+ * so new rows carry it — but two cases still leave it NULL and both are by
+ * design: a subscription or class that owns several live appointments has no
+ * single id to stamp, and a trial that has not been placed yet has no
+ * appointment at all. Every row written before #1333 is NULL too, and there is
+ * no backfill (doctrine rule 6).
+ *
+ * So the entity arms are not a fallback that could be retired — they are what
+ * makes the trail complete. The reader collects the appointment's own
+ * polymorphic keys — its request/event/trial id, every one of its slot ids, and
+ * every reschedule request id — and matches each of them against `entityId`
+ * PAIRED with the entity type its writer stamps, because `entityId` alone is
+ * unconstrained and would admit a same-id row of another type.
  *
  * Reading it is privileged-only. ADR 20
  * (`docs/enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md`)
@@ -66,7 +70,8 @@ export interface BookingTimelineEntry {
    * Null on reschedule rows: a proposal is raised, it does not move out of a
    * prior state. On status rows this is the pre-image the CAS observed, which
    * is `"UNKNOWN"` when a concurrent writer moved the row between the pre-read
-   * and the update (the documented A12 limitation).
+   * and the update (the documented A12 limitation) and `"CREATED"` on the one
+   * row that is not a transition at all (#1333).
    */
   from: string | null;
   /** On reschedule rows this is where the proposal ended up, not a transition. */

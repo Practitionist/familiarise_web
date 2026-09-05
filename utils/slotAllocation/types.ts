@@ -79,6 +79,17 @@ export interface AllocationRequest {
    * it does not.
    */
   allowPartial?: boolean;
+  /**
+   * #1206 — place ONLY the sessions an earlier partial allocation left
+   * unplaced, treating every confirmed appointment as fixed. Off by default
+   * because the ordinary auto path is a re-plan: it deletes what exists and
+   * lays the whole schedule out again. That is right for a reschedule and
+   * catastrophic for an event whose earlier sessions are already booked and
+   * paid. Honoured only for a recurring event that already has confirmed
+   * sessions and no reschedule in flight; every other shape falls through to
+   * today's behaviour unchanged.
+   */
+  topUp?: boolean;
 }
 
 /**
@@ -150,6 +161,14 @@ export interface AllocationResult {
   placedSessions?: number;
   requiredSessions?: number;
   unplacedSessions?: number;
+  /**
+   * #1206 — a top-up run that wrote nothing: either the plan is already fully
+   * scheduled or the consultant's availability still has no room. Success, not
+   * a failure, and the one signal the notification suppressor reads — the
+   * hourly sweep re-attempts every incomplete event, so a notice on a run that
+   * changed nothing would page the consultee every hour forever.
+   */
+  noChange?: boolean;
   /**
    * #1206 — on a SLOT_SHORTAGE refusal: how many whole sessions the search
    * COULD have placed. Zero means offering a partial allocation is pointless.

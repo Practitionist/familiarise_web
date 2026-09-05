@@ -36,6 +36,10 @@ interface HistoryMeta {
   actorUserId?: string | null;
   reason?: string | null;
   organizationId?: string | null;
+  /**
+   * #1333 — optional because every helper below resolves it from the row's own
+   * pre-image when the caller omits it. A caller that knows better still wins.
+   */
   appointmentId?: string | null;
 }
 async function appendHistory(
@@ -58,6 +62,40 @@ async function appendHistory(
       appointmentId: meta.appointmentId ?? null,
     },
   });
+}
+
+/**
+ * The one history row that is not a transition (#1333). Creation moves nothing,
+ * so a freshly created request had an empty timeline until its first CAS fired —
+ * the staff surface read "nothing has moved on this booking yet" for every new
+ * booking. The from-status is the literal `"CREATED"`, deliberately not the
+ * null sentinel: `appendHistory` renders null as `"UNKNOWN"`, which on this
+ * surface means "a concurrent writer moved the row between the pre-read and the
+ * update", and creation is not that.
+ *
+ * Callers must invoke this in the same transaction as the create, so a booking
+ * that exists always has its opening row.
+ */
+export async function appendCreationHistory(
+  tx: HistoryTx,
+  entity: BookingHistoryEntity,
+  entityId: string,
+  initialStatus: string,
+  meta: HistoryMeta = {},
+): Promise<void> {
+  await appendHistory(tx, entity, entityId, "CREATED", initialStatus, meta);
+}
+
+/**
+ * Resolves the appointment id to stamp on a history row for an entity that owns
+ * `Appointment[]` rather than a single appointment. A multi-appointment
+ * aggregate has no single id, so the column stays null and the timeline falls
+ * back to the `{ entity, entityId }` arm of its OR.
+ */
+function soleAppointmentId(
+  appointments: { id: string }[] | undefined,
+): string | null {
+  return appointments?.length === 1 ? appointments[0].id : null;
 }
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
@@ -123,9 +161,11 @@ export async function transitionConsultationRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  // #1333 — the pre-read also carries the appointment id, so the audit row is
+  // resolvable by appointment rather than only by the polymorphic entity key.
   const before = await tx.consultation.findUnique({
     where: { id: args.where.id },
-    select: { status: true },
+    select: { status: true, appointment: { select: { id: true } } },
   });
   const res = await tx.consultation.updateMany({
     where: {
@@ -142,7 +182,10 @@ export async function transitionConsultationRequest(
     args.where.id,
     before?.status,
     args.to,
-    args,
+    {
+      ...args,
+      appointmentId: args.appointmentId ?? before?.appointment?.id ?? null,
+    },
   );
 }
 
@@ -158,9 +201,18 @@ export async function transitionSubscriptionRequest(
     fromIn?: AppointmentStatus[];
   },
 ): Promise<void> {
+  // #1333 — `take: 2` is the whole question: one live appointment resolves, two
+  // proves the aggregate has no single id.
   const before = await tx.subscription.findUnique({
     where: { id: args.where.id },
-    select: { status: true },
+    select: {
+      status: true,
+      appointments: {
+        where: { deletedAt: null },
+        select: { id: true },
+        take: 2,
+      },
+    },
   });
   const res = await tx.subscription.updateMany({
     where: {
@@ -177,7 +229,11 @@ export async function transitionSubscriptionRequest(
     args.where.id,
     before?.status,
     args.to,
-    args,
+    {
+      ...args,
+      appointmentId:
+        args.appointmentId ?? soleAppointmentId(before?.appointments),
+    },
   );
 }
 
@@ -220,7 +276,7 @@ export async function transitionWebinarEvent(
 ): Promise<void> {
   const before = await tx.webinar.findUnique({
     where: args.where,
-    select: { status: true },
+    select: { status: true, appointment: { select: { id: true } } },
   });
   const res = await tx.webinar.updateMany({
     where: {
@@ -230,14 +286,10 @@ export async function transitionWebinarEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Webinar", args.to);
-  await appendHistory(
-    tx,
-    "WEBINAR",
-    args.where.id,
-    before?.status,
-    args.to,
-    args,
-  );
+  await appendHistory(tx, "WEBINAR", args.where.id, before?.status, args.to, {
+    ...args,
+    appointmentId: args.appointmentId ?? before?.appointment?.id ?? null,
+  });
 }
 
 export async function transitionClassEvent(
@@ -249,9 +301,18 @@ export async function transitionClassEvent(
     fromIn?: ClassStatus[];
   },
 ): Promise<void> {
+  // A class owns one appointment per SESSION, so a multi-session class leaves
+  // the id null and only a single-session one resolves — see `soleAppointmentId`.
   const before = await tx.class.findUnique({
     where: args.where,
-    select: { status: true },
+    select: {
+      status: true,
+      appointments: {
+        where: { deletedAt: null },
+        select: { id: true },
+        take: 2,
+      },
+    },
   });
   const res = await tx.class.updateMany({
     where: {
@@ -261,14 +322,11 @@ export async function transitionClassEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
-  await appendHistory(
-    tx,
-    "CLASS",
-    args.where.id,
-    before?.status,
-    args.to,
-    args,
-  );
+  await appendHistory(tx, "CLASS", args.where.id, before?.status, args.to, {
+    ...args,
+    appointmentId:
+      args.appointmentId ?? soleAppointmentId(before?.appointments),
+  });
 }
 
 //////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
@@ -342,7 +400,9 @@ export async function transitionSlotCompletion(
   const moved = await tx.slotOfAppointment.updateManyAndReturn({
     where: casWhere,
     data: { completionStatus: args.to, ...args.data },
-    select: { id: true },
+    // #1333 — the owning appointment comes from the moved row itself, which is
+    // exact whether the caller swept one appointmentId or an `in` list.
+    select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
     throw new IllegalTransitionError("SlotOfAppointment", args.to);
@@ -351,14 +411,10 @@ export async function transitionSlotCompletion(
   for (const row of moved) {
     // A row that entered the from-set after the pre-read has no entry here and
     // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
-    await appendHistory(
-      tx,
-      "SLOT",
-      row.id,
-      fromById.get(row.id),
-      args.to,
-      args,
-    );
+    await appendHistory(tx, "SLOT", row.id, fromById.get(row.id), args.to, {
+      ...args,
+      appointmentId: args.appointmentId ?? row.appointmentId ?? null,
+    });
   }
   return moved.length;
 }
@@ -393,7 +449,7 @@ export async function transitionTrialSession(
 ): Promise<void> {
   const before = await tx.trialSession.findUnique({
     where: { id: args.where.id },
-    select: { status: true },
+    select: { status: true, appointmentId: true },
   });
   const res = await tx.trialSession.updateMany({
     where: {
@@ -404,14 +460,12 @@ export async function transitionTrialSession(
   });
   if (res.count === 0)
     throw new IllegalTransitionError("TrialSession", args.to);
-  await appendHistory(
-    tx,
-    "TRIAL",
-    args.where.id,
-    before?.status,
-    args.to,
-    args,
-  );
+  // A PENDING trial has no appointment yet, so the id is null until acceptance
+  // places the session — the scalar is nullable for exactly that reason.
+  await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {
+    ...args,
+    appointmentId: args.appointmentId ?? before?.appointmentId ?? null,
+  });
 }
 
 //////////////////////////////////////////////// Reschedule proposals ////////////////////////////////////////////////
@@ -465,7 +519,9 @@ export async function transitionRescheduleRequest(
   const releasesLock = RESCHEDULE_TERMINAL_STATUSES.includes(args.to);
   const before = await tx.rescheduleRequest.findUnique({
     where: args.where,
-    select: { status: true },
+    // `appointmentId` is required here, not the open-proposal lock
+    // (`openForAppointmentId`), which is cleared by this very update.
+    select: { status: true, appointmentId: true },
   });
   const res = await tx.rescheduleRequest.updateMany({
     where: {
@@ -489,6 +545,6 @@ export async function transitionRescheduleRequest(
     args.where.id,
     before?.status,
     args.to,
-    args,
+    { ...args, appointmentId: args.appointmentId ?? before?.appointmentId },
   );
 }

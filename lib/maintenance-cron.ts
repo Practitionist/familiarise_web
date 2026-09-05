@@ -57,6 +57,9 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // state onto the invoice. It moves no money, but a half-deployed payload
   // becomes a statutory record that can only be cancelled for 24 hours.
   "irp-uploader",
+  // #1370 — its healer mints tax invoices, which burns numbers from a gapless
+  // statutory series. A half-deployed run leaves gaps that cannot be filled.
+  "gst-outward-register-export",
 ]);
 
 /** The maintenance phases that can stop a job. */

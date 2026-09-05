@@ -111,40 +111,12 @@ export function formatCurrencyAmount(
   }).format(amountInSmallestUnit / divisor);
 }
 
-/**
- * @deprecated After paise migration, all DB amounts are in smallest currency unit.
- * Use formatCurrencyAmount() instead for all DB-sourced values.
- *
- * Format an amount already in major currency units for display.
- * Only use this for user-input values that haven't been converted to paise yet.
- *
- * @param amount   - Amount in major units (e.g., 14990 rupees = ₹14,990, 100 dollars = $100)
- * @param currency - ISO 4217 currency code (required)
- *
- * @example
- * formatCurrencyFromMajorUnit(14990, "INR") // "₹14,990.00"
- * formatCurrencyFromMajorUnit(100, "USD")   // "$100.00"
- * formatCurrencyFromMajorUnit(500, "JPY")   // "¥500"
- */
-export function formatCurrencyFromMajorUnit(
-  amount: number,
-  currency: string,
-): string {
-  const upper = currency.toUpperCase();
-  const locale = CURRENCY_LOCALE_MAP[upper] || "en-IN";
-  const fractionDigits = ZERO_DECIMAL_CURRENCIES.has(upper)
-    ? 0
-    : THREE_DECIMAL_CURRENCIES.has(upper)
-      ? 3
-      : 2;
-
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: upper,
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  }).format(amount);
-}
+// #1396 — a deprecated major-unit formatter lived here, taking rupees rather
+// than paise. Every money column in this schema is in the smallest unit, so it
+// had no correct caller left and each accidental one displayed a figure a
+// hundred times too large. Deleted rather than left deprecated; use
+// `formatCurrencyAmount` above, which is the paise-taking formatter, and
+// convert at the boundary if raw user input in major units ever appears.
 
 /**
  * Extract initials from a person's name.

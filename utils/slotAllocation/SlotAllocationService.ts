@@ -153,7 +153,11 @@ export class SlotAllocationService {
       // parties hear about them from every caller path (routes, auto-confirm,
       // accept-proposal). Fire-and-forget: a Novu outage must never fail an
       // allocation.
-      if (result.success) {
+      // #1206 — the suppressor. A top-up that placed nothing is a successful
+      // no-op, and the sweep runs hourly against every incomplete event, so
+      // notifying here would page the consultee once an hour until their
+      // consultant happens to publish more availability.
+      if (result.success && result.noChange !== true) {
         void this.notifyAllocationPlaced(request.eventType, request.eventId, {
           // #1206 — tell the consultee HOW MANY sessions are scheduled and
           // that the rest follow, rather than a bare "you're booked".
@@ -217,6 +221,7 @@ export class SlotAllocationService {
           request.initialAllocation,
           request.expectedTentativeSlotCount,
           request.allowPartial,
+          request.topUp,
         );
 
       case "manual":
@@ -1115,6 +1120,12 @@ export class SlotAllocationService {
      * the flag changes nothing.
      */
     allowPartial = false,
+    /**
+     * #1206 — top up an event a partial allocation left short: place only the
+     * missing sessions and treat every confirmed appointment as fixed. See
+     * `AllocationRequest.topUp` for why this is not the default.
+     */
+    topUp = false,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -1247,49 +1258,123 @@ export class SlotAllocationService {
         pastConfirmedSlotCount > 0 &&
         isRecurringEventType(eventType);
 
+      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+        config.sessionDurationInHours || config.durationInHours || 1,
+      );
+
+      // #1206 — a top-up preserves what is confirmed and places only the
+      // shortfall. It is the one auto path that never deletes, so it is gated
+      // narrowly: a reschedule's tentative rows ARE the sessions being moved,
+      // a single-session event has nothing to top up, and an event with no
+      // confirmed sessions is an ordinary fresh allocation already.
+      // A top-up that cannot apply is refused, never downgraded: the caller
+      // asked to preserve, and the ordinary path deletes and re-plans.
+      if (topUp === true) {
+        if (!isRecurringEventType(eventType)) {
+          throw new AllocationValidationError(
+            "topUp applies to subscriptions and classes only; a single-session event has nothing to top up.",
+          );
+        }
+        if (isReschedule) {
+          throw new AllocationValidationError(
+            "topUp cannot run while the event has tentative sessions; finish or clear the pending reallocation first.",
+          );
+        }
+        if (existingNonTentativeSlotCount === 0) {
+          throw new AllocationValidationError(
+            "topUp needs at least one confirmed session to preserve; run an ordinary allocation instead.",
+          );
+        }
+      }
+      const isTopUp = topUp === true;
+
+      // 1 Appointment = 1 session, the same identity the reschedule branch
+      // below counts on. Counted by appointment rather than by dividing the
+      // slot count, so a plan whose session duration changed mid-flight cannot
+      // turn the shortfall into a fraction.
+      const existingConfirmedSessionCount = existingAppointments.filter((a) =>
+        a.slotsOfAppointment.some((s) => !s.isTentative),
+      ).length;
+      const topUpPlanSessions = isTopUp
+        ? Math.ceil(
+            SlotCalculationService.calculateRequiredSlots(eventType, config) /
+              slotsPerCall,
+          )
+        : 0;
+      /**
+       * The answer a top-up gives when it writes nothing — the plan is already
+       * whole, or the consultant's availability still has no room for the rest.
+       * `placedSessions` is this run's placements, hence 0; the notification
+       * suppressor fires on `noChange` before any template can read it.
+       */
+      const topUpNoChange = (): AllocationResult => {
+        const unplacedSessions = Math.max(
+          topUpPlanSessions - existingConfirmedSessionCount,
+          0,
+        );
+        return {
+          success: true,
+          appointments: [],
+          // Derived from the shortfall, so a whole plan never reads as partial.
+          partial: unplacedSessions > 0,
+          noChange: true,
+          placedSessions: 0,
+          requiredSessions: topUpPlanSessions,
+          unplacedSessions,
+        };
+      };
+
       // Guard: reject re-allocation when event is already fully scheduled.
       // Applies to all event types (webinar, class, subscription) to prevent
       // concurrent auto-allocate calls from creating duplicate session sets.
       // For in-progress reallocation (recurring only), only count FUTURE confirmed slots.
       if (!isReschedule && existingNonTentativeSlotCount > 0) {
-        const requiredForGuard = SlotCalculationService.calculateRequiredSlots(
-          eventType,
-          config,
-        );
-        const futureNonTentativeSlotCount =
-          existingNonTentativeSlotCount - pastConfirmedSlotCount;
-        if (
-          !isInProgressReallocation &&
-          existingNonTentativeSlotCount >= requiredForGuard
-        ) {
-          throw new AllocationConflictError(
-            `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
-          );
-        }
-        // For in-progress: only block if future slots alone meet the future requirement
-        if (
-          isInProgressReallocation &&
-          futureNonTentativeSlotCount >=
-            requiredForGuard - pastConfirmedSlotCount
-        ) {
-          throw new AllocationConflictError(
-            `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
-          );
+        if (isTopUp) {
+          // A top-up neither deletes nor re-plans, so a complete event is an
+          // answer rather than a conflict: the hourly sweep must be able to
+          // pass over one without raising an error.
+          if (existingConfirmedSessionCount >= topUpPlanSessions) {
+            return topUpNoChange();
+          }
+        } else {
+          const requiredForGuard =
+            SlotCalculationService.calculateRequiredSlots(eventType, config);
+          const futureNonTentativeSlotCount =
+            existingNonTentativeSlotCount - pastConfirmedSlotCount;
+          if (
+            !isInProgressReallocation &&
+            existingNonTentativeSlotCount >= requiredForGuard
+          ) {
+            throw new AllocationConflictError(
+              `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+            );
+          }
+          // For in-progress: only block if future slots alone meet the future requirement
+          if (
+            isInProgressReallocation &&
+            futureNonTentativeSlotCount >=
+              requiredForGuard - pastConfirmedSlotCount
+          ) {
+            throw new AllocationConflictError(
+              `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
+            );
+          }
         }
       }
 
       // Collect appointment IDs to exclude from conflict detection and weekly limits.
       // For reschedule: exclude tentative appointments (they'll be deleted)
       // For initial/in-progress allocation: exclude ALL existing appointments (they'll be deleted or preserved)
+      // #1206 top-up: exclude NOTHING. Every confirmed session survives this
+      // run, so its interval must keep blocking candidates and its week and day
+      // must keep counting toward the caps the validator re-checks.
       const appointmentIdsToExclude = isReschedule
         ? existingAppointments
             .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
             .map((a) => a.id)
-        : existingAppointments.map((a) => a.id);
-
-      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-        config.sessionDurationInHours || config.durationInHours || 1,
-      );
+        : isTopUp
+          ? []
+          : existingAppointments.map((a) => a.id);
 
       // Calculate required slots
       let requiredSlots: number;
@@ -1309,10 +1394,18 @@ export class SlotAllocationService {
           eventType,
           config,
         );
-        // For in-progress reallocation, only allocate future slots
-        requiredSlots = isInProgressReallocation
-          ? fullRequired - pastConfirmedSlotCount
-          : fullRequired;
+        // #1206 — a top-up owes the plan's total minus every session already
+        // confirmed, past ones included: a delivered session is not owed twice,
+        // and a future one is preserved rather than replanned.
+        if (isTopUp) {
+          requiredSlots =
+            (topUpPlanSessions - existingConfirmedSessionCount) * slotsPerCall;
+        } else {
+          // For in-progress reallocation, only allocate future slots
+          requiredSlots = isInProgressReallocation
+            ? fullRequired - pastConfirmedSlotCount
+            : fullRequired;
+        }
       }
 
       // #939 review — the in-progress guard above already rejects the
@@ -1333,24 +1426,37 @@ export class SlotAllocationService {
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
       // Pass existingAppointments so sessionsPerWeek is scoped to this event only
-      const selectedSlots = await this.findAvailableSlots(
-        prisma,
-        consultant,
-        requiredSlots,
-        slotsPerCall,
-        eventType,
-        config,
-        appointmentIdsToExclude,
-        existingAppointments,
-        consulteeUserId, // #898 — pick slots free for the consultee too
-        consultantProfileId,
-        preference,
-        eventId, // #1194 — names the event in the row-truncation warning
-        // #1206 — never on a reschedule: its tentative rows ARE the sessions
-        // being moved, and placing fewer would delete the remainder outright
-        // instead of leaving it pending.
-        allowPartial && isRecurringEventType(eventType) && !isReschedule,
-      );
+      let selectedSlots: Date[];
+      try {
+        selectedSlots = await this.findAvailableSlots(
+          prisma,
+          consultant,
+          requiredSlots,
+          slotsPerCall,
+          eventType,
+          config,
+          appointmentIdsToExclude,
+          existingAppointments,
+          consulteeUserId, // #898 — pick slots free for the consultee too
+          consultantProfileId,
+          preference,
+          eventId, // #1194 — names the event in the row-truncation warning
+          // #1206 — never on a reschedule: its tentative rows ARE the sessions
+          // being moved, and placing fewer would delete the remainder outright
+          // instead of leaving it pending.
+          allowPartial && isRecurringEventType(eventType) && !isReschedule,
+        );
+      } catch (error) {
+        // #1206 — with `allowPartial` on, a shortage is only raised when the
+        // search could place NOTHING. For the hourly top-up sweep that is the
+        // ordinary answer ("still no room"), not a refusal worth reporting; a
+        // top-up WITHOUT allowPartial keeps the typed SLOT_SHORTAGE so the
+        // consultant's dialog can still offer to place what fits.
+        if (isTopUp && allowPartial && error instanceof SlotShortageError) {
+          return topUpNoChange();
+        }
+        throw error;
+      }
 
       // Validate (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
@@ -1375,8 +1481,20 @@ export class SlotAllocationService {
       // divisions are exact. A partial run leaves the request APPROVED with
       // fewer sessions than the plan; the shortfall is derived here and at
       // read time, never stored.
-      const placedSessions = Math.floor(selectedSlots.length / slotsPerCall);
-      const requestedSessions = Math.ceil(requiredSlots / slotsPerCall);
+      //
+      // A top-up reports against the PLAN rather than against this run,
+      // because that is what the consultee's notice has to say: the sessions
+      // already on their calendar count as scheduled, and the shortfall is
+      // what is left after this run adds to them.
+      const alreadyScheduledSessions = isTopUp
+        ? existingConfirmedSessionCount
+        : 0;
+      const placedSessions =
+        alreadyScheduledSessions +
+        Math.floor(selectedSlots.length / slotsPerCall);
+      const requestedSessions = isTopUp
+        ? topUpPlanSessions
+        : Math.ceil(requiredSlots / slotsPerCall);
       const partialPlacement = placedSessions < requestedSessions;
 
       // SHORT write-only transaction. The heavy reads above no longer hold a
@@ -1442,17 +1560,36 @@ export class SlotAllocationService {
           // For reschedules: only delete appointments with tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all (shouldn't be any, but safety measure)
-          const {
-            enrolledUserIds,
-            deletedAppointmentIds,
-            reusableAppointmentId,
-          } = await this.deleteExistingAppointments(
-            tx,
-            eventType,
-            eventId,
-            isReschedule,
-            isInProgressReallocation,
-          );
+          // #1206 top-up: nothing is deleted at all, which is the whole point —
+          // the confirmed sessions and the Payment rows hanging off them are
+          // exactly what the delete-and-replan path was destroying.
+          let enrolledUserIds: string[] = [];
+          let deletedAppointmentIds: string[] = [];
+          let reusableAppointmentId: string | undefined;
+          if (isTopUp) {
+            // A group event's learners live ONLY on the slot↔user M2M, and the
+            // ids normally come out of the rows the delete freed. With nothing
+            // freed, read them off the surviving sessions instead, or the new
+            // ones would have no attendees. A subscription's consultee is
+            // connected by createAppointments, so it needs no such read.
+            if (eventType === "class") {
+              enrolledUserIds =
+                await SlotAllocationService.collectEventParticipantIds(
+                  tx,
+                  eventType,
+                  eventId,
+                );
+            }
+          } else {
+            ({ enrolledUserIds, deletedAppointmentIds, reusableAppointmentId } =
+              await this.deleteExistingAppointments(
+                tx,
+                eventType,
+                eventId,
+                isReschedule,
+                isInProgressReallocation,
+              ));
+          }
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -3687,6 +3824,44 @@ export class SlotAllocationService {
         { status: "CONFIRMED", organizationId },
       );
     }
+  }
+
+  /**
+   * #1206 — the people already seated on an event's confirmed sessions.
+   *
+   * Every delete branch harvests these ids from the rows it frees, so that
+   * `reconnectEnrolledUsers` can re-link them to the replacements. A top-up
+   * frees nothing, so it reads them off the surviving slots instead. Without
+   * this a class topped up with two more sessions would create them empty:
+   * enrolment for a group event lives ONLY on the slot↔user join.
+   */
+  private static async collectEventParticipantIds(
+    tx: Tx,
+    eventType: EventType,
+    eventId: string,
+  ): Promise<string[]> {
+    const relationField = this.getEventRelationField(eventType);
+    const slots = await tx.slotOfAppointment.findMany({
+      where: {
+        isTentative: false,
+        deletedAt: null,
+        // A cancelled or replaced slot keeps its user relation as history; only
+        // live seats should be carried onto the new sessions.
+        completionStatus: {
+          notIn: [
+            SlotCompletionStatus.CANCELLED,
+            SlotCompletionStatus.RESCHEDULED,
+          ],
+        },
+        appointment: {
+          [`${relationField}Id`]: eventId,
+        } as Prisma.AppointmentWhereInput,
+      },
+      select: { user: { select: { id: true } } },
+    });
+    return Array.from(
+      new Set(slots.flatMap((slot) => slot.user.map((user) => user.id))),
+    );
   }
 
   /**

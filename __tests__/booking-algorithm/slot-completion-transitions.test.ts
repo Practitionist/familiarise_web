@@ -26,6 +26,7 @@ type TrialTx = Parameters<typeof transitionTrialSession>[0];
 function slotTx(count: number, from: string = "SCHEDULED") {
   const ids = Array.from({ length: count }, (_, i) => ({
     id: `slot_${i + 1}`,
+    appointmentId: "apt_1",
   }));
   const updateManyAndReturn = jest.fn().mockResolvedValue(ids);
   const findMany = jest
@@ -77,7 +78,7 @@ describe("SLOT_COMPLETION_ALLOWED_FROM", () => {
 
 describe("transitionSlotCompletion", () => {
   it("bakes the allowed-from set into the WHERE and returns the count", async () => {
-    const { tx, updateManyAndReturn } = slotTx(2);
+    const { tx, updateManyAndReturn, create } = slotTx(2);
     const moved = await transitionSlotCompletion(tx, {
       where: { appointmentId: "apt_1", deletedAt: null },
       to: "CANCELLED",
@@ -94,8 +95,22 @@ describe("transitionSlotCompletion", () => {
         completionStatus: "CANCELLED",
         deletedAt: new Date("2026-09-02T00:00:00Z"),
       },
-      select: { id: true },
+      // #1333 — the owning appointment comes back with each moved row so the
+      // history row it writes can name it.
+      select: { id: true, appointmentId: true },
     });
+    // #1333 — one history row per moved slot, each naming the appointment the
+    // row came back with, not a null fallback.
+    expect(create).toHaveBeenCalledTimes(2);
+    for (const [call] of create.mock.calls) {
+      expect(call.data).toEqual(
+        expect.objectContaining({
+          entity: "SLOT",
+          toStatus: "CANCELLED",
+          appointmentId: "apt_1",
+        }),
+      );
+    }
   });
 
   it("fromIn narrows the set", async () => {

@@ -304,7 +304,7 @@ erDiagram
   ClassEvent ||--o{ Appointment : "M appointments"
 
   Appointment ||--|{ SlotOfAppointment : "N slots per session"
-  Appointment ||--o{ BookingStatusHistory : "one row per CAS transition"
+  Appointment ||--o{ BookingStatusHistory : "one row per creation and CAS transition"
   SlotOfAppointment ||--o| MeetingSession : "video call"
 ```
 
