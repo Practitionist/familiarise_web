@@ -317,30 +317,29 @@ export async function recordOverageAtCheckout(
     });
     if (!baseLeg) {
       // #1458 — the old fallback treated "no base leg" as licence-funded and
-      // made the overage fully additive. That is right for LICENSE (the licence
-      // leg is 0 and the marginal is the only money on the payment) and wrong
-      // for anything else, where inflating Payment.amount invents a charge no
-      // rail ever collected. Prove the LICENSE rail before taking that branch.
-      const licenseLeg = await tx.paymentLeg.findUnique({
-        where: { paymentId_source: { paymentId, source: "LICENSE" } },
-        select: { amountPaise: true },
+      // made the overage fully additive, which cannot work on either remaining
+      // rail. A LICENSE parent keeps `Payment.amount` at the full price behind a
+      // deliberately ₹0 licence leg, and the leg-sum guard only excuses that
+      // while the licence leg is the ONLY funding leg: adding an
+      // OVERAGE_INVOICE_ACCRUAL leg re-arms the comparison and
+      // `assert_payment_legs_ok` then raises at COMMIT, so the booking already
+      // died with an opaque Postgres check_violation. A parent with no funding
+      // leg at all means the funding seam itself drifted. Neither is fixable by
+      // inflating the amount, so both refuse the booking with an error the buyer
+      // can take to their admin.
+      const fundingErr = new PaymentError(
+        "This booking is past your programme's cap and the programme's funding source cannot be charged for the difference. Ask your billing admin to switch the programme to block over-cap bookings, or to fund it from the organisation's wallet or invoice account.",
+        "OVERAGE_UNSUPPORTED_FUNDING",
+      );
+      // A coverage gap, not a modelled outcome: it means an operator saved a
+      // programme whose overage can never be collected.
+      reportSentryError(fundingErr, {
+        subsystem: "payments",
+        contexts: { overage: { paymentId, marginalPaise } },
       });
-      if (!licenseLeg) {
-        const fundingErr = new PaymentError(
-          "This booking is past your programme's cap and the programme's funding source cannot be charged for the difference. Ask your billing admin to review the programme's overage settings.",
-          "OVERAGE_UNSUPPORTED_FUNDING",
-        );
-        // A coverage gap, not a modelled outcome: an org-sponsored payment is
-        // supposed to carry exactly one of the WALLET/INVOICE_ACCRUAL/LICENSE
-        // funding legs, so reaching here means the funding seam itself drifted.
-        reportSentryError(fundingErr, {
-          subsystem: "payments",
-          contexts: { overage: { paymentId, marginalPaise } },
-        });
-        throw fundingErr;
-      }
+      throw fundingErr;
     }
-    const carved = baseLeg && baseLeg.amountPaise >= basePaise ? basePaise : 0;
+    const carved = baseLeg.amountPaise >= basePaise ? basePaise : 0;
     if (carved > 0) {
       await tx.paymentLeg.update({
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },

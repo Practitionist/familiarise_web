@@ -92,6 +92,21 @@ export function overageBehaviorUnsupportedReason(
       "Choose CHARGE_ORG, which is collected by that same wallet debit, or BLOCK to stop over-cap bookings."
     );
   }
+  // A licence is a flat fee settled at contract time, so a licence-funded
+  // booking collects nothing per booking: its funding leg is deliberately ₹0
+  // while `Payment.amount` stays at the full price, and the leg-sum guard
+  // excuses that only while the licence leg is the payment's ONLY funding leg.
+  // Charging an overage adds a second leg, which re-arms the comparison and
+  // makes `assert_payment_legs_ok` raise at COMMIT — so every over-cap booking
+  // under such a programme died with an opaque database error. There is no
+  // per-booking rail to collect the marginal on, so the configuration itself is
+  // refused.
+  if (fundingSource === "LICENSE" && overageBehavior !== "BLOCK") {
+    return (
+      "A licence-funded programme cannot charge for bookings past its cap, because a licence is a flat fee settled at contract time and no money moves per booking to carry the overage. " +
+      "Choose BLOCK to stop over-cap bookings, or fund the programme from the organisation's wallet or invoice account."
+    );
+  }
   return null;
 }
 

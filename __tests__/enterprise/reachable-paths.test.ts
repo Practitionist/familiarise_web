@@ -83,6 +83,18 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
       expect(reason).toContain("#715");
     });
 
+    it("refuses either charging behaviour on a LICENSE-funded account", () => {
+      // A flat licence moves no money per booking, so nothing carries the
+      // marginal and the leg-sum guard rejects the extra leg at COMMIT.
+      expect(
+        overageBehaviorUnsupportedReason("LICENSE", "CHARGE_ORG"),
+      ).toContain("licence");
+      expect(
+        overageBehaviorUnsupportedReason("LICENSE", "CHARGE_MEMBER"),
+      ).toContain("licence");
+      expect(overageBehaviorUnsupportedReason("LICENSE", "BLOCK")).toBeNull();
+    });
+
     it("allows CHARGE_ORG and BLOCK on WALLET, and CHARGE_MEMBER on INVOICE", () => {
       expect(
         overageBehaviorUnsupportedReason("WALLET", "CHARGE_ORG"),

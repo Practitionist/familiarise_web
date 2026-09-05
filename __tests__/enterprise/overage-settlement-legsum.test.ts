@@ -38,10 +38,14 @@ function makeTx(opts: {
   priceCap?: number | null;
   overageBehavior?: "CHARGE_ORG" | "CHARGE_MEMBER";
   /** #1458 — which funding rail wrote the parent's base leg. */
-  baseSource?: "INVOICE_ACCRUAL" | "WALLET";
+  baseSource?: "INVOICE_ACCRUAL" | "WALLET" | "LICENSE";
 }) {
   const legs: Leg[] = [
-    { source: opts.baseSource ?? "INVOICE_ACCRUAL", amountPaise: opts.price },
+    {
+      source: opts.baseSource ?? "INVOICE_ACCRUAL",
+      // A licence leg is deliberately zero-value: the contract already paid.
+      amountPaise: opts.baseSource === "LICENSE" ? 0 : opts.price,
+    },
   ];
   const payment = { amount: opts.price };
   const children: { amount: number }[] = [];
@@ -211,6 +215,30 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
     // cascade splits it across the legs — with one WALLET leg equal to amount,
     // a 100% refund returns exactly the debit and not a paisa more.
     expect(state.payment.amount).toBe(walletDebit);
+  });
+
+  // A licence is a flat fee settled at contract time, so its leg is ₹0 while
+  // Payment.amount stays at the full price. Adding an overage leg re-arms the
+  // leg-sum comparison the licence carve had suppressed, and the booking used
+  // to die at COMMIT on assert_payment_legs_ok instead of saying why.
+  it("LICENSE + CHARGE_ORG is refused rather than made additive", async () => {
+    const { state, tx } = makeTx({
+      price: 100_000,
+      cap: 5,
+      used: 5,
+      baseSource: "LICENSE",
+    });
+
+    await expect(
+      recordOverageAtCheckout({
+        tx: tx as unknown as Tx,
+        ...callArgs(100_000),
+      }),
+    ).rejects.toMatchObject({ code: "OVERAGE_UNSUPPORTED_FUNDING" });
+
+    expect(tx.paymentLeg.create).not.toHaveBeenCalled();
+    expect(tx.payment.update).not.toHaveBeenCalled();
+    expect(state.legs).toEqual([{ source: "LICENSE", amountPaise: 0 }]);
   });
 });
 
