@@ -1,3 +1,4 @@
+/** @jsxImportSource @/lib/pdf/react-runtime */
 /**
  * Credit-note PDF renderer — CGST s.34 `CreditNote` documents (#1230).
  *
@@ -14,7 +15,6 @@
  * tax split, and rate of tax.
  */
 
-import React from "react";
 import {
   Document,
   Page,

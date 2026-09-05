@@ -1,3 +1,4 @@
+/** @jsxImportSource @/lib/pdf/react-runtime */
 /**
  * The shared page furniture for the consumer (B2C) statutory documents.
  *
@@ -17,7 +18,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import React from "react";
 import { View, Text, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Currency } from "@prisma/client";
 
