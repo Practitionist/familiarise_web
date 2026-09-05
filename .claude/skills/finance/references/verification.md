@@ -6,6 +6,16 @@ Verifying a money change means producing an actual gateway event, an actual data
 
 The shared Supabase project is fragile and serves both dev and prod (there are no branches), so money-path verification runs against a Netlify deploy preview rather than a local `next dev` session. Two things make this practical since 2026-09-04: browser sign-in on Netlify previews now works, because the deploy-preview context carries a wildcard trusted origin (it used to 403 with `INVALID_ORIGIN`), and `PG_POOL_MAX=1` behaviour — the single-connection deadlock class described in the doctrine page — only reproduces under a real deployed pool, not a local one with its own connections. A local dev server is fine for UI iteration, but a claim that a money path is verified has to be backed by a preview run.
 
+## What a run leaves behind
+
+Verification writes to the same Supabase project that serves production, because there is exactly one project and no branches, and that is a deliberate decision rather than an oversight. A run therefore leaves real rows behind: a `Payment`, the `LedgerTransaction` and `LedgerEntry` pair it posts, a `ConsultantEarnings` accrual, any tax invoice or credit note the flow mints, and a `WebhookEvent` inbox row for every replayed delivery. Razorpay TEST MODE isolates the gateway balance, not this application's tables, so none of those rows are prevented by using test keys.
+
+This is acceptable before launch because the dataset is mock throughout — every seeded user and every existing `Recording` row is faker data, nothing has been sold, and a full reset precedes launch, which is also why no backfill migration is ever written for it. It stops being acceptable the moment real customers exist.
+
+Four disciplines keep the residue harmless in the meantime. Record every identifier a run creates in the verification report, so a later reader can tell a test row from a real one without guessing. Use recognisable fixture names for the users and organisations a run needs, rather than names that read like genuine customers. Never delete a ledger row to tidy up, because the ledger is append-only and deleting an entry silently drifts every snapshot and balance derived from it — post a compensating reversal if a run must be undone. When a cached aggregate disagrees with the journal after a run, repair the cache to the journal's value and never the reverse, since the journal is the truth and the cache is a derivation of it.
+
+The escalation, once the platform has real customers, is a dedicated Supabase project or a database branch for verification, at which point this page's premise changes and the recipe should be rewritten against it.
+
 ## Gateway mode
 
 Verification uses Razorpay **TEST MODE** keys (`rzp_test_...`), never live keys. Test-mode payments, refunds, and payouts are entirely separate from live-mode data and are invisible to each other in the Razorpay dashboard, so a test-mode run cannot contaminate a real balance and a live key accidentally used in a preview cannot be mistaken for a successful test.

@@ -21,7 +21,7 @@ reading is not enough. Before claiming anything works:
 mcp__streamio__video_query_calls    {"ended_at": {"$exists": false}}
 mcp__streamio__chat_query_channels  {"type": {"$eq": "messaging"}}
 mcp__supabase__execute_sql          -- count MeetingSession/MeetingAttendance/WebhookEvent
-netlify env:list --json             -- the env is not the same as .env
+netlify env:list --json | jq -r 'if type=="object" then keys[] else .[].key end'  -- keys only, never values
 ```
 
 The 2026-08-12 audit found a **total, never-once-worked webhook outage** that no amount of code
