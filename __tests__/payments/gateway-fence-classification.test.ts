@@ -78,4 +78,67 @@ describe("gateway fence classification", () => {
     expect(toast.title).toBe("Domain Verification Required");
     expect(toast.description).toBeTruthy();
   });
+
+  // #1458 — the overage settlement throws PROGRAM_CAP_EXHAUSTED as a 402 with
+  // copy the buyer can act on, but the checkout catch rewrote it to "Failed to
+  // record payment information" and the classifier answered 500 UNKNOWN_ERROR.
+  it("classifies PROGRAM_CAP_EXHAUSTED as a 402 with its own toast", () => {
+    const classified = classifyError(
+      Object.assign(new Error("cycle ceiling reached"), {
+        httpStatus: 402,
+        code: "PROGRAM_CAP_EXHAUSTED",
+      }),
+    );
+
+    expect(classified.errorType).toBe(ErrorTypes.PROGRAM_CAP_EXHAUSTED);
+    expect(classified.isBusinessError).toBe(true);
+    expect(classified.httpStatus).toBe(402);
+
+    const toast = getErrorToast(classified.errorType);
+    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.description).toContain("programme budget");
+  });
+
+  it("classifies the other checkout-transaction refusals off their codes", () => {
+    expect(
+      classifyError(
+        Object.assign(new Error("session cap"), {
+          code: "PROGRAM_SESSION_CAP_REACHED",
+        }),
+      ).httpStatus,
+    ).toBe(402);
+    expect(
+      classifyError(
+        Object.assign(new Error("member overage"), {
+          code: "OVERAGE_CHARGE_MEMBER_UNSUPPORTED",
+        }),
+      ).httpStatus,
+    ).toBe(409);
+    expect(
+      classifyError(
+        Object.assign(new Error("funding"), {
+          code: "OVERAGE_UNSUPPORTED_FUNDING",
+        }),
+      ).httpStatus,
+    ).toBe(409);
+  });
+
+  // #1467 — a lapsed contract and a dunning suspension are org entitlement
+  // states the member's admin can clear. Both threw bare Errors, so the
+  // message-only fallback answered 500 UNKNOWN_ERROR on a routine refusal.
+  it.each([
+    ["PROGRAM_ASSIGNMENT_INACTIVE", 409],
+    ["BILLING_SUSPENDED_DUNNING", 402],
+  ])("classifies %s as a business rejection with status %i", (code, status) => {
+    const classified = classifyError(
+      Object.assign(new Error("refused"), { code }),
+    );
+
+    expect(classified.isBusinessError).toBe(true);
+    expect(classified.httpStatus).toBe(status);
+
+    const toast = getErrorToast(classified.errorType);
+    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.description).toContain("admin");
+  });
 });

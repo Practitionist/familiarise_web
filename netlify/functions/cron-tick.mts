@@ -32,6 +32,20 @@ const TARGETS = [
   "release-earnings",
 ] as const;
 
+/** The batch size a target gets when it is not listed in {@link TARGET_LIMITS}. */
+const DEFAULT_LIMIT = 50;
+
+/**
+ * #1459 — per-target overrides for the batch size. Fifty rows is only the right
+ * bite for a sweep whose per-row cost is a database write; `abandoned-payments`
+ * also makes a gateway round trip per payment, and at fifty it could not finish
+ * inside {@link PER_TARGET_TIMEOUT_MS} on any tick. The unbounded GitHub Actions
+ * run is the backstop for whatever a small bite leaves behind.
+ */
+const TARGET_LIMITS: Partial<Record<(typeof TARGETS)[number], number>> = {
+  "abandoned-payments": 10,
+};
+
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
 const PER_TARGET_TIMEOUT_MS = 6_000;
 
@@ -58,12 +72,13 @@ function jsonResponse(body: unknown, status: number): Response {
 async function hitTarget(
   baseUrl: string,
   secret: string,
-  name: string,
+  name: (typeof TARGETS)[number],
 ): Promise<{ name: string; status: number }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PER_TARGET_TIMEOUT_MS);
+  const limit = TARGET_LIMITS[name] ?? DEFAULT_LIMIT;
   try {
-    const res = await fetch(`${baseUrl}/api/cleanup/${name}?limit=50`, {
+    const res = await fetch(`${baseUrl}/api/cleanup/${name}?limit=${limit}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}` },
       signal: controller.signal,

@@ -868,6 +868,10 @@ export async function createEarningsFromPayment({
                 select: { source: true, amountPaise: true },
               });
               const orgId = payment.organizationId ?? null;
+              // #1458 — tracked separately from `receivable` so the credit side
+              // can ask "was a CHARGE_ORG overage funded through this payment?"
+              // without a second leg query. See the surcharge credit below.
+              let overageAccrualPaise = 0;
               const debits: Posting[] = [];
               const pushDebit = (account: AccountRef, amountPaise: number) => {
                 if (amountPaise > 0)
@@ -888,8 +892,11 @@ export async function createEarningsFromPayment({
                       wallet += leg.amountPaise;
                       break;
                     case "INVOICE_ACCRUAL":
+                      receivable += leg.amountPaise;
+                      break;
                     case "OVERAGE_INVOICE_ACCRUAL":
                       receivable += leg.amountPaise;
+                      overageAccrualPaise += leg.amountPaise;
                       break;
                     case "REFERRAL_CREDIT":
                       promo += leg.amountPaise;
@@ -964,6 +971,38 @@ export async function createEarningsFromPayment({
               let platformFeeCreditPaise = platformFeePaise;
               for (const s of Array.from(collabSettlements.values())) {
                 platformFeeCreditPaise += s.orgSplit.platformFeePaise;
+              }
+              // #1458 (Sentry FAMILIARISE_WEB-28) — every credit above is
+              // derived from `payment.originalAmount`, the nominal price, while
+              // the debits are the funding legs. A CHARGE_ORG overage surcharge
+              // is the one funding amount that is NOT inside the nominal price:
+              // the base carve keeps `basePaise` in, but `marginal = base +
+              // surcharge` bumps both the accrual leg and `Payment.amount` by
+              // the surcharge. Without this credit the posting was short by
+              // exactly `surchargePaise`, threw LedgerImbalanceError, and the
+              // booking committed with no journal entry at all.
+              //
+              // PLATFORM_FEE is the right account and no new one is needed: an
+              // over-cap surcharge is a markup the platform charges the org for
+              // exceeding its own cap, not consultant income — the consultant is
+              // paid out of `originalAmount`, which the surcharge sits outside
+              // of. (The surcharge is booked gross of GST; `Payment.taxAmount`
+              // is computed on the nominal price and is not re-derived for an
+              // overage, which is the same limitation the invoice rollup has.)
+              //
+              // Only read when an OVERAGE_INVOICE_ACCRUAL leg actually funded
+              // this payment: on the wallet rail the marginal is inside the
+              // wallet debit and no such leg exists, and a CHARGE_MEMBER
+              // surcharge rides the member's side-payment, not this journal.
+              if (overageAccrualPaise > 0) {
+                const orgOverage = await tx.overageEvent.findFirst({
+                  where: {
+                    bookingUtilization: { paymentId: payment.id },
+                    overageBehavior: "CHARGE_ORG",
+                  },
+                  select: { surchargePaise: true },
+                });
+                platformFeeCreditPaise += sumPaise(orgOverage?.surchargePaise);
               }
               pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
               if (splits.length > 0) {

@@ -25,7 +25,68 @@ import {
 // break every inbound payment confirmation.
 export const runtime = "nodejs";
 
+/**
+ * #1459 — a Razorpay event payload is a few kilobytes; the largest we have seen
+ * is well under a hundredth of this. Anything bigger is not a delivery we have
+ * to serve, and reading it into a buffer to HMAC it is work an unauthenticated
+ * caller gets to make us do. The refusal is the first thing the handler does,
+ * so an oversized body never reaches the signature read and never writes a
+ * webhook-inbox row.
+ */
+const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
+
+/**
+ * #1459 — Content-Length is optional and set by the caller, so the header check
+ * alone is a cap only a well-behaved sender honours: omit it, or send chunked,
+ * and `req.text()` would buffer whatever arrives. Counting the bytes as they
+ * stream in and abandoning the read the moment the cap is passed is what makes
+ * the limit hold against the caller it was written for. The whole body is
+ * decoded in one pass at the end, because a multi-byte character split across
+ * two chunks must not be decoded twice — the HMAC covers these exact bytes.
+ *
+ * @returns The raw body, or `null` when the request exceeded the cap.
+ */
+async function readBodyWithinCap(req: NextRequest): Promise<string | null> {
+  const stream = req.body;
+  // No stream means there is no body to bound; `text()` yields "" and the
+  // signature check below rejects it.
+  if (!stream) return req.text();
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_WEBHOOK_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 export async function POST(req: NextRequest) {
+  // Content-Length is what a refusal can be based on before a single byte is
+  // read, so an honest oversized delivery costs us nothing at all. A caller
+  // that omits or understates it is caught by readBodyWithinCap instead.
+  const declaredBytes = Number(req.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredBytes) &&
+    declaredBytes > MAX_WEBHOOK_BODY_BYTES
+  ) {
+    console.warn(
+      `Rejected oversized Razorpay webhook body: ${declaredBytes} bytes`,
+    );
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+
   Sentry.setTag("subsystem", "payments");
 
   // #1377 — the payment-side secrets, current first and (only during a
@@ -49,7 +110,13 @@ export async function POST(req: NextRequest) {
   // The HMAC covers the RAW bytes. Read them once here and hand the same
   // string to every verification attempt — parsing and re-serialising would
   // reorder keys and break the digest.
-  const body = signature ? await req.text() : "";
+  const body = signature ? await readBodyWithinCap(req) : "";
+  if (body === null) {
+    console.warn(
+      `Rejected oversized Razorpay webhook body: over ${MAX_WEBHOOK_BODY_BYTES} bytes`,
+    );
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
 
   const matchedRole = signature
     ? matchRazorpayWebhookSecret(body, signature, paymentSecrets)

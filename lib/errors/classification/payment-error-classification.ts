@@ -39,6 +39,17 @@ export const ErrorTypes = {
   // intercepts DomainVerificationRequiredError by instanceof and hardcodes this
   // string in the response JSON.
   DOMAIN_VERIFICATION_REQUIRED: "DOMAIN_VERIFICATION_REQUIRED",
+  // #1458 — the three org-programme refusals checkout can raise from inside its
+  // transaction. Each is a rejection the buyer or their admin can act on, so
+  // each carries its own toast rather than sharing one "config" bucket.
+  PROGRAM_CAP_EXHAUSTED: "PROGRAM_CAP_EXHAUSTED_ERROR",
+  PROGRAM_SESSION_CAP_REACHED: "PROGRAM_SESSION_CAP_REACHED_ERROR",
+  OVERAGE_CHARGE_MEMBER_UNSUPPORTED: "OVERAGE_CHARGE_MEMBER_UNSUPPORTED_ERROR",
+  // #1467 — the two org-sponsorship refusals raised BEFORE checkout takes its
+  // lock. They are entitlement states, not overage states, so they get their own
+  // types rather than borrowing one of the three above.
+  PROGRAM_ASSIGNMENT_INACTIVE: "PROGRAM_ASSIGNMENT_INACTIVE_ERROR",
+  BILLING_SUSPENDED_DUNNING: "BILLING_SUSPENDED_DUNNING_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -224,7 +235,61 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.DOMAIN_VERIFICATION_REQUIRED,
     httpStatus: 403,
   },
+  // #1458 — all four are thrown from inside the checkout transaction, where the
+  // catch used to rewrite anything it did not recognise to "Failed to record
+  // payment information". With a row here the code survives the rethrow and the
+  // buyer gets the status and the copy that match the actual refusal.
+  {
+    code: "PROGRAM_CAP_EXHAUSTED",
+    errorType: ErrorTypes.PROGRAM_CAP_EXHAUSTED,
+    httpStatus: 402,
+  },
+  {
+    code: "PROGRAM_SESSION_CAP_REACHED",
+    errorType: ErrorTypes.PROGRAM_SESSION_CAP_REACHED,
+    httpStatus: 402,
+  },
+  {
+    code: "OVERAGE_CHARGE_MEMBER_UNSUPPORTED",
+    errorType: ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED,
+    httpStatus: 409,
+  },
+  {
+    code: "OVERAGE_UNSUPPORTED_FUNDING",
+    errorType: ErrorTypes.UNSUPPORTED_CONFIG,
+    httpStatus: 409,
+  },
+  // #1467 — both were bare `new Error(...)` and so fell through the
+  // message-only fallback to 500 UNKNOWN_ERROR. A member whose organisation's
+  // contract had merely lapsed could not tell the refusal from a crash, and
+  // every one of them opened a Sentry incident.
+  {
+    code: "PROGRAM_ASSIGNMENT_INACTIVE",
+    errorType: ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE,
+    httpStatus: 409,
+  },
+  {
+    code: "BILLING_SUSPENDED_DUNNING",
+    errorType: ErrorTypes.BILLING_SUSPENDED_DUNNING,
+    httpStatus: 402,
+  },
 ] as const;
+
+/**
+ * True when an error's `code` is one this module already resolves to a status
+ * and a toast.
+ *
+ * #1458 — the checkout transaction's catch has to decide whether an error is
+ * safe to rethrow unchanged. Asking "is this code registered?" is the same
+ * question the classifier answers a moment later, so the two can never disagree
+ * about which refusals reach the buyer intact.
+ */
+export function isBusinessErrorCode(code: unknown): boolean {
+  return (
+    typeof code === "string" &&
+    BUSINESS_ERROR_CODES.some((entry) => entry.code === code)
+  );
+}
 
 /**
  * Read a string `code` off an error without importing the class that set it —
