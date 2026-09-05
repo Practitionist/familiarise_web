@@ -23,7 +23,10 @@
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
@@ -550,20 +553,41 @@ export async function mintConsumerCreditNote(
     // Not a silent no-op: the caller believes it reversed money, and an
     // over-credit attempt means a refund and a chargeback both landed on one
     // payment. That needs an operator, not a swallowed return.
-    void recordSystemError({
+    //
+    // It does not need a pager, though. The cumulative cap from #1393 refusing
+    // a second reversal is the cap WORKING — no money moved, the invoice is
+    // intact, and the operator's job is reconciliation rather than incident
+    // response. `recordSystemError` escalates to Sentry at the default error
+    // level, so this outcome opened an error-level issue every time it fired.
+    // The durable SystemEvent row is kept exactly as it was; only the Sentry
+    // report is downgraded to the modelled-refusal shape used elsewhere.
+    const refusal = new Error(
+      `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
+    );
+    void recordSystemEvent({
       organizationId: null,
       category: "PAYMENT",
-      summary:
-        "Consumer credit note not minted: invoice already fully credited",
-      err: new Error(
-        `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
-      ),
+      severity: "ERROR",
+      message: `Consumer credit note not minted: invoice already fully credited: ${refusal.message}`,
       context: {
         paymentId: params.paymentId,
         refundId: params.refundId ?? null,
         disputeId: params.disputeId ?? null,
+        errorMessage: refusal.message,
       },
     }).catch(() => {});
+    reportSentryError(refusal, {
+      subsystem: "payments",
+      op: "mintConsumerCreditNote",
+      level: "warning",
+      expected: true,
+      extra: {
+        consumerInvoiceId: invoice.id,
+        paymentId: params.paymentId,
+        refundId: params.refundId ?? null,
+        disputeId: params.disputeId ?? null,
+      },
+    });
     return { consumerCreditNoteId: null };
   }
   if (derived.outcome === "NOTHING_TO_CREDIT") {

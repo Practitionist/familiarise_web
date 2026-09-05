@@ -96,4 +96,33 @@ describe("#1437 gateway note limits", () => {
     // sat at exactly Razorpay's 15-key ceiling before `discountCode` was cut.
     expect(Object.keys(metadata).length).toBeLessThanOrEqual(14);
   });
+
+  /**
+   * #1462 — the same payload, seen from the webhook's side. A scheduling-period
+   * subscription has no slot times, and sending them as `""` failed
+   * `z.string().datetime().optional()` on every capture, stranding the sale as
+   * REQUIRES_MANUAL_RECOVERY with the buyer already charged.
+   */
+  it("omits every empty optional field instead of sending it as an empty string", () => {
+    const metadata = buildPaymentMetadata(
+      {
+        appointmentType: "SUBSCRIPTION",
+        planId: "plan-1",
+        paymentGateway: "RAZORPAY",
+        schedulingPeriodStartsAt: "2026-09-01T00:00:00.000Z",
+        schedulingPeriodEndsAt: "2026-12-01T00:00:00.000Z",
+      } as unknown as CheckoutInput,
+      "user-1",
+    );
+
+    expect(metadata).not.toHaveProperty("startsAt");
+    expect(metadata).not.toHaveProperty("endsAt");
+    expect(metadata).not.toHaveProperty("slotOfAvailabilityWeeklyId");
+    expect(metadata).not.toHaveProperty("slotOfAvailabilityCustomId");
+    expect(metadata).not.toHaveProperty("notes");
+    expect(Object.values(metadata)).not.toContain("");
+    // What the sale actually needs still travels.
+    expect(metadata.schedulingPeriodStartsAt).toBe("2026-09-01T00:00:00.000Z");
+    expect(metadata.schedulingPeriodEndsAt).toBe("2026-12-01T00:00:00.000Z");
+  });
 });
