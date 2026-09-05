@@ -419,6 +419,98 @@ ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
   CHECK (pg_column_size("payload") <= 65536);
 
 -- SPLIT
+-- #1405 — one OPEN rate-card window per scope. `bumpRateCard` closes the
+-- current card and inserts its replacement in one transaction, but under the
+-- default isolation two concurrent OWNER bumps each read "nothing open here"
+-- and each insert a row with `effectiveTo = NULL`; `findEffective` then picked
+-- between the two open windows non-deterministically, so the same booking
+-- could settle on either split. The route is Serializable + retried now; this
+-- index is the structural guarantee behind it. Three of the four scope columns
+-- are nullable and Postgres treats NULL key columns as distinct, which is
+-- exactly the case that must NOT be exempt, so NULL key columns
+-- are treated as equal via NULLS NOT DISTINCT (Postgres 15+); an enum-to-text
+-- COALESCE expression is not IMMUTABLE and Postgres refuses it in an index.
+DROP INDEX IF EXISTS "rate_card_one_open_window";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "rate_card_one_open_window"
+  ON "RateCard" ("ownerOrgId", "ownerContractId", "planType", "planId")
+  NULLS NOT DISTINCT
+  WHERE "effectiveTo" IS NULL;
+
+-- SPLIT
+-- #1365 — B2C tax invoices are documents, not postings, so nothing else asserts
+-- their arithmetic. A negative head on a statutory document is unfilable.
+ALTER TABLE "ConsumerInvoice" DROP CONSTRAINT IF EXISTS "consumer_invoice_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsumerInvoice" ADD CONSTRAINT "consumer_invoice_amounts_nonnegative"
+  CHECK ("taxableValuePaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0 AND "igstPaise" >= 0 AND "totalPaise" >= 0);
+-- SPLIT
+-- A supply is either intra-state (CGST+SGST) or inter-state (IGST); an invoice
+-- carrying both heads names two mutually exclusive places of supply at once.
+ALTER TABLE "ConsumerInvoice" DROP CONSTRAINT IF EXISTS "consumer_invoice_tax_head_xor";
+-- SPLIT
+ALTER TABLE "ConsumerInvoice" ADD CONSTRAINT "consumer_invoice_tax_head_xor"
+  CHECK ("igstPaise" = 0 OR ("cgstPaise" = 0 AND "sgstPaise" = 0));
+-- SPLIT
+ALTER TABLE "ConsumerCreditNote" DROP CONSTRAINT IF EXISTS "consumer_credit_note_amounts_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsumerCreditNote" ADD CONSTRAINT "consumer_credit_note_amounts_nonnegative"
+  CHECK ("taxableValuePaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0 AND "igstPaise" >= 0 AND "totalPaise" >= 0);
+
+-- SPLIT
+-- ============================================================================
+-- #1354 — one withholding table, two deductee rails.
+--
+-- TDSRecord and TdsAdjustment used to be consultant-only, with a NOT NULL
+-- `consultantProfileId` doing the structural work. Admitting host
+-- organisations meant making that column nullable, which on its own would
+-- allow a row belonging to NEITHER rail (both null — an unattributable
+-- statutory deduction) or to BOTH (a return line filed twice, against two
+-- different PANs). Prisma cannot express a CHECK, so the invariant it used to
+-- get free from NOT NULL has to be restated here.
+--
+-- Precedent: collaborator_plan_xor above, same `<>`-on-IS-NULL shape.
+-- ============================================================================
+
+-- SPLIT
+-- Exactly one deductee. `(a IS NULL) <> (b IS NULL)` is true only when the two
+-- nullness flags differ, which is exactly "one of them is set".
+ALTER TABLE "TDSRecord" DROP CONSTRAINT IF EXISTS "tds_record_deductee_xor";
+-- SPLIT
+ALTER TABLE "TDSRecord" ADD CONSTRAINT "tds_record_deductee_xor"
+  CHECK (("consultantProfileId" IS NULL) <> ("organizationId" IS NULL));
+
+-- SPLIT
+-- The payout column must match the rail. Both FKs are real, so nothing else
+-- stops an org row from citing a ConsultantPayout: the row would then dedupe
+-- on the consultant unique (all-NULL, therefore never conflicting) and file
+-- its credit under someone else's disbursement.
+ALTER TABLE "TDSRecord" DROP CONSTRAINT IF EXISTS "tds_record_payout_rail_matches";
+-- SPLIT
+ALTER TABLE "TDSRecord" ADD CONSTRAINT "tds_record_payout_rail_matches"
+  CHECK (
+    ("organizationId" IS NULL AND "orgPayoutId" IS NULL)
+    OR ("consultantProfileId" IS NULL AND "payoutId" IS NULL)
+  );
+
+-- SPLIT
+-- Same XOR on the filing-side adjustment rows, which the return generator
+-- exports as revised-statement lines.
+ALTER TABLE "TdsAdjustment" DROP CONSTRAINT IF EXISTS "tds_adjustment_deductee_xor";
+-- SPLIT
+ALTER TABLE "TdsAdjustment" ADD CONSTRAINT "tds_adjustment_deductee_xor"
+  CHECK (("consultantProfileId" IS NULL) <> ("organizationId" IS NULL));
+
+-- SPLIT
+-- #676 PM-22 shape, now on the org rail too: OrganizationPayout.tdsFinancialYear
+-- is what the completion-time TDSRecord files under, so a malformed value there
+-- files a whole quarter's org withholding under a year that does not exist.
+ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_tds_fy_format";
+-- SPLIT
+ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
+  CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
+
+-- SPLIT
 -- ============================================================================
 -- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
 -- Each of these can fail against pre-reset data (existing nulls, historical

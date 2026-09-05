@@ -125,6 +125,15 @@ export type Finding = {
     // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger
     // transaction: the cash left but the payable was never cleared in the journal.
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
+    // #1408 — an OrganizationPayout whose `clawbackAmountPaise` exceeds the
+    // CASH DEBIT its `clawback:*` postings actually recorded. Only
+    // reversePayoutClawback posts one, and it does so best-effort inside a
+    // try/catch; the two other writers of `clawbackAmountPaise` (refund.ts and
+    // booking-refund.ts) post nothing at all. The money row and the journal are
+    // a dual write with no transaction spanning them, so this is the detector
+    // for the gap — total (nothing posted) and partial (a later clawback's
+    // posting lost) share the kind and differ only in `deltaPaise`.
+    | "LEDGER_DUAL_WRITE_GAP"
     // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
     // The JS boundary converts BigInt → number; past 2^53−1 that conversion
     // loses precision (and sumPaise() starts throwing mid-flight). This
@@ -183,6 +192,59 @@ export type ReconcileReport = {
   };
   findings: Finding[];
 };
+
+/**
+ * #1408 — the clawback dual-write gap, compared on AMOUNTS rather than on the
+ * presence of a posting. `clawbackAmountPaise` is a running total: a payout
+ * clawed back twice whose second posting was swallowed still carries a
+ * `clawback:*` transaction, so a payout-id Set reads it as clean. The CASH
+ * DEBIT is the authoritative leg — it is the money that came back — so the sum
+ * of those legs is what the stamped counter is measured against. Pure, so the
+ * pin can drive it without standing up a whole reconciler run.
+ */
+export function clawbackDualWriteGapFindings(
+  payouts: {
+    id: string;
+    organizationId: string;
+    clawbackAmountPaise: number | bigint;
+  }[],
+  postedPaiseByPayout: Map<string, number>,
+): Finding[] {
+  const out: Finding[] = [];
+  for (const po of payouts) {
+    const expected = Number(po.clawbackAmountPaise);
+    // Both columns are BigInt and `Finding` carries plain numbers, so the
+    // narrowing stays. What must never happen quietly is a value that does not
+    // survive it: past 2^53 the comparison below rounds, and a rounded shortfall
+    // reads as `actual >= expected` — the detector would report CLEAN on a real
+    // dual-write gap. Loud failure naming the row beats a suppressed finding.
+    if (!Number.isSafeInteger(expected)) {
+      throw new Error(
+        `clawbackDualWriteGapFindings: OrganizationPayout ${po.id} has clawbackAmountPaise=${po.clawbackAmountPaise}, outside the safe-integer range — the shortfall comparison would round and could suppress a LEDGER_DUAL_WRITE_GAP.`,
+      );
+    }
+    const actual = postedPaiseByPayout.get(po.id) ?? 0;
+    // Shortfall only. A ledger that posted MORE than was stamped is the
+    // opposite defect and does not belong under this kind's note.
+    if (actual >= expected) continue;
+    out.push({
+      kind: "LEDGER_DUAL_WRITE_GAP",
+      organizationId: po.organizationId,
+      payoutId: po.id,
+      expectedPaise: expected,
+      actualPaise: actual,
+      deltaPaise: expected - actual,
+      details: {
+        scope: "org-payout-clawback",
+        note:
+          actual === 0
+            ? "OrganizationPayout.clawbackAmountPaise > 0 but no clawback:* ledger transaction against this payout."
+            : "OrganizationPayout.clawbackAmountPaise exceeds the summed CASH DEBIT of its clawback:* postings — a later clawback's dual write was lost.",
+      },
+    });
+  }
+  return out;
+}
 
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: read-only auditor, lock is belt-and-braces.
@@ -933,6 +995,76 @@ async function runReconcileLedgersUnlocked(
           note: "OrganizationPayout.status=COMPLETED but no ORG_PAYOUT ledger transaction.",
         },
       });
+    }
+  }
+
+  // #1408 — the clawback dual-write. A refund against an already-paid org
+  // payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
+  // but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
+  // reversePayoutClawback posts it inside a try/catch that swallows the
+  // failure, and refund.ts / booking-refund.ts never post it at all. The
+  // stamped payout then claims cash was recovered that the journal has never
+  // seen. Matched on the soft link plus the `clawback:` key prefix because the
+  // full key embeds the refund id, which the payout row does not carry — and
+  // compared on summed amounts, not presence, since the counter is cumulative
+  // and a second clawback's lost posting hides behind the first one's.
+  {
+    const clawedBackPayouts = await prisma.organizationPayout.findMany({
+      where: {
+        clawbackAmountPaise: { gt: 0 },
+        ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+      },
+      select: { id: true, organizationId: true, clawbackAmountPaise: true },
+    });
+    if (clawedBackPayouts.length > 0) {
+      // Chunked IN to stay under the bind-param cap, like the sibling lookups
+      // below; a full-scope run can carry more payout ids than one statement.
+      const CLAWBACK_CHUNK = 5_000;
+      const clawbackPostedByPayout = new Map<string, number>();
+      for (let i = 0; i < clawedBackPayouts.length; i += CLAWBACK_CHUNK) {
+        const clawbackTxns = await prisma.ledgerTransaction.findMany({
+          where: {
+            payoutId: {
+              in: clawedBackPayouts
+                .slice(i, i + CLAWBACK_CHUNK)
+                .map((po) => po.id),
+            },
+            idempotencyKey: { startsWith: "clawback:" },
+          },
+          select: {
+            payoutId: true,
+            entries: {
+              where: { direction: "DEBIT", account: { kind: "CASH" } },
+              select: { amountPaise: true },
+            },
+          },
+        });
+        for (const t of clawbackTxns) {
+          if (!t.payoutId) continue;
+          const posted = t.entries.reduce((sum, e) => {
+            // Same reasoning as the detector's guard: a leg that does not
+            // survive the narrowing would under-report the posted side, which
+            // manufactures a phantom gap or hides a real one.
+            const paise = Number(e.amountPaise);
+            if (!Number.isSafeInteger(paise)) {
+              throw new Error(
+                `clawback posting for payout ${t.payoutId} has amountPaise=${e.amountPaise}, outside the safe-integer range.`,
+              );
+            }
+            return sum + paise;
+          }, 0);
+          clawbackPostedByPayout.set(
+            t.payoutId,
+            (clawbackPostedByPayout.get(t.payoutId) ?? 0) + posted,
+          );
+        }
+      }
+      findings.push(
+        ...clawbackDualWriteGapFindings(
+          clawedBackPayouts,
+          clawbackPostedByPayout,
+        ),
+      );
     }
   }
 

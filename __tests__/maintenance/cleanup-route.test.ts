@@ -47,7 +47,11 @@ jest.mock("../../lib/maintenance-cron", () => ({
 
 import type { NextRequest } from "next/server";
 
-import { cleanupRoute, statusFor } from "../../lib/cron/cleanup-route";
+import {
+  cleanupRoute,
+  InvalidLimitError,
+  statusFor,
+} from "../../lib/cron/cleanup-route";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import {
   assertNotInMaintenance,
@@ -179,6 +183,18 @@ describe("cleanupRoute", () => {
     await POST(request());
 
     expect(guard).toHaveBeenCalledWith("reconcile-pending-refunds");
+  });
+
+  it("answers 400 INVALID_LIMIT and never runs the job on a bad ?limit=", async () => {
+    const run = jest.fn(() => {
+      throw new InvalidLimitError();
+    });
+    const { POST } = cleanupRoute({ job: "test-job", run });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "INVALID_LIMIT" });
   });
 
   it("never returns the exception text to the caller", async () => {

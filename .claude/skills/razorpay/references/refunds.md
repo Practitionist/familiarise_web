@@ -75,11 +75,15 @@ idempotencyKey: reserved.id
 `createRazorpayRefund` sends the header only when the caller supplies a key. No key is
 safer than a guessed one.
 
-Two responses to expect. A **409** means a request with the same key is still in flight —
-it is retryable, and `postRefund` retries once before giving up to the reconcile cron with
-`REFUND_IN_FLIGHT`. The same key with a *different* payload returns `BAD_REQUEST`. The
-`receipt` field also acts as a secondary idempotency key ("Duplicate receipt found for
-this refund request").
+Two responses to expect, and Razorpay answers both of them with a **409**. When another
+request carrying the same key is still in flight, the description reads "still in
+progress" and the conflict is retryable: `postRefund` retries once before giving up to the
+reconcile cron with `REFUND_IN_FLIGHT`. When the same key is replayed with a *different*
+payload, the description reads "Different request with the same idempotency key has
+already been processed" and no amount of retrying will change the answer, so `postRefund`
+throws it immediately as `REFUND_IDEMPOTENCY_KEY_REUSED` — a key collision is our bug, not
+the gateway's. The `receipt` field also acts as a secondary idempotency key ("Duplicate
+receipt found for this refund request").
 
 Sources: <https://razorpay.com/docs/api/refunds/normal-refunds-idempotent/> ·
 <https://razorpay.com/docs/api/refunds/instant-refunds-idempotent/> ·
