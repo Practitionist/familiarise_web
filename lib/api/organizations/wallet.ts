@@ -43,6 +43,42 @@ export class WalletInsufficientFundsError extends Error {
 }
 
 /**
+ * #1459 — a `walletBalance` of NULL means "no cached balance was ever written",
+ * not "zero", and arithmetic against it yields NULL rather than the new figure.
+ * Only the still-NULL row matches, so this is a no-op on every account that
+ * already carries a number and cannot clobber a concurrent writer's value. The
+ * schema keeps the column nullable for now; a non-null default belongs to the
+ * pre-MVP reset.
+ */
+async function seedNullWalletBalance(
+  tx: Tx,
+  billingAccountId: string,
+): Promise<void> {
+  await tx.billingAccount.updateMany({
+    where: { id: billingAccountId, walletBalance: null },
+    data: { walletBalance: 0 },
+  });
+}
+
+/**
+ * #1459 — the balance to report back is the one Postgres actually stored, so it
+ * is read off the mutated row. A NULL here can no longer be a legitimate zero
+ * (the seed above ran in the same transaction), so it means the arithmetic did
+ * not take; coercing it with `?? 0` is exactly what let the drift go unnoticed.
+ */
+function readCachedBalance(
+  billingAccountId: string,
+  acct: { walletBalance: number | null },
+): number {
+  if (acct.walletBalance === null) {
+    throw new Error(
+      `Billing account ${billingAccountId} still has a NULL cached wallet balance after the mutation`,
+    );
+  }
+  return acct.walletBalance;
+}
+
+/**
  * Atomically debit a wallet. Throws WalletInsufficientFundsError if the
  * account would go negative. Must be called inside a Prisma transaction.
  */
@@ -62,6 +98,12 @@ export async function walletDebit(
       `walletDebit requires positive amountPaise, got ${params.amountPaise}`,
     );
   }
+  // #1459 — Postgres NULL + x = NULL, so a decrement on a NULL cached balance
+  // silently no-ops; INVOICE-funded accounts are created with a NULL cached
+  // balance. Seeding the NULL to 0 first (the WHERE matches only the NULL row,
+  // so a concurrent writer is untouched) keeps the cache a real number even
+  // though the gte guard below still refuses the debit on a zero balance.
+  await seedNullWalletBalance(tx, params.billingAccountId);
   // Atomic conditional decrement via the ORM (no raw SQL): updateMany only matches
   // a row whose balance is already sufficient (gte excludes NULL too), so two
   // concurrent debits can't overdraw — Postgres row-locks the matched row.
@@ -82,7 +124,7 @@ export async function walletDebit(
     where: { id: params.billingAccountId },
     select: { walletBalance: true, currency: true },
   });
-  const balanceAfter = acct.walletBalance ?? 0;
+  const balanceAfter = readCachedBalance(params.billingAccountId, acct);
 
   // #772 B3 — WalletEntry removed. The wallet-balance cache is decremented
   // above; the booking-debit's accounting leg (Dr WALLET) posts to the
@@ -112,16 +154,20 @@ export async function walletCredit(
       `walletCredit requires positive amountPaise, got ${params.amountPaise}`,
     );
   }
-  // Atomic increment via the ORM (no raw SQL). WALLET-funded accounts are created
-  // with walletBalance=0 (never null), and every mutation is increment/decrement,
-  // so the value stays non-null — increment is exact without a COALESCE. `update`
+  // #1459 — Postgres NULL + x = NULL, so an increment on a NULL cached balance
+  // silently no-ops while the ledger CREDIT posts: permanent cache-vs-ledger
+  // drift. INVOICE-funded accounts are created with a NULL cached balance, so
+  // this is not hypothetical. Seed the NULL to 0 in the same transaction first.
+  await seedNullWalletBalance(tx, params.billingAccountId);
+  // Atomic increment via the ORM (no raw SQL). The seed above guarantees a
+  // non-null operand, so increment is exact without a COALESCE. `update`
   // throws P2025 if the account is missing (a real error, like the old guard).
   const acct = await tx.billingAccount.update({
     where: { id: params.billingAccountId },
     data: { walletBalance: { increment: params.amountPaise } },
     select: { walletBalance: true, currency: true, ownerOrgId: true },
   });
-  const balanceAfter = acct.walletBalance ?? 0;
+  const balanceAfter = readCachedBalance(params.billingAccountId, acct);
 
   // #771 D1/D5 / #772 B3 — double-entry is now the sole record (WalletEntry
   // removed). A top-up is a complete 2-leg txn:
@@ -317,9 +363,7 @@ export function signedDeltaPaise(
   let total = 0;
   for (const r of rows) {
     const amount =
-      typeof r.amountPaise === "bigint"
-        ? Number(r.amountPaise)
-        : r.amountPaise;
+      typeof r.amountPaise === "bigint" ? Number(r.amountPaise) : r.amountPaise;
     if (!Number.isSafeInteger(amount)) {
       throw new Error(
         `signedDeltaPaise: amount ${r.amountPaise} exceeds the safe integer range`,

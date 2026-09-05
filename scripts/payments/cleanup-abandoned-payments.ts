@@ -225,26 +225,104 @@ async function expirePendingPayments(
   payments: AbandonedPayment[],
   errors: string[],
 ): Promise<void> {
-  for (const payment of payments) {
-    try {
-      await cancelPaymentIntent(payment.paymentIntent, payment.paymentGateway);
+  // #1459 — the gateway round trips run first and in parallel; the status
+  // writes below stay one-at-a-time and in cohort order, because they are the
+  // part that has to be a deterministic sequence inside the caller's
+  // transaction. A payment whose cancel failed is reported and skipped, which
+  // is what the sequential version did.
+  const failures = await cancelGatewayIntents(payments);
 
-      // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
-      await tx.payment.updateMany({
-        where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-        data: { paymentStatus: PaymentStatus.EXPIRED },
-      });
-    } catch (paymentError) {
-      const errorMessage = describeError(paymentError);
+  for (const payment of payments) {
+    const failure = failures.get(payment.id);
+    if (failure !== undefined) {
       console.warn(
         `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
-        errorMessage,
+        failure,
       );
       errors.push(
-        `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`,
+        `Payment cancellation failed for ${payment.paymentIntent}: ${failure}`,
       );
+      continue;
     }
+
+    // Conditional on PENDING: a capture racing this sweep keeps SUCCEEDED.
+    await tx.payment.updateMany({
+      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+      data: { paymentStatus: PaymentStatus.EXPIRED },
+    });
   }
+}
+
+/**
+ * #1459 — how many gateway cancels are in flight at once. The Netlify ticker
+ * gives this sweep a 6 s budget (ADR 27) and one sequential round trip per
+ * payment spent all of it on five stuck rows, so every tick aborted mid-sweep.
+ * Five is enough to hide the latency without opening a burst the gateway would
+ * rate-limit.
+ */
+const GATEWAY_CANCEL_CONCURRENCY = 5;
+
+/**
+ * #1459 — ceiling on a single cancel. Neither gateway client sets one, so a
+ * hung connection would hold the whole batch past the ticker's timeout and the
+ * payment would never be marked EXPIRED. A timed-out cancel is recorded like
+ * any other gateway failure and retried on the next run.
+ */
+const GATEWAY_CANCEL_TIMEOUT_MS = 4_000;
+
+async function cancelWithTimeout(
+  paymentIntent: string,
+  gateway: PaymentGateway,
+): Promise<void> {
+  // AbortSignal.timeout's timer does not hold the event loop open, so a cancel
+  // that wins the race leaves nothing behind to keep the function alive.
+  const signal = AbortSignal.timeout(GATEWAY_CANCEL_TIMEOUT_MS);
+  await Promise.race([
+    cancelPaymentIntent(paymentIntent, gateway),
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () =>
+        reject(
+          new Error(
+            `Gateway cancel timed out after ${GATEWAY_CANCEL_TIMEOUT_MS} ms`,
+          ),
+        ),
+      );
+    }),
+  ]);
+}
+
+/**
+ * Cancel every payment's gateway intent with bounded concurrency.
+ *
+ * Exported for the concurrency pin: the ceiling is the whole point of the
+ * function, and it is invisible from the outside of the sweep.
+ *
+ * @returns The failures only, keyed by payment id — a payment absent from the
+ *   map was cancelled and is safe to mark EXPIRED.
+ */
+export async function cancelGatewayIntents(
+  payments: readonly Pick<
+    AbandonedPayment,
+    "id" | "paymentIntent" | "paymentGateway"
+  >[],
+): Promise<Map<string, string>> {
+  const failures = new Map<string, string>();
+
+  for (let i = 0; i < payments.length; i += GATEWAY_CANCEL_CONCURRENCY) {
+    const chunk = payments.slice(i, i + GATEWAY_CANCEL_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      chunk.map((payment) =>
+        cancelWithTimeout(payment.paymentIntent, payment.paymentGateway),
+      ),
+    );
+    settled.forEach((outcome, j) => {
+      if (outcome.status === "rejected") {
+        failures.set(chunk[j].id, describeError(outcome.reason));
+      }
+    });
+  }
+
+  return failures;
 }
 
 /**

@@ -68,7 +68,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
-import { cleanupAbandonedPayments } from "../../scripts/payments/cleanup-abandoned-payments";
+import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
+import {
+  cancelGatewayIntents,
+  cleanupAbandonedPayments,
+} from "../../scripts/payments/cleanup-abandoned-payments";
 import { REQUEST_ALLOWED_FROM } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
@@ -297,5 +301,56 @@ describe("cleanupAbandonedPayments — soft-cancel + credit reversal (#1319)", (
         data: expect.objectContaining({ completionStatus: "CANCELLED" }),
       }),
     );
+  });
+});
+
+/**
+ * #1459 — the Netlify ticker gives this sweep a six-second budget and the
+ * cancels used to run one after another, so five stuck payments were enough to
+ * spend it all and every tick aborted mid-sweep. The cancels now fan out, and
+ * the ceiling on that fan-out is the only thing keeping the sweep from opening
+ * an unbounded burst against the gateway.
+ */
+describe("cleanupAbandonedPayments gateway cancel concurrency (#1459)", () => {
+  it("never has more than five gateway cancels in flight", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    (cancelRazorpayOrder as jest.Mock).mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+    });
+
+    const payments = Array.from({ length: 12 }, (_, i) => ({
+      id: `pay_${i}`,
+      paymentIntent: `order_${i}`,
+      paymentGateway: "RAZORPAY" as const,
+    }));
+
+    const failures = await cancelGatewayIntents(payments);
+
+    expect(cancelRazorpayOrder).toHaveBeenCalledTimes(12);
+    expect(peak).toBeLessThanOrEqual(5);
+    // Twelve over a ceiling of five is three chunks, so the fan-out is real
+    // rather than an accidental sequence of one.
+    expect(peak).toBeGreaterThan(1);
+    expect(failures.size).toBe(0);
+  });
+
+  it("reports a failed cancel against its own payment and lets the rest through", async () => {
+    (cancelRazorpayOrder as jest.Mock).mockImplementation(
+      async (intent: string) => {
+        if (intent === "order_1") throw new Error("gateway refused");
+      },
+    );
+
+    const failures = await cancelGatewayIntents([
+      { id: "pay_0", paymentIntent: "order_0", paymentGateway: "RAZORPAY" },
+      { id: "pay_1", paymentIntent: "order_1", paymentGateway: "RAZORPAY" },
+    ]);
+
+    expect([...failures.keys()]).toEqual(["pay_1"]);
+    expect(failures.get("pay_1")).toBe("gateway refused");
   });
 });

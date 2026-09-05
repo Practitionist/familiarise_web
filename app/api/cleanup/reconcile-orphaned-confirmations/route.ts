@@ -14,31 +14,21 @@
  * because one appointment can carry hundreds of buyers. #1391
  */
 
-import { cleanupRoute, statusFor } from "@/lib/cron/cleanup-route";
+import {
+  cleanupRoute,
+  parseLimitParam,
+  statusFor,
+} from "@/lib/cron/cleanup-route";
 import { reconcileOrphanedConfirmations } from "@/scripts/payments/reconcile-orphaned-confirmations";
-
-/** Upper bound on `?limit=`; above this the run cannot finish in one function. */
-const MAX_LIMIT = 500;
-
-function parseLimit(raw: string | null): number | undefined {
-  if (raw === null) return undefined;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_LIMIT) {
-    // A malformed bound falls back to the script's defaults rather than
-    // failing the run: this is a cron entry point, and refusing to sweep is a
-    // worse outcome than sweeping the default number of rows.
-    console.warn(
-      `reconcile-orphaned-confirmations: ignoring invalid limit "${raw}"`,
-    );
-    return undefined;
-  }
-  return parsed;
-}
 
 export const { GET, POST } = cleanupRoute({
   job: "reconcile-orphaned-confirmations",
   run: (req) => {
-    const limit = parseLimit(req.nextUrl.searchParams.get("limit"));
+    // #1459 — this route kept a private parser that swallowed a malformed
+    // `?limit=` and swept the default batch instead. Every other ticker target
+    // uses the shared one, which answers 400 INVALID_LIMIT on junk and clamps
+    // at the cap, so a broken caller is visible rather than silently unbounded.
+    const limit = parseLimitParam(req);
     return reconcileOrphanedConfirmations(limit === undefined ? {} : { limit });
   },
   summarize: (r) => ({

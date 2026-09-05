@@ -13,7 +13,31 @@ import {
 // crashed events through the exact same handler routing.
 import { processRazorpayWebhookEvent } from "../razorpay-dispatch";
 
+/**
+ * #1459 — a Razorpay event payload is a few kilobytes; the largest we have seen
+ * is well under a hundredth of this. Anything bigger is not a delivery we have
+ * to serve, and reading it into a buffer to HMAC it is work an unauthenticated
+ * caller gets to make us do. The refusal is the first thing the handler does,
+ * so an oversized body never reaches the signature read and never writes a
+ * webhook-inbox row.
+ */
+const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
+
 export async function POST(req: NextRequest) {
+  // Content-Length is what a refusal can be based on before the body is read.
+  // Razorpay always sends it; a delivery without one falls through to the
+  // signature check, which is the platform's own request-size limit's job.
+  const declaredBytes = Number(req.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredBytes) &&
+    declaredBytes > MAX_WEBHOOK_BODY_BYTES
+  ) {
+    console.warn(
+      `Rejected oversized Razorpay webhook body: ${declaredBytes} bytes`,
+    );
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
   Sentry.setTag("subsystem", "payments");
   if (!secret) {
