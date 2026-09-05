@@ -57,64 +57,44 @@ export const FEATURES = [
   },
 ];
 
-// #1485 — the "4.9 Average Rating" counter that used to close this row is
-// gone. No rating was ever read here: it was a literal on a public marketing
-// page, which is a misleading-advertisement exposure rather than a positioning
-// choice. It is not replaced by a live figure because the only loader that
-// derives one (getExpertsMetadata) is cached on a 5-minute window, and Next
-// resolves a route's revalidate to the MINIMUM of the segment value and every
-// data-cache entry read during the render — reading it here would silently cut
-// this page's 1-hour ISR window to five minutes on the surface where LCP
-// matters most. The honest, data-derived rating is rendered on
-// /explore/experts, which already pays for that read.
-export const STATS = [
-  { value: 10000, suffix: "+", label: "Active Users" },
-  { value: 500, suffix: "+", label: "Expert Mentors" },
-  { value: 50000, suffix: "+", label: "Sessions Completed" },
-];
-
+// #1490 — the hardcoded "150+ experts" line under each category is gone. The
+// card now renders a real per-domain consultant count, looked up by name from
+// the landing loader, and renders no line at all where that count is zero.
 export const CATEGORIES = [
   {
     icon: Code,
     name: "Technology",
-    count: "150+ experts",
     color: "bg-zinc-900",
   },
   {
     icon: Briefcase,
     name: "Business",
-    count: "120+ experts",
     color: "bg-zinc-800",
   },
-  { icon: Palette, name: "Design", count: "80+ experts", color: "bg-zinc-700" },
+  { icon: Palette, name: "Design", color: "bg-zinc-700" },
   {
     icon: TrendingUp,
     name: "Marketing",
-    count: "90+ experts",
     color: "bg-zinc-800",
   },
   {
     icon: HeartHandshake,
     name: "Career Coach",
-    count: "60+ experts",
     color: "bg-zinc-900",
   },
   {
     icon: GraduationCap,
     name: "Education",
-    count: "70+ experts",
     color: "bg-zinc-700",
   },
   {
     icon: Lightbulb,
     name: "Startups",
-    count: "50+ experts",
     color: "bg-zinc-800",
   },
   {
     icon: Globe,
     name: "Languages",
-    count: "40+ experts",
     color: "bg-zinc-900",
   },
 ];

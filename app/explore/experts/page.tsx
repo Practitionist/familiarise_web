@@ -8,7 +8,11 @@ import {
   getCuratedExperts,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
-import { buildExpertsHeroStats, type IExpertsHeroStat } from "./utils";
+import {
+  buildExpertHeroStats,
+  type ExpertStatKey,
+  type IPublicStat,
+} from "@/lib/data/public-stats";
 
 // ISR, not force-dynamic. This listing reads no session and takes no
 // searchParams (filtering happens in the client component below), so the
@@ -31,13 +35,13 @@ import { buildExpertsHeroStats, type IExpertsHeroStat } from "./utils";
 // profiles purge this path on demand at the write sites.
 export const revalidate = 300;
 
-const STAT_ICONS: Record<IExpertsHeroStat["key"], LucideIcon> = {
+const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
   experts: Users,
   rating: Star,
   sessions: TrendingUp,
 };
 
-function HeroSection({ stats }: { stats: IExpertsHeroStat[] }) {
+function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
   return (
     <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
       <div className="absolute inset-0">
@@ -77,7 +81,7 @@ function HeroSection({ stats }: { stats: IExpertsHeroStat[] }) {
                       <Icon className="w-6 h-6 text-white" />
                     </div>
                     <div className="text-2xl md:text-3xl font-bold text-white">
-                      {stat.value}
+                      {stat.display}
                     </div>
                     <div className="text-sm text-zinc-500">{stat.label}</div>
                   </div>
@@ -109,7 +113,7 @@ export default async function ExploreExperts() {
 
   return (
     <main className="min-h-screen bg-background">
-      <HeroSection stats={buildExpertsHeroStats(metadata.consultantMetadata)} />
+      <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
 
       <FeaturedExperts experts={featuredExperts} isLoading={false} />
 

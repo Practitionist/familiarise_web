@@ -106,6 +106,80 @@ export const getHomeReviews = unstable_cache(
   { revalidate: 3600, tags: ["reviews", "home"] },
 );
 
+/**
+ * The real figures behind the landing hero and the category cards (#1490).
+ *
+ * This is deliberately its OWN loader rather than a call to
+ * `getExpertsMetadata`, for two independent reasons. The first is the window:
+ * that loader is cached for 5 minutes to match /explore/experts, and Next
+ * resolves a route's revalidate to the minimum of its segment value and every
+ * data cache entry read during the render, so reading it here would silently
+ * cut this page's 1-hour ISR interval to five minutes — on the surface where
+ * LCP matters most. Rather than shorten `/`, the same counts are cached here at
+ * 3600 to match the segment, exactly as every sibling loader in this file
+ * already does. The second is weight: that loader also reads domains, tags,
+ * languages and companies for the explore filters, none of which the landing
+ * renders.
+ *
+ * Tagged "experts" so the existing purgeExpertSurfaces() call at the
+ * verify/edit/delete write sites clears it on demand; the interval is a
+ * backstop, not the SLA.
+ */
+export const getHomeStats = unstable_cache(
+  async () => {
+    const [totalConsultants, ratingAggregate, completedSessions, byDomain] =
+      await Promise.all([
+        // #781 §B — soft-deleted profiles leave public surfaces.
+        prisma.consultantProfile.count({
+          where: { verificationStatus: "VERIFIED", deletedAt: null },
+        }),
+        // The PUBLISHED score, not the raw `rating` mean: `rating` defaults to
+        // 0 and every unreviewed profile carries that default. `publishedRating`
+        // is NULL below the #705 suppression threshold and Prisma's `_avg`
+        // skips NULLs. `reviewCount` rides along as the denominator.
+        prisma.consultantProfile.aggregate({
+          where: { verificationStatus: "VERIFIED", deletedAt: null },
+          _avg: { publishedRating: true },
+          _sum: { reviewCount: true },
+        }),
+        // Meetings actually held. The unit is the SLOT: an Appointment carries
+        // no status of its own and a subscription spans many meetings.
+        prisma.slotOfAppointment.count({
+          where: { completionStatus: "COMPLETED", deletedAt: null },
+        }),
+        prisma.domain.findMany({
+          select: {
+            name: true,
+            _count: {
+              select: {
+                consultantProfiles: {
+                  where: { verificationStatus: "VERIFIED", deletedAt: null },
+                },
+              },
+            },
+          },
+        }),
+      ]);
+
+    return {
+      totalConsultants,
+      averageRating: ratingAggregate._avg.publishedRating || 0,
+      publishedReviewCount: ratingAggregate._sum.reviewCount || 0,
+      completedSessions,
+      // Keyed lowercase so the hardcoded category labels can look themselves up
+      // without depending on how a domain happens to be capitalised.
+      consultantsByDomain: Object.fromEntries(
+        byDomain.map((d) => [
+          d.name.toLowerCase(),
+          d._count.consultantProfiles,
+        ]),
+      ) as Record<string, number>,
+    };
+  },
+  ["home-stats"],
+  { revalidate: 3600, tags: ["experts", "home"] },
+);
+
 export const getHomeImages = unstable_cache(
   async () => {
     const images = await fetchImagesFromSupabaseStorage(
