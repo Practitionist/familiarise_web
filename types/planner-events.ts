@@ -93,6 +93,8 @@ export type ConsultationPlanEvent = {
     consultantProfileId: string;
     consultantProfile?: ConsultantProfileSummary | null;
     consultations?: TConsultation[];
+    // #1494 — sole-owner archive/restore toggle.
+    archivedAt?: Date | null;
     createdAt?: Date;
     updatedAt?: Date;
   };
@@ -110,6 +112,8 @@ export type SubscriptionPlanEvent = {
     // trialEnabled/trialDurationMinutes/trialPriceInPaise come from
     // SubscriptionPlanSchema
     subscriptionContents?: SubscriptionContentInput[];
+    // #1494 — sole-owner archive/restore toggle.
+    archivedAt?: Date | null;
     createdAt?: Date;
     updatedAt?: Date;
   };

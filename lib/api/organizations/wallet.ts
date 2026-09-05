@@ -30,7 +30,21 @@ import type { WalletReason } from "@prisma/client";
 import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
+/**
+ * #1477 — an org that has run its wallet down is refusing a booking, not
+ * failing at one. The stable `code` is what carries that through checkout's
+ * catch (`isBusinessErrorCode`) and into the classifier, which would otherwise
+ * fall back to matching prose and answer 500 "Failed to record payment
+ * information" for a condition only a top-up fixes.
+ *
+ * `requestedPaise` is the whole shortfall we can report: the guard below is a
+ * conditional `updateMany` that refuses without ever reading the row, and
+ * re-reading the balance to fill in an `availablePaise` would add a query
+ * inside the checkout transaction, which PG_POOL_MAX=1 serialises behind it.
+ */
 export class WalletInsufficientFundsError extends Error {
+  public readonly code = "WALLET_INSUFFICIENT_FUNDS";
+  public readonly httpStatus = 402;
   constructor(
     public billingAccountId: string,
     public requestedPaise: number,

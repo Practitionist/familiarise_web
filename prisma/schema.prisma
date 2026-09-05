@@ -2013,6 +2013,9 @@ model OrganizationPayout {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
+  /// #1470 — POST-withholding: the sum the payout rail actually transfers to
+  /// the host org, i.e. `netPayoutPaise - tdsAmountPaise`. The ORG_PAYOUT
+  /// journal credits CASH at this figure.
   amountPaise    BigInt
   currency       Currency       @default(INR)
   status         PayoutStatus
@@ -2024,6 +2027,10 @@ model OrganizationPayout {
   grossRevenuePaise BigInt
   platformFeePaise  BigInt
   refundsPaise      BigInt @default(0)
+  /// #1470 — PRE-withholding: the host org's share net of platform fee and
+  /// refunds, which is also the base TDS is computed on. The ORG_PAYOUT
+  /// journal debits ORG_PAYABLE at this figure, so
+  /// `amountPaise + tdsAmountPaise` must always equal it.
   netPayoutPaise    BigInt
 
   // India statutory (fields final; cron + derivation stubbed in v1)
