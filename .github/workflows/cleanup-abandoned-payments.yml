@@ -7,6 +7,10 @@ on:
     - cron: "6-59/15 * * * *"
   workflow_dispatch: # Allow manual triggering
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   cleanup-abandoned-payments:
     runs-on: ubuntu-latest

@@ -9,6 +9,10 @@ on:
     - cron: "9-59/10 * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   process-data-exports:
     runs-on: ubuntu-latest
