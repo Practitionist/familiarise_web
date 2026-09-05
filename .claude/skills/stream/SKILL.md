@@ -1,5 +1,5 @@
 ---
-name: stream-sdk
+name: stream
 description: Work on this repo's Stream.io integration — chat channels, video calls, tokens, webhooks, recordings, moderation, and the crons around them. Use when the user says "stream", "chat channel", "DM channel", "meeting", "video call", "call type", "stream token", "recording", "attendance", "no-show", "webhook not firing", or is touching lib/stream/, lib/stream-*.ts, actions/stream/, app/api/stream/, app/meetings/, or components/chat/.
 ---
 

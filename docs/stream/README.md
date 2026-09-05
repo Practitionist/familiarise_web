@@ -60,7 +60,7 @@ subsystem. The unnumbered ones are references.
 
 ## Rules that have been learned the hard way
 
-Each of these cost an incident. They are repeated in the `stream-sdk` skill,
+Each of these cost an incident. They are repeated in the `stream` skill (`.claude/skills/stream/SKILL.md`),
 which is the version kept closest to the code.
 
 **Never derive an identifier with `localeCompare`.** It orders by ICU collation,

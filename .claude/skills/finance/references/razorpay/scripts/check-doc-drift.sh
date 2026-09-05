@@ -3,16 +3,26 @@
 # corrected for. Each pattern below was live in these docs at some point and had
 # to be fact-checked out; this stops them creeping back in silently.
 #
-#   bash .claude/skills/razorpay/scripts/check-doc-drift.sh
+#   bash .claude/skills/finance/references/razorpay/scripts/check-doc-drift.sh
 #
 # Exits non-zero on the first violation found. Run it after editing anything in
-# .claude/skills/razorpay/ or .claude/agents/razorpay-*.md.
+# .claude/skills/finance/references/razorpay/ or .claude/agents/razorpay-*.md.
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGETS=("$ROOT/skills/razorpay" "$ROOT/agents")
+# Resolve the repo root from the script's own location so the bundle can move
+# without silently scanning nothing (#1483).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
+TARGETS=("$ROOT/.claude/skills/finance/references/razorpay" "$ROOT/.claude/agents")
 FAILED=0
+
+for target in "${TARGETS[@]}"; do
+  if [ ! -d "$target" ]; then
+    echo "FAIL: target directory does not exist: $target"
+    echo "      the bundle moved; update TARGETS in $(basename "${BASH_SOURCE[0]}")"
+    exit 1
+  fi
+done
 
 # pattern <regex> <why>
 #
@@ -23,7 +33,7 @@ check() {
   local pattern="$1" why="$2" hits
   hits=$(grep -rInE "$pattern" "${TARGETS[@]}" \
     --include='*.md' --include='*.sh' \
-    --exclude="$(basename "${BASH_SOURCE[0]}")" 2>/dev/null \
+    --exclude="$(basename "${BASH_SOURCE[0]}")" \
     | grep -v 'drift-ok' || true)
   if [ -n "$hits" ]; then
     echo "FAIL: $why"

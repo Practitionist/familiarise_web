@@ -86,7 +86,7 @@ intent prefix: `org_` is `INTERNAL` (an in-ledger reversal against the org's
 wallet, invoice or licence), `free_` is `CREDITS` (referral credits restored,
 no gateway money), everything else is `GATEWAY`. The two front doors are
 `refundBookingPayment` and `refundWholeEventPayments`, plus
-`refundRemovedAttendeeSeat` for one seat; see the booking doctrine in `SKILL.md`.
+`refundRemovedAttendeeSeat` for one seat; see the booking doctrine in `../SKILL.md`.
 `refundBookingPayment` refuses a partial `amountPaise` on the credits rail with
 `RefundValidationError` / `INVALID_AMOUNT`.
 
