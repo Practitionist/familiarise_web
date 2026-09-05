@@ -214,15 +214,34 @@ const nextConfig = {
   // render time through `path.join(process.cwd(), …)` is invisible to it, so
   // the file would be absent from the deployed function and every Hindi or
   // Marathi buyer name would render as boxes. Name the routes explicitly.
+  //
+  // #1468 — the same blind spot applies to `react/jsx-runtime`. The statutory
+  // documents create their elements through it deliberately outside the
+  // bundler (lib/pdf/react-runtime/jsx-runtime.ts), which the tracer cannot
+  // see, and the only traced import of `react` is the reconciler's, which
+  // reaches the package root rather than that entrypoint. Ship the package.
   outputFileTracingIncludes: {
-    "/api/payments/[paymentId]/invoice/pdf": ["./public/fonts/**"],
+    "/api/payments/[paymentId]/invoice/pdf": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
     "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
       "./public/fonts/**",
+      "./node_modules/react/**",
     ],
+    "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
+      "./node_modules/react/**",
+    ],
+    "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
+      ["./node_modules/react/**"],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
-  // These are server-only dependencies used by @prisma/adapter-pg
+  // These are server-only dependencies used by @prisma/adapter-pg.
+  //
+  // `@react-pdf/renderer` is also in Next's own built-in external list, so
+  // listing it here changes nothing — it is external either way, and that is
+  // what forces lib/pdf to resolve its JSX runtime past the bundler (#1468).
   serverExternalPackages: [
     "pg",
     "@prisma/adapter-pg",
