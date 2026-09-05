@@ -27,6 +27,14 @@ interface ExpertProfileClientProps {
   reviews: TConsultantReview[];
 }
 
+// Per-date rollup shown as dots under each calendar day. Derived client-side
+// from the same range response the dialog uses for its slot list.
+// - open:    at least one plainly free slot
+// - partial: bookable but every free slot needs approval / is partially taken
+// - full:    slots exist but none are bookable (fully booked or past)
+// Days missing from the map have no slots at all.
+type DayStatus = "open" | "partial" | "full";
+
 export function ExpertProfileClient({
   consultantDetails,
   userDetails,
@@ -44,6 +52,11 @@ export function ExpertProfileClient({
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
+  const [monthAvailability, setMonthAvailability] = useState<
+    Record<string, DayStatus>
+  >({});
+  const [isMonthSummaryReady, setIsMonthSummaryReady] = useState(false);
+  const monthFetchIdRef = useRef(0);
 
   const timezone = browserTimezone || userDetails?.timezone;
 
@@ -111,6 +124,85 @@ export function ExpertProfileClient({
   useEffect(() => {
     fetchSlots();
   }, [fetchSlots]);
+
+  // Month-wide rollup so the calendar can show which days have slots before
+  // the user clicks one. Reuses the same range endpoint as fetchSlots; only
+  // requests today onward so past days never bloat the payload.
+  const fetchMonthAvailability = useCallback(async () => {
+    if (!consultantDetails || !timezone || isTimezoneLoading) return;
+
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const monthStart = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      1,
+    );
+    const startDateInUtc = monthStart > todayStart ? monthStart : todayStart;
+    const endDateInUtc = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+    if (startDateInUtc > endDateInUtc) return;
+
+    setMonthAvailability({});
+    setIsMonthSummaryReady(false);
+    const requestId = ++monthFetchIdRef.current;
+
+    try {
+      const response = await fetch(
+        `/api/slots/availability-with-allocation/${
+          consultantDetails.id
+        }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch month availability");
+      }
+
+      const { data } = await response.json();
+      if (requestId !== monthFetchIdRef.current) return; // stale month flip
+
+      const summary: Record<string, DayStatus> = {};
+      for (const [dateKey, slots] of Object.entries(
+        (data ?? {}) as Record<string, (TSlotTiming & { _isPast?: boolean })[]>,
+      )) {
+        let hasOpen = false;
+        let hasPartial = false;
+        for (const slot of slots ?? []) {
+          if ((slot as TSlotTiming & { _isPast?: boolean })._isPast) continue;
+          const status = slot.bookingStatus || "available";
+          if (status === "fully-booked") continue;
+          if (status === "partially-booked" || slot.isAllocated)
+            hasPartial = true;
+          else hasOpen = true;
+        }
+        summary[dateKey] = hasOpen ? "open" : hasPartial ? "partial" : "full";
+      }
+
+      setMonthAvailability(summary);
+      setIsMonthSummaryReady(true);
+    } catch (error) {
+      console.error("Error fetching month availability:", error);
+    }
+  }, [currentDate, consultantDetails, timezone, isTimezoneLoading]);
+
+  useEffect(() => {
+    fetchMonthAvailability();
+  }, [fetchMonthAvailability]);
+
+  const refreshSlots = useCallback(async () => {
+    await Promise.all([fetchSlots(), fetchMonthAvailability()]);
+  }, [fetchSlots, fetchMonthAvailability]);
 
   const handleConsultationBooking = useCallback(
     async (consultationPlanId: string) => {
@@ -227,12 +319,20 @@ export function ExpertProfileClient({
     ).getDay();
 
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const days = [];
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    // Cell size comes from --cell on the calendar card (clamp of viewport
+    // height) so 6 rows + chrome always fit inside the dialog without it
+    // growing past the screen; width shrinks with it on narrow panes too.
+    const cellClass = "h-[var(--cell,40px)] w-[var(--cell,40px)]";
+    const days: JSX.Element[] = [];
 
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
-      );
+      days.push(<div key={`empty-${i}`} className={cellClass} />);
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -245,28 +345,57 @@ export function ExpertProfileClient({
         selectedDate?.getDate() === i &&
         selectedDate?.getMonth() === currentDate.getMonth() &&
         selectedDate?.getFullYear() === currentDate.getFullYear();
+      const dateKey = formatInTimeZone(date, timezone || "UTC", "yyyy-MM-dd");
+      const status = monthAvailability[dateKey];
+      const isPast = date < todayStart;
+      // Past days and days with zero slots are not clickable; fully-booked
+      // days stay clickable so the rose slot list explains why.
+      const isDisabled = isPast || (isMonthSummaryReady && !status);
+
+      const dotClass = isSelected
+        ? status === "open"
+          ? "bg-emerald-600"
+          : status === "partial"
+            ? "bg-amber-500"
+            : status === "full"
+              ? "bg-rose-500"
+              : "bg-zinc-300"
+        : status === "open"
+          ? "bg-emerald-400"
+          : status === "partial"
+            ? "bg-amber-400"
+            : status === "full"
+              ? "bg-rose-400"
+              : "bg-zinc-700";
 
       days.push(
         <button
           key={i}
-          className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
+          className={`${cellClass} rounded-full text-xs sm:text-sm lg:text-base font-medium transition-all duration-200 flex flex-col items-center justify-center gap-0.5
             ${
               isSelected
                 ? "bg-white text-zinc-900 shadow-md"
-                : "text-zinc-300 hover:bg-zinc-700/60"
+                : isDisabled
+                  ? "text-zinc-600 cursor-not-allowed"
+                  : "text-zinc-300 hover:bg-zinc-700/60"
             }`}
           onClick={() => {
             setSelectedDate(date);
             setSelectedSlot(null);
           }}
+          disabled={isDisabled}
         >
-          {i}
+          <span className="leading-none">{i}</span>
+          {/* Placeholder keeps the number baseline identical on every day */}
+          <span
+            className={`h-1 w-1 rounded-full ${isPast ? "bg-transparent" : dotClass}`}
+          />
         </button>,
       );
     }
 
     return days;
-  }, [currentDate, selectedDate]);
+  }, [currentDate, selectedDate, monthAvailability, isMonthSummaryReady, timezone]);
 
   return (
     <main className="bg-muted">
@@ -341,7 +470,7 @@ export function ExpertProfileClient({
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
               autoOpenTrial={autoOpenTrial}
-              onRefreshSlots={fetchSlots}
+              onRefreshSlots={refreshSlots}
             />
           </motion.div>
         </div>
