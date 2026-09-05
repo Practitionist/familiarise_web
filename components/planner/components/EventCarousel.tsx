@@ -33,6 +33,8 @@ interface WebinarCarouselProps {
   onJoinMeeting?: (event: PlannerWebinarEvent) => void;
   joinableEventIds?: Set<string>;
   joiningEventId?: string | null;
+  onArchiveToggle?: (planId: string, archived: boolean) => void;
+  archivingPlanId?: string | null;
 }
 
 interface ClassCarouselProps {
@@ -44,6 +46,8 @@ interface ClassCarouselProps {
   onJoinMeeting?: (event: PlannerClassEvent) => void;
   joinableEventIds?: Set<string>;
   joiningEventId?: string | null;
+  onArchiveToggle?: (planId: string, archived: boolean) => void;
+  archivingPlanId?: string | null;
 }
 
 interface ConsultationCarouselProps {
@@ -52,6 +56,8 @@ interface ConsultationCarouselProps {
   onDelete: (eventId: string) => Promise<void>;
   eventType: "consultation";
   participantCounts: Record<string, number>;
+  onArchiveToggle?: (planId: string, archived: boolean) => void;
+  archivingPlanId?: string | null;
 }
 
 interface SubscriptionCarouselProps {
@@ -62,6 +68,8 @@ interface SubscriptionCarouselProps {
   participantCounts: Record<string, number>;
   pendingTrialCounts?: Record<string, number>;
   onTrialsClick?: () => void;
+  onArchiveToggle?: (planId: string, archived: boolean) => void;
+  archivingPlanId?: string | null;
 }
 
 type EventCarouselProps =
@@ -84,6 +92,27 @@ function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
 
 function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
   return event.type === "subscription";
+}
+
+// #1494 — the plan is the sellable offering; for webinar/class events
+// `event.id` names the SESSION instance, so the plan id must be read from
+// the nested plan instead.
+function getPlanId(event: Event): string | undefined {
+  if (isWebinarEvent(event)) return event.webinarPlan.id;
+  if (isClassEvent(event)) return event.classPlan.id;
+  if (isConsultationPlanEvent(event)) return event.consultationPlan.id;
+  if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.id;
+  return undefined;
+}
+
+function getPlanArchivedAt(event: Event): Date | null {
+  if (isWebinarEvent(event)) return event.webinarPlan.archivedAt ?? null;
+  if (isClassEvent(event)) return event.classPlan.archivedAt ?? null;
+  if (isConsultationPlanEvent(event))
+    return event.consultationPlan.archivedAt ?? null;
+  if (isSubscriptionPlanEvent(event))
+    return event.subscriptionPlan.archivedAt ?? null;
+  return null;
 }
 
 // Empty state configuration
@@ -182,6 +211,10 @@ export function EventCarousel({
       : eventType === "class"
         ? (props as ClassCarouselProps).joiningEventId
         : undefined;
+  const onArchiveToggle = (props as { onArchiveToggle?: (planId: string, archived: boolean) => void })
+    .onArchiveToggle;
+  const archivingPlanId = (props as { archivingPlanId?: string | null })
+    .archivingPlanId;
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8;
 
@@ -335,6 +368,20 @@ export function EventCarousel({
               }
               canJoinNow={joinableEventIds?.has(event.id ?? "") ?? false}
               isJoiningMeeting={joiningEventId === event.id}
+              onArchiveToggle={
+                onArchiveToggle && getPlanId(event)
+                  ? () =>
+                      onArchiveToggle(
+                        getPlanId(event) as string,
+                        getPlanArchivedAt(event) === null,
+                      )
+                  : undefined
+              }
+              isArchiveToggling={
+                archivingPlanId !== null &&
+                archivingPlanId !== undefined &&
+                archivingPlanId === getPlanId(event)
+              }
             />
           </motion.div>
         ))}

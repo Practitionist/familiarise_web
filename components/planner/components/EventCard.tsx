@@ -14,6 +14,8 @@ import {
   Users,
   Gift,
   Loader2,
+  Archive,
+  Undo2,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -48,6 +50,12 @@ interface EventCardProps {
   onJoinMeeting?: () => void;
   canJoinNow?: boolean;
   isJoiningMeeting?: boolean;
+  /**
+   * Archive/restore the offering this event's plan represents (#1494).
+   * Omitted (rather than a no-op) for a row with no id, same as onEdit/onDelete.
+   */
+  onArchiveToggle?: () => void;
+  isArchiveToggling?: boolean;
 }
 
 function formatCollaboratorRole(role: string): string {
@@ -127,6 +135,18 @@ function getEventTitle(event: Event): string {
   if (isConsultationPlanEvent(event)) return event.consultationPlan.title;
   if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.title;
   return "";
+}
+
+// #1494 — archivedAt lives on the plan, not the session instance, so each
+// branch reads the nested plan rather than `event` itself.
+function getPlanArchivedAt(event: Event): Date | null {
+  if (isWebinarEvent(event)) return event.webinarPlan.archivedAt ?? null;
+  if (isClassEvent(event)) return event.classPlan.archivedAt ?? null;
+  if (isConsultationPlanEvent(event))
+    return event.consultationPlan.archivedAt ?? null;
+  if (isSubscriptionPlanEvent(event))
+    return event.subscriptionPlan.archivedAt ?? null;
+  return null;
 }
 
 function getEventDescription(event: Event): string {
@@ -254,10 +274,13 @@ export function EventCard({
   canJoinNow,
   isJoiningMeeting,
   canManage = true,
+  onArchiveToggle,
+  isArchiveToggling,
 }: Readonly<EventCardProps>) {
   const config = eventTypeConfig[eventType];
   const Icon = config.icon;
 
+  const isArchived = getPlanArchivedAt(event) !== null;
   const title = getEventTitle(event);
   const description = getEventDescription(event);
   const price = getEventPrice(event);
@@ -299,6 +322,14 @@ export function EventCard({
               <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
                 {config.label}
               </span>
+              {isArchived && (
+                <span
+                  className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                  title="Off sale. Existing bookings continue."
+                >
+                  Archived
+                </span>
+              )}
               {collaboratorRole && (
                 <span
                   className={cn(
@@ -350,6 +381,32 @@ export function EventCard({
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
+              {onArchiveToggle && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={!canManage || isArchiveToggling}
+                  className="h-8 w-8 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900"
+                  aria-label={`${isArchived ? "Restore" : "Archive"} ${title}`}
+                  title={
+                    isArchived
+                      ? "Restore this offering to put it back on sale."
+                      : "Archive this offering to stop new bookings. Existing appointments continue."
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onArchiveToggle();
+                  }}
+                >
+                  {isArchiveToggling ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : isArchived ? (
+                    <Undo2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Archive className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              )}
             </div>
           )}
         </div>
