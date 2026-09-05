@@ -414,4 +414,54 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
     expect(result.errorCount).toBe(0);
     expect(result.success).toBe(true);
   });
+
+  /**
+   * #1461 — `payment_intent_unexpected_state` used to be blanket-suppressed as
+   * "already gone". On a `processing` intent that is false: Stripe is still
+   * holding the buyer's money behind a payment this sweep has just marked
+   * EXPIRED, and the run reported itself healthy.
+   */
+  it("counts an uncancellable but still-live Stripe intent as a failure", async () => {
+    process.env.STRIPE_ENABLED = "true";
+    const appointment = abandonedConsultation();
+    appointment.payment[0].paymentGateway = "STRIPE";
+    appointment.payment[0].paymentIntent = "pi_live_1";
+    db.appointment.findMany.mockResolvedValue([appointment]);
+    stripeClient.paymentIntents.cancel.mockRejectedValue(
+      Object.assign(new Error("cannot cancel a processing PaymentIntent"), {
+        code: "payment_intent_unexpected_state",
+        payment_intent: { status: "processing" },
+      }),
+    );
+
+    const result = await cleanupAbandonedPayments();
+
+    // #1464 still holds: the row expires regardless of the cancel's outcome.
+    expect(tx.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: "pay_1", paymentStatus: "PENDING" },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    expect(result.errorCount).toBe(1);
+    expect(result.success).toBe(false);
+  });
+
+  it("leaves a succeeded intent alone — that one really is nothing to cancel", async () => {
+    process.env.STRIPE_ENABLED = "true";
+    const appointment = abandonedConsultation();
+    appointment.payment[0].paymentGateway = "STRIPE";
+    appointment.payment[0].paymentIntent = "pi_done_1";
+    db.appointment.findMany.mockResolvedValue([appointment]);
+    stripeClient.paymentIntents.cancel.mockRejectedValue(
+      Object.assign(new Error("cannot cancel a succeeded PaymentIntent"), {
+        code: "payment_intent_unexpected_state",
+        // Nested under `raw`, the other shape the SDK wraps errors in.
+        raw: { payment_intent: { status: "succeeded" } },
+      }),
+    );
+
+    const result = await cleanupAbandonedPayments();
+
+    expect(result.errorCount).toBe(0);
+    expect(result.success).toBe(true);
+  });
 });

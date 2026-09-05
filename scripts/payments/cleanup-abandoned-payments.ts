@@ -79,18 +79,51 @@ function logStripeFenceOnce(): void {
   );
 }
 
+/** The two intent states that mean the hold this cancel was for is gone. */
+const TERMINAL_INTENT_STATUSES = new Set(["canceled", "succeeded"]);
+
+/**
+ * #1461 — `payment_intent_unexpected_state` does not mean "already gone". It
+ * means "the intent's current state forbids a cancel", which covers a
+ * `canceled` or `succeeded` intent (genuinely nothing to do) and equally a
+ * `processing` or `requires_capture` one, where the gateway is still holding
+ * the buyer's money. Stripe attaches the offending intent to the error, so the
+ * two can be told apart without spending a `retrieve` round trip out of this
+ * sweep's 4 s per-cancel budget. Read defensively off both the top level and
+ * `raw`, because which one carries it depends on the SDK's error wrapping.
+ */
+function unexpectedStateIsTerminal(error: unknown): boolean {
+  const err = error as
+    | {
+        payment_intent?: { status?: unknown };
+        raw?: { payment_intent?: { status?: unknown } };
+      }
+    | null
+    | undefined;
+  const status =
+    err?.payment_intent?.status ?? err?.raw?.payment_intent?.status;
+  return typeof status === "string" && TERMINAL_INTENT_STATUSES.has(status);
+}
+
 /**
  * #1464 — an intent Stripe cannot find, or one that is already in a terminal
  * state, is nothing to cancel rather than a failure: the hold it represented
  * is gone, which is exactly what the cancel was for. Matched on the error's
  * own fields instead of `instanceof Stripe.errors.StripeError` so the check
  * does not depend on the lazily-imported SDK's class identity.
+ *
+ * #1461 — the row is expired either way (that is #1464's point), so what this
+ * decides is only whether an operator is told. A live intent we could not
+ * cancel, sitting behind a locally EXPIRED payment, is exactly the state
+ * someone has to look at, even though #1439 heals a capture that lands late.
  */
 function isNothingToCancel(error: unknown): boolean {
   const code = (error as { code?: unknown } | null | undefined)?.code;
   if (code === "resource_missing") return true;
-  // Stripe's code for "this PaymentIntent is canceled/succeeded already".
-  if (code === "payment_intent_unexpected_state") return true;
+  // Terminal by the payload's own account, or a failure. An absent status is
+  // a failure too: unproven is not the same as safe.
+  if (code === "payment_intent_unexpected_state")
+    return unexpectedStateIsTerminal(error);
   return error instanceof Error && error.message.includes("already");
 }
 
