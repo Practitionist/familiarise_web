@@ -4,6 +4,7 @@ import { handleCheckout } from "@/lib/payments/operations/checkout";
 import {
   classifyError,
   logClassifiedError,
+  ErrorTypes,
 } from "@/lib/errors/classification/payment-error-classification";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -15,6 +16,7 @@ import {
   EventFullError,
 } from "@/utils/appointmentlock";
 import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
+import { WalletInsufficientFundsError } from "@/lib/api/organizations/wallet";
 import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
@@ -201,6 +203,25 @@ export async function POST(req: NextRequest) {
           error:
             "This organization's wallet is temporarily on hold pending a balance review. Your card was not charged. Please try again shortly or contact support.",
           errorType: "WALLET_FROZEN",
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // #1477 — an overdrawn wallet reaches here with its own code, so the
+    // classifier below would already answer 402. It gets its own branch anyway
+    // for the two things that fall-through cannot do: replace a message naming
+    // the billing account and the paise figure with copy the buyer can act on,
+    // and skip the unconditional `captureException` under it, which would file
+    // a routine refusal as an exception.
+    if (error instanceof WalletInsufficientFundsError) {
+      return NextResponse.json(
+        {
+          error:
+            "This organization's wallet does not have enough balance for this booking. Your card was not charged — ask your billing admin to top it up.",
+          errorType: ErrorTypes.WALLET_INSUFFICIENT_FUNDS,
+          yourCardWasNotCharged: true,
           timestamp: new Date().toISOString(),
         },
         { status: error.httpStatus },

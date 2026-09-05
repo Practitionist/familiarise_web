@@ -4163,6 +4163,11 @@ export async function handleCheckout(
         // codes are deliberately NOT here: they mean a programme was configured
         // in a shape we cannot collect on, which has to keep paging.
         dbErrorCode === "PROGRAM_SESSION_CAP_REACHED" ||
+        // #1477 — an org that has spent its wallet down is refusing the
+        // booking, not faulting on it. The rethrow below already lets it
+        // through on its registered code; tagging is a separate list by
+        // design, so without this line the routine refusal kept paging.
+        dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
             // Word-bounded: bare `includes` let "full" match "successful" and
@@ -4259,9 +4264,17 @@ export async function handleCheckout(
     const isConsulteeDoubleBook =
       error instanceof Error &&
       error.message.toLowerCase().includes("already have a session booked");
+    // #1477 — the inner catch rethrows anything carrying a registered business
+    // code, so every one of those refusals arrives here too and was re-reported
+    // as a fault, undoing the `expected: true` it had just been given. Asking
+    // the classifier the same question it will answer for the response keeps
+    // the two verdicts from disagreeing.
+    const isBusinessRefusal = isBusinessErrorCode(
+      (error as { code?: unknown } | null)?.code,
+    );
     reportSentryError(error, {
       subsystem: "payments",
-      expected: isModeledLockRace || isConsulteeDoubleBook,
+      expected: isModeledLockRace || isConsulteeDoubleBook || isBusinessRefusal,
     });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {

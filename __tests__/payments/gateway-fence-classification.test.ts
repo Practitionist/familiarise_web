@@ -14,6 +14,7 @@ import {
   UnsupportedGatewayError,
 } from "@/lib/payments/validation/gateway-guards";
 import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
+import { WalletInsufficientFundsError } from "@/lib/api/organizations/wallet";
 
 describe("gateway fence classification", () => {
   it("classifies a disabled gateway as a 422 business rejection", () => {
@@ -140,5 +141,22 @@ describe("gateway fence classification", () => {
     const toast = getErrorToast(classified.errorType);
     expect(toast.title).not.toBe("Something Went Wrong");
     expect(toast.description).toContain("admin");
+  });
+
+  // #1477 — `WalletInsufficientFundsError` carried no code at all, so an org
+  // that had simply spent its wallet down got 500 "Something Went Wrong" and a
+  // Sentry incident for a refusal only a top-up can clear.
+  it("classifies an overdrawn org wallet as a 402 pointing at the billing admin", () => {
+    const classified = classifyError(
+      new WalletInsufficientFundsError("ba_1", 250000),
+    );
+
+    expect(classified.errorType).toBe(ErrorTypes.WALLET_INSUFFICIENT_FUNDS);
+    expect(classified.isBusinessError).toBe(true);
+    expect(classified.httpStatus).toBe(402);
+
+    const toast = getErrorToast(classified.errorType);
+    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.description).toContain("billing admin");
   });
 });
