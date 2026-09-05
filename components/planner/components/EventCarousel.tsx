@@ -13,14 +13,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import {
-  WebinarEvent,
-  ClassEvent,
   PlannerWebinarEvent,
   PlannerClassEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
 } from "@/types/planner-events";
+import {
+  getPlanArchivedAt,
+  getPlanId,
+  isClassEvent,
+  isConsultationPlanEvent,
+  isSubscriptionPlanEvent,
+  isWebinarEvent,
+} from "@/lib/planner/archive-state";
 import { EventCard } from "./EventCard";
 import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 
@@ -77,43 +83,6 @@ type EventCarouselProps =
   | ClassCarouselProps
   | ConsultationCarouselProps
   | SubscriptionCarouselProps;
-
-function isWebinarEvent(event: Event): event is WebinarEvent {
-  return event.type === "webinar";
-}
-
-function isClassEvent(event: Event): event is ClassEvent {
-  return event.type === "class";
-}
-
-function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
-  return event.type === "consultation";
-}
-
-function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
-  return event.type === "subscription";
-}
-
-// #1494 — the plan is the sellable offering; for webinar/class events
-// `event.id` names the SESSION instance, so the plan id must be read from
-// the nested plan instead.
-function getPlanId(event: Event): string | undefined {
-  if (isWebinarEvent(event)) return event.webinarPlan.id;
-  if (isClassEvent(event)) return event.classPlan.id;
-  if (isConsultationPlanEvent(event)) return event.consultationPlan.id;
-  if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.id;
-  return undefined;
-}
-
-function getPlanArchivedAt(event: Event): Date | null {
-  if (isWebinarEvent(event)) return event.webinarPlan.archivedAt ?? null;
-  if (isClassEvent(event)) return event.classPlan.archivedAt ?? null;
-  if (isConsultationPlanEvent(event))
-    return event.consultationPlan.archivedAt ?? null;
-  if (isSubscriptionPlanEvent(event))
-    return event.subscriptionPlan.archivedAt ?? null;
-  return null;
-}
 
 // Empty state configuration
 const emptyStateConfig = {

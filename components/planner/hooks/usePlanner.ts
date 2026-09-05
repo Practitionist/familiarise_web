@@ -42,8 +42,10 @@ async function patchPlanArchived(
     body: JSON.stringify({ archived }),
   });
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || fallbackErrorMessage);
+    // A 502 HTML page or an empty 401 has no JSON body to read; without this
+    // the thrown SyntaxError replaces the message meant for the consultant.
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.error || fallbackErrorMessage);
   }
   return response.json();
 }

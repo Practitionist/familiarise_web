@@ -6,8 +6,8 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import {
-  ArchivePlanBodySchema,
-  nextArchivedAt,
+  archivedAtForArchive,
+  parsePlanArchiveBody,
   PLAN_ARCHIVE_RESPONSE_NOTE,
 } from "@/lib/api/plans/archive";
 
@@ -81,15 +81,14 @@ export async function PATCH(
 
     const { classPlanId } = await params;
 
-    const body = await request.json();
-    const validationResult = ArchivePlanBodySchema.safeParse(body);
-    if (!validationResult.success) {
+    const parsedBody = await parsePlanArchiveBody(request);
+    if (!parsedBody.ok) {
       return NextResponse.json(
-        { error: "Validation failed", details: validationResult.error.issues },
+        { error: parsedBody.error, details: parsedBody.details },
         { status: 400 },
       );
     }
-    const { archived } = validationResult.data;
+    const { archived } = parsedBody;
 
     const existingPlan = await prisma.classPlan.findUnique({
       where: { id: classPlanId },
@@ -115,7 +114,11 @@ export async function PATCH(
 
     const classPlan = await prisma.classPlan.update({
       where: { id: classPlanId },
-      data: { archivedAt: nextArchivedAt(archived, existingPlan.archivedAt) },
+      data: {
+        archivedAt: archived
+          ? archivedAtForArchive(existingPlan.archivedAt)
+          : null,
+      },
     });
 
     return NextResponse.json(

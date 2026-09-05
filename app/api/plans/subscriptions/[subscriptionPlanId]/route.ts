@@ -11,8 +11,8 @@ import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
-  ArchivePlanBodySchema,
-  nextArchivedAt,
+  archivedAtForArchive,
+  parsePlanArchiveBody,
   PLAN_ARCHIVE_RESPONSE_NOTE,
 } from "@/lib/api/plans/archive";
 
@@ -348,15 +348,14 @@ export async function PATCH(
 
     const { subscriptionPlanId } = await params;
 
-    const body = await request.json();
-    const validationResult = ArchivePlanBodySchema.safeParse(body);
-    if (!validationResult.success) {
+    const parsedBody = await parsePlanArchiveBody(request);
+    if (!parsedBody.ok) {
       return NextResponse.json(
-        { error: "Validation failed", details: validationResult.error.issues },
+        { error: parsedBody.error, details: parsedBody.details },
         { status: 400 },
       );
     }
-    const { archived } = validationResult.data;
+    const { archived } = parsedBody;
 
     const existingPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
@@ -381,7 +380,11 @@ export async function PATCH(
 
     const subscriptionPlan = await prisma.subscriptionPlan.update({
       where: { id: subscriptionPlanId },
-      data: { archivedAt: nextArchivedAt(archived, existingPlan.archivedAt) },
+      data: {
+        archivedAt: archived
+          ? archivedAtForArchive(existingPlan.archivedAt)
+          : null,
+      },
     });
 
     return NextResponse.json(

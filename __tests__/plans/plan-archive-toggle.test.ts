@@ -206,6 +206,20 @@ describe.each(families)(
       expect(delegate.update).not.toHaveBeenCalled();
     });
 
+    it("a malformed JSON body is a 400, not a 5xx", async () => {
+      const res = await patch(
+        new NextRequest("http://localhost/api/plans/x", {
+          method: "PATCH",
+          body: "{not json",
+        }),
+        { params: Promise.resolve({ [paramKey]: "plan-1" }) as never },
+      );
+
+      expect(res.status).toBe(400);
+      expect(delegate.findUnique).not.toHaveBeenCalled();
+      expect(delegate.update).not.toHaveBeenCalled();
+    });
+
     it("requires authentication", async () => {
       mockedGetSession.mockResolvedValueOnce(null);
 

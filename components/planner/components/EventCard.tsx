@@ -22,13 +22,14 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { isRecurringEventType } from "@/utils/slotAllocation/types";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
+import { Event } from "@/types/planner-events";
 import {
-  Event,
-  WebinarEvent,
-  ClassEvent,
-  ConsultationPlanEvent,
-  SubscriptionPlanEvent,
-} from "@/types/planner-events";
+  getPlanArchivedAt,
+  isClassEvent,
+  isConsultationPlanEvent,
+  isSubscriptionPlanEvent,
+  isWebinarEvent,
+} from "@/lib/planner/archive-state";
 
 type EventType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -67,22 +68,6 @@ function formatCollaboratorRole(role: string): string {
     TEACHING_ASSISTANT: "TA",
   };
   return labels[role] || role;
-}
-
-function isWebinarEvent(event: Event): event is WebinarEvent {
-  return event.type === "webinar";
-}
-
-function isClassEvent(event: Event): event is ClassEvent {
-  return event.type === "class";
-}
-
-function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
-  return event.type === "consultation";
-}
-
-function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
-  return event.type === "subscription";
 }
 
 const eventTypeConfig: Record<
@@ -135,18 +120,6 @@ function getEventTitle(event: Event): string {
   if (isConsultationPlanEvent(event)) return event.consultationPlan.title;
   if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.title;
   return "";
-}
-
-// #1494 — archivedAt lives on the plan, not the session instance, so each
-// branch reads the nested plan rather than `event` itself.
-function getPlanArchivedAt(event: Event): Date | null {
-  if (isWebinarEvent(event)) return event.webinarPlan.archivedAt ?? null;
-  if (isClassEvent(event)) return event.classPlan.archivedAt ?? null;
-  if (isConsultationPlanEvent(event))
-    return event.consultationPlan.archivedAt ?? null;
-  if (isSubscriptionPlanEvent(event))
-    return event.subscriptionPlan.archivedAt ?? null;
-  return null;
 }
 
 function getEventDescription(event: Event): string {
@@ -281,6 +254,8 @@ export function EventCard({
   const Icon = config.icon;
 
   const isArchived = getPlanArchivedAt(event) !== null;
+  // Named here rather than nested in the JSX ternary below (sonar S3358).
+  const ArchiveToggleIcon = isArchived ? Undo2 : Archive;
   const title = getEventTitle(event);
   const description = getEventDescription(event);
   const price = getEventPrice(event);
@@ -400,10 +375,8 @@ export function EventCard({
                 >
                   {isArchiveToggling ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : isArchived ? (
-                    <Undo2 className="h-3.5 w-3.5" />
                   ) : (
-                    <Archive className="h-3.5 w-3.5" />
+                    <ArchiveToggleIcon className="h-3.5 w-3.5" />
                   )}
                 </Button>
               )}
