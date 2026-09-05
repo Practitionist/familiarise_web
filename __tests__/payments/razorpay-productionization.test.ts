@@ -7,6 +7,8 @@
  * 2. Rotating `RAZORPAY_WEBHOOK_SECRET` must not drop the deliveries signed
  *    with the old secret during the cutover, because Razorpay disables a
  *    webhook that fails for 24 hours and lost events cannot be replayed.
+ * 3. The `X-Payout-Idempotency` header must stay inside the length RazorpayX
+ *    accepts, or the duplicate guard becomes a 400 on every live payout.
  */
 import crypto from "node:crypto";
 
@@ -16,7 +18,10 @@ import {
   resolveRazorpayPaymentSecrets,
   verifyRazorpaySignature,
 } from "@/app/api/webhooks/razorpay/signature";
-import { RazorpayPayoutsService } from "@/lib/payments/payouts/razorpay-payouts";
+import {
+  boundPayoutIdempotencyKey,
+  RazorpayPayoutsService,
+} from "@/lib/payments/payouts/razorpay-payouts";
 
 const RAW_BODY = JSON.stringify({
   event: "payment.captured",
@@ -58,6 +63,23 @@ describe("Razorpay webhook secret rotation grace", () => {
     });
 
     expect(secrets).toEqual([{ role: "current", value: "current_secret" }]);
+  });
+
+  it("offers nothing at all when the current secret is missing", () => {
+    // The grace window is an aid to a rotation, never a standalone secret: a
+    // deployment that has lost the current value must fail loudly rather than
+    // keep accepting deliveries on the retired one.
+    expect(
+      resolveRazorpayPaymentSecrets({
+        RAZORPAY_WEBHOOK_SECRET_PREVIOUS: "old_secret",
+      }),
+    ).toEqual([]);
+    expect(
+      resolveRazorpayPaymentSecrets({
+        RAZORPAY_WEBHOOK_SECRET: "   ",
+        RAZORPAY_WEBHOOK_SECRET_PREVIOUS: "old_secret",
+      }),
+    ).toEqual([]);
   });
 
   it("offers the previous secret second, and never duplicates the current one", () => {
@@ -130,5 +152,31 @@ describe("Razorpay webhook secret rotation grace", () => {
     ).toBe(true);
     expect(isPayoutEventName(RAW_BODY)).toBe(false);
     expect(isPayoutEventName("{ not json")).toBe(false);
+  });
+});
+
+describe("RazorpayX payout idempotency header", () => {
+  // Both real key shapes overshoot the gateway's 36-character ceiling, so the
+  // bound is what stands between a deduplicated retry and a rejected payout.
+  const orgKey = "payout_11111111-2222-4333-8444-555555555555";
+  const consultantKey =
+    "payout_11111111-2222-4333-8444-555555555555_batch_1756900000000_abcdef12";
+
+  it("keeps a key the gateway already accepts", () => {
+    expect(boundPayoutIdempotencyKey("payout_ckv1v0h8n0000abcdefghijkl")).toBe(
+      "payout_ckv1v0h8n0000abcdefghijkl",
+    );
+  });
+
+  it("folds an over-long key into the accepted length, deterministically", () => {
+    for (const key of [orgKey, consultantKey]) {
+      const bounded = boundPayoutIdempotencyKey(key);
+      expect(bounded.length).toBeLessThanOrEqual(36);
+      expect(bounded).toMatch(/^[A-Za-z0-9 _-]+$/);
+      expect(boundPayoutIdempotencyKey(key)).toBe(bounded);
+    }
+    expect(boundPayoutIdempotencyKey(orgKey)).not.toBe(
+      boundPayoutIdempotencyKey(consultantKey),
+    );
   });
 });

@@ -258,7 +258,9 @@ Since March 2025, RazorpayX **requires** an idempotency key on every payout requ
 
 The key must be deterministic for a given payout, because that is the only property that makes a retry safe. `generateIdempotencyKey` in `lib/payments/payouts/razorpay-payouts.ts` therefore returns `payout_{payoutId}` and nothing else. An earlier version appended a timestamp, which produced a fresh key on every attempt and so defeated the mechanism entirely: a retry after a timeout would have submitted a second payout for the same earnings. Do not reintroduce a clock, a random suffix or an attempt counter into this key.
 
-The key is sent via the `X-Payout-Idempotency` header. When the payout row already carries an `idempotencyKey`, that value is used in preference to the generated one, so a row reissued across two batches still lands on the same RazorpayX idempotency slot.
+The key is sent via the `X-Payout-Idempotency` header. When the payout row already carries an `idempotencyKey`, that value is used ahead of the generated one, so every attempt on a given row lands on the same RazorpayX idempotency slot.
+
+RazorpayX bounds that header at 4 to 36 characters drawn from letters, digits, hyphens, underscores and spaces, and answers anything else with a 400. Two of our keys overshoot it: an organization payout derives `payout_<uuid>`, which is 43 characters, and a consultant payout persists `payout_<consultantProfileId>_<batchId>`, which is 72. `boundPayoutIdempotencyKey` therefore folds any key the gateway would refuse onto a 34-character digest of itself at the point the header is written. The fold is a pure function of the key, so determinism is preserved and a retry still returns the original payout rather than creating a second one. The persisted `idempotencyKey` is left alone, because it is also the row's unique constraint and the Stripe transfer key, and neither of those is bounded the way this header is.
 
 ---
 

@@ -64,7 +64,11 @@ export function verifyRazorpaySignature(
  * silent.
  *
  * An unset, blank or duplicated previous secret contributes no candidate, so
- * the normal steady state is a single-secret check.
+ * the normal steady state is a single-secret check. A missing CURRENT secret
+ * contributes none at all: the grace window is an aid to a rotation, not a
+ * secret in its own right, so a deployment that has lost
+ * `RAZORPAY_WEBHOOK_SECRET` must fail loudly on the route's 500 rather than
+ * quietly keep accepting deliveries on a value the operator has retired.
  */
 export function resolveRazorpayPaymentSecrets(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -73,9 +77,10 @@ export function resolveRazorpayPaymentSecrets(
   const previous = env.RAZORPAY_WEBHOOK_SECRET_PREVIOUS?.trim();
 
   const candidates: RazorpayWebhookSecretCandidate[] = [];
-  if (current) {
-    candidates.push({ role: "current", value: current });
+  if (!current) {
+    return candidates;
   }
+  candidates.push({ role: "current", value: current });
   if (previous && previous !== current) {
     candidates.push({ role: "previous", value: previous });
   }

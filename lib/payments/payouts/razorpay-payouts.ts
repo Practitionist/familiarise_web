@@ -156,6 +156,43 @@ export interface PayoutWebhookEvent {
  */
 const RAZORPAYX_REQUEST_TIMEOUT_MS = 30_000;
 
+// RazorpayX accepts an `X-Payout-Idempotency` value of 4-36 characters drawn
+// from letters, digits, hyphen, underscore and space, and rejects anything else
+// with a 400 — so an over-long key is not a weaker duplicate guard, it is a
+// payout that never leaves the building.
+const PAYOUT_IDEMPOTENCY_MIN_LENGTH = 4;
+const PAYOUT_IDEMPOTENCY_MAX_LENGTH = 36;
+const PAYOUT_IDEMPOTENCY_ALLOWED_CHARS = /^[A-Za-z0-9 _-]+$/;
+
+/**
+ * Fold a caller's idempotency key onto one RazorpayX will accept.
+ *
+ * #1377 — both money-out paths overshot the limit. An organization payout sends
+ * `payout_<uuid>` (43 characters) and a consultant payout prefers the
+ * `idempotencyKey` persisted on the row, `payout_<profileId>_<batchId>` (72),
+ * so every live submission would have been refused at the header rather than
+ * deduplicated. The persisted value stays as it is — it is also the row's
+ * unique key and the Stripe idempotency key, neither of which is bounded this
+ * way — and only the gateway header is narrowed here.
+ *
+ * The fold is a pure function of the key, so the one property that makes a
+ * retry safe survives: the same payout row always derives the same slot, and a
+ * request that timed out after RazorpayX accepted it returns the original
+ * payout instead of paying a second time.
+ */
+export function boundPayoutIdempotencyKey(key: string): string {
+  if (
+    key.length >= PAYOUT_IDEMPOTENCY_MIN_LENGTH &&
+    key.length <= PAYOUT_IDEMPOTENCY_MAX_LENGTH &&
+    PAYOUT_IDEMPOTENCY_ALLOWED_CHARS.test(key)
+  ) {
+    return key;
+  }
+  // 34 characters: inside the limit, inside the charset, and still readable as
+  // a payout key in the RazorpayX dashboard.
+  return `p_${crypto.createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
+}
+
 export class RazorpayPayoutsService {
   private config: RazorpayXConfig;
   private baseUrl = "https://api.razorpay.com/v1";
@@ -255,7 +292,24 @@ export class RazorpayPayoutsService {
       );
     }
 
-    return response.json();
+    // #1377 — the success body is read OUTSIDE the fetch() try above, so a
+    // reply whose headers arrived but whose body stalls trips the same
+    // AbortSignal here, and a non-JSON body (an edge/WAF error page) throws a
+    // SyntaxError. Either would escape as a bare exception and lose the
+    // retryable code the payout callers classify on. Neither says whether the
+    // payout was accepted, which is exactly the RAZORPAYX_REQUEST_FAILED case.
+    try {
+      return (await response.json()) as T;
+    } catch (cause) {
+      throw new PaymentError(
+        `RazorpayX response to ${method} ${endpoint} could not be read: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        "RAZORPAYX_REQUEST_FAILED",
+        "RAZORPAY",
+        cause,
+      );
+    }
   }
 
   // ============================================
@@ -415,7 +469,9 @@ export class RazorpayPayoutsService {
         notes: request.notes,
       },
       {
-        "X-Payout-Idempotency": request.idempotencyKey,
+        "X-Payout-Idempotency": boundPayoutIdempotencyKey(
+          request.idempotencyKey,
+        ),
       },
     );
   }
