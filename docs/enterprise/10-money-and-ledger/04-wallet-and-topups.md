@@ -28,6 +28,8 @@ A wallet is not a single model — it is a `WalletTopUp` lifecycle record paired
 
 The `walletBalance` cache exists for exactly one reason: a conditional SQL `UPDATE … WHERE walletBalance >= amount` is the cheapest correct overdraft guard under concurrency. We can't run that guard against a derived sum, so we keep a cache and let the reconcile cron prove it never drifts. See [Concurrency & idempotency](../30-programs-and-lifecycle/01-concurrency-and-idempotency.md).
 
+The column is nullable, and an account that has never been credited carries `NULL` rather than zero, which is a real distinction in Postgres because `NULL + amount` is `NULL` and not the new balance. Both `walletCredit` and `walletDebit` therefore write a zero over a `NULL` in the same transaction before they touch the arithmetic, and they read the resulting balance back off the mutated row instead of coercing a `NULL` to zero (#1459). Giving the column a non-null default so the seeding step becomes unnecessary is a schema change, and it belongs to the pre-MVP database reset rather than to any migration written today.
+
 ---
 
 ## 2. WalletTopUp lifecycle
