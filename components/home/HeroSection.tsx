@@ -150,7 +150,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 pt-8 border-t border-zinc-800"
+            className="grid grid-cols-2 md:grid-cols-3 gap-8 md:gap-12 pt-8 border-t border-zinc-800"
           >
             {STATS.map((stat, i) => (
               <div key={i} className="text-center">

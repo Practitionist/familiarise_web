@@ -57,11 +57,20 @@ export const FEATURES = [
   },
 ];
 
+// #1485 — the "4.9 Average Rating" counter that used to close this row is
+// gone. No rating was ever read here: it was a literal on a public marketing
+// page, which is a misleading-advertisement exposure rather than a positioning
+// choice. It is not replaced by a live figure because the only loader that
+// derives one (getExpertsMetadata) is cached on a 5-minute window, and Next
+// resolves a route's revalidate to the MINIMUM of the segment value and every
+// data-cache entry read during the render — reading it here would silently cut
+// this page's 1-hour ISR window to five minutes on the surface where LCP
+// matters most. The honest, data-derived rating is rendered on
+// /explore/experts, which already pays for that read.
 export const STATS = [
   { value: 10000, suffix: "+", label: "Active Users" },
   { value: 500, suffix: "+", label: "Expert Mentors" },
   { value: 50000, suffix: "+", label: "Sessions Completed" },
-  { value: 4.9, suffix: "", label: "Average Rating" },
 ];
 
 export const CATEGORIES = [
@@ -288,7 +297,10 @@ export const TRUST_BADGES = [
   {
     icon: Award,
     label: "Quality Assured",
-    description: "4.9★ average session rating",
+    // #1485 — was "4.9★ average session rating", a number with nothing behind
+    // it. What replaces it is a property of the review system itself, so it
+    // stays true at every scale.
+    description: "Ratings come only from verified session participants",
   },
 ];
 

@@ -47,10 +47,85 @@ export interface IExpertsMetaData {
       name: string;
       consultantCount: number;
     }[];
+    /** Mean of the PUBLISHED per-consultant scores, 0 when none qualify. */
     averageRating: number;
+    /** Denominator behind `averageRating` — published reviews across the
+     *  directory. Gates whether the rating is shown at all (#1485). */
+    publishedReviewCount: number;
+    /** Meetings actually held across the platform — COMPLETED slots, not
+     *  appointments (#1485). */
+    completedSessions: number;
   };
   availableLanguages: string[];
   availableCompanies: string[];
+}
+
+/**
+ * Minimum published reviews before a directory-wide average rating is a claim
+ * anyone can stand behind rather than one person's anecdote. Below it the stat
+ * is omitted entirely instead of being padded (#1485).
+ */
+export const MIN_REVIEWS_FOR_PUBLIC_RATING = 5;
+
+export interface IExpertsHeroStat {
+  key: "experts" | "rating" | "sessions";
+  value: string;
+  label: string;
+}
+
+/**
+ * Build the public hero stats for /explore/experts out of real figures only.
+ *
+ * Each entry is dropped when its figure is not yet meaningful. The page it
+ * serves used to fall back to "10K+" experts and a "4.9" rating whenever the
+ * real numbers were zero, and rendered a hardcoded "50K+ Sessions Completed"
+ * that was never read from anything — fabricated social proof on a public
+ * marketing surface, which is a misleading-advertisement exposure under the
+ * Consumer Protection Act 2019, not a positioning choice (#1485).
+ *
+ * An empty array is a correct, expected result before launch. The caller
+ * renders honest early-stage copy in place of the grid rather than a number.
+ */
+export function buildExpertsHeroStats(metadata: {
+  totalConsultants: number;
+  averageRating: number;
+  publishedReviewCount: number;
+  completedSessions: number;
+}): IExpertsHeroStat[] {
+  const stats: IExpertsHeroStat[] = [];
+
+  if (metadata.totalConsultants > 0) {
+    stats.push({
+      key: "experts",
+      value: `${metadata.totalConsultants}`,
+      label:
+        metadata.totalConsultants === 1 ? "Active Expert" : "Active Experts",
+    });
+  }
+
+  if (
+    metadata.averageRating > 0 &&
+    metadata.publishedReviewCount >= MIN_REVIEWS_FOR_PUBLIC_RATING
+  ) {
+    stats.push({
+      key: "rating",
+      value: metadata.averageRating.toFixed(1),
+      label: "Average Rating",
+    });
+  }
+
+  if (metadata.completedSessions > 0) {
+    stats.push({
+      key: "sessions",
+      value: `${metadata.completedSessions}`,
+      label:
+        metadata.completedSessions === 1
+          ? "Session Completed"
+          : "Sessions Completed",
+    });
+  }
+
+  return stats;
 }
 
 export interface IConsultantsByDomain {
@@ -156,6 +231,7 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
     params.set("minRating", String(filters.minRating));
   for (const company of filters.companies) params.append("companies", company);
   if (filters.language) params.set("language", filters.language);
-  if (filters.affiliationType) params.set("affiliationType", filters.affiliationType);
+  if (filters.affiliationType)
+    params.set("affiliationType", filters.affiliationType);
   return params.toString();
 }
