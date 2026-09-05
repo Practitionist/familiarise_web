@@ -15,6 +15,7 @@ import {
   EventFullError,
 } from "@/utils/appointmentlock";
 import { WalletFrozenError } from "@/lib/payments/wallet-freeze";
+import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
@@ -80,7 +81,6 @@ export async function POST(req: NextRequest) {
         event: "checkout_gateway_routed",
         buyerCountry,
         gateway: gatewayRouting.gateway,
-        isIBT: gatewayRouting.isIBT,
         reason: gatewayRouting.reason,
         timestamp: new Date().toISOString(),
       }),
@@ -201,6 +201,23 @@ export async function POST(req: NextRequest) {
           error:
             "This organization's wallet is temporarily on hold pending a balance review. Your card was not charged. Please try again shortly or contact support.",
           errorType: "WALLET_FROZEN",
+          timestamp: new Date().toISOString(),
+        },
+        { status: error.httpStatus },
+      );
+    }
+
+    // #1407 — invoice funding asserts a verified org domain
+    // (lib/payments/operations/checkout.ts:2585) and the guard's typed 403 fell
+    // through to classifyError, which is message-only and answered 500
+    // UNKNOWN_ERROR. Honour the structured status like WalletFrozenError above,
+    // so the page can say what the admin has to do.
+    if (error instanceof DomainVerificationRequiredError) {
+      return NextResponse.json(
+        {
+          error:
+            "Invoice funding requires a verified domain on this organization. Your card was not charged — ask your billing admin to verify the domain, or pay by card instead.",
+          errorType: "DOMAIN_VERIFICATION_REQUIRED",
           timestamp: new Date().toISOString(),
         },
         { status: error.httpStatus },
