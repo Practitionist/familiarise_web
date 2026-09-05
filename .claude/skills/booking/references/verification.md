@@ -109,7 +109,7 @@ money-specific walkthrough is `docs/testing/booking-finance-hardening-test-plan.
 Drive checkout with `isMockPayment: true` in the request body. It only works
 when `NODE_ENV === "development"`, and it makes the payment succeed immediately,
 the slots non-tentative and the gateway call disappear (see
-`booking-money-boundary` §2). That is the cheapest way to produce a real
+`references/money-boundary.md` §2). That is the cheapest way to produce a real
 booking, a real Payment row and real earnings without touching a gateway.
 
 ## 6. Concurrency claims need the chaos suite

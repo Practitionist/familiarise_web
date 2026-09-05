@@ -1,18 +1,28 @@
 ---
-name: booking-doctrine
-description: The non-negotiable invariants of this repo's booking subsystem — CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, and the no-backfill reset posture. Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/slotAllocation/, lib/payments/operations/, scripts/appointments/, or app/api/appointments|bookings|checkout.
+name: booking
+description: How this repo's booking subsystem is built and kept correct — the non-negotiable doctrine (CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, no-backfill reset posture), how published availability becomes bookable slots (weekly vs custom rows, the 30-minute atom, union coverage, the three allocation modes), how concurrent booking writes are serialized (Redis lock atoms, global lock order, CAS-in-WHERE, Serializable retries), where booking touches money (the tentative hold, price derivation, refund quotes, funding rails, the earnings healer), and how to actually verify a booking change (jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook). Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund, availability, allocation, checkout or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/slotAllocation/, utils/appointmentlock.ts, utils/timeSlotsProcessing.ts, lib/db/serializable-retry.ts, lib/payments/pricing/, lib/payments/operations/, scripts/appointments/, prisma/sql/, app/api/slots/, or app/api/appointments|bookings|checkout.
 ---
 
-# Booking Doctrine
+# Booking
 
-Six rules govern every change in this subsystem. Each has been violated at least
-once, and each violation cost real money or real bookings — the issue numbers
-are the receipts. Treat any diff that breaks one as wrong until proven
-otherwise. Sibling skills carry the detail: `booking-concurrency` for locks and
-constraints, `booking-availability` for the slot model, `booking-money-boundary`
-for holds and refunds, `booking-verification` for proving a change works.
+This is the index for the booking domain. The doctrine below is inline because
+every rule here is non-negotiable and has been violated at least once, each
+violation costing real money or real bookings — the issue numbers are the
+receipts. The four references carry the detail for a specific concern.
 
-## 1. Every status write goes through a CAS transition helper
+| Reference                      | Purpose                                                                                                                                                                      | Read it when                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `references/availability.md`   | How published availability becomes bookable slots — weekly vs custom rows, the 30-minute atom, union coverage, the grid endpoint, the three allocation modes.                | Touching availability rows, the booking calendar grid, slot generation, or conflict detection.                       |
+| `references/concurrency.md`    | How concurrent booking writes are serialized — Redis lock atoms, the global lock order, CAS-in-WHERE, retry budgets, Serializable retries.                                   | Touching `utils/appointmentlock.ts`, `lib/db/serializable-retry.ts`, or any booking write that races another writer. |
+| `references/money-boundary.md` | Where booking touches money — the tentative hold, price derivation, refund quotes, funding rails, the earnings healer.                                                       | Changing checkout, a payment hold, a refund amount or rail, or a cancellation quote.                                 |
+| `references/verification.md`   | How to actually prove a booking change works — jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook, the standing prohibition on `db push`. | Before claiming a booking, slot, allocation, checkout, refund, or maintenance change is verified.                    |
+
+## Doctrine
+
+Six rules govern every change in this subsystem. Treat any diff that breaks one
+as wrong until proven otherwise.
+
+### 1. Every status write goes through a CAS transition helper
 
 `lib/booking/transitions.ts` exports seven guarded helpers, and no booking
 status column may be written any other way. As of wave 5 (#1319) the set is
@@ -59,7 +69,7 @@ sites are `app/api/slots/request-for-approval` and the consultation and
 subscription checkout handlers; the capture webhook's legacy creators do not
 write it yet.
 
-## 2. Nothing that a Payment points at is ever deleted
+### 2. Nothing that a Payment points at is ever deleted
 
 `Payment.appointment` cascades on delete, so deleting an Appointment destroys
 the Payment rows, the refund trail and the credit usage with it. A trial
@@ -88,7 +98,7 @@ on an Appointment or a confirmed slot, you are almost certainly wrong: reconcile
 in place, as `replaceContiguousSlotRun` does precisely so Stream
 `MeetingSession` and `Recording` rows survive.
 
-## 3. Refunds have exactly two front doors
+### 3. Refunds have exactly two front doors
 
 One booking refunds through `refundBookingPayment`
 (`lib/payments/operations/booking-refund.ts`); a whole webinar or class refunds
@@ -103,7 +113,7 @@ these dies on `UNKNOWN_GATEWAY` and historically reversed nothing (#1003,
 #1020). `isFreeCreditIntent` matches `free_` and restores referral credits
 rather than moving gateway money. Everything else is the two-phase gateway refund.
 
-## 4. Org scoping is explicit on every list
+### 4. Org scoping is explicit on every list
 
 `lib/api/scope/parse.ts` is the single definition of the `?orgScope=` vocabulary
 and resolves it to one of four kinds: `personal`, `org`, `orgMember`, and `all`.
@@ -122,7 +132,7 @@ not open. Cross-org funding visibility now belongs to the money views. Org lists
 metadata-only by design (ADR 20): an org sees that a session happened, never its
 content.
 
-## 5. An approved request that was never paid has one outcome: EXPIRED
+### 5. An approved request that was never paid has one outcome: EXPIRED
 
 The lapsed pay-link sweep is `cleanupExpiredApprovalPendingPayments` in
 `scripts/payments/cleanup-abandoned-payments.ts`, and it transitions the request
@@ -151,7 +161,7 @@ counter-example rather than the pattern: it flips `APPROVED_PENDING_PAYMENT` to
 `EXPIRED` with a bare `updateMany` that carries neither the money predicate nor
 the CAS helper.
 
-## 6. There are no backfill migrations
+### 6. There are no backfill migrations
 
 The schema is managed with `prisma db push`, not migrations, and everything
 currently in the database is seed data awaiting the one-time pre-MVP reset

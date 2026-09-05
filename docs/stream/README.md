@@ -99,5 +99,5 @@ A test deletion is a real deletion.
 - Issue #1146 — the review findings that outlived the pull requests that raised
   them.
 - [ADR: `resolveMeetingAccess` returns what it loaded](../decisions/2026-08-13-meeting-access-returns-what-it-loaded.md)
-- `.claude/skills/stream-sdk/SKILL.md` — the working reference, kept in step
+- `.claude/skills/stream/SKILL.md` — the working reference, kept in step
   with the code more actively than these pages.
