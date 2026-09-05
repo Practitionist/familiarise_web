@@ -218,6 +218,9 @@ export async function POST(req: NextRequest) {
     // and skip the unconditional `captureException` under it, which would file
     // a routine refusal as an exception.
     if (error instanceof WalletInsufficientFundsError) {
+      // #1477 — a modelled refusal, reported like the other business-coded
+      // outcomes below so the route's observability stays uniform.
+      reportSentryError(error, { subsystem: "checkout", expected: true });
       return NextResponse.json(
         {
           error:
