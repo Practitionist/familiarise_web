@@ -50,6 +50,11 @@ export const ErrorTypes = {
   // types rather than borrowing one of the three above.
   PROGRAM_ASSIGNMENT_INACTIVE: "PROGRAM_ASSIGNMENT_INACTIVE_ERROR",
   BILLING_SUSPENDED_DUNNING: "BILLING_SUSPENDED_DUNNING_ERROR",
+  // #1477 — an overdrawn org wallet. Distinct from WALLET_FROZEN above: the
+  // balance is trustworthy and simply too small, so the fix is a top-up rather
+  // than an ops reconciliation. The checkout route reaches this through
+  // `ErrorTypes`, so the value is free to keep the `_ERROR` suffix.
+  WALLET_INSUFFICIENT_FUNDS: "WALLET_INSUFFICIENT_FUNDS_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -271,6 +276,16 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
   {
     code: "BILLING_SUSPENDED_DUNNING",
     errorType: ErrorTypes.BILLING_SUSPENDED_DUNNING,
+    httpStatus: 402,
+  },
+  // #1477 — `walletDebit`'s overdraft guard throws from inside the checkout
+  // transaction, and its message ("Insufficient wallet balance on billing
+  // account …") matches nothing in the prose fallback, so every low-wallet
+  // booking answered 500 and paged as an unexpected fault. 402 is the same
+  // "this account cannot fund it" status the programme-budget refusals use.
+  {
+    code: "WALLET_INSUFFICIENT_FUNDS",
+    errorType: ErrorTypes.WALLET_INSUFFICIENT_FUNDS,
     httpStatus: 402,
   },
 ] as const;
