@@ -247,9 +247,16 @@ export async function fetchExpertsMetadata() {
         // was not a number anyone could defend. `publishedRating` is NULL
         // below the #705 suppression threshold and Prisma's `_avg` skips
         // NULLs, so this averages only consultants with a publishable score.
-        // `reviewCount` rides along as the denominator the caller gates on.
+        // `reviewCount` rides along as the denominator the caller gates on, so
+        // the filter scopes it to the SAME profiles `_avg` used — a suppressed
+        // profile's reviews must not help clear the display threshold for an
+        // average they contributed nothing to.
         prisma.consultantProfile.aggregate({
-          where: { verificationStatus: "VERIFIED", deletedAt: null },
+          where: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+            publishedRating: { not: null },
+          },
           _avg: { publishedRating: true },
           _sum: { reviewCount: true },
         }),

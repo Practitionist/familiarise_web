@@ -238,7 +238,7 @@ export default function ProgramsInteractiveContent({
               </div>
             ) : (
               <p className="text-sm text-zinc-500">
-                New classes and webinars are published every week.
+                Check back for new classes and webinars.
               </p>
             )}
           </motion.div>

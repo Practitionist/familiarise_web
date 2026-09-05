@@ -90,7 +90,7 @@ function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
             </div>
           ) : (
             <p className="text-sm text-zinc-500">
-              New experts are joining every week.
+              Check back for newly verified experts.
             </p>
           )}
         </div>

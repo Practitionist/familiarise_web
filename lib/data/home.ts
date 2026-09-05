@@ -136,9 +136,16 @@ export const getHomeStats = unstable_cache(
         // The PUBLISHED score, not the raw `rating` mean: `rating` defaults to
         // 0 and every unreviewed profile carries that default. `publishedRating`
         // is NULL below the #705 suppression threshold and Prisma's `_avg`
-        // skips NULLs. `reviewCount` rides along as the denominator.
+        // skips NULLs. `reviewCount` rides along as the denominator, so the
+        // filter scopes it to the SAME profiles `_avg` used — a suppressed
+        // profile's reviews must not help clear the display threshold for an
+        // average they contributed nothing to (#1485).
         prisma.consultantProfile.aggregate({
-          where: { verificationStatus: "VERIFIED", deletedAt: null },
+          where: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+            publishedRating: { not: null },
+          },
           _avg: { publishedRating: true },
           _sum: { reviewCount: true },
         }),

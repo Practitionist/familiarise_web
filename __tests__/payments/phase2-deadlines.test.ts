@@ -295,11 +295,14 @@ describe("#1484 — the payment-success payload names the plan, not its id", () 
       10000,
     );
 
-    const payload = notifyPaymentSuccess.mock.calls[0][1] as {
-      planTitle: string;
-    };
-    expect(payload.planTitle).toBe("Consultation");
-    expect(payload.planTitle).not.toBe(METADATA.planId);
+    // Both triggers read the same `resolvedPlanTitle`, and the primed slot
+    // means the booked ping is not skipped — so the fallback has to hold on
+    // both payloads, not just the first.
+    for (const trigger of [notifyPaymentSuccess, notifyAppointmentBooked]) {
+      const payload = trigger.mock.calls[0][1] as { planTitle: string };
+      expect(payload.planTitle).toBe("Consultation");
+      expect(payload.planTitle).not.toBe(METADATA.planId);
+    }
   });
 });
 
