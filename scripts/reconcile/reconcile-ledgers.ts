@@ -213,6 +213,16 @@ export function clawbackDualWriteGapFindings(
   const out: Finding[] = [];
   for (const po of payouts) {
     const expected = Number(po.clawbackAmountPaise);
+    // Both columns are BigInt and `Finding` carries plain numbers, so the
+    // narrowing stays. What must never happen quietly is a value that does not
+    // survive it: past 2^53 the comparison below rounds, and a rounded shortfall
+    // reads as `actual >= expected` — the detector would report CLEAN on a real
+    // dual-write gap. Loud failure naming the row beats a suppressed finding.
+    if (!Number.isSafeInteger(expected)) {
+      throw new Error(
+        `clawbackDualWriteGapFindings: OrganizationPayout ${po.id} has clawbackAmountPaise=${po.clawbackAmountPaise}, outside the safe-integer range — the shortfall comparison would round and could suppress a LEDGER_DUAL_WRITE_GAP.`,
+      );
+    }
     const actual = postedPaiseByPayout.get(po.id) ?? 0;
     // Shortfall only. A ledger that posted MORE than was stamped is the
     // opposite defect and does not belong under this kind's note.
@@ -1031,10 +1041,18 @@ async function runReconcileLedgersUnlocked(
         });
         for (const t of clawbackTxns) {
           if (!t.payoutId) continue;
-          const posted = t.entries.reduce(
-            (sum, e) => sum + Number(e.amountPaise),
-            0,
-          );
+          const posted = t.entries.reduce((sum, e) => {
+            // Same reasoning as the detector's guard: a leg that does not
+            // survive the narrowing would under-report the posted side, which
+            // manufactures a phantom gap or hides a real one.
+            const paise = Number(e.amountPaise);
+            if (!Number.isSafeInteger(paise)) {
+              throw new Error(
+                `clawback posting for payout ${t.payoutId} has amountPaise=${e.amountPaise}, outside the safe-integer range.`,
+              );
+            }
+            return sum + paise;
+          }, 0);
           clawbackPostedByPayout.set(
             t.payoutId,
             (clawbackPostedByPayout.get(t.payoutId) ?? 0) + posted,

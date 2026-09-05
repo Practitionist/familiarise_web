@@ -184,6 +184,14 @@ function mapGatewayStatus(
         return PayoutStatus.PROCESSING;
       case "rejected":
         return PayoutStatus.FAILED;
+      // #1407 — RazorpayX returns `failed` for a payout the bank refused after
+      // it was queued, and the arm had only `rejected`. That is precisely the
+      // cohort this sweep walks, so the payout fell through as an unknown
+      // status and was skipped: PENDING/PROCESSING forever, earnings still
+      // batched against money that never left. The Stripe arm has always
+      // mapped it. FAILED delegation un-batches the earnings and reverses TDS.
+      case "failed":
+        return PayoutStatus.FAILED;
       case "reversed":
         return PayoutStatus.FAILED;
       case "cancelled":
