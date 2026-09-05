@@ -6855,7 +6855,9 @@ model OverageEvent {
   currency             Currency            @default(INR)
   chargeStatus         OverageChargeStatus @default(PENDING)
   /// CHARGE_MEMBER: Payment row for the instant overage charge.
-  /// CHARGE_ORG: Payment row of the rolled-up cycle invoice.
+  /// CHARGE_ORG: Payment row of the rolled-up cycle invoice, or — on the WALLET
+  /// rail (#1458) — the booking Payment whose WALLET leg already collected the
+  /// marginal, in which case the event is born CHARGED with no invoiceLineItemId.
   paymentId            String?
   // #781 §B — SetNull kept deliberately: the abandoned-side-charge sweep
   // deletes never-captured PENDING payments; the event row (and its

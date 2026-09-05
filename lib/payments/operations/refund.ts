@@ -1199,11 +1199,23 @@ export async function applyRefundCascade(
         bookingUtilizationId: payment.bookingUtilization.id,
         chargeStatus: "CHARGED",
       },
-      select: { id: true, overageBehavior: true, paymentId: true },
+      select: {
+        id: true,
+        overageBehavior: true,
+        paymentId: true,
+        invoiceLineItemId: true,
+      },
     });
+    // #1458 — the wallet rail collects a CHARGE_ORG marginal inside this very
+    // payment's WALLET debit, so the leg reversal above has already credited it
+    // back. There is no invoice behind it and therefore no credit note to wait
+    // for; gating on one left the event permanently CHARGED, still eating the
+    // programme's per-cycle overage ceiling after the booking was refunded.
+    const walletCollected =
+      charged?.paymentId === payment.id && charged?.invoiceLineItemId === null;
     if (
       charged?.overageBehavior === "CHARGE_ORG" &&
-      refundCreditNote.creditNoteId
+      (refundCreditNote.creditNoteId || walletCollected)
     ) {
       await transitionOverage(
         tx,
