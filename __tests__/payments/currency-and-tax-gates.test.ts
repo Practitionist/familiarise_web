@@ -29,7 +29,24 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { detectBuyerCountry } from "../../lib/payments/tax/buyer-country";
-import { validatePlanCurrency } from "../../lib/payments/validation/currency-guards";
+import {
+  assertInrSettlement,
+  validatePlanCurrency,
+} from "../../lib/payments/validation/currency-guards";
+
+// #1396 — the Razorpay SDK is replaced wholesale so `createRazorpayOrder` can be
+// called for real and the assertion observed at its true position: ahead of the
+// client lookup and ahead of `orders.create`. Asserting that the spy was never
+// called is the whole point — a guard placed after the SDK call would still
+// throw and would still pass a naive "it throws" test.
+const ordersCreate = jest.fn();
+jest.mock("razorpay", () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    orders: { create: (...args: unknown[]) => ordersCreate(...args) },
+  })),
+}));
+import { assertGatewayUsable } from "../../lib/payments/validation/gateway-guards";
 import {
   deriveConsumerInvoiceTax,
   deriveConsumerCreditNoteAmounts,
@@ -124,6 +141,90 @@ describe("the planner cannot create an unsettleable plan", () => {
     const match = src.match(/const DEFAULT_CURRENCIES = (\[[^\]]*\])/);
     expect(match).not.toBeNull();
     expect(JSON.parse(match![1].replace(/'/g, '"'))).toEqual(["INR"]);
+  });
+});
+
+describe("settlement is INR at the gateway boundary (#1396)", () => {
+  it("passes INR through", () => {
+    expect(() =>
+      assertInrSettlement("INR", "create a test order"),
+    ).not.toThrow();
+  });
+
+  it("normalises before deciding, so lower case and padding still pass, and hands back the canonical code", () => {
+    let result: string | undefined;
+    expect(() => {
+      result = assertInrSettlement(" inr ", "create a test order");
+    }).not.toThrow();
+    expect(result).toBe("INR");
+  });
+
+  it.each(["USD", "EUR", "GBP", "AED"])(
+    "refuses %s with NON_INR_SETTLEMENT",
+    (ccy) => {
+      expect(() => assertInrSettlement(ccy, "create a test order")).toThrow(
+        expect.objectContaining({ code: "NON_INR_SETTLEMENT" }),
+      );
+    },
+  );
+
+  it("refuses a code the platform cannot even represent", () => {
+    // A currency outside the Prisma enum must fail the same way as a
+    // representable-but-unsettleable one: both are non-INR settlement attempts.
+    expect(() => assertInrSettlement("XYZ", "create a test order")).toThrow(
+      expect.objectContaining({ code: "NON_INR_SETTLEMENT" }),
+    );
+  });
+
+  it("stops a non-INR createRazorpayOrder before the SDK is called", async () => {
+    // The reachable repro: a BillingAccount set to USD, whose currency the
+    // wallet top-up route forwarded verbatim alongside an amount in INR paise.
+    // Razorpay reads a non-INR amount in the target currency's own subunit, so
+    // 100000 would have been a $1,000.00 order for an intended ₹1,000 top-up.
+    process.env.RAZORPAY_KEY_ID ||= "rzp_test_stub";
+    process.env.RAZORPAY_SECRET ||= "stub_secret";
+    const { createRazorpayOrder } =
+      await import("../../lib/payments/core/razorpay");
+
+    await expect(
+      createRazorpayOrder({
+        amount: 100000,
+        currency: "USD",
+        metadata: { appointmentType: "CONSULTATION" },
+        paymentGateway: "RAZORPAY",
+      }),
+    ).rejects.toThrow(expect.objectContaining({ code: "NON_INR_SETTLEMENT" }));
+
+    expect(ordersCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Stripe rail is fenced unless it is switched on", () => {
+  // #1351 — Stripe was fully live: every checkout page offered the button and
+  // routeGateway honoured an explicit STRIPE request unconditionally, on
+  // sk_test_ keys. It is a contingency rail for an RBI rule change, so the
+  // flag is the gate.
+  const original = process.env.STRIPE_ENABLED;
+  afterEach(() => {
+    if (original === undefined) delete process.env.STRIPE_ENABLED;
+    else process.env.STRIPE_ENABLED = original;
+  });
+
+  it("rejects STRIPE with the flag unset and accepts it with the flag on", () => {
+    delete process.env.STRIPE_ENABLED;
+    expect(() => assertGatewayUsable("STRIPE", "route a checkout")).toThrow(
+      /STRIPE_ENABLED/,
+    );
+
+    process.env.STRIPE_ENABLED = "true";
+    expect(() =>
+      assertGatewayUsable("STRIPE", "route a checkout"),
+    ).not.toThrow();
+
+    // The fence must not touch the gateway that actually takes money.
+    expect(() =>
+      assertGatewayUsable("RAZORPAY", "route a checkout"),
+    ).not.toThrow();
   });
 });
 

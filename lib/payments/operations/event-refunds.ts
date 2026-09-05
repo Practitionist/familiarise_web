@@ -344,13 +344,24 @@ export async function refundRemovedAttendeeSeat(args: {
       hoursUntilStart,
       isOrganiserInitiated,
     );
+    // #1396 — `refundPct` may carry two decimals (a policy can say 12.5%), so
+    // multiplying paise by the float first put a binary rounding error inside a
+    // money amount before the floor ever ran. Scale to integer basis points and
+    // divide once, exactly as `computeBookingRefundQuote` in cancellation-policy
+    // does; BigInt because the intermediate product leaves the safe-integer
+    // range long before the amounts stop being real money.
+    const grossPaise = Number(payment.amount);
+    const policyRefundPaise = Number(
+      (BigInt(grossPaise) * BigInt(Math.round(refundPct * 100))) /
+        BigInt(10_000),
+    );
     // Clamp to the remaining balance, exactly as the cancel route does. A seat
     // carrying an earlier partial refund would otherwise ask for more than is
     // left, `refundPayment` would reject the whole request, and the attendee
     // would receive nothing of the remainder they are owed.
     const amountPaise = Math.min(
-      Math.floor((Number(payment.amount) * refundPct) / 100),
-      refundableBalancePaise(Number(payment.amount), payment),
+      policyRefundPaise,
+      refundableBalancePaise(grossPaise, payment),
     );
     if (amountPaise <= 0) return { amountRefundedPaise: 0, refundPct, rail: null };
 
