@@ -157,9 +157,10 @@ jest.mock("../../lib/novu/org-workflows", () => ({
   notifyOrgProgramExhausted: jest.fn(),
   notifyOrgProgramCapNear: jest.fn(),
 }));
-jest.mock("../../lib/payments/operations/cancellation-policy", () => ({
+// #1499 — checkout now resolves a policy VERSION id rather than freezing Json.
+jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   __esModule: true,
-  resolveCancellationPolicySnapshot: jest.fn(() => ({})),
+  resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
 import prisma from "../../lib/prisma";
