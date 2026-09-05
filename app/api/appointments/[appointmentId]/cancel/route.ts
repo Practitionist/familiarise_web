@@ -439,12 +439,7 @@ export async function POST(
        * already exhausted" and "the gateway refused" — and the client was left
        * inferring failure from a positive `refundPct`, which is a guess.
        */
-      status:
-        | "REFUNDED"
-        | "FAILED"
-        | "NOTHING_REFUNDABLE"
-        | "POLICY_ZERO"
-        | "MANUAL_REVIEW";
+      status: "REFUNDED" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
       /**
@@ -470,10 +465,10 @@ export async function POST(
             consultantUserId === session.user.id) ||
           (isPrivilegedUser && session.user.id !== consulteeUserId);
         // #1161 — a fully-credit-funded booking: its refund IS the credit
-        // restoration, all-or-nothing. Full restoration when the cancellation
-        // is not the buyer's choice or falls in a full-refund window; a
-        // payer-initiated late cancel escalates (partial credit restoration is
-        // an unmade product call — same residual as attendee-leave).
+        // restoration, all-or-nothing, because the credits rail refuses a partial
+        // amount. #1500 settled what a partial TIER means for such a booking: the
+        // quote rounds it up to a full restoration, and only a 0% tier returns
+        // nothing.
         const isFreeCreditFunded =
           paidPayment.amountPaise === 0 &&
           paidPayment.paymentIntent.startsWith("free_");
@@ -484,12 +479,13 @@ export async function POST(
         // exists to tell the buyer what this click pays, so they must be one
         // function or the quote eventually stops matching the charge.
         const quote = quoteBookingRefund({
-          policySnapshot: bookingCtx.policySnapshot,
+          policy: bookingCtx.policy,
           hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
           slotsTotal: bookingCtx.slotsTotal,
           sessionsRemaining: bookingCtx.sessionsRemaining,
           isSubscription: !!appointment.subscription,
           isConsultantInitiated,
+          isFreeCreditFunded,
           grossPaise: paidPayment.amountPaise,
           refundablePaise: paidPayment.refundablePaise,
         });
@@ -498,53 +494,38 @@ export async function POST(
 
         // Credit-funded first: its refund is a credit restoration, which is
         // all-or-nothing, so the tiered amount above does not apply to it.
-        // (#1006's partly-consumed escalation used to branch here; the linear
-        // proration in `proratedBasePaise` replaced it — see the PR for why.)
-        if (isFreeCreditFunded) {
-          if (refundPct === 100) {
-            try {
-              const restored = await refundBookingPayment({
-                paymentId: paidPayment.id,
-                reason:
-                  "cancellation (credit-funded booking, full restoration)",
-                initiatedByUserId: session.user.id,
-              });
-              refund = {
-                // Report what the restoration actually returned. Hardcoding 0
-                // reintroduced the ambiguity this field exists to remove — the
-                // status says REFUNDED while the amount reads like the policy
-                // owed nothing.
-                amountRefundedPaise: restored.amountRefundedPaise,
-                refundPct: 100,
-                status: "REFUNDED",
-                requiresManualReview: false,
-                rail: restored.rail,
-              };
-            } catch (freeErr) {
-              Sentry.captureException(
-                freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
-                { tags: { subsystem: "bookings" } },
-              );
-              refund = {
-                amountRefundedPaise: 0,
-                refundPct: 100,
-                status: "FAILED",
-                requiresManualReview: true,
-              };
-            }
-          } else {
-            await recordSystemError({
-              organizationId: appointment.organizationId ?? null,
-              category: "PAYMENT",
-              summary:
-                "Credit-funded booking cancelled inside a partial-refund window; partial credit restoration has no product rule yet (#1161)",
-              err: new Error("FREE_CREDIT_PARTIAL_RESTORATION_UNDEFINED"),
-              context: { appointmentId, paymentId: paidPayment.id, refundPct },
-            }).catch(() => {});
+        // #1500 — every tier above 0% restores the credit IN FULL; the escalation
+        // to a human that used to sit on the partial branch is gone, because the
+        // product rule it was waiting for now exists. A 0% tier falls through to
+        // POLICY_ZERO below, so a late cancel bites a credit buyer exactly as it
+        // bites a card buyer.
+        if (quote.creditRestoresInFull) {
+          try {
+            const restored = await refundBookingPayment({
+              paymentId: paidPayment.id,
+              reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+              initiatedByUserId: session.user.id,
+            });
+            refund = {
+              // Report what the restoration actually returned. Hardcoding 0
+              // reintroduced the ambiguity this field exists to remove — the
+              // status says REFUNDED while the amount reads like the policy
+              // owed nothing.
+              amountRefundedPaise: restored.amountRefundedPaise,
+              refundPct: 100,
+              status: "REFUNDED",
+              requiresManualReview: false,
+              rail: restored.rail,
+            };
+          } catch (freeErr) {
+            Sentry.captureException(
+              freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
+              { tags: { subsystem: "bookings" } },
+            );
             refund = {
               amountRefundedPaise: 0,
-              refundPct,
-              status: "MANUAL_REVIEW",
+              refundPct: 100,
+              status: "FAILED",
               requiresManualReview: true,
             };
           }
