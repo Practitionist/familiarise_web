@@ -78,6 +78,11 @@ export function isReachableOrgFundingPath(
  * member had already picked a slot. Refusing the CONFIGURATION instead means
  * the state is unreachable rather than merely fatal.
  *
+ * `overageSurchargeBps` participates because the surcharge, not the behaviour
+ * alone, decides collectability on the wallet rail: the plain over-cap amount is
+ * a slice of the price the wallet already debited, while a markup on top of that
+ * price is money no rail ever collects.
+ *
  * The message is returned rather than thrown so both the create route (a Zod
  * refinement) and the patch route (an inline `fail()`) can raise it in their own
  * shape without either of them owning the rule.
@@ -85,11 +90,29 @@ export function isReachableOrgFundingPath(
 export function overageBehaviorUnsupportedReason(
   fundingSource: FundingSource | null,
   overageBehavior: OverageBehavior,
+  overageSurchargeBps?: number | null,
 ): string | null {
   if (fundingSource === "WALLET" && overageBehavior === "CHARGE_MEMBER") {
     return (
       "A wallet-funded organisation cannot charge members for bookings past the programme cap, because the wallet debit has already collected the whole booking price and the member credit-back is not implemented (#715). " +
       "Choose CHARGE_ORG, which is collected by that same wallet debit, or BLOCK to stop over-cap bookings."
+    );
+  }
+  // #1458 — CHARGE_ORG on the wallet rail is collectable only while the marginal
+  // is a slice of the price the wallet already debited. A surcharge is a markup
+  // ON TOP of that price, so nothing collected it; the only way to would be to
+  // raise `Payment.amount`, which re-arms the leg-sum trigger against an
+  // unchanged WALLET leg. recordWalletCollectedOrgOverage() therefore refuses it
+  // at checkout — after the member has picked a slot — so refuse the
+  // configuration here for the same reason CHARGE_MEMBER is refused above.
+  if (
+    fundingSource === "WALLET" &&
+    overageBehavior === "CHARGE_ORG" &&
+    (overageSurchargeBps ?? 0) > 0
+  ) {
+    return (
+      "A wallet-funded organisation cannot be charged an overage surcharge, because the wallet debit collects the booking price and a surcharge is a markup on top of it that no rail collects afterwards. " +
+      "Remove the overage surcharge to keep charging the organisation the plain over-cap amount, or choose BLOCK to stop over-cap bookings."
     );
   }
   // A licence is a flat fee settled at contract time, so a licence-funded

@@ -120,6 +120,18 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "This programme is set to charge members for bookings past its cap, which is not available on a wallet-funded organisation. Ask your billing admin to switch the programme to charge the organisation or to block over-cap bookings.",
   },
+  // #1467 — the organisation's entitlement, not the booking, is what stops
+  // these. Retrying changes nothing, so each toast names the admin who can.
+  [ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE]: {
+    title: "No Programme Covers This Booking",
+    description:
+      "Your organisation has no active programme assignment for this session type, usually because its contract or programme has ended. Ask your organisation admin to assign you to a programme that covers it, or book it yourself. You were not charged.",
+  },
+  [ErrorTypes.BILLING_SUSPENDED_DUNNING]: {
+    title: "Organisation Billing Suspended",
+    description:
+      "Your organisation has an overdue invoice, so new sponsored bookings are paused until it is paid. Ask your billing admin to settle it, or book this session yourself. You were not charged.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

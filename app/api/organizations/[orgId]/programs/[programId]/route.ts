@@ -250,6 +250,9 @@ async function applyProgramPatch(
     const overageReason = overageBehaviorUnsupportedReason(
       current.contract.billingAccount?.fundingSource ?? null,
       merged.overageBehavior,
+      // #1458 — merged, so a patch that adds a surcharge to an already-saved
+      // wallet CHARGE_ORG programme is refused as readily as one that sets both.
+      merged.overageSurchargeBps,
     );
     if (overageReason) fail(overageReason);
   }

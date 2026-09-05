@@ -104,6 +104,22 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
         overageBehaviorUnsupportedReason("INVOICE", "CHARGE_MEMBER"),
       ).toBeNull();
     });
+
+    // A wallet debit collects the booking price, so the plain over-cap amount
+    // rides along inside it; a surcharge sits on top of that price and nothing
+    // collects it. Checkout refuses it either way, so the configuration must.
+    it("refuses a surcharged CHARGE_ORG on WALLET but not the plain one", () => {
+      expect(
+        overageBehaviorUnsupportedReason("WALLET", "CHARGE_ORG", 1000),
+      ).toContain("surcharge");
+      expect(
+        overageBehaviorUnsupportedReason("WALLET", "CHARGE_ORG", 0),
+      ).toBeNull();
+      // The surcharge only matters on the wallet rail — an invoice can carry it.
+      expect(
+        overageBehaviorUnsupportedReason("INVOICE", "CHARGE_ORG", 1000),
+      ).toBeNull();
+    });
   });
 
   describe("capabilityOf", () => {

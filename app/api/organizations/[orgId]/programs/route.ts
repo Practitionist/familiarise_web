@@ -320,11 +320,17 @@ export async function POST(
   // what happens past the cap. CHARGE_MEMBER on a wallet-funded contract only
   // failed at checkout, inside the booking transaction, so the refusal landed on
   // a member who had already picked a slot. Refuse it here instead.
+  const overageConfig =
+    body.type === "LICENSED_SEAT"
+      ? body.licensedSeatConfig
+      : body.creditPoolConfig;
   const overageReason = overageBehaviorUnsupportedReason(
     fundingSource,
-    body.type === "LICENSED_SEAT"
-      ? body.licensedSeatConfig.overageBehavior
-      : body.creditPoolConfig.overageBehavior,
+    overageConfig.overageBehavior,
+    // #1458 — the surcharge is part of the rule, not a separate knob: CHARGE_ORG
+    // is collectable on a wallet debit only while the marginal stays inside the
+    // price that debit took.
+    overageConfig.overageSurchargeBps,
   );
   if (overageReason) {
     return NextResponse.json(

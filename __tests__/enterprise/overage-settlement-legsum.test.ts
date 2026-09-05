@@ -196,6 +196,9 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
       { source: "WALLET", amountPaise: walletDebit },
     ]);
     expect(state.payment.amount).toBe(walletDebit);
+    // The cancellation quote is a percentage of Payment.amount and the refund
+    // cascade splits it across the legs, so one WALLET leg equal to amount is
+    // what makes a 100% refund return exactly the debit and not a paisa more.
     expect(sum(state.legs)).toBe(state.payment.amount);
     expect(tx.paymentLeg.create).not.toHaveBeenCalled();
     expect(tx.payment.update).not.toHaveBeenCalled();
@@ -210,11 +213,6 @@ describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", ()
         }),
       }),
     );
-
-    // The cancellation quote is a percentage of Payment.amount and the refund
-    // cascade splits it across the legs — with one WALLET leg equal to amount,
-    // a 100% refund returns exactly the debit and not a paisa more.
-    expect(state.payment.amount).toBe(walletDebit);
   });
 
   // A licence is a flat fee settled at contract time, so its leg is ₹0 while

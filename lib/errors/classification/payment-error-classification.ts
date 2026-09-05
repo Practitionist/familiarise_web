@@ -45,6 +45,11 @@ export const ErrorTypes = {
   PROGRAM_CAP_EXHAUSTED: "PROGRAM_CAP_EXHAUSTED_ERROR",
   PROGRAM_SESSION_CAP_REACHED: "PROGRAM_SESSION_CAP_REACHED_ERROR",
   OVERAGE_CHARGE_MEMBER_UNSUPPORTED: "OVERAGE_CHARGE_MEMBER_UNSUPPORTED_ERROR",
+  // #1467 — the two org-sponsorship refusals raised BEFORE checkout takes its
+  // lock. They are entitlement states, not overage states, so they get their own
+  // types rather than borrowing one of the three above.
+  PROGRAM_ASSIGNMENT_INACTIVE: "PROGRAM_ASSIGNMENT_INACTIVE_ERROR",
+  BILLING_SUSPENDED_DUNNING: "BILLING_SUSPENDED_DUNNING_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -253,6 +258,20 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     code: "OVERAGE_UNSUPPORTED_FUNDING",
     errorType: ErrorTypes.UNSUPPORTED_CONFIG,
     httpStatus: 409,
+  },
+  // #1467 — both were bare `new Error(...)` and so fell through the
+  // message-only fallback to 500 UNKNOWN_ERROR. A member whose organisation's
+  // contract had merely lapsed could not tell the refusal from a crash, and
+  // every one of them opened a Sentry incident.
+  {
+    code: "PROGRAM_ASSIGNMENT_INACTIVE",
+    errorType: ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE,
+    httpStatus: 409,
+  },
+  {
+    code: "BILLING_SUSPENDED_DUNNING",
+    errorType: ErrorTypes.BILLING_SUSPENDED_DUNNING,
+    httpStatus: 402,
   },
 ] as const;
 

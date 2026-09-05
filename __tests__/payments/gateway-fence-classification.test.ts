@@ -122,4 +122,23 @@ describe("gateway fence classification", () => {
       ).httpStatus,
     ).toBe(409);
   });
+
+  // #1467 — a lapsed contract and a dunning suspension are org entitlement
+  // states the member's admin can clear. Both threw bare Errors, so the
+  // message-only fallback answered 500 UNKNOWN_ERROR on a routine refusal.
+  it.each([
+    ["PROGRAM_ASSIGNMENT_INACTIVE", 409],
+    ["BILLING_SUSPENDED_DUNNING", 402],
+  ])("classifies %s as a business rejection with status %i", (code, status) => {
+    const classified = classifyError(
+      Object.assign(new Error("refused"), { code }),
+    );
+
+    expect(classified.isBusinessError).toBe(true);
+    expect(classified.httpStatus).toBe(status);
+
+    const toast = getErrorToast(classified.errorType);
+    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.description).toContain("admin");
+  });
 });

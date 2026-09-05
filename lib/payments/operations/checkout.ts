@@ -1552,8 +1552,15 @@ async function revalidateInsideLock(
           select: { id: true },
         });
         if (suspended) {
-          throw new Error(
-            "This organization is suspended from new sponsored bookings until its overdue invoice is paid.",
+          // #1467 — the in-lock re-check of the same dunning gate. It throws
+          // inside the checkout transaction, so without the code the catch below
+          // rewrites it to "Failed to record payment information"; with it the
+          // buyer gets the same 402 the pre-lock gate returns.
+          throw Object.assign(
+            new Error(
+              "This organization is suspended from new sponsored bookings until its overdue invoice is paid.",
+            ),
+            { httpStatus: 402, code: "BILLING_SUSPENDED_DUNNING" },
           );
         }
       }
@@ -2526,8 +2533,15 @@ export async function handleCheckout(
         orderBy: { dueDate: "asc" },
       });
       if (suspended) {
-        throw new Error(
-          `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+        // #1467 — same shape as the assignment refusal below: a bare Error here
+        // would 500 the moment the flag is switched on. 402 because the block is
+        // lifted by paying money that is already owed, which is exactly what
+        // Payment Required means to the buyer's client.
+        throw Object.assign(
+          new Error(
+            `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+          ),
+          { httpStatus: 402, code: "BILLING_SUSPENDED_DUNNING" },
         );
       }
     }
@@ -2664,10 +2678,19 @@ export async function handleCheckout(
       });
 
       if (!assignment) {
-        throw new Error(
-          "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
-            appointmentType +
-            ".",
+        // #1467 — a lapsed contract or a closed programme is a routine refusal
+        // the member's own admin can undo, but the bare Error matched nothing in
+        // BUSINESS_ERROR_PATTERNS and classifyError answered 500 UNKNOWN_ERROR:
+        // the buyer could not tell it from a crash and Sentry logged a false
+        // incident. 409 because the request is well-formed and the org's
+        // entitlement state is what conflicts with it.
+        throw Object.assign(
+          new Error(
+            "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
+              appointmentType +
+              ".",
+          ),
+          { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
         );
       }
       programAssignmentId = assignment.id;
