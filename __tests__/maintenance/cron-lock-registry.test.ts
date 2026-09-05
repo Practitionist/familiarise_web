@@ -222,4 +222,21 @@ describe("cron lock registry (#1169)", () => {
     );
     expect(orphaned).toEqual([]);
   });
+
+  it("gives every scheduled workflow a queueing concurrency group", () => {
+    // #1413 — a second, redundant guard alongside withCronLock: an overlap
+    // should queue behind the in-flight run at the Actions layer too, not
+    // just at the Redis layer. cancel-in-progress must stay false, since
+    // killing a mid-flight money job is the one thing worse than a double run.
+    const missing = registry
+      .map((r) => r.workflow)
+      .filter((workflow) => {
+        const src = read(path.join(WORKFLOW_DIR, workflow));
+        if (!src) return true;
+        const hasGroup = /^concurrency:\s*\n\s*group:\s*\S+/m.test(src);
+        const hasNoCancel = /cancel-in-progress:\s*false/.test(src);
+        return !(hasGroup && hasNoCancel);
+      });
+    expect(missing).toEqual([]);
+  });
 });
