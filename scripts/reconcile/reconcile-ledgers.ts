@@ -446,6 +446,11 @@ async function runReconcileLedgersUnlocked(
           overageBehavior: "CHARGE_ORG",
           chargeStatus: { in: ["ACCRUED", "CHARGED"] },
           invoiceLineItemId: null,
+          // #1458 — a wallet-funded CHARGE_ORG overage is collected by the
+          // booking's own wallet debit and never reaches an invoice, so it is
+          // born CHARGED with a paymentId and no line item. Either link is
+          // proof of collection; neither is the drift this check hunts.
+          paymentId: null,
         },
         { chargeStatus: "CHARGED", settledAt: null },
       ],
@@ -485,7 +490,7 @@ async function runReconcileLedgersUnlocked(
         paymentId: ev.paymentId,
         invoiceLineItemId: ev.invoiceLineItemId,
         settledAt: ev.settledAt,
-        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued/charged without an InvoiceLineItem, or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
+        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued/charged with neither an InvoiceLineItem nor the wallet-funded booking Payment that collected it (#1458), or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
       },
     });
   }

@@ -37,8 +37,12 @@ function makeTx(opts: {
   surchargeBps?: number | null;
   priceCap?: number | null;
   overageBehavior?: "CHARGE_ORG" | "CHARGE_MEMBER";
+  /** #1458 — which funding rail wrote the parent's base leg. */
+  baseSource?: "INVOICE_ACCRUAL" | "WALLET";
 }) {
-  const legs: Leg[] = [{ source: "INVOICE_ACCRUAL", amountPaise: opts.price }];
+  const legs: Leg[] = [
+    { source: opts.baseSource ?? "INVOICE_ACCRUAL", amountPaise: opts.price },
+  ];
   const payment = { amount: opts.price };
   const children: { amount: number }[] = [];
   let childSeq = 0;
@@ -165,6 +169,48 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
     ]);
     expect(state.payment.amount).toBe(100_000); // no surcharge → unchanged
     expect(sum(state.legs)).toBe(state.payment.amount); // covered + overage == price
+  });
+});
+
+describe("recordOverageAtCheckout — CHARGE_ORG on the WALLET rail (#1458)", () => {
+  it("leaves the payment at the wallet debit, adds no leg, and records the overage as collected", async () => {
+    const walletDebit = 258_326;
+    const { state, tx } = makeTx({
+      price: walletDebit,
+      cap: 5,
+      used: 5,
+      baseSource: "WALLET",
+    });
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(walletDebit),
+    });
+
+    // The wallet already took the whole price at commit, so the marginal is
+    // collected: no OVERAGE_INVOICE_ACCRUAL leg, no amount bump.
+    expect(state.legs).toEqual([
+      { source: "WALLET", amountPaise: walletDebit },
+    ]);
+    expect(state.payment.amount).toBe(walletDebit);
+    expect(sum(state.legs)).toBe(state.payment.amount);
+    expect(tx.paymentLeg.create).not.toHaveBeenCalled();
+    expect(tx.payment.update).not.toHaveBeenCalled();
+
+    expect(tx.overageEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "CHARGED",
+          paymentId: "pay1",
+          settledAt: expect.any(Date),
+        }),
+      }),
+    );
+
+    // The cancellation quote is a percentage of Payment.amount and the refund
+    // cascade splits it across the legs — with one WALLET leg equal to amount,
+    // a 100% refund returns exactly the debit and not a paisa more.
+    expect(state.payment.amount).toBe(walletDebit);
   });
 });
 

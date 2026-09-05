@@ -108,6 +108,7 @@ import {
 import { sumPaise } from "@/lib/payments/utils/money";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
+import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -3329,8 +3330,15 @@ export async function handleCheckout(
                   // never happens.
                   exhaustedBell.programAssignmentId = programAssignmentId;
 
-                  throw new Error(
-                    "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                  // #1458 — a stable code, because the message-preservation
+                  // list below never matched this sentence and the buyer got
+                  // "Failed to record payment information" for a cap they can
+                  // ask an admin to raise.
+                  throw Object.assign(
+                    new Error(
+                      "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                    ),
+                    { httpStatus: 402, code: "PROGRAM_SESSION_CAP_REACHED" },
                   );
                 }
                 throw err;
@@ -3748,6 +3756,11 @@ export async function handleCheckout(
         dbError instanceof WalletFrozenError ||
         dbError instanceof ProgramAssignmentLimitError ||
         dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
+        // #1458 — the per-assignment session cap is the same class of modelled
+        // refusal as the per-cycle overage ceiling above. The overage funding
+        // codes are deliberately NOT here: they mean a programme was configured
+        // in a shape we cannot collect on, which has to keep paging.
+        dbErrorCode === "PROGRAM_SESSION_CAP_REACHED" ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
             // Word-bounded: bare `includes` let "full" match "successful" and
@@ -3772,6 +3785,16 @@ export async function handleCheckout(
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
       if (dbError instanceof WalletFrozenError) {
+        throw dbError;
+      }
+
+      // #1458 — an error carrying a registered business code already resolves
+      // to its own status and toast in the classifier, so rewriting it to the
+      // generic message below is pure loss: PROGRAM_CAP_EXHAUSTED was thrown as
+      // a 402 with actionable copy and reached the buyer as a 500
+      // "Something Went Wrong". Codes are checked before messages because a
+      // code survives a reworded sentence and a substring does not.
+      if (dbError instanceof Error && isBusinessErrorCode(dbErrorCode)) {
         throw dbError;
       }
 

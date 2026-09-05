@@ -13,6 +13,7 @@
 import {
   REACHABLE_ORG_FUNDING_PATHS,
   isReachableOrgFundingPath,
+  overageBehaviorUnsupportedReason,
   capabilityOf,
 } from "@/lib/enterprise/reachable-paths";
 
@@ -66,6 +67,30 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
       expect(
         isReachableOrgFundingPath("HYBRID", "LICENSE", "LICENSED_SEAT"),
       ).toBe(true);
+    });
+  });
+
+  // #1458 — the matrix sanctions SPONSOR + WALLET + CREDIT_POOL, but a wallet
+  // debit takes the whole booking price at commit, so there is nothing left to
+  // carve back out for a member charge. Checkout could only fail closed after
+  // the member had picked a slot; the config is what has to be refused.
+  describe("overageBehaviorUnsupportedReason", () => {
+    it("refuses CHARGE_MEMBER on a WALLET-funded account, naming #715", () => {
+      const reason = overageBehaviorUnsupportedReason(
+        "WALLET",
+        "CHARGE_MEMBER",
+      );
+      expect(reason).toContain("#715");
+    });
+
+    it("allows CHARGE_ORG and BLOCK on WALLET, and CHARGE_MEMBER on INVOICE", () => {
+      expect(
+        overageBehaviorUnsupportedReason("WALLET", "CHARGE_ORG"),
+      ).toBeNull();
+      expect(overageBehaviorUnsupportedReason("WALLET", "BLOCK")).toBeNull();
+      expect(
+        overageBehaviorUnsupportedReason("INVOICE", "CHARGE_MEMBER"),
+      ).toBeNull();
     });
   });
 

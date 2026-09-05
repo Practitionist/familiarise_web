@@ -103,6 +103,23 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Invoice funding needs a verified domain on your organisation; ask your billing admin to verify it, or pay by card instead. Your card was not charged.",
   },
+  // #1458 — the programme ran out of budget or was configured with a rail we do
+  // not collect on. Neither is fixed by retrying, so each toast names the person
+  // who can actually unblock the booking.
+  [ErrorTypes.PROGRAM_CAP_EXHAUSTED]: {
+    title: "Programme Budget Used Up",
+    description:
+      "Your organisation's programme budget for this cycle is used up; ask your admin or pay yourself if allowed.",
+  },
+  [ErrorTypes.PROGRAM_SESSION_CAP_REACHED]: {
+    title: "Programme Session Cap Reached",
+    description: null, // The server message already names the admin action.
+  },
+  [ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED]: {
+    title: "Programme Not Bookable Past Its Cap",
+    description:
+      "This programme is set to charge members for bookings past its cap, which is not available on a wallet-funded organisation. Ask your billing admin to switch the programme to charge the organisation or to block over-cap bookings.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

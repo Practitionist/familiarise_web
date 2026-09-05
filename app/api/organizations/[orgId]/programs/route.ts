@@ -16,6 +16,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   capabilityOf,
   isReachableOrgFundingPath,
+  overageBehaviorUnsupportedReason,
 } from "@/lib/enterprise/reachable-paths";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -311,6 +312,23 @@ export async function POST(
         error: `${body.type} programs are not allowed for a ${capability ?? "non-sponsoring"} organization on a ${fundingSource ?? "unknown"}-funded contract. This combination isn't part of the supported funding matrix.`,
         code: "UNREACHABLE_FUNDING_PATH",
       },
+      { status: 400 },
+    );
+  }
+
+  // #1458 — the matrix above sanctions the funding shape but says nothing about
+  // what happens past the cap. CHARGE_MEMBER on a wallet-funded contract only
+  // failed at checkout, inside the booking transaction, so the refusal landed on
+  // a member who had already picked a slot. Refuse it here instead.
+  const overageReason = overageBehaviorUnsupportedReason(
+    fundingSource,
+    body.type === "LICENSED_SEAT"
+      ? body.licensedSeatConfig.overageBehavior
+      : body.creditPoolConfig.overageBehavior,
+  );
+  if (overageReason) {
+    return NextResponse.json(
+      { error: overageReason, code: "INVALID_OVERAGE_CONFIG" },
       { status: 400 },
     );
   }

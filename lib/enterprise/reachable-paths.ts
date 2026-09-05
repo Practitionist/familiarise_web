@@ -12,7 +12,11 @@
  * for that capability.
  */
 
-import type { FundingSource, ProgramType } from "@prisma/client";
+import type {
+  FundingSource,
+  OverageBehavior,
+  ProgramType,
+} from "@prisma/client";
 
 export type ReachableCapability =
   | "PERSONAL_TAG" // not a real Program — tag-only attribution
@@ -58,6 +62,37 @@ export function isReachableOrgFundingPath(
         (p.fundingSource as unknown) === "any") &&
       (p.programType === programType || p.programType === "any"),
   );
+}
+
+/**
+ * The reason a programme's overage behaviour cannot be honoured on a given
+ * funding source, or `null` when the combination is supported.
+ *
+ * #1458 — the funding matrix above says which (capability, funding, programme
+ * type) shapes exist; it says nothing about what happens once a booking goes
+ * past the cap, and that gap let a wallet-funded organisation save a programme
+ * that charges its members. Collecting from a member requires carving the
+ * over-cap portion back out of the parent payment, which on the wallet rail
+ * would mean crediting the wallet mid-transaction — the credit-back that #715
+ * has never built. Checkout therefore refused the booking at commit, after the
+ * member had already picked a slot. Refusing the CONFIGURATION instead means
+ * the state is unreachable rather than merely fatal.
+ *
+ * The message is returned rather than thrown so both the create route (a Zod
+ * refinement) and the patch route (an inline `fail()`) can raise it in their own
+ * shape without either of them owning the rule.
+ */
+export function overageBehaviorUnsupportedReason(
+  fundingSource: FundingSource | null,
+  overageBehavior: OverageBehavior,
+): string | null {
+  if (fundingSource === "WALLET" && overageBehavior === "CHARGE_MEMBER") {
+    return (
+      "A wallet-funded organisation cannot charge members for bookings past the programme cap, because the wallet debit has already collected the whole booking price and the member credit-back is not implemented (#715). " +
+      "Choose CHARGE_ORG, which is collected by that same wallet debit, or BLOCK to stop over-cap bookings."
+    );
+  }
+  return null;
 }
 
 /**
