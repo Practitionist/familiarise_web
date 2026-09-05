@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { deriveDirectoryRating } from "@/lib/data/public-stats";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 /**
@@ -127,7 +128,7 @@ export const getHomeReviews = unstable_cache(
  */
 export const getHomeStats = unstable_cache(
   async () => {
-    const [totalConsultants, ratingAggregate, completedSessions, byDomain] =
+    const [totalConsultants, ratedProfiles, completedSessions, byDomain] =
       await Promise.all([
         // #781 §B — soft-deleted profiles leave public surfaces.
         prisma.consultantProfile.count({
@@ -135,19 +136,17 @@ export const getHomeStats = unstable_cache(
         }),
         // The PUBLISHED score, not the raw `rating` mean: `rating` defaults to
         // 0 and every unreviewed profile carries that default. `publishedRating`
-        // is NULL below the #705 suppression threshold and Prisma's `_avg`
-        // skips NULLs. `reviewCount` rides along as the denominator, so the
-        // filter scopes it to the SAME profiles `_avg` used — a suppressed
-        // profile's reviews must not help clear the display threshold for an
-        // average they contributed nothing to (#1485).
-        prisma.consultantProfile.aggregate({
+        // is NULL below the #705 suppression threshold, so filtering it out
+        // leaves only publishable scores. Weighting by review happens in the
+        // shared `deriveDirectoryRating`, which `/explore/experts` calls too so
+        // the landing hero and the directory cannot drift (#1485).
+        prisma.consultantProfile.findMany({
           where: {
             verificationStatus: "VERIFIED",
             deletedAt: null,
             publishedRating: { not: null },
           },
-          _avg: { publishedRating: true },
-          _sum: { reviewCount: true },
+          select: { publishedRating: true, reviewCount: true },
         }),
         // Meetings actually held. The unit is the SLOT: an Appointment carries
         // no status of its own and a subscription spans many meetings.
@@ -170,8 +169,7 @@ export const getHomeStats = unstable_cache(
 
     return {
       totalConsultants,
-      averageRating: ratingAggregate._avg.publishedRating || 0,
-      publishedReviewCount: ratingAggregate._sum.reviewCount || 0,
+      ...deriveDirectoryRating(ratedProfiles),
       completedSessions,
       // Keyed lowercase so the hardcoded category labels can look themselves up
       // without depending on how a domain happens to be capitalised.

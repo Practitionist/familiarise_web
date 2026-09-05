@@ -15,6 +15,7 @@
 import {
   buildExpertHeroStats,
   buildProgramHeroStats,
+  deriveDirectoryRating,
   MIN_REVIEWS_FOR_PUBLIC_RATING,
 } from "../../lib/data/public-stats";
 
@@ -42,6 +43,49 @@ const NO_PROGRAMS = {
   publishedWebinarCount: 0,
   enrolledLearnerCount: 0,
 };
+
+describe("deriveDirectoryRating", () => {
+  it("weights by review, so a five-review newcomer cannot outvote a busy expert", () => {
+    const rating = deriveDirectoryRating([
+      { publishedRating: 4.0, reviewCount: 100 },
+      { publishedRating: 5.0, reviewCount: 5 },
+    ]);
+
+    // (4.0 × 100 + 5.0 × 5) / 105 = 4.0476…, displayed "4.0". The unweighted
+    // mean would read 4.5 — half a star of social proof conjured out of one
+    // lightly-reviewed profile. Asserted raw: rounding is a display concern.
+    expect(rating.averageRating).toBeCloseTo(425 / 105, 10);
+    expect(rating.publishedReviewCount).toBe(105);
+    expect(rating.averageRating.toFixed(1)).toBe("4.0");
+  });
+
+  it("skips suppressed profiles entirely, so their reviews never clear the gate", () => {
+    // #705 leaves `publishedRating` NULL below the suppression threshold; those
+    // reviews back no published number and must not count toward the one that
+    // licenses showing it.
+    const rating = deriveDirectoryRating([
+      { publishedRating: null, reviewCount: 40 },
+      { publishedRating: 4.5, reviewCount: 2 },
+    ]);
+
+    expect(rating.averageRating).toBe(4.5);
+    expect(rating.publishedReviewCount).toBe(2);
+    expect(rating.publishedReviewCount).toBeLessThan(
+      MIN_REVIEWS_FOR_PUBLIC_RATING,
+    );
+    expect(buildExpertHeroStats({ ...NO_EXPERTS, ...rating })).toEqual([]);
+  });
+
+  it("returns a zero rating rather than NaN when nothing qualifies", () => {
+    expect(deriveDirectoryRating([])).toEqual({
+      averageRating: 0,
+      publishedReviewCount: 0,
+    });
+    expect(
+      deriveDirectoryRating([{ publishedRating: 5, reviewCount: 0 }]),
+    ).toEqual({ averageRating: 0, publishedReviewCount: 0 });
+  });
+});
 
 describe("buildExpertHeroStats", () => {
   it("emits nothing at all when every figure is zero", () => {

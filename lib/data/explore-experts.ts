@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { IConsultantCardData } from "@/types/consultant";
+import { deriveDirectoryRating } from "@/lib/data/public-stats";
 
 /**
  * Server-side data access for the explore experts page.
@@ -222,7 +223,7 @@ export async function fetchExpertsMetadata() {
       const [
         totalConsultants,
         consultantsByDomain,
-        ratingAggregate,
+        ratedProfiles,
         completedSessions,
       ] = await Promise.all([
         prisma.consultantProfile.count({
@@ -243,22 +244,18 @@ export async function fetchExpertsMetadata() {
         }),
         // #1485 — the PUBLISHED score, not the raw `rating` mean. `rating`
         // defaults to 0 and every unreviewed profile carries that default, so
-        // averaging it across the directory understated the real figure and
-        // was not a number anyone could defend. `publishedRating` is NULL
-        // below the #705 suppression threshold and Prisma's `_avg` skips
-        // NULLs, so this averages only consultants with a publishable score.
-        // `reviewCount` rides along as the denominator the caller gates on, so
-        // the filter scopes it to the SAME profiles `_avg` used — a suppressed
-        // profile's reviews must not help clear the display threshold for an
-        // average they contributed nothing to.
-        prisma.consultantProfile.aggregate({
+        // averaging it across the directory was not a number anyone could
+        // defend. `publishedRating` is NULL below the #705 suppression
+        // threshold, so filtering it out leaves only publishable scores. The
+        // rows are weighted by review in `deriveDirectoryRating` rather than
+        // by `_avg`, which cannot express a weighted mean.
+        prisma.consultantProfile.findMany({
           where: {
             verificationStatus: "VERIFIED",
             deletedAt: null,
             publishedRating: { not: null },
           },
-          _avg: { publishedRating: true },
-          _sum: { reviewCount: true },
+          select: { publishedRating: true, reviewCount: true },
         }),
         // #1485 — the real "sessions completed" figure, replacing a hardcoded
         // "50K+". The unit is the SLOT, not the appointment: a slot is one
@@ -279,8 +276,7 @@ export async function fetchExpertsMetadata() {
           name: d.name,
           consultantCount: d._count.consultantProfiles,
         })),
-        averageRating: ratingAggregate._avg.publishedRating || 0,
-        publishedReviewCount: ratingAggregate._sum.reviewCount || 0,
+        ...deriveDirectoryRating(ratedProfiles),
         completedSessions,
       };
     })(),

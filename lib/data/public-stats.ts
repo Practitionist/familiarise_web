@@ -21,6 +21,55 @@
  */
 export const MIN_REVIEWS_FOR_PUBLIC_RATING = 5;
 
+/** One consultant's publishable score and the reviews standing behind it. */
+export interface IRatedProfile {
+  publishedRating: number | null;
+  reviewCount: number;
+}
+
+export interface IDirectoryRating {
+  /** Mean over REVIEWS, not over consultants; 0 when none qualify. */
+  averageRating: number;
+  /** The reviews that actually fed that mean — the gate's denominator. */
+  publishedReviewCount: number;
+}
+
+/**
+ * The directory-wide "Average Rating" as a visitor reads that label: the mean
+ * over published REVIEWS, `Σ(rating × reviewCount) / Σ(reviewCount)`, not the
+ * mean over consultants.
+ *
+ * Weighting matters because the unweighted figure lets a five-review newcomer
+ * outvote an expert with a hundred: A at 100×4.0 with B at 5×5.0 reads 4.5
+ * unweighted and 4.05 weighted, and only the second is a number the platform
+ * could defend. It is also the conservative one, and it counts exactly the
+ * population the `MIN_REVIEWS_FOR_PUBLIC_RATING` gate counts, so the figure and
+ * its threshold can no longer disagree about who they are describing.
+ *
+ * Prisma's `_avg` cannot express this, so both loaders fetch the gated rows and
+ * call in here — the row set is the verified directory and both callers are
+ * cached. Profiles below the #705 suppression threshold carry a NULL
+ * `publishedRating` and are skipped, so their reviews neither move the mean nor
+ * help clear the gate. Rounding happens at display only; the maths stays exact.
+ */
+export function deriveDirectoryRating(
+  profiles: IRatedProfile[],
+): IDirectoryRating {
+  let weightedSum = 0;
+  let reviews = 0;
+
+  for (const profile of profiles) {
+    if (profile.publishedRating === null || profile.reviewCount <= 0) continue;
+    weightedSum += profile.publishedRating * profile.reviewCount;
+    reviews += profile.reviewCount;
+  }
+
+  return {
+    averageRating: reviews > 0 ? weightedSum / reviews : 0,
+    publishedReviewCount: reviews,
+  };
+}
+
 export interface IPublicStat<K extends string> {
   key: K;
   /** The raw figure, for callers that animate it (the landing counters). */
@@ -36,7 +85,7 @@ export type ProgramStatKey = "classes" | "webinars" | "learners";
 export interface IExpertStatsInput {
   /** Verified, non-deleted consultant profiles. */
   totalConsultants: number;
-  /** Mean of the PUBLISHED per-consultant scores; 0 when none qualify. */
+  /** Review-weighted mean of the PUBLISHED scores; 0 when none qualify. */
   averageRating: number;
   /** Published reviews across the directory — the rating's denominator. */
   publishedReviewCount: number;
