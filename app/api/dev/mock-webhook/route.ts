@@ -20,6 +20,7 @@
  *   - payout.rejected: Marks payout as failed
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
@@ -71,8 +72,28 @@ interface MockWebhookResponse {
  * was never load-bearing here — this app deploys on Netlify, which sets no
  * `VERCEL_ENV`, so the branch had been dead since it was written.
  */
-function isDevelopment(): boolean {
-  return process.env.NODE_ENV === "development";
+function isDevelopment(request?: NextRequest): boolean {
+  if (
+    process.env.NODE_ENV === "development" ||
+    process.env.VERCEL_ENV === "preview"
+  ) {
+    return true;
+  }
+  // test/finance-union ONLY (this branch is never merged): a Netlify deploy
+  // preview may replay events when the caller proves it holds the preview's
+  // CRON_SECRET. ALLOW_PREVIEW_WEBHOOK_REPLAY is set only in the Netlify
+  // deploy-preview context (CONTEXT is not visible to the function at runtime).
+  return previewReplayAuthorized(request);
+}
+
+function previewReplayAuthorized(request?: NextRequest): boolean {
+  if (process.env.ALLOW_PREVIEW_WEBHOOK_REPLAY !== "true" || !request)
+    return false;
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const auth = request.headers.get("authorization") ?? "";
+  const sha = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(sha(auth), sha(`Bearer ${secret}`));
 }
 
 // ============================================
@@ -356,7 +377,7 @@ async function handleMockPayoutRejected(
 
 export async function POST(request: NextRequest) {
   // Block in production
-  if (!isDevelopment()) {
+  if (!isDevelopment(request)) {
     return NextResponse.json(
       {
         success: false,
