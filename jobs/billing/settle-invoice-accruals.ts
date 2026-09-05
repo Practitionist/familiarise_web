@@ -36,8 +36,6 @@ export async function settleInvoiceAccruals(): Promise<{
   orgsProcessed: number;
   invoicesCreated: number;
 }> {
-  await abortIfMaintenance("settle-invoice-accruals");
-
   if (process.env.ENABLE_CONSOLIDATED_INVOICE === "false") {
     console.log(
       '[settle-invoice-accruals] ENABLE_CONSOLIDATED_INVOICE === "false" — skipping (explicit opt-out)',
@@ -108,16 +106,33 @@ export async function settleInvoiceAccruals(): Promise<{
   return { orgsProcessed: rows.length, invoicesCreated };
 }
 
+/**
+ * The locked core both entry points share — the Actions run below and the
+ * CRON_SECRET twin at `app/api/cleanup/settle-invoice-accruals/route.ts`. The
+ * lock has to live here rather than in `main`, or the HTTP call would bill the
+ * same accrual set alongside a scheduled run. The maintenance guard does NOT:
+ * `abortIfMaintenance` exits the process, which inside the Next server would
+ * take the instance down, so each entry point applies its own flavour
+ * (`abortIfMaintenance` here, `assertNotInMaintenance` in `cleanupRoute`).
+ */
+export async function runSettleInvoiceAccruals(): Promise<{
+  orgsProcessed: number;
+  invoicesCreated: number;
+}> {
+  return withCronLock(
+    "settle-invoice-accruals",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => settleInvoiceAccruals(),
+  );
+}
+
 async function main() {
   console.log(
     `[settle-invoice-accruals] Starting at ${new Date().toISOString()}`,
   );
   Sentry.logger.info("job:settle-invoice-accruals started");
-  const r = await withCronLock(
-    "settle-invoice-accruals",
-    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-    () => settleInvoiceAccruals(),
-  );
+  await abortIfMaintenance("settle-invoice-accruals");
+  const r = await runSettleInvoiceAccruals();
   console.log(
     `[settle-invoice-accruals] Done. orgsProcessed=${r.orgsProcessed} invoicesCreated=${r.invoicesCreated}`,
   );

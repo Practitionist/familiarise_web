@@ -384,114 +384,143 @@ function decryptPansByDeducteeKey(
   return fullPanByDeducteeKey;
 }
 
+/**
+ * The locked core both entry points share — the Actions run below and the
+ * CRON_SECRET twin at `app/api/cleanup/tds-return-draft/route.ts`. The
+ * maintenance guard stays OUT of it: `abortIfMaintenance` exits the process,
+ * which inside the Next server would take the instance down, so each entry
+ * point applies its own flavour (`abortIfMaintenance` here,
+ * `assertNotInMaintenance` in `cleanupRoute`).
+ */
+export async function runTdsReturnDraftExport(): Promise<{
+  financialYear: string;
+  quarter: number;
+  deducteeCount: number;
+  alreadyReported: number;
+  warnings: string[];
+  storagePath: string;
+}> {
+  // #476 — fail-open: the draft is a read-only export, harmless to repeat.
+  return await withCronLock(
+    "tds-26q-draft-export",
+    { failMode: "open" },
+    async () => {
+      const { financialYear, quarter } = resolveReturnPeriod();
+
+      const records = await prisma.tDSRecord.findMany({
+        where: { financialYear, quarter },
+        orderBy: { createdAt: "asc" },
+        select: {
+          consultantProfileId: true,
+          organizationId: true,
+          payoutId: true,
+          orgPayoutId: true,
+          tdsSection: true,
+          cumulativeAmountCredited: true,
+          tdsDeducted: true,
+          isReversal: true,
+          reportedInForm26Q: true,
+        },
+      });
+
+      const alreadyReported = records.filter((r) => r.reportedInForm26Q).length;
+
+      const byDeductee = accumulateByDeductee(records);
+      const consultantIds = [...byDeductee.values()]
+        .filter((a) => a.deducteeType === "CONSULTANT")
+        .map((a) => a.deducteeId);
+      const organizationIds = [...byDeductee.values()]
+        .filter((a) => a.deducteeType === "ORGANIZATION")
+        .map((a) => a.deducteeId);
+
+      const baselineByDeductee = await loadQuarterBaselines(
+        financialYear,
+        quarter,
+        consultantIds,
+        organizationIds,
+      );
+      const identityByKey = await loadDeducteeIdentities(
+        consultantIds,
+        organizationIds,
+      );
+      const sections = [
+        ...new Set(
+          [...byDeductee.values()]
+            .map((a) => a.section)
+            .filter((s): s is string => !!s),
+        ),
+      ];
+      const paymentCodeBySection = await loadPaymentCodesBySection(
+        sections,
+        financialYear,
+        quarter,
+      );
+
+      const rows = buildSourceRows(
+        byDeductee,
+        baselineByDeductee,
+        identityByKey,
+        paymentCodeBySection,
+      );
+
+      const draft = buildTdsReturnDraft(rows, financialYear, quarter);
+      if (alreadyReported > 0) {
+        draft.warnings.push(
+          `${alreadyReported} record(s) in scope are stamped reportedInForm26Q and were excluded — amendatory filings are manual.`,
+        );
+      }
+
+      // Masked: the draft carries panLast4 only, never a full PAN.
+      console.log("[tds-return-draft]", JSON.stringify(draft, null, 2));
+      for (const w of draft.warnings) {
+        console.warn(`[tds-return-draft] WARN ${w}`);
+      }
+
+      // ---- Full-PAN CSV → private bucket -----------------------------
+      const storagePath = tdsReturnCsvStoragePath(financialYear, quarter);
+      await uploadPrivateFinanceObject({
+        storagePath,
+        body: Buffer.from(
+          buildTdsReturnCsv(draft, decryptPansByDeducteeKey(identityByKey)),
+          "utf8",
+        ),
+        contentType: "text/csv; charset=utf-8",
+      });
+      // Path only — the object itself is the one place a full PAN lives, and
+      // it is reachable solely through the authenticated admin route.
+      console.log(`[tds-return-draft] CSV written to ${storagePath}`);
+
+      if (rows.length === 0) {
+        Sentry.logger.warn("job:tds-return-draft-empty", {
+          financialYear,
+          quarter,
+        });
+      }
+
+      return {
+        financialYear,
+        quarter,
+        deducteeCount: rows.length,
+        alreadyReported,
+        warnings: draft.warnings,
+        storagePath,
+      };
+    },
+  );
+}
+
 async function main() {
   // runJob returns void by design (it manages its own lifecycle) — no await.
   runJob("tds-26q-draft-export", async () => {
     await abortIfMaintenance("tds-26q-draft-export");
-    // #476 — fail-open: the draft is a read-only export, harmless to repeat.
-    await withCronLock(
-      "tds-26q-draft-export",
-      { failMode: "open" },
-      async () => {
-        const { financialYear, quarter } = resolveReturnPeriod();
-
-        const records = await prisma.tDSRecord.findMany({
-          where: { financialYear, quarter },
-          orderBy: { createdAt: "asc" },
-          select: {
-            consultantProfileId: true,
-            organizationId: true,
-            payoutId: true,
-            orgPayoutId: true,
-            tdsSection: true,
-            cumulativeAmountCredited: true,
-            tdsDeducted: true,
-            isReversal: true,
-            reportedInForm26Q: true,
-          },
-        });
-
-        const alreadyReported = records.filter(
-          (r) => r.reportedInForm26Q,
-        ).length;
-
-        const byDeductee = accumulateByDeductee(records);
-        const consultantIds = [...byDeductee.values()]
-          .filter((a) => a.deducteeType === "CONSULTANT")
-          .map((a) => a.deducteeId);
-        const organizationIds = [...byDeductee.values()]
-          .filter((a) => a.deducteeType === "ORGANIZATION")
-          .map((a) => a.deducteeId);
-
-        const baselineByDeductee = await loadQuarterBaselines(
-          financialYear,
-          quarter,
-          consultantIds,
-          organizationIds,
-        );
-        const identityByKey = await loadDeducteeIdentities(
-          consultantIds,
-          organizationIds,
-        );
-        const sections = [
-          ...new Set(
-            [...byDeductee.values()]
-              .map((a) => a.section)
-              .filter((s): s is string => !!s),
-          ),
-        ];
-        const paymentCodeBySection = await loadPaymentCodesBySection(
-          sections,
-          financialYear,
-          quarter,
-        );
-
-        const rows = buildSourceRows(
-          byDeductee,
-          baselineByDeductee,
-          identityByKey,
-          paymentCodeBySection,
-        );
-
-        const draft = buildTdsReturnDraft(rows, financialYear, quarter);
-        if (alreadyReported > 0) {
-          draft.warnings.push(
-            `${alreadyReported} record(s) in scope are stamped reportedInForm26Q and were excluded — amendatory filings are manual.`,
-          );
-        }
-
-        // Masked: the draft carries panLast4 only, never a full PAN.
-        console.log("[tds-return-draft]", JSON.stringify(draft, null, 2));
-        for (const w of draft.warnings) {
-          console.warn(`[tds-return-draft] WARN ${w}`);
-        }
-
-        // ---- Full-PAN CSV → private bucket -----------------------------
-        const storagePath = tdsReturnCsvStoragePath(financialYear, quarter);
-        await uploadPrivateFinanceObject({
-          storagePath,
-          body: Buffer.from(
-            buildTdsReturnCsv(draft, decryptPansByDeducteeKey(identityByKey)),
-            "utf8",
-          ),
-          contentType: "text/csv; charset=utf-8",
-        });
-        // Path only — the object itself is the one place a full PAN lives, and
-        // it is reachable solely through the authenticated admin route.
-        console.log(`[tds-return-draft] CSV written to ${storagePath}`);
-
-        if (rows.length === 0) {
-          Sentry.logger.warn("job:tds-return-draft-empty", {
-            financialYear,
-            quarter,
-          });
-        }
-      },
-    );
+    await runTdsReturnDraftExport();
   });
 }
 
-main().catch((err) => {
-  console.error("[tds-return-draft] fatal:", err);
-  process.exit(1);
-});
+// Guarded: importing this module from the HTTP twin must not fire the export.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[tds-return-draft] fatal:", err);
+    process.exit(1);
+  });
+}

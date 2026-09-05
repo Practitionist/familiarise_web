@@ -419,6 +419,25 @@ ALTER TABLE "onboarding_drafts" ADD CONSTRAINT "onboarding_draft_payload_size"
   CHECK (pg_column_size("payload") <= 65536);
 
 -- SPLIT
+-- #1405 — one OPEN rate-card window per scope. `bumpRateCard` closes the
+-- current card and inserts its replacement in one transaction, but under the
+-- default isolation two concurrent OWNER bumps each read "nothing open here"
+-- and each insert a row with `effectiveTo = NULL`; `findEffective` then picked
+-- between the two open windows non-deterministically, so the same booking
+-- could settle on either split. The route is Serializable + retried now; this
+-- index is the structural guarantee behind it. Three of the four scope columns
+-- are nullable and Postgres treats NULL key columns as distinct, which is
+-- exactly the case that must NOT be exempt, so NULL key columns
+-- are treated as equal via NULLS NOT DISTINCT (Postgres 15+); an enum-to-text
+-- COALESCE expression is not IMMUTABLE and Postgres refuses it in an index.
+DROP INDEX IF EXISTS "rate_card_one_open_window";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "rate_card_one_open_window"
+  ON "RateCard" ("ownerOrgId", "ownerContractId", "planType", "planId")
+  NULLS NOT DISTINCT
+  WHERE "effectiveTo" IS NULL;
+
+-- SPLIT
 -- #1365 — B2C tax invoices are documents, not postings, so nothing else asserts
 -- their arithmetic. A negative head on a statutory document is unfilable.
 ALTER TABLE "ConsumerInvoice" DROP CONSTRAINT IF EXISTS "consumer_invoice_amounts_nonnegative";

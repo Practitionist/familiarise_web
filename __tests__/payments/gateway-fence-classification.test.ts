@@ -13,6 +13,7 @@ import {
   DisabledGatewayError,
   UnsupportedGatewayError,
 } from "@/lib/payments/validation/gateway-guards";
+import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 
 describe("gateway fence classification", () => {
   it("classifies a disabled gateway as a 422 business rejection", () => {
@@ -60,4 +61,21 @@ describe("gateway fence classification", () => {
       expect(toast.description).toBeTruthy();
     },
   );
+
+  // #1407 — invoice funding's verified-domain guard throws its own typed 403,
+  // and with no BUSINESS_ERROR_CODES row it answered 500 UNKNOWN_ERROR: the
+  // buyer saw "something went wrong" for a condition their admin can fix.
+  it("classifies the verified-domain guard as an actionable 403", () => {
+    const classified = classifyError(
+      new DomainVerificationRequiredError("INVOICE_FUNDING"),
+    );
+
+    expect(classified.errorType).toBe(ErrorTypes.DOMAIN_VERIFICATION_REQUIRED);
+    expect(classified.isBusinessError).toBe(true);
+    expect(classified.httpStatus).toBe(403);
+
+    const toast = getErrorToast(classified.errorType);
+    expect(toast.title).toBe("Domain Verification Required");
+    expect(toast.description).toBeTruthy();
+  });
 });
