@@ -50,6 +50,7 @@ import type { NextRequest } from "next/server";
 import {
   cleanupRoute,
   InvalidLimitError,
+  parseLimitParam,
   statusFor,
 } from "../../lib/cron/cleanup-route";
 import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
@@ -84,6 +85,37 @@ describe("statusFor", () => {
   it("treats a result with no success field as successful", () => {
     // Several routes return counters only; absence is not failure.
     expect(statusFor({})).toBe(200);
+  });
+});
+
+/**
+ * #1459 — `reconcile-orphaned-confirmations` kept its own parser that logged a
+ * malformed `?limit=` and swept the defaults, so a broken caller produced a run
+ * that looked healthy. Every ticker target now shares this one, which is worth
+ * pinning directly rather than only through the route's 400 mapping.
+ */
+describe("parseLimitParam", () => {
+  const withLimit = (raw: string | null): NextRequest =>
+    ({
+      nextUrl: {
+        searchParams: new URLSearchParams(raw === null ? "" : { limit: raw }),
+      },
+    }) as unknown as NextRequest;
+
+  it("refuses a present-but-invalid limit instead of falling back to unbounded", () => {
+    // "" is `?limit=`: present, so it is junk rather than the absent default.
+    for (const raw of ["", "abc", "0", "-5", "2.5"]) {
+      expect(() => parseLimitParam(withLimit(raw))).toThrow(InvalidLimitError);
+    }
+  });
+
+  it("clamps above the cap and passes a sane value through", () => {
+    expect(parseLimitParam(withLimit("5000"))).toBe(500);
+    expect(parseLimitParam(withLimit("50"))).toBe(50);
+  });
+
+  it("treats an absent limit as the unbounded GitHub Actions run", () => {
+    expect(parseLimitParam(withLimit(null))).toBeUndefined();
   });
 });
 

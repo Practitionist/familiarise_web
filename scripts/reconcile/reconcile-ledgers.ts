@@ -442,10 +442,28 @@ async function runReconcileLedgersUnlocked(
           chargeStatus: { in: ["PENDING", "FAILED", "CHARGED"] },
           paymentId: null,
         },
+        // ACCRUED means "billed on an issued invoice", which only the rollup
+        // produces and which always stamps the line item. A payment link cannot
+        // stand in for it, so this branch keeps invoiceLineItemId mandatory.
         {
           overageBehavior: "CHARGE_ORG",
-          chargeStatus: { in: ["ACCRUED", "CHARGED"] },
+          chargeStatus: "ACCRUED",
           invoiceLineItemId: null,
+        },
+        // #1458 — a wallet-funded CHARGE_ORG overage is collected by the
+        // booking's own wallet debit and never reaches an invoice, so it is born
+        // CHARGED with a paymentId and no line item. That link is proof of
+        // collection only when the payment behind it actually carries the WALLET
+        // leg that did the collecting; any other CHARGED event with no line item
+        // is still the drift this check hunts.
+        {
+          overageBehavior: "CHARGE_ORG",
+          chargeStatus: "CHARGED",
+          invoiceLineItemId: null,
+          OR: [
+            { paymentId: null },
+            { payment: { legs: { none: { source: "WALLET" } } } },
+          ],
         },
         { chargeStatus: "CHARGED", settledAt: null },
       ],
@@ -485,7 +503,7 @@ async function runReconcileLedgersUnlocked(
         paymentId: ev.paymentId,
         invoiceLineItemId: ev.invoiceLineItemId,
         settledAt: ev.settledAt,
-        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued/charged without an InvoiceLineItem, or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
+        note: "OverageEvent link/state invariant violated: CHARGE_MEMBER pending/failed/charged without a side-Payment, CHARGE_ORG accrued without an InvoiceLineItem, CHARGE_ORG charged with neither an InvoiceLineItem nor a booking Payment carrying the WALLET leg that collected it (#1458), or CHARGED without settledAt. Trace the transitionOverage() path that produced this state.",
       },
     });
   }

@@ -50,12 +50,17 @@ export class InvalidLimitError extends Error {
  * the nightly GitHub Actions run, which can afford an unbounded batch — so the
  * ticker sends `?limit=50` and every other caller (Actions, manual `curl`)
  * omits it and keeps today's unbounded behaviour. A present-but-invalid value
- * (non-numeric, zero, negative, or fractional) throws {@link InvalidLimitError}
- * rather than being treated as absent; a value above the cap is clamped to it.
+ * (empty, non-numeric, zero, negative, or fractional) throws
+ * {@link InvalidLimitError} rather than being treated as absent; a value above
+ * the cap is clamped to it.
  */
 export function parseLimitParam(req: NextRequest): number | undefined {
   const raw = req.nextUrl.searchParams.get("limit");
-  if (!raw) return undefined;
+  // #1459 — only a missing key is absent. A truthiness test also swallowed
+  // `?limit=`, which is a caller that meant to bound the sweep and sent
+  // nothing: it would have got the unbounded batch back, the exact silent
+  // fall-through this parser exists to make visible.
+  if (raw === null) return undefined;
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) {
     throw new InvalidLimitError();

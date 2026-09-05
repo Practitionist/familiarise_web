@@ -16,8 +16,12 @@ import {
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
+  transitionConsultationRequest,
+  transitionSlotCompletion,
+  transitionSubscriptionRequest,
   transitionTrialSession,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
@@ -108,6 +112,7 @@ import {
 import { sumPaise } from "@/lib/payments/utils/money";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import { resolveCancellationPolicySnapshot } from "@/lib/payments/operations/cancellation-policy";
+import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -160,8 +165,18 @@ type SubscriptionCheckoutResult = {
  * 15 keys, leaving no headroom for the next one, and the discount is already
  * reflected in the order amount and recorded on the Payment row, while nothing
  * in the webhook path ever reads it back out of the gateway.
+ *
+ * #1462 — an optional field with no value is omitted rather than emitted as an
+ * empty string, because the webhook schemas type those fields as `.optional()`,
+ * which admits an absent key but rejects `""`; sending the empty key made every
+ * scheduling-period subscription fail validation at capture, and it also spent
+ * key budget the 15-key ceiling above has no room for.
  */
 const GATEWAY_NOTE_MAX_CHARS = 256;
+
+/** Why a superseded open order's booking was cancelled (#1463). */
+const SUPERSEDED_HOLD_NOTE =
+  "Superseded by a newer checkout attempt for the same booking";
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -181,18 +196,31 @@ export function buildPaymentMetadata(
     fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null;
   },
 ): { appointmentId: string; appointmentType: string; [key: string]: string } {
+  const notes = (data.notes || "").slice(0, GATEWAY_NOTE_MAX_CHARS);
   return {
     appointmentId: "pending",
     appointmentType: data.appointmentType,
     userId: userId,
     planId: data.planId,
-    startsAt: data.startsAt || "",
-    endsAt: data.endsAt || "",
-    slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId || "",
-    slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId || "",
-    schedulingPeriodStartsAt: data.schedulingPeriodStartsAt || "",
-    schedulingPeriodEndsAt: data.schedulingPeriodEndsAt || "",
-    notes: (data.notes || "").slice(0, GATEWAY_NOTE_MAX_CHARS),
+    // #1462 — every key below is conditional. A scheduling-period subscription
+    // carries no direct slots, so `startsAt`/`endsAt` used to reach the gateway
+    // as `""` and then failed `z.string().datetime().optional()` on the way
+    // back in, stranding a captured sale as REQUIRES_MANUAL_RECOVERY.
+    ...(data.startsAt && { startsAt: data.startsAt }),
+    ...(data.endsAt && { endsAt: data.endsAt }),
+    ...(data.slotOfAvailabilityWeeklyId && {
+      slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId,
+    }),
+    ...(data.slotOfAvailabilityCustomId && {
+      slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId,
+    }),
+    ...(data.schedulingPeriodStartsAt && {
+      schedulingPeriodStartsAt: data.schedulingPeriodStartsAt,
+    }),
+    ...(data.schedulingPeriodEndsAt && {
+      schedulingPeriodEndsAt: data.schedulingPeriodEndsAt,
+    }),
+    ...(notes && { notes }),
     ...(data.eventId && { eventId: data.eventId }),
     ...(orgContext?.organizationId && {
       organizationId: orgContext.organizationId,
@@ -239,11 +267,30 @@ interface ReusableOrder {
   amount: number;
   currency: string;
   isMockPayment: boolean;
-  /** First slot of the booked window (consultation/class shape); empty for
+  /** The booked window's slot rows (consultation/class shape); empty for
    *  subscription placeholders whose period lives on the slot rows too. */
   appointment?: {
     slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }>;
   } | null;
+}
+
+/**
+ * The [start, end) a set of slot rows actually covers.
+ *
+ * #1463 — a booked window is stored as N contiguous 30-minute atoms (#1319), so
+ * the window gate below cannot read the first row's endpoints: for anything
+ * longer than half an hour the first atom ends 30 minutes into the booking and
+ * every resume was rejected as a slot-window mismatch. The run's first start and
+ * last end are the window.
+ */
+function slotRunWindow(
+  slots: Array<{ startsAt: Date; endsAt: Date }> | undefined,
+): { startsAt: Date; endsAt: Date } | null {
+  if (!slots || slots.length === 0) return null;
+  return {
+    startsAt: new Date(Math.min(...slots.map((s) => s.startsAt.getTime()))),
+    endsAt: new Date(Math.max(...slots.map((s) => s.endsAt.getTime()))),
+  };
 }
 
 export async function findReusablePendingOrderPayment(
@@ -323,7 +370,9 @@ export async function findReusablePendingOrderPayment(
           slotsOfAppointment: {
             select: { startsAt: true, endsAt: true },
             orderBy: { startsAt: "asc" as const },
-            take: 1,
+            // #1463 — the whole run, not its first atom. Bounded well above any
+            // single bookable window so a pathological row cannot widen the read.
+            take: 48,
           },
         },
       },
@@ -341,14 +390,14 @@ export async function findReusablePendingOrderPayment(
     // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
     // DIFFERENT appointment time must never resume the first attempt's order.
     if (params.appointmentType === "CONSULTATION") {
-      const slot = appt?.slotsOfAppointment?.[0];
-      if (!params.slotWindow || !slot) {
+      const run = slotRunWindow(appt?.slotsOfAppointment);
+      if (!params.slotWindow || !run) {
         supersede.push({ id: candidate.id, reason: "window-unmatchable" });
         continue;
       }
       if (
-        slot.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
-        slot.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
+        run.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
+        run.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
       ) {
         supersede.push({ id: candidate.id, reason: "slot-window-mismatch" });
         continue;
@@ -358,10 +407,7 @@ export async function findReusablePendingOrderPayment(
       const reqPeriod = params.schedulingPeriod ?? null;
       // Subscription windows ride the SAME slot rows as consultations — the
       // minted placeholder's slot carries the scheduling-period bounds.
-      const subSlot = appt?.slotsOfAppointment?.[0];
-      const rowPeriod = subSlot
-        ? { startsAt: subSlot.startsAt, endsAt: subSlot.endsAt }
-        : null;
+      const rowPeriod = slotRunWindow(appt?.slotsOfAppointment);
       if (!!reqPeriod !== !!rowPeriod) {
         supersede.push({ id: candidate.id, reason: "period-mismatch" });
         continue;
@@ -390,6 +436,122 @@ export async function findReusablePendingOrderPayment(
   }
 
   return { reusable: reusable[0] ?? null, supersede };
+}
+
+/**
+ * #1463 — superseding an open order is a RELEASE, not just a status flip.
+ *
+ * Expiring the Payment row alone left the superseded attempt's tentative
+ * appointment and slots occupying the calendar, so the very next attempt for
+ * the same window hit "Time slot is already booked" again and the buyer was
+ * walled in until the cleanup sweep ran. The hold has to go back at the same
+ * moment its payment stops being payable, which is why the payment CAS, the
+ * slot release and the parent request's cancellation all sit in one
+ * transaction: a partial release is exactly the state that reopens the wall.
+ *
+ * Every write is CAS-in-WHERE per ADR 21 — the payment claim carries
+ * `paymentStatus: PENDING` so a capture that landed a millisecond earlier wins
+ * and its booking is left completely alone, and the appointment and slot moves
+ * go through the guarded helpers in `lib/booking/transitions.ts` rather than a
+ * bare update. A parent that has already moved on (its own payment succeeded)
+ * throws `IllegalTransitionError`, which is caught per appointment so the rest
+ * of the release still commits.
+ *
+ * Group events are deliberately untouched: their slots are shared between
+ * attendees, so releasing a seat is a disconnect rather than a status move and
+ * belongs to `cancelPendingCheckout`, which owns that shape. No event checkout
+ * is blocked by a per-buyer hold, so nothing here depends on it.
+ */
+async function releaseSupersededHolds(params: {
+  paymentIds: string[];
+  userId: string;
+}): Promise<void> {
+  await prisma.$transaction(async (tx: Tx) => {
+    const claimed = await tx.payment.updateManyAndReturn({
+      where: {
+        id: { in: params.paymentIds },
+        userId: params.userId,
+        paymentStatus: PaymentStatus.PENDING,
+      },
+      data: { paymentStatus: PaymentStatus.EXPIRED, expiresAt: new Date() },
+      select: { id: true, appointmentId: true },
+    });
+
+    const appointmentIds = claimed
+      .map((row) => row.appointmentId)
+      .filter((id): id is string => id !== null);
+    if (appointmentIds.length === 0) return;
+
+    const appointments = await tx.appointment.findMany({
+      where: { id: { in: appointmentIds }, deletedAt: null },
+      select: {
+        id: true,
+        webinarId: true,
+        classId: true,
+        consultation: { select: { id: true } },
+        subscription: { select: { id: true } },
+      },
+    });
+
+    for (const appointment of appointments) {
+      if (appointment.webinarId || appointment.classId) continue;
+
+      // Doctrine rule 2: a slot is freed by status, never by DELETE — the
+      // buyer keeps the record of the attempt they abandoned.
+      await transitionSlotCompletion(tx, {
+        where: {
+          appointmentId: appointment.id,
+          isTentative: true,
+          deletedAt: null,
+        },
+        to: "CANCELLED",
+        data: { deletedAt: new Date() },
+        reason: SUPERSEDED_HOLD_NOTE,
+        actorUserId: params.userId,
+        allowZero: true,
+      });
+
+      try {
+        if (appointment.consultation) {
+          await transitionConsultationRequest(tx, {
+            where: { id: appointment.consultation.id },
+            to: "CANCELLED",
+            fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+            actorUserId: params.userId,
+            reason: SUPERSEDED_HOLD_NOTE,
+            data: {
+              cancellationNotes: SUPERSEDED_HOLD_NOTE,
+              cancelledAt: new Date(),
+            },
+          });
+        }
+        if (appointment.subscription) {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: appointment.subscription.id },
+            to: "CANCELLED",
+            fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+            actorUserId: params.userId,
+            reason: SUPERSEDED_HOLD_NOTE,
+            data: {
+              cancellationNotes: SUPERSEDED_HOLD_NOTE,
+              cancelledAt: new Date(),
+            },
+          });
+        }
+      } catch (error) {
+        // The parent moved past the payment stage under us, which means some
+        // other payment already carried it — that booking is not ours to
+        // cancel. Modelled, so it is reported for visibility only.
+        if (!(error instanceof IllegalTransitionError)) throw error;
+        reportSentryError(error, {
+          subsystem: "payments",
+          level: "warning",
+          expected: true,
+          extra: { appointmentId: appointment.id },
+        });
+      }
+    }
+  });
 }
 
 // ============================================================================
@@ -516,6 +678,13 @@ export async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
   userId: string,
   buyerCountry: string = "IN",
+  /**
+   * #1465-triage — the org scope `handleCheckout` already resolved (membership
+   * verified) before it calls this. Only reaches the slot-availability gate,
+   * where it scopes the self-hold exclusion to holds this request could
+   * actually resume. Null default keeps every non-org caller personal.
+   */
+  organizationId: string | null = null,
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
@@ -598,11 +767,14 @@ export async function calculateAmountAndValidate(
 
         assertPlanPurchasable(plan, "This consultation");
 
+        // #1463 — the buyer's User id, not their ConsulteeProfile id: the
+        // duplicate-hold step compares it to `Payment.userId`.
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id,
+          userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
+          organizationId,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -629,11 +801,13 @@ export async function calculateAmountAndValidate(
 
         assertPlanPurchasable(plan, "This subscription");
 
+        // #1463 — the buyer's User id; see the consultation arm above.
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id,
+          userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
+          organizationId,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -860,19 +1034,182 @@ export async function calculateAmountAndValidate(
 // ============================================================================
 
 /**
+ * The one definition of "this buyer's hold is still live".
+ *
+ * #1463 — step 2 below and the self-hold exclusion must agree exactly on what
+ * a live hold is, or a hold could be excluded from one and not the other. The
+ * shape is the one step 2 has always used: still PENDING, and either inside its
+ * minted expiry window or young enough that the window has not been stamped yet.
+ * `deletedAt: null` is the single addition, matching what
+ * `findReusablePendingOrderPayment` will adopt — a soft-deleted payment is not
+ * a hold anybody can resume.
+ *
+ * Liveness only. The self-hold exclusion narrows this further with the resume
+ * gate's own scope (gateway + org) — see `findSelfHoldAppointmentIds`. Step 2's
+ * duplicate-attempt guard must NOT carry that scope: it asks "does this buyer
+ * already hold this window at all", and scoping it would let a second attempt
+ * on another gateway slip past the guard entirely.
+ */
+function buildLiveHoldPaymentFilter(
+  buyerUserId: string,
+  now: Date,
+): Prisma.PaymentWhereInput {
+  return {
+    userId: buyerUserId,
+    paymentStatus: PaymentStatus.PENDING,
+    deletedAt: null,
+    OR: [
+      { expiresAt: { gt: now } },
+      {
+        AND: [
+          { expiresAt: null },
+          { createdAt: { gte: new Date(now.getTime() - 5 * 60 * 1000) } },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * #1463 — the appointments that are this buyer's OWN open order for exactly
+ * this booking, and therefore are not occupants of the slot they hold.
+ *
+ * A buyer who closes the gateway modal and clicks Pay again used to be told
+ * "Time slot is already booked" by their own hold, which made the documented
+ * open-order resume (`findReusablePendingOrderPayment`, "Rec C") unreachable:
+ * the availability gate ran first and threw. Excluding these appointments lets
+ * the request reach that gate, which then either resumes the same gateway order
+ * or supersedes it and releases the hold.
+ *
+ * The exclusion is deliberately as narrow as the resume gate itself. It takes
+ * the same buyer, the same plan, the same gateway and the same org scope, a
+ * payment that is still PENDING and still live, and a window that matches
+ * EXACTLY — a different buyer, a different plan, or any
+ * overlapping-but-different window keeps blocking, and a shape whose plan
+ * identity cannot be resolved (webinars and classes, whose slots are shared
+ * between attendees) is never excluded at all.
+ *
+ * #1465-triage — gateway and org are part of that narrowness, not decoration.
+ * `findReusablePendingOrderPayment` requires both to match before it will
+ * resume or supersede a candidate, so a hold minted on a different gateway (or
+ * under a different org scope) is one this request can neither adopt nor
+ * expire. Excluding it from availability without those two terms let the same
+ * buyer mint a SECOND tentative appointment and a second payable order over the
+ * same window, and both orders could capture. A hold that cannot be resumed
+ * must keep blocking; the buyer waits out its `expiresAt` instead of
+ * double-paying.
+ *
+ * Exactness is decided in code rather than in the WHERE clause because a booked
+ * window is stored as N contiguous 30-minute atoms (#1319), so no single row
+ * carries both endpoints: the run's first start and last end are what must
+ * equal the request.
+ */
+export async function findSelfHoldAppointmentIds(
+  tx: Tx,
+  params: {
+    buyerUserId: string;
+    appointmentType: CheckoutInput["appointmentType"];
+    planId: string;
+    /** The gateway this request will mint on — the resume gate's own scope. */
+    paymentGateway: PaymentGateway;
+    /** Server-resolved org scope; null for personal/marketplace checkouts. */
+    organizationId: string | null;
+    slotStart: Date;
+    slotEnd: Date;
+    now: Date;
+  },
+): Promise<string[]> {
+  // A switch rather than a ternary chain: sonar S3358 flags the nested form,
+  // and the exhaustive shape is what keeps a new appointment type from silently
+  // inheriting an exclusion it was never reasoned about.
+  let planScope: Prisma.AppointmentWhereInput | null;
+  switch (params.appointmentType) {
+    case "CONSULTATION":
+      planScope = { consultation: { consultationPlanId: params.planId } };
+      break;
+    case "SUBSCRIPTION":
+      planScope = { subscription: { subscriptionPlanId: params.planId } };
+      break;
+    default:
+      planScope = null;
+  }
+  if (!planScope) return [];
+
+  const candidates = await tx.appointment.findMany({
+    where: {
+      ...planScope,
+      deletedAt: null,
+      payment: {
+        some: {
+          ...buildLiveHoldPaymentFilter(params.buyerUserId, params.now),
+          // The two terms `findReusablePendingOrderPayment` also requires.
+          // Null-safe org equality: personal stays personal.
+          paymentGateway: params.paymentGateway,
+          organizationId: params.organizationId,
+        },
+      },
+      // Cheap index-served pre-filter on the run's first atom; the run's full
+      // extent is checked below.
+      slotsOfAppointment: {
+        some: {
+          startsAt: params.slotStart,
+          isTentative: true,
+          deletedAt: null,
+        },
+      },
+    },
+    select: {
+      id: true,
+      slotsOfAppointment: {
+        where: { deletedAt: null },
+        select: { startsAt: true, endsAt: true },
+      },
+    },
+    // Bounded: one buyer can hold one window on one plan; anything beyond a
+    // handful is a state this exclusion should not be widening for anyway.
+    take: 5,
+  });
+
+  return candidates
+    .filter((appointment) => {
+      const slots = appointment.slotsOfAppointment;
+      if (slots.length === 0) return false;
+      const runStart = Math.min(...slots.map((s) => s.startsAt.getTime()));
+      const runEnd = Math.max(...slots.map((s) => s.endsAt.getTime()));
+      return (
+        runStart === params.slotStart.getTime() &&
+        runEnd === params.slotEnd.getTime()
+      );
+    })
+    .map((appointment) => appointment.id);
+}
+
+/**
  * Validate slot availability with protection against race conditions
  * Checks for:
  * 1. Confirmed overlapping bookings
  * 2. Duplicate tentative bookings by same user
  * 3. Excessive tentative bookings (rate limiting)
+ *
+ * #1463 — returns the buyer's own self-held appointment ids so the caller's
+ * own conflict checks can exclude the same rows this function did; re-deriving
+ * them there would be a second query answering an identical question.
  */
 export async function validateSlotAvailability(
   tx: Tx,
   data: CheckoutInput,
-  userId?: string,
+  buyerUserId?: string,
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
-) {
-  if (!data.startsAt || !data.endsAt) return;
+  /**
+   * #1465-triage — the SERVER-resolved org scope for this request, which is
+   * what `findReusablePendingOrderPayment` matches on. Defaults to null
+   * (personal) so a caller that cannot resolve it fails closed: an org-scoped
+   * hold then keeps blocking rather than being excluded from availability by a
+   * request that could never resume it.
+   */
+  organizationId: string | null = null,
+): Promise<{ selfHoldAppointmentIds: string[] }> {
+  if (!data.startsAt || !data.endsAt) return { selfHoldAppointmentIds: [] };
 
   // LCY-2 consent cascade (#701/#1230) — a consultant who withdrew
   // SESSION_BOOKING consent must not receive new bookings. Fail-closed:
@@ -905,6 +1242,7 @@ export async function validateSlotAvailability(
 
   const slotStart = new Date(data.startsAt);
   const slotEnd = new Date(data.endsAt);
+  const now = new Date();
 
   // 0. Validate slot is not in the past or too soon (minimum lead time check)
   const timingError = validateSlotTiming(slotStart);
@@ -1007,6 +1345,26 @@ export async function validateSlotAvailability(
     }
   }
 
+  // #1463 — the buyer's own open order for exactly this booking. Resolved once
+  // and subtracted from both blocking steps below; see
+  // findSelfHoldAppointmentIds for why the exclusion is this narrow.
+  const selfHoldAppointmentIds = buyerUserId
+    ? await findSelfHoldAppointmentIds(tx, {
+        buyerUserId,
+        appointmentType: data.appointmentType,
+        planId: data.planId,
+        paymentGateway: data.paymentGateway,
+        organizationId,
+        slotStart,
+        slotEnd,
+        now,
+      })
+    : [];
+  const notSelfHeld: Prisma.SlotOfAppointmentWhereInput[] =
+    selfHoldAppointmentIds.length > 0
+      ? [{ NOT: { appointmentId: { in: selfHoldAppointmentIds } } }]
+      : [];
+
   // 1. Check for confirmed overlapping appointments FOR THIS CONSULTANT ONLY
   // FIX Bug #05: Use canonical overlap predicate that catches all 4 overlap shapes
   // (partial start, partial end, full containment, and exact match)
@@ -1045,10 +1403,15 @@ export async function validateSlotAvailability(
           appointment: {
             AND: [
               { OR: buildOccupiedAppointmentFilter() },
-              { NOT: buildDeadHoldFilter(new Date()) },
+              { NOT: buildDeadHoldFilter(now) },
             ],
           },
         },
+        // #1463 — the buyer's own live hold on exactly this window and plan is
+        // their open order, not another occupant, and the Rec C block below
+        // (findReusablePendingOrderPayment) is the path that resumes or
+        // supersedes it. Everything else still blocks.
+        ...notSelfHeld,
       ],
     },
   });
@@ -1059,7 +1422,12 @@ export async function validateSlotAvailability(
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
   // FIX Bug #05: Use canonical overlap predicate
-  if (userId) {
+  //
+  // #1463 — this step took the caller's ConsulteeProfile id and compared it to
+  // `Payment.userId`, which is a User id, so it could never match and the step
+  // never fired. The parameter is the buyer's User id now, which is also the
+  // identity the self-hold exclusion needs.
+  if (buyerUserId) {
     const recentAttempt = await tx.slotOfAppointment.findFirst({
       where: {
         AND: [
@@ -1081,30 +1449,14 @@ export async function validateSlotAvailability(
           {
             appointment: {
               payment: {
-                some: {
-                  AND: [
-                    { userId: userId },
-                    { paymentStatus: "PENDING" },
-                    {
-                      OR: [
-                        { expiresAt: { gt: new Date() } }, // Not yet expired
-                        {
-                          AND: [
-                            { expiresAt: null }, // No expiration set
-                            {
-                              createdAt: {
-                                gte: new Date(Date.now() - 5 * 60 * 1000),
-                              },
-                            }, // Within 5 min
-                          ],
-                        },
-                      ],
-                    },
-                  ],
-                },
+                some: buildLiveHoldPaymentFilter(buyerUserId, now),
               },
             },
           },
+          // #1463 — same exclusion as step 1: telling the buyer to "complete
+          // your current payment" while giving them no way to do so is the
+          // dead end this issue is about.
+          ...notSelfHeld,
         ],
       },
     });
@@ -1120,6 +1472,8 @@ export async function validateSlotAvailability(
   // #1169 PR 2 step 1 blocks on ANY live hold, this count could never reach
   // one, let alone three. Do not re-add a per-slot attempt cap here; the hold
   // itself is the cap.
+
+  return { selfHoldAppointmentIds };
 }
 
 // ============================================================================
@@ -1551,8 +1905,15 @@ async function revalidateInsideLock(
           select: { id: true },
         });
         if (suspended) {
-          throw new Error(
-            "This organization is suspended from new sponsored bookings until its overdue invoice is paid.",
+          // #1467 — the in-lock re-check of the same dunning gate. It throws
+          // inside the checkout transaction, so without the code the catch below
+          // rewrites it to "Failed to record payment information"; with it the
+          // buyer gets the same 402 the pre-lock gate returns.
+          throw Object.assign(
+            new Error(
+              "This organization is suspended from new sponsored bookings until its overdue invoice is paid.",
+            ),
+            { httpStatus: 402, code: "BILLING_SUSPENDED_DUNNING" },
           );
         }
       }
@@ -1633,11 +1994,14 @@ async function revalidateInsideLock(
           });
           if (!consultationPlan) throw new Error("Consultation plan not found");
 
-          await validateSlotAvailability(
+          // #1463 — the buyer's User id, and the self-held appointments it
+          // resolves are excluded from the consultee-side check below too.
+          const { selfHoldAppointmentIds } = await validateSlotAvailability(
             tx,
             data,
-            user.consulteeProfile.id,
+            userId,
             consultationPlan.consultantProfile.user.id,
+            orgContext?.organizationId ?? null,
           );
 
           // Consultee-side conflict check.
@@ -1666,6 +2030,14 @@ async function revalidateInsideLock(
                 { OR: buildOccupiedAppointmentFilter() },
                 // #1319 — parity with step 1 of validateSlotAvailability.
                 { NOT: buildDeadHoldFilter(new Date()) },
+                // #1463 — and parity with its self-hold exclusion: the buyer's
+                // own open order for this exact window is not a competing
+                // session on their calendar, it is the thing they are trying to
+                // finish paying for. Without this the availability fix above
+                // would only move the wall one query to the right.
+                ...(selfHoldAppointmentIds.length > 0
+                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
+                  : []),
                 {
                   slotsOfAppointment: {
                     some: {
@@ -1704,11 +2076,13 @@ async function revalidateInsideLock(
           });
           if (!subscriptionPlan) throw new Error("Subscription plan not found");
 
-          await validateSlotAvailability(
+          // #1463 — the buyer's User id; see the consultation arm above.
+          const { selfHoldAppointmentIds } = await validateSlotAvailability(
             tx,
             data,
-            user.consulteeProfile.id,
+            userId,
             subscriptionPlan.consultantProfile.user.id,
+            orgContext?.organizationId ?? null,
           );
 
           // Consultee-side conflict check for direct-slot subscriptions.
@@ -1722,6 +2096,10 @@ async function revalidateInsideLock(
                 { OR: buildOccupiedAppointmentFilter() },
                 // #1319 — parity with step 1 of validateSlotAvailability.
                 { NOT: buildDeadHoldFilter(new Date()) },
+                // #1463 — same self-hold exclusion as the consultation arm.
+                ...(selfHoldAppointmentIds.length > 0
+                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
+                  : []),
                 {
                   slotsOfAppointment: {
                     some: {
@@ -1869,11 +2247,13 @@ export async function handleConsultationCheckout(
 
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
+  // #1463 — the buyer's User id, which is what `Payment.userId` holds.
   await validateSlotAvailability(
     tx,
     data,
-    consulteeProfileId,
+    consulteeUserId,
     consultantUserId,
+    organizationId,
   );
 
   // Create consultation
@@ -2525,8 +2905,15 @@ export async function handleCheckout(
         orderBy: { dueDate: "asc" },
       });
       if (suspended) {
-        throw new Error(
-          `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+        // #1467 — same shape as the assignment refusal below: a bare Error here
+        // would 500 the moment the flag is switched on. 402 because the block is
+        // lifted by paying money that is already owed, which is exactly what
+        // Payment Required means to the buyer's client.
+        throw Object.assign(
+          new Error(
+            `This organization has an overdue invoice (${suspended.invoiceNumber}) and is suspended from new sponsored bookings until it is paid.`,
+          ),
+          { httpStatus: 402, code: "BILLING_SUSPENDED_DUNNING" },
         );
       }
     }
@@ -2663,10 +3050,19 @@ export async function handleCheckout(
       });
 
       if (!assignment) {
-        throw new Error(
-          "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
-            appointmentType +
-            ".",
+        // #1467 — a lapsed contract or a closed programme is a routine refusal
+        // the member's own admin can undo, but the bare Error matched nothing in
+        // BUSINESS_ERROR_PATTERNS and classifyError answered 500 UNKNOWN_ERROR:
+        // the buyer could not tell it from a crash and Sentry logged a false
+        // incident. 409 because the request is well-formed and the org's
+        // entitlement state is what conflicts with it.
+        throw Object.assign(
+          new Error(
+            "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
+              appointmentType +
+              ".",
+          ),
+          { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
         );
       }
       programAssignmentId = assignment.id;
@@ -2694,7 +3090,14 @@ export async function handleCheckout(
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
-    } = await calculateAmountAndValidate(validatedData, userId, buyerCountry);
+    } = await calculateAmountAndValidate(
+      validatedData,
+      userId,
+      buyerCountry,
+      // #1465-triage — resolved and membership-verified above; the slot gate
+      // needs it to scope the self-hold exclusion to a resumable hold.
+      organizationId,
+    );
 
     const displayCurrencyAtCheckout =
       validatedData.displayCurrency?.toUpperCase() || currency;
@@ -2839,12 +3242,12 @@ export async function handleCheckout(
           : {}),
       });
     if (supersededOrders.length > 0) {
-      await prisma.payment.updateMany({
-        where: { id: { in: supersededOrders.map((s) => s.id) } },
-        data: {
-          paymentStatus: PaymentStatus.EXPIRED,
-          expiresAt: new Date(),
-        },
+      // #1463 — expiring the payment is only half of it; the hold it minted has
+      // to come off the calendar in the same transaction or this buyer's next
+      // attempt walls itself out again. See releaseSupersededHolds.
+      await releaseSupersededHolds({
+        paymentIds: supersededOrders.map((s) => s.id),
+        userId,
       });
       console.log(
         JSON.stringify({
@@ -3329,8 +3732,15 @@ export async function handleCheckout(
                   // never happens.
                   exhaustedBell.programAssignmentId = programAssignmentId;
 
-                  throw new Error(
-                    "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                  // #1458 — a stable code, because the message-preservation
+                  // list below never matched this sentence and the buyer got
+                  // "Failed to record payment information" for a cap they can
+                  // ask an admin to raise.
+                  throw Object.assign(
+                    new Error(
+                      "Your program has hit its session cap for this cycle. Ask your organization admin to upgrade the program or wait for the next cycle.",
+                    ),
+                    { httpStatus: 402, code: "PROGRAM_SESSION_CAP_REACHED" },
                   );
                 }
                 throw err;
@@ -3748,6 +4158,11 @@ export async function handleCheckout(
         dbError instanceof WalletFrozenError ||
         dbError instanceof ProgramAssignmentLimitError ||
         dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
+        // #1458 — the per-assignment session cap is the same class of modelled
+        // refusal as the per-cycle overage ceiling above. The overage funding
+        // codes are deliberately NOT here: they mean a programme was configured
+        // in a shape we cannot collect on, which has to keep paging.
+        dbErrorCode === "PROGRAM_SESSION_CAP_REACHED" ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
             // Word-bounded: bare `includes` let "full" match "successful" and
@@ -3772,6 +4187,16 @@ export async function handleCheckout(
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
       if (dbError instanceof WalletFrozenError) {
+        throw dbError;
+      }
+
+      // #1458 — an error carrying a registered business code already resolves
+      // to its own status and toast in the classifier, so rewriting it to the
+      // generic message below is pure loss: PROGRAM_CAP_EXHAUSTED was thrown as
+      // a 402 with actionable copy and reached the buyer as a 500
+      // "Something Went Wrong". Codes are checked before messages because a
+      // code survives a reworded sentence and a substring does not.
+      if (dbError instanceof Error && isBusinessErrorCode(dbErrorCode)) {
         throw dbError;
       }
 

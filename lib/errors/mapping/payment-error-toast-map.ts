@@ -103,6 +103,35 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Invoice funding needs a verified domain on your organisation; ask your billing admin to verify it, or pay by card instead. Your card was not charged.",
   },
+  // #1458 — the programme ran out of budget or was configured with a rail we do
+  // not collect on. Neither is fixed by retrying, so each toast names the person
+  // who can actually unblock the booking.
+  [ErrorTypes.PROGRAM_CAP_EXHAUSTED]: {
+    title: "Programme Budget Used Up",
+    description:
+      "Your organisation's programme budget for this cycle is used up; ask your admin or pay yourself if allowed.",
+  },
+  [ErrorTypes.PROGRAM_SESSION_CAP_REACHED]: {
+    title: "Programme Session Cap Reached",
+    description: null, // The server message already names the admin action.
+  },
+  [ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED]: {
+    title: "Programme Not Bookable Past Its Cap",
+    description:
+      "This programme is set to charge members for bookings past its cap, which is not available on a wallet-funded organisation. Ask your billing admin to switch the programme to charge the organisation or to block over-cap bookings.",
+  },
+  // #1467 — the organisation's entitlement, not the booking, is what stops
+  // these. Retrying changes nothing, so each toast names the admin who can.
+  [ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE]: {
+    title: "No Programme Covers This Booking",
+    description:
+      "Your organisation has no active programme assignment for this session type, usually because its contract or programme has ended. Ask your organisation admin to assign you to a programme that covers it, or book it yourself. You were not charged.",
+  },
+  [ErrorTypes.BILLING_SUSPENDED_DUNNING]: {
+    title: "Organisation Billing Suspended",
+    description:
+      "Your organisation has an overdue invoice, so new sponsored bookings are paused until it is paid. Ask your billing admin to settle it, or book this session yourself. You were not charged.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

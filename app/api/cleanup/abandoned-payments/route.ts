@@ -5,7 +5,11 @@ import {
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
 } from "@/scripts/payments/cleanup-abandoned-payments";
-import { InvalidLimitError, parseLimitParam } from "@/lib/cron/cleanup-route";
+import {
+  InvalidLimitError,
+  parseLimitParam,
+  statusFor,
+} from "@/lib/cron/cleanup-route";
 import * as Sentry from "@sentry/nextjs";
 import {
   assertNotInMaintenance,
@@ -49,11 +53,19 @@ export async function POST(req: NextRequest) {
       consultationSuccess: consultationResult.success,
     });
 
-    return NextResponse.json({
-      paymentCleanup: paymentResult,
-      consultationCleanup: consultationResult,
-      overallSuccess: paymentResult.success && consultationResult.success,
-    });
+    const overallSuccess = paymentResult.success && consultationResult.success;
+    return NextResponse.json(
+      {
+        paymentCleanup: paymentResult,
+        consultationCleanup: consultationResult,
+        overallSuccess,
+      },
+      // #1464 — this twin always answered 200, so a run that reported failures
+      // in its own body still read as healthy to the ticker and to anything
+      // watching the status. The shared mapping answers 500 when the sweep
+      // says it failed, which is what the rest of the cohort already does.
+      { status: statusFor({ success: overallSuccess }) },
+    );
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
     // skips with a 409 instead of double-running.
