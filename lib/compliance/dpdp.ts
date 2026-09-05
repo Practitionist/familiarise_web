@@ -85,7 +85,7 @@
 
 import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
-import type { PurposeCode } from "./purpose-codes";
+import { purposeCodeAliases, type PurposeCode } from "./purpose-codes";
 
 /**
  * Thrown when a purpose-scoped action is blocked because the user has not
@@ -203,7 +203,11 @@ export async function checkConsent(
   const artifact = await db.consentArtifact.findFirst({
     where: {
       userId,
-      purposeCodes: { has: purposeCode },
+      // #1472 — `hasSome` over the canonical code AND its legacy aliases. An
+      // exact `has` made every pre-taxonomy artifact (`session-booking`)
+      // invisible here, so the fail-closed gate denied a consultant who had in
+      // fact granted consent. See purposeCodeAliases.
+      purposeCodes: { hasSome: purposeCodeAliases(purposeCode) },
       withdrawnAt: null,
       auditRetainedUntil: { gt: now },
     },
@@ -239,7 +243,9 @@ export async function checkConsentBatch(params: {
     const artifacts = await prisma.consentArtifact.findMany({
       where: {
         userId: { in: userIds.slice(i, i + CHUNK) },
-        purposeCodes: { has: purposeCode },
+        // #1472 — same alias set as checkConsent; the batch form must not
+        // answer differently from the per-user gate it stands in for.
+        purposeCodes: { hasSome: purposeCodeAliases(purposeCode) },
         withdrawnAt: null,
         auditRetainedUntil: { gt: now },
       },
@@ -271,7 +277,10 @@ export async function withdrawConsent(params: {
     ? {
         userId,
         withdrawnAt: null,
-        purposeCodes: { has: purposeCode },
+        // #1472 — a narrow withdrawal has to reach the artifact under whatever
+        // code it was written with, or the user withdraws and the gate keeps
+        // reading the legacy row as live consent.
+        purposeCodes: { hasSome: purposeCodeAliases(purposeCode) },
       }
     : { userId, withdrawnAt: null };
 

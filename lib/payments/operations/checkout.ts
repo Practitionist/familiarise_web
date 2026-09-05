@@ -678,6 +678,13 @@ export async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
   userId: string,
   buyerCountry: string = "IN",
+  /**
+   * #1465-triage — the org scope `handleCheckout` already resolved (membership
+   * verified) before it calls this. Only reaches the slot-availability gate,
+   * where it scopes the self-hold exclusion to holds this request could
+   * actually resume. Null default keeps every non-org caller personal.
+   */
+  organizationId: string | null = null,
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
@@ -767,6 +774,7 @@ export async function calculateAmountAndValidate(
           validatedData,
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
+          organizationId,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -799,6 +807,7 @@ export async function calculateAmountAndValidate(
           validatedData,
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
+          organizationId,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -1034,6 +1043,12 @@ export async function calculateAmountAndValidate(
  * `deletedAt: null` is the single addition, matching what
  * `findReusablePendingOrderPayment` will adopt — a soft-deleted payment is not
  * a hold anybody can resume.
+ *
+ * Liveness only. The self-hold exclusion narrows this further with the resume
+ * gate's own scope (gateway + org) — see `findSelfHoldAppointmentIds`. Step 2's
+ * duplicate-attempt guard must NOT carry that scope: it asks "does this buyer
+ * already hold this window at all", and scoping it would let a second attempt
+ * on another gateway slip past the guard entirely.
  */
 function buildLiveHoldPaymentFilter(
   buyerUserId: string,
@@ -1067,11 +1082,22 @@ function buildLiveHoldPaymentFilter(
  * or supersedes it and releases the hold.
  *
  * The exclusion is deliberately as narrow as the resume gate itself. It takes
- * the same buyer, the same plan, a payment that is still PENDING and still
- * live, and a window that matches EXACTLY — a different buyer, a different
- * plan, or any overlapping-but-different window keeps blocking, and a shape
- * whose plan identity cannot be resolved (webinars and classes, whose slots are
- * shared between attendees) is never excluded at all.
+ * the same buyer, the same plan, the same gateway and the same org scope, a
+ * payment that is still PENDING and still live, and a window that matches
+ * EXACTLY — a different buyer, a different plan, or any
+ * overlapping-but-different window keeps blocking, and a shape whose plan
+ * identity cannot be resolved (webinars and classes, whose slots are shared
+ * between attendees) is never excluded at all.
+ *
+ * #1465-triage — gateway and org are part of that narrowness, not decoration.
+ * `findReusablePendingOrderPayment` requires both to match before it will
+ * resume or supersede a candidate, so a hold minted on a different gateway (or
+ * under a different org scope) is one this request can neither adopt nor
+ * expire. Excluding it from availability without those two terms let the same
+ * buyer mint a SECOND tentative appointment and a second payable order over the
+ * same window, and both orders could capture. A hold that cannot be resumed
+ * must keep blocking; the buyer waits out its `expiresAt` instead of
+ * double-paying.
  *
  * Exactness is decided in code rather than in the WHERE clause because a booked
  * window is stored as N contiguous 30-minute atoms (#1319), so no single row
@@ -1084,17 +1110,29 @@ export async function findSelfHoldAppointmentIds(
     buyerUserId: string;
     appointmentType: CheckoutInput["appointmentType"];
     planId: string;
+    /** The gateway this request will mint on — the resume gate's own scope. */
+    paymentGateway: PaymentGateway;
+    /** Server-resolved org scope; null for personal/marketplace checkouts. */
+    organizationId: string | null;
     slotStart: Date;
     slotEnd: Date;
     now: Date;
   },
 ): Promise<string[]> {
-  const planScope: Prisma.AppointmentWhereInput | null =
-    params.appointmentType === "CONSULTATION"
-      ? { consultation: { consultationPlanId: params.planId } }
-      : params.appointmentType === "SUBSCRIPTION"
-        ? { subscription: { subscriptionPlanId: params.planId } }
-        : null;
+  // A switch rather than a ternary chain: sonar S3358 flags the nested form,
+  // and the exhaustive shape is what keeps a new appointment type from silently
+  // inheriting an exclusion it was never reasoned about.
+  let planScope: Prisma.AppointmentWhereInput | null;
+  switch (params.appointmentType) {
+    case "CONSULTATION":
+      planScope = { consultation: { consultationPlanId: params.planId } };
+      break;
+    case "SUBSCRIPTION":
+      planScope = { subscription: { subscriptionPlanId: params.planId } };
+      break;
+    default:
+      planScope = null;
+  }
   if (!planScope) return [];
 
   const candidates = await tx.appointment.findMany({
@@ -1102,7 +1140,13 @@ export async function findSelfHoldAppointmentIds(
       ...planScope,
       deletedAt: null,
       payment: {
-        some: buildLiveHoldPaymentFilter(params.buyerUserId, params.now),
+        some: {
+          ...buildLiveHoldPaymentFilter(params.buyerUserId, params.now),
+          // The two terms `findReusablePendingOrderPayment` also requires.
+          // Null-safe org equality: personal stays personal.
+          paymentGateway: params.paymentGateway,
+          organizationId: params.organizationId,
+        },
       },
       // Cheap index-served pre-filter on the run's first atom; the run's full
       // extent is checked below.
@@ -1156,6 +1200,14 @@ export async function validateSlotAvailability(
   data: CheckoutInput,
   buyerUserId?: string,
   consultantUserId?: string, // NEW: Filter by consultant to prevent blocking across different consultants
+  /**
+   * #1465-triage — the SERVER-resolved org scope for this request, which is
+   * what `findReusablePendingOrderPayment` matches on. Defaults to null
+   * (personal) so a caller that cannot resolve it fails closed: an org-scoped
+   * hold then keeps blocking rather than being excluded from availability by a
+   * request that could never resume it.
+   */
+  organizationId: string | null = null,
 ): Promise<{ selfHoldAppointmentIds: string[] }> {
   if (!data.startsAt || !data.endsAt) return { selfHoldAppointmentIds: [] };
 
@@ -1301,6 +1353,8 @@ export async function validateSlotAvailability(
         buyerUserId,
         appointmentType: data.appointmentType,
         planId: data.planId,
+        paymentGateway: data.paymentGateway,
+        organizationId,
         slotStart,
         slotEnd,
         now,
@@ -1947,6 +2001,7 @@ async function revalidateInsideLock(
             data,
             userId,
             consultationPlan.consultantProfile.user.id,
+            orgContext?.organizationId ?? null,
           );
 
           // Consultee-side conflict check.
@@ -2027,6 +2082,7 @@ async function revalidateInsideLock(
             data,
             userId,
             subscriptionPlan.consultantProfile.user.id,
+            orgContext?.organizationId ?? null,
           );
 
           // Consultee-side conflict check for direct-slot subscriptions.
@@ -2192,7 +2248,13 @@ export async function handleConsultationCheckout(
   // Validate slot availability
   // FIX: Pass consultant user ID to filter by consultant
   // #1463 — the buyer's User id, which is what `Payment.userId` holds.
-  await validateSlotAvailability(tx, data, consulteeUserId, consultantUserId);
+  await validateSlotAvailability(
+    tx,
+    data,
+    consulteeUserId,
+    consultantUserId,
+    organizationId,
+  );
 
   // Create consultation
   const initialStatus = skipPayment
@@ -3028,7 +3090,14 @@ export async function handleCheckout(
       creditsApplied,
       buyerCountry: detectedBuyerCountry,
       isInternational,
-    } = await calculateAmountAndValidate(validatedData, userId, buyerCountry);
+    } = await calculateAmountAndValidate(
+      validatedData,
+      userId,
+      buyerCountry,
+      // #1465-triage — resolved and membership-verified above; the slot gate
+      // needs it to scope the self-hold exclusion to a resumable hold.
+      organizationId,
+    );
 
     const displayCurrencyAtCheckout =
       validatedData.displayCurrency?.toUpperCase() || currency;

@@ -10,9 +10,11 @@
  * unreachable and the buyer waited for the hold to expire.
  *
  * The exclusion has to be exactly as narrow as the resume gate it feeds, which
- * is what this pin holds in place: the same buyer, the same plan and the exact
- * same window passes; a different buyer on the same slot still blocks; and the
- * same buyer on an overlapping-but-different window still blocks.
+ * is what this pin holds in place: the same buyer, the same plan, the same
+ * gateway and the exact same window passes; a different buyer on the same slot
+ * still blocks; the same buyer on an overlapping-but-different window still
+ * blocks; and (#1465-triage) so does a hold minted on a different gateway,
+ * which `findReusablePendingOrderPayment` could neither resume nor supersede.
  *
  * The transaction client below evaluates the two blocking predicates against an
  * in-memory hold rather than asserting on query shape, so the self-hold
@@ -101,6 +103,9 @@ const heldSlots: HeldSlot[] = [
 /** The hold's live PENDING payment belongs to the buyer, and to nobody else. */
 const HOLD_OWNER = BUYER;
 
+/** ...and it was minted on the gateway the resume gate would look for. */
+const HOLD_GATEWAY = "RAZORPAY";
+
 /** The `AND` terms of the two blocking slot queries this suite discriminates. */
 interface SlotWhereTerm {
   NOT?: SlotWhereTerm;
@@ -112,7 +117,13 @@ interface SlotWhereTerm {
 
 /** The self-hold lookup's `where`, as far as this suite reads it. */
 interface SelfHoldWhere {
-  payment?: { some?: { userId?: string } };
+  payment?: {
+    some?: {
+      userId?: string;
+      paymentGateway?: string;
+      organizationId?: string | null;
+    };
+  };
   consultation?: { consultationPlanId?: string };
   slotsOfAppointment?: { some?: { startsAt?: Date } };
 }
@@ -143,6 +154,10 @@ const tx = {
     findMany: async ({ where }: { where: SelfHoldWhere }) => {
       const wantedStart = where.slotsOfAppointment?.some?.startsAt;
       if (where.payment?.some?.userId !== HOLD_OWNER) return [];
+      // #1465-triage — the resume gate's own scope, and therefore this
+      // exclusion's: a hold on another gateway or another org is not adoptable.
+      if (where.payment?.some?.paymentGateway !== HOLD_GATEWAY) return [];
+      if ((where.payment?.some?.organizationId ?? null) !== null) return [];
       if (where.consultation?.consultationPlanId !== PLAN) return [];
       if (
         !wantedStart ||
@@ -169,11 +184,15 @@ const tx = {
   },
 } as unknown as Tx;
 
-function checkoutInput(startsAt: Date, endsAt: Date): CheckoutInput {
+function checkoutInput(
+  startsAt: Date,
+  endsAt: Date,
+  paymentGateway: string = HOLD_GATEWAY,
+): CheckoutInput {
   return {
     appointmentType: "CONSULTATION",
     planId: PLAN,
-    paymentGateway: "RAZORPAY",
+    paymentGateway,
     startsAt: startsAt.toISOString(),
     endsAt: endsAt.toISOString(),
   } as unknown as CheckoutInput;
@@ -197,6 +216,17 @@ describe("#1463 the buyer's own live hold does not block their resume", () => {
         tx,
         checkoutInput(WINDOW_START, WINDOW_END),
         "other-buyer",
+        CONSULTANT,
+      ),
+    ).rejects.toThrow("Time slot is already booked");
+  });
+
+  it("still blocks a hold this request could not resume (other gateway)", async () => {
+    await expect(
+      validateSlotAvailability(
+        tx,
+        checkoutInput(WINDOW_START, WINDOW_END, "STRIPE"),
+        BUYER,
         CONSULTANT,
       ),
     ).rejects.toThrow("Time slot is already booked");
