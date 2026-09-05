@@ -54,7 +54,6 @@ export type { OrgProcessingResult } from "./org-payout-service";
 export {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
-  releaseEarningsFromHold,
   getConsultantEarningsSummary,
   getConsultantEarnings,
   refundEarnings,
