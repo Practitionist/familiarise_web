@@ -4,8 +4,10 @@ import { handleCheckout } from "@/lib/payments/operations/checkout";
 import {
   classifyError,
   logClassifiedError,
+  isBusinessErrorCode,
   ErrorTypes,
 } from "@/lib/errors/classification/payment-error-classification";
+import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
@@ -265,10 +267,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "checkout" } },
-    );
+    // #1477 — an error carrying a registered business code is an ANSWER, not a
+    // fault: the classifier below already resolves it to its own status and
+    // toast. Capturing it here as an exception is what kept every coded refusal
+    // without an explicit branch above — the #1458 programme-cap codes, the
+    // #1467 entitlement codes — paging as a checkout incident. Report it the
+    // way the modelled refusals inside handleCheckout are reported instead.
+    if (isBusinessErrorCode((error as { code?: unknown } | null)?.code)) {
+      reportSentryError(error, { subsystem: "checkout", expected: true });
+    } else {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "checkout" } },
+      );
+    }
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 
