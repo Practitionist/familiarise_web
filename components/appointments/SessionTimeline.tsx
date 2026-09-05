@@ -225,22 +225,10 @@ export function SessionTimeline({
           className={cn(
             "flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors",
             "bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-900/40",
-            onCompletePayment &&
-              "cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30",
           )}
-          onClick={onCompletePayment ? () => onCompletePayment() : undefined}
-          role={onCompletePayment ? "button" : undefined}
-          tabIndex={onCompletePayment ? 0 : undefined}
-          onKeyDown={
-            onCompletePayment
-              ? (e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onCompletePayment();
-                  }
-                }
-              : undefined
-          }
+          // The row is not itself a control: the "Complete payment" button
+          // below is the single activation target, so screen readers get one
+          // affordance instead of a role="button" wrapper around a <button>.
         >
           <span className="text-sm shrink-0 w-5 text-center" aria-label="held">
             ⏳

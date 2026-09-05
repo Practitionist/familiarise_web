@@ -53,7 +53,10 @@ export function HeldSlotBadge({ deadline, className }: HeldSlotBadgeProps) {
       )}
       title={`Held until ${format(deadline, "h:mm a")}`}
     >
-      Held until {format(deadline, "h:mm a")} · {minutesLeft}m left
+      Held until {format(deadline, "h:mm a")} ·{" "}
+      {/* minutesLeft floors, so 0 is the live final minute, not a lapsed
+          hold — "0m left" next to an active CTA reads as broken. */}
+      {minutesLeft === 0 ? "under a minute left" : `${minutesLeft}m left`}
     </span>
   );
 }

@@ -31,7 +31,10 @@ export function useHoldCountdown(deadline: Date | null): HoldCountdown {
   }, [target]);
 
   const minutesLeft =
-    target === null ? 0 : Math.max(0, Math.ceil((target - now) / 60_000));
+    // Floor, not ceil: this clock sits on a payment deadline, so rounding UP
+    // would promise time the hold does not have ("2m left" at 61s remaining).
+    // 0 therefore means "inside the final minute", which the badge words.
+    target === null ? 0 : Math.max(0, Math.floor((target - now) / 60_000));
 
   return { minutesLeft, isExpired };
 }
