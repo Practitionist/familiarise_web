@@ -100,6 +100,88 @@ export class PayoutValidationError extends Error {
   }
 }
 
+/**
+ * #1470 — raised when an OrganizationPayout's withholding identity
+ * (`amountPaise + tdsAmountPaise === netPayoutPaise`) does not hold at the
+ * moment the ORG_PAYOUT journal would be written.
+ *
+ * `netPayoutPaise` is the host org's share BEFORE withholding and `amountPaise`
+ * is what the rail actually transfers, so a payout that breaks the identity has
+ * no correct posting available: any figure we picked would clear ORG_PAYABLE or
+ * credit CASH by an amount the money never moved. Throwing from inside the CAS
+ * transaction rolls the completion (or the reversal) back, which is safe because
+ * the gateway webhook is at-least-once and the stuck-payout sweep re-drives it.
+ */
+export class OrgPayoutWithholdingMismatchError extends Error {
+  readonly code = "ORG_PAYOUT_WITHHOLDING_MISMATCH" as const;
+  constructor(
+    readonly payoutId: string,
+    readonly organizationId: string,
+    readonly netPayoutPaise: number,
+    readonly amountPaise: number,
+    readonly tdsAmountPaise: number,
+  ) {
+    super(
+      `Org payout ${payoutId} withholding identity violated: amountPaise ${amountPaise} + tdsAmountPaise ${tdsAmountPaise} !== netPayoutPaise ${netPayoutPaise}`,
+    );
+    this.name = "OrgPayoutWithholdingMismatchError";
+  }
+}
+
+/**
+ * #1470 — assert the withholding identity before either ORG_PAYOUT posting.
+ * Kept as one helper so the completion and its reversal cannot drift apart.
+ */
+function assertOrgPayoutWithholdingIdentity(payout: {
+  id: string;
+  organizationId: string;
+  netPayoutPaise: number;
+  amountPaise: number;
+  tdsAmountPaise: number | null;
+}): void {
+  const tds = payout.tdsAmountPaise ?? 0;
+  if (payout.amountPaise + tds !== payout.netPayoutPaise) {
+    throw new OrgPayoutWithholdingMismatchError(
+      payout.id,
+      payout.organizationId,
+      payout.netPayoutPaise,
+      payout.amountPaise,
+      tds,
+    );
+  }
+}
+
+/**
+ * #1470 — report a broken withholding identity. Called from the `.catch` of the
+ * transaction rather than from inside it: `recordSystemError` writes through the
+ * global Prisma client, and under PG_POOL_MAX=1 a global-client query issued
+ * while a `$transaction` holds the only connection deadlocks (see the HLD).
+ */
+async function reportOrgPayoutWithholdingMismatch(
+  err: OrgPayoutWithholdingMismatchError,
+  op: string,
+): Promise<void> {
+  const context = {
+    orgPayoutId: err.payoutId,
+    organizationId: err.organizationId,
+    netPayoutPaise: err.netPayoutPaise,
+    amountPaise: err.amountPaise,
+    tdsAmountPaise: err.tdsAmountPaise,
+  };
+  await recordSystemError({
+    organizationId: err.organizationId,
+    category: "PAYOUT",
+    summary: `${err.code} — org payout journal refused: amountPaise + tdsAmountPaise does not equal netPayoutPaise`,
+    err,
+    context,
+  }).catch(() => {});
+  reportSentryError(err, {
+    subsystem: "payments",
+    op,
+    extra: context,
+  });
+}
+
 interface OrgPayoutEligibility {
   eligible: boolean;
   readyAmount: number;
@@ -1059,7 +1141,10 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
   wasNoOp: boolean;
   status: PayoutStatus;
 }> {
-  const result = await prisma.$transaction(async (tx) => {
+  // #1470 — the promise is held in a local so the `.catch` below is a separate
+  // statement: chaining it onto `prisma.$transaction(...)` re-indents the whole
+  // callback and buries the money change in whitespace.
+  const completion = prisma.$transaction(async (tx) => {
     const claim = await tx.organizationPayout.updateMany({
       where: { id: payoutId, status: "PROCESSING" },
       data: { status: "COMPLETED", processedAt: new Date() },
@@ -1089,6 +1174,9 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
         id: true,
         organizationId: true,
         netPayoutPaise: true,
+        // #1470 — the CASH leg is sized from what the rail actually sent, which
+        // is this column, not netPayoutPaise.
+        amountPaise: true,
         tdsAmountPaise: true,
         // #1354 — the rate and section the completion-time TDSRecord files
         // under, both pinned at batch time (see createOrgPayoutBatch). The
@@ -1124,8 +1212,15 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     });
 
     // #771 D1/D5 — double-entry (dual-write): settle the host org's payable.
-    //   Dr ORG_PAYABLE (gross)   Cr CASH (paid)   Cr TDS_PAYABLE (withheld)
+    //   Dr ORG_PAYABLE (pre-withholding share, netPayoutPaise)
+    //     Cr CASH (what the rail transferred, amountPaise)
+    //     Cr TDS_PAYABLE (withheld, tdsAmountPaise)
+    // #1470 — this used to debit `netPayoutPaise + tds` and credit CASH
+    // `netPayoutPaise`. That balances, so the trigger accepted it, but it
+    // cleared the payable and credited cash by one TDS amount too much on every
+    // org payout. The identity below is what makes the three legs tie out.
     const orgTds = payout.tdsAmountPaise ?? 0;
+    assertOrgPayoutWithholdingIdentity(payout);
     if (payout.netPayoutPaise > 0) {
       // #783 — ledger is INR-only; never key accounts by the payout's settlement
       // currency (would orphan INR paise in a foreign-labelled account). Matches
@@ -1137,12 +1232,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
             organizationId: payout.organizationId,
           },
           direction: "DEBIT",
-          amountPaise: payout.netPayoutPaise + orgTds,
+          amountPaise: payout.netPayoutPaise,
         },
         {
           account: { kind: "CASH" },
           direction: "CREDIT",
-          amountPaise: payout.netPayoutPaise,
+          amountPaise: payout.amountPaise,
         },
       ];
       if (orgTds > 0) {
@@ -1193,9 +1288,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
       const financialYear = getIndianFinancialYear();
       const quarter = getIndianFYQuarter();
       const { start, end } = getFYDateRange(financialYear);
-      // The return reports the GROSS amount credited, not the cash that left:
-      // net + withheld, over every other COMPLETED payout to this org in the FY
-      // plus this one.
+      // The return reports the GROSS amount credited, not the cash that left.
+      // #1470 — `netPayoutPaise` IS that gross figure: it is the org share
+      // before withholding, and it is the base `computeTdsForPayout` was given.
+      // Adding `tdsAmountPaise` on top (as this did) counted the withholding
+      // twice. So: sum of `netPayoutPaise` over every other COMPLETED payout to
+      // this org in the FY, plus this one's.
       const priorCompleted = await tx.organizationPayout.aggregate({
         where: {
           organizationId: payout.organizationId,
@@ -1203,13 +1301,10 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
           processedAt: { gte: start, lt: end },
           id: { not: payoutId },
         },
-        _sum: { netPayoutPaise: true, tdsAmountPaise: true },
+        _sum: { netPayoutPaise: true },
       });
       const cumulativeAmountCredited =
-        sumPaise(priorCompleted._sum.netPayoutPaise) +
-        sumPaise(priorCompleted._sum.tdsAmountPaise) +
-        payout.netPayoutPaise +
-        orgTds;
+        sumPaise(priorCompleted._sum.netPayoutPaise) + payout.netPayoutPaise;
 
       await recordOrgTDSDeduction({
         organizationId: payout.organizationId,
@@ -1241,6 +1336,15 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
           ? { organizationId: payout.organizationId, tdsAmountPaise: orgTds }
           : null,
     };
+  });
+  // #1470 — the withholding-identity guard fires INSIDE the transaction so the
+  // CAS rolls back; the durable report has to happen out here, after the
+  // connection is free (PG_POOL_MAX=1).
+  const result = await completion.catch(async (err: unknown) => {
+    if (err instanceof OrgPayoutWithholdingMismatchError) {
+      await reportOrgPayoutWithholdingMismatch(err, "markOrgPayoutCompleted");
+    }
+    throw err;
   });
 
   if (result.missingTdsRate) {
@@ -1424,7 +1528,7 @@ export async function markOrgPayoutReversed(
   //     claims PROCESSING): the payable stayed cleared, the cash stayed out, the
   //     earnings stayed PAID. We now post a REVERSING ORG_PAYOUT (the exact
   //     inverse of the original), re-open the earnings, and set REVERSED.
-  const completedResult = await prisma.$transaction(async (tx) => {
+  const reversalCompletion = prisma.$transaction(async (tx) => {
     const claim = await tx.organizationPayout.updateMany({
       where: { id: payoutId, status: "COMPLETED" },
       data: {
@@ -1441,6 +1545,9 @@ export async function markOrgPayoutReversed(
         id: true,
         organizationId: true,
         netPayoutPaise: true,
+        // #1470 — the CASH leg of the original posting was sized from this, so
+        // the mirror must be too.
+        amountPaise: true,
         tdsAmountPaise: true,
         currency: true,
         organization: { select: { name: true } },
@@ -1453,12 +1560,17 @@ export async function markOrgPayoutReversed(
       data: { status: "READY", orgPayoutId: null },
     });
 
-    // Reverse the ORG_PAYOUT posting exactly: the original was
-    //   Dr ORG_PAYABLE (net + tds)  Cr CASH (net)  Cr TDS_PAYABLE (tds)
+    // Reverse the ORG_PAYOUT posting exactly: the original is
+    //   Dr ORG_PAYABLE (netPayoutPaise)  Cr CASH (amountPaise)
+    //   Cr TDS_PAYABLE (tdsAmountPaise)
     // so the reversal brings the cash back and re-opens the payable. (The TDS
     // *remittance* to the government is a separate flow; reversing TDS_PAYABLE
     // here only un-does this payout's accrual, which is correct for a bounce.)
+    // #1470 — this mirror was written against the old, wrong completion legs,
+    // which is why a reversal still netted to zero while a payout that stayed
+    // COMPLETED kept the overstatement.
     const orgTds = payout.tdsAmountPaise ?? 0;
+    assertOrgPayoutWithholdingIdentity(payout);
     if (payout.netPayoutPaise > 0) {
       // #783 — INR-only ledger; the reversal keys the same INR accounts as the
       // original posting (which now omits currency) so the pair nets to zero.
@@ -1466,7 +1578,7 @@ export async function markOrgPayoutReversed(
         {
           account: { kind: "CASH" },
           direction: "DEBIT",
-          amountPaise: payout.netPayoutPaise,
+          amountPaise: payout.amountPaise,
         },
         {
           account: {
@@ -1474,7 +1586,7 @@ export async function markOrgPayoutReversed(
             organizationId: payout.organizationId,
           },
           direction: "CREDIT",
-          amountPaise: payout.netPayoutPaise + orgTds,
+          amountPaise: payout.netPayoutPaise,
         },
       ];
       if (orgTds > 0) {
@@ -1529,6 +1641,17 @@ export async function markOrgPayoutReversed(
       },
     };
   });
+  // #1470 — same shape as markOrgPayoutCompleted: the guard throws inside the
+  // transaction so the REVERSED claim rolls back, and the durable report runs
+  // once the single pooled connection is free.
+  const completedResult = await reversalCompletion.catch(
+    async (err: unknown) => {
+      if (err instanceof OrgPayoutWithholdingMismatchError) {
+        await reportOrgPayoutWithholdingMismatch(err, "markOrgPayoutReversed");
+      }
+      throw err;
+    },
+  );
 
   if (completedResult.claimed) {
     if (completedResult.notify) {

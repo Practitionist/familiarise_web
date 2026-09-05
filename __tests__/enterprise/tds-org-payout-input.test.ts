@@ -210,7 +210,7 @@ describe("markOrgPayoutCompleted — withheld TDS with no stored rate (#1354)", 
     );
     mockedPrisma.organizationPayout.updateMany.mockResolvedValue({ count: 1 });
     mockedPrisma.organizationPayout.aggregate.mockResolvedValue({
-      _sum: { netPayoutPaise: 0, tdsAmountPaise: 0 },
+      _sum: { netPayoutPaise: 0 },
     });
   });
 
@@ -223,6 +223,9 @@ describe("markOrgPayoutCompleted — withheld TDS with no stored rate (#1354)", 
       id: PAYOUT_ID,
       organizationId: ORG_ID,
       netPayoutPaise: 999_000,
+      // #1470 — amountPaise is the post-withholding transfer, so it must
+      // satisfy amountPaise + tds === netPayoutPaise or the posting is refused.
+      amountPaise: 998_000,
       tdsAmountPaise: 1_000,
       tdsRateAppliedBps: null,
       tdsSectionApplied: null,

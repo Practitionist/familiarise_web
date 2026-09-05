@@ -15,6 +15,9 @@ export const { GET, POST } = cleanupRoute({
   run: (req) => releaseEarningsFromHold({ limit: parseLimitParam(req) }),
   summarize: (r) => ({
     releasedCount: r.releasedCount,
+    // #1471 — the host-org arm is reported separately so the existing
+    // `releasedCount` keeps meaning "consultant earnings released".
+    organizationEarningsReleased: r.organizationEarningsReleased,
     errorCount: r.errorCount,
   }),
   // #1390 review — the constant 200 masked a caught job error (success:false)
