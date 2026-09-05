@@ -17,7 +17,7 @@ Resolve the target PR number from `$ARGUMENTS`; if empty, use the PR for the cur
 - **Never invent a comment's verdict.** Classify each comment only after opening the CURRENT code at the file/line it references — line numbers in old comments drift, so locate by surrounding code, not the stale line number.
 - **Mock data only.** Validation runs against the project's test harness (jest + mocked Prisma) and/or the dev `mock-webhook` route. Do **not** create real payments/refunds/orgs in a shared or remote database. Many of this repo's money paths are internal (cascades, ledger postings, crons) and aren't cleanly HTTP-callable — the faithful before/after is the real function under a mocked Prisma `$transaction`, which is what the route would call anyway.
 - **Pause before push.** After fixes are applied and validated, STOP and present the diff + the before/after evidence. Do not commit or push until the user explicitly approves.
-- **Resolve, don't reply.** Bot threads (Gemini Code Assist, CodeRabbit) get *resolved* via GraphQL, with no reply comment, and only after the work is merged/pushed. Do this in a background agent.
+- **Resolve, don't reply.** Bot threads (Gemini Code Assist, CodeRabbit) get _resolved_ via GraphQL, with no reply comment, and only after the work is merged/pushed. Do this in a background agent.
 
 ---
 
@@ -41,13 +41,13 @@ Note the reviewers. In this repo, **CodeRabbit auto-skips** PRs whose base is no
 
 For every inline comment, open the referenced code as it is NOW and assign exactly one verdict:
 
-| Verdict | Meaning | How to decide |
-|---|---|---|
-| **legit-pending** | A real issue, not yet addressed | The code still has the problem the comment describes |
-| **BS** | Wrong, irrelevant, or boilerplate | The claim is false, or it's a bot "skipped/sunset" notice, or it contradicts a deliberate design (cite the design) |
-| **already-fixed** | Real, but the current diff already fixes it | The branch's code no longer has the issue (the comment predates the fix) |
-| **partly-fixed** | Addressed in part | Some of the comment's points are handled, others remain — list which |
-| **incorrectly-fixed** | An attempt exists but is wrong | A change was made that doesn't actually resolve it or introduces a new bug |
+| Verdict               | Meaning                                     | How to decide                                                                                                      |
+| --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **legit-pending**     | A real issue, not yet addressed             | The code still has the problem the comment describes                                                               |
+| **BS**                | Wrong, irrelevant, or boilerplate           | The claim is false, or it's a bot "skipped/sunset" notice, or it contradicts a deliberate design (cite the design) |
+| **already-fixed**     | Real, but the current diff already fixes it | The branch's code no longer has the issue (the comment predates the fix)                                           |
+| **partly-fixed**      | Addressed in part                           | Some of the comment's points are handled, others remain — list which                                               |
+| **incorrectly-fixed** | An attempt exists but is wrong              | A change was made that doesn't actually resolve it or introduces a new bug                                         |
 
 Watch for the trap where two bots give **contradictory** suggestions (e.g. anchor-slug fixes) — when that happens, sidestep the ambiguity with a robust third option rather than picking one.
 
@@ -84,8 +84,8 @@ Once pushed, resolve every addressed thread **without posting a reply**, in a ba
 
 ```bash
 # list unresolved thread ids
-gh api graphql -f query='{ repository(owner:"OWNER", name:"REPO"){ pullRequest(number: PR){
-  reviewThreads(first: 100){ nodes { id isResolved } } } } }' \
+gh api graphql -f query='query($pr: Int!){ repository(owner:"OWNER", name:"REPO"){ pullRequest(number: $pr){
+  reviewThreads(first: 100){ nodes { id isResolved } } } } }' -F pr="$PR" \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false) | .id'
 # resolve each (variable form, ~1s apart)
 gh api graphql -f query='mutation($id: ID!){ resolveReviewThread(input:{threadId:$id}){ thread { isResolved } } }' -F id="$THREAD_ID"

@@ -108,7 +108,7 @@ returns false.
 Redis serializes the common case; the status transition is what rejects the
 illegal write. The allowed-from set is baked into the UPDATE's WHERE clause, so
 a losing writer matches zero rows and throws `IllegalTransitionError` (409,
-`ILLEGAL_TRANSITION`). Never swallow a zero-row result. See `booking-doctrine`
+`ILLEGAL_TRANSITION`). Never swallow a zero-row result. See the booking doctrine in `../SKILL.md`
 rule 1 for the helpers and the maps.
 
 ## 7. Constraints Prisma cannot express live in SQL sidecars

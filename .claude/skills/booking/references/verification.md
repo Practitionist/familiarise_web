@@ -64,7 +64,8 @@ nowhere else in the repo; treat this paragraph as the reference.
 A related, opposite trap: `jest.config.ts` ignores `/\.claude/worktrees/`, which
 covers agent checkouts nested under `.claude/` but **not** the `~/Desktop/fw-*`
 worktrees, so jest runs their tests normally and needs no override.
-(`.claude/skills/razorpay/references/this-repo.md` claims otherwise.)
+(`.claude/skills/finance/references/razorpay/references/this-repo.md` claims
+otherwise.)
 
 A warm incremental `tsc` can also hide type errors here: clear the
 `.tsbuildinfo` cache before trusting a clean local run, or trust CI.
@@ -109,7 +110,7 @@ money-specific walkthrough is `docs/testing/booking-finance-hardening-test-plan.
 Drive checkout with `isMockPayment: true` in the request body. It only works
 when `NODE_ENV === "development"`, and it makes the payment succeed immediately,
 the slots non-tentative and the gateway call disappear (see
-`booking-money-boundary` §2). That is the cheapest way to produce a real
+`references/money-boundary.md` §2). That is the cheapest way to produce a real
 booking, a real Payment row and real earnings without touching a gateway.
 
 ## 6. Concurrency claims need the chaos suite
