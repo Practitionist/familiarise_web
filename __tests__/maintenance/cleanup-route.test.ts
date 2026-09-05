@@ -103,7 +103,8 @@ describe("parseLimitParam", () => {
     }) as unknown as NextRequest;
 
   it("refuses a present-but-invalid limit instead of falling back to unbounded", () => {
-    for (const raw of ["abc", "0", "-5", "2.5"]) {
+    // "" is `?limit=`: present, so it is junk rather than the absent default.
+    for (const raw of ["", "abc", "0", "-5", "2.5"]) {
       expect(() => parseLimitParam(withLimit(raw))).toThrow(InvalidLimitError);
     }
   });

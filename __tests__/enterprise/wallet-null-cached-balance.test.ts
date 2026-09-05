@@ -19,7 +19,11 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 }));
 
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
-import { walletCredit } from "../../lib/api/organizations/wallet";
+import {
+  WalletInsufficientFundsError,
+  walletCredit,
+  walletDebit,
+} from "../../lib/api/organizations/wallet";
 
 /** A billing account row whose cached balance obeys Postgres NULL arithmetic. */
 function invoiceFundedAccount() {
@@ -34,14 +38,29 @@ function invoiceFundedAccount() {
       billingAccount: {
         updateMany: jest.fn(
           async (args: {
-            where: { walletBalance?: null };
-            data: { walletBalance: number };
+            where: { walletBalance?: null | { gte: number } };
+            data: { walletBalance: number | { decrement: number } };
           }) => {
+            const guard = args.where.walletBalance;
             // `walletBalance: null` in the WHERE matches only a row that still
             // has no cached balance, exactly like the SQL `IS NULL`.
-            if (args.where.walletBalance === null && row.walletBalance !== null)
+            if (guard === null) {
+              if (row.walletBalance !== null) return { count: 0 };
+              row.walletBalance = args.data.walletBalance as number;
+              return { count: 1 };
+            }
+            // `gte` is the debit's sufficiency guard. SQL comparisons against
+            // NULL are UNKNOWN rather than true, so it matches nothing on an
+            // unseeded row — the reason the seed above cannot let a debit
+            // through that the balance does not cover.
+            if (
+              row.walletBalance === null ||
+              row.walletBalance < (guard as { gte: number }).gte
+            )
               return { count: 0 };
-            row.walletBalance = args.data.walletBalance;
+            row.walletBalance -= (
+              args.data.walletBalance as { decrement: number }
+            ).decrement;
             return { count: 1 };
           },
         ),
@@ -84,5 +103,24 @@ describe("walletCredit against a NULL cached balance (#1459)", () => {
         account: { kind: "WALLET", organizationId: "org_1" },
       }),
     );
+  });
+});
+
+describe("walletDebit against a NULL cached balance (#1459)", () => {
+  it("seeds the cache to zero and still refuses the debit", async () => {
+    const { row, tx } = invoiceFundedAccount();
+
+    await expect(
+      walletDebit(tx as never, {
+        billingAccountId: "ba_1",
+        amountPaise: 5000,
+        reason: "BOOKING",
+      }),
+    ).rejects.toThrow(WalletInsufficientFundsError);
+
+    // The seed is the fix for the credit path; on the debit path it must not
+    // become a licence to spend. Zero is a real balance, and the gte guard
+    // refuses it exactly as it refuses any other insufficient one.
+    expect(row.walletBalance).toBe(0);
   });
 });
