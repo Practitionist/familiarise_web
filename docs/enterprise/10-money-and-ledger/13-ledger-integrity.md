@@ -55,6 +55,7 @@ flowchart TD
 | `LEDGER_TXN_IMBALANCE` | per `LedgerTransaction` (**full scope only**) | `Σdebit == Σcredit` | a manual SQL edit or a future writer bug broke a posting; **zero of these across a reseed is the gate** that justified removing the three legacy logs |
 | `LEDGER_BALANCE_SNAPSHOT_DRIFT` | per `LedgerAccount` (**full scope only**) | maintained `LedgerAccountBalance` snapshot == journal `Σ(DEBIT)−Σ(CREDIT)` (#776) | the O(1) running-balance cache drifted, or an account with entries has no snapshot row (a posting bypassed `postLedgerTxn`) |
 | `REFUND_BOOKING_COHERENCE` | per `BookingUtilization` (**full scope only**) | fully-refunded payment ⇒ utilization reversed; reversed utilization ⇒ a `SUCCEEDED` refund backs it (#776 §C) | a cap leak (money back but the seat still consumed) or a seat released for free |
+| `LEDGER_DUAL_WRITE_GAP` | per `OrganizationPayout` with `clawbackAmountPaise > 0` | a `clawback:*` `LedgerTransaction` exists against that payout (#1408) | the payout claims recovered cash the journal never saw: `reversePayoutClawback` posts the reversal best-effort inside a `try`/`catch`, and the two other writers of `clawbackAmountPaise` (`refund.ts`, `booking-refund.ts`) post nothing at all |
 
 **Grouped by what each check protects** — the flat list above is alphabetical; this is the pipeline as a defender, from "is the journal itself sound" through "do the caches match" to "who gets paged":
 

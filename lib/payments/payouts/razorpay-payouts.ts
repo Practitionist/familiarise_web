@@ -609,10 +609,28 @@ export class RazorpayPayoutsService {
 
 let razorpayPayoutsInstance: RazorpayPayoutsService | null = null;
 
+/**
+ * #1407 — the one place the RazorpayX API credential pair is resolved.
+ * Disbursement and the two status pollers must authenticate as the same
+ * merchant: the pollers read RAZORPAY_KEY_ID/RAZORPAY_SECRET directly, so on
+ * an account whose X keys differ from the core checkout keys every payout
+ * lookup 401s and every stuck payout is silently left stuck. Fallback order
+ * matches the documented one in `.env.sample`.
+ */
+export function resolveRazorpayXCredentials(): {
+  keyId: string;
+  keySecret: string;
+} {
+  return {
+    keyId: process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "",
+    keySecret:
+      process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_SECRET || "",
+  };
+}
+
 export function getRazorpayPayoutsService(): RazorpayPayoutsService {
   if (!razorpayPayoutsInstance) {
-    const keyId =
-      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID || "";
+    const { keyId, keySecret } = resolveRazorpayXCredentials();
 
     // PM-10 — ENABLE_LIVE_PAYOUTS, not NODE_ENV, is the posture where real
     // money leaves via RazorpayX: the consultant rail holds submissions
@@ -648,8 +666,7 @@ export function getRazorpayPayoutsService(): RazorpayPayoutsService {
 
     razorpayPayoutsInstance = new RazorpayPayoutsService({
       keyId,
-      keySecret:
-        process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_SECRET || "",
+      keySecret,
       accountNumber: process.env.RAZORPAYX_ACCOUNT_NUMBER || "",
       webhookSecret: process.env.RAZORPAYX_WEBHOOK_SECRET,
     });

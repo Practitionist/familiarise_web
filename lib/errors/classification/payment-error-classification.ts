@@ -35,6 +35,10 @@ export const ErrorTypes = {
   WALLET_FROZEN: "WALLET_FROZEN",
   CONSENT_REQUIRED: "CONSENT_REQUIRED_ERROR",
   CONSENT_WITHDRAWN: "CONSENT_WITHDRAWN_ERROR",
+  // Same literal-equality rule as WALLET_FROZEN above: the checkout route
+  // intercepts DomainVerificationRequiredError by instanceof and hardcodes this
+  // string in the response JSON.
+  DOMAIN_VERIFICATION_REQUIRED: "DOMAIN_VERIFICATION_REQUIRED",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -209,6 +213,15 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
   {
     code: "CONSENT_WITHDRAWN",
     errorType: ErrorTypes.CONSENT_WITHDRAWN,
+    httpStatus: 403,
+  },
+  // #1407 — invoice funding is gated on a verified domain
+  // (lib/enterprise/governance.ts). The guard throws its own 403, but with no
+  // row here the message-only fallback answered 500 UNKNOWN_ERROR and the buyer
+  // saw "something went wrong" for a condition their admin can actually fix.
+  {
+    code: "DOMAIN_VERIFICATION_REQUIRED",
+    errorType: ErrorTypes.DOMAIN_VERIFICATION_REQUIRED,
     httpStatus: 403,
   },
 ] as const;

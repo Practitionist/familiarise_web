@@ -96,6 +96,13 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "This consultant has paused bookings; your card was not charged.",
   },
+  // #1407 — the fix is an admin action on the organisation, not a retry, so the
+  // copy names it rather than inviting the buyer to try again.
+  [ErrorTypes.DOMAIN_VERIFICATION_REQUIRED]: {
+    title: "Domain Verification Required",
+    description:
+      "Invoice funding needs a verified domain on your organisation; ask your billing admin to verify it, or pay by card instead. Your card was not charged.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message
