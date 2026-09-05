@@ -103,7 +103,8 @@ export class PayoutValidationError extends Error {
 /**
  * #1470 — raised when an OrganizationPayout's withholding identity
  * (`amountPaise + tdsAmountPaise === netPayoutPaise`) does not hold at the
- * moment the ORG_PAYOUT journal would be written.
+ * moment the ORG_PAYOUT journal would be written, or when any of the three
+ * figures is negative (#1473 review): both leave the payout unpostable.
  *
  * `netPayoutPaise` is the host org's share BEFORE withholding and `amountPaise`
  * is what the rail actually transfers, so a payout that breaks the identity has
@@ -140,7 +141,17 @@ function assertOrgPayoutWithholdingIdentity(payout: {
   tdsAmountPaise: number | null;
 }): void {
   const tds = payout.tdsAmountPaise ?? 0;
-  if (payout.amountPaise + tds !== payout.netPayoutPaise) {
+  // #1473 review — the identity on its own accepts a negative row (-100 + 0
+  // === -100), and the `netPayoutPaise > 0` guard at the posting site would
+  // then let the completion commit COMPLETED/PAID with no journal at all.
+  // `createOrgPayoutBatch` rejects a non-positive batch and nothing else mints
+  // an OrganizationPayout, so this guards a hand-edited row rather than a known
+  // path — but it is the same class of silent, unpostable money as the identity
+  // itself. Zero stays legal: a zero payout has nothing to post and is skipped
+  // on purpose.
+  const isNegative =
+    payout.netPayoutPaise < 0 || payout.amountPaise < 0 || tds < 0;
+  if (isNegative || payout.amountPaise + tds !== payout.netPayoutPaise) {
     throw new OrgPayoutWithholdingMismatchError(
       payout.id,
       payout.organizationId,

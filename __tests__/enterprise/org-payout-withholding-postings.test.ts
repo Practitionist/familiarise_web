@@ -213,6 +213,26 @@ describe("#1470 — markOrgPayoutCompleted ORG_PAYOUT posting", () => {
       }),
     );
   });
+
+  it("refuses a negative payout that satisfies the identity arithmetically", async () => {
+    // #1473 review — -852,516 + 0 === -852,516 passes the equation, and the
+    // posting site skips the journal for anything not > 0, so without the
+    // non-negativity guard this row would settle COMPLETED with no ledger entry.
+    mockedPrisma.organizationPayout.findUniqueOrThrow.mockResolvedValue(
+      payoutRow({
+        netPayoutPaise: -NET_PAYOUT_PAISE,
+        amountPaise: -NET_PAYOUT_PAISE,
+        tdsAmountPaise: 0,
+      }),
+    );
+
+    await expect(markOrgPayoutCompleted(PAYOUT_ID)).rejects.toThrow(
+      OrgPayoutWithholdingMismatchError,
+    );
+
+    expect(postLedgerTxn).not.toHaveBeenCalled();
+    expect(recordOrgTDSDeduction).not.toHaveBeenCalled();
+  });
 });
 
 describe("#1470 — markOrgPayoutReversed mirrors the corrected posting", () => {
