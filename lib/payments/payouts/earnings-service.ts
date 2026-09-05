@@ -1130,41 +1130,12 @@ export async function createEarningsFromPayment({
   }
 }
 
-/**
- * Release earnings from hold period
- * Called by cron job hourly
- */
-export async function releaseEarningsFromHold(): Promise<number> {
-  const now = new Date();
-
-  // Release consultant earnings
-  const consultantResult = await prisma.consultantEarnings.updateMany({
-    where: {
-      status: EarningStatus.PENDING,
-      holdUntil: { lte: now },
-    },
-    data: {
-      status: EarningStatus.READY,
-    },
-  });
-
-  // Release org earnings in parallel
-  const orgResult = await prisma.organizationEarnings.updateMany({
-    where: {
-      status: EarningStatus.PENDING,
-      holdUntil: { lte: now },
-    },
-    data: {
-      status: EarningStatus.READY,
-    },
-  });
-
-  const total = consultantResult.count + orgResult.count;
-  console.log(
-    `Released ${consultantResult.count} consultant + ${orgResult.count} org earnings from hold`,
-  );
-  return total;
-}
+// #1471 — `releaseEarningsFromHold` used to live here as a second, unlocked
+// implementation that nothing called: every scheduled entry point imports
+// `scripts/earnings/release-earnings.ts` instead. It was the only copy that
+// released `OrganizationEarnings`, which is why the org arm looked implemented
+// while being dead. The behaviour has moved into the script (locked, bounded,
+// Serializable) and the dead copy is deleted rather than kept as a trap.
 
 /**
  * Get consultant earnings summary.

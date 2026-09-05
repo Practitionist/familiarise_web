@@ -43,12 +43,15 @@
  *      org-license-covered bookings. The hot checkout path log-warns
  *      on mismatch; this invariant is the retroactive detector.)
  *
- *   G. For every OrganizationPayout:
+ *   G. For every OrganizationPayout in PENDING / APPROVED / PROCESSING /
+ *      COMPLETED:
  *      sum(OrganizationEarnings.orgSharePaise - .refundedAmountPaise)
  *        for batched earnings === OrganizationPayout.netPayoutPaise
  *      (drift here means the batch claim updated earnings but didn't
  *      match the payout totals — investigate the
- *      createOrgPayoutBatch tx history)
+ *      createOrgPayoutBatch tx history. #1471: FAILED / REVERSED /
+ *      CANCELLED payouts are skipped because they deliberately detach
+ *      their earnings back to READY.)
  *
  *   Note: as of A3 (per-collaborator HOST-org settlement) one Payment
  *   can carry N OrganizationEarnings rows — one per (paymentId, orgId)
@@ -615,10 +618,26 @@ async function runReconcileLedgersUnlocked(
   // and writes them to the payout in one go. If anything ever diverges
   // (manual SQL, partial migration, future code changes) this catches
   // the drift before the next bank transfer is initiated.
+  //
+  // #1471 review — scoped to the statuses where the attachment is EXPECTED to
+  // hold. A FAILED payout (markOrgPayoutFailedInternal) and a REVERSED one
+  // (markOrgPayoutReversed) both detach their earnings back to READY with
+  // `orgPayoutId: null` on purpose, so they legitimately end up with zero
+  // attached earnings against a retained `netPayoutPaise` — every one of them
+  // was being reported as drift. CANCELLED is excluded for the same reason.
+  // APPROVED is included with PENDING/PROCESSING/COMPLETED because the batch is
+  // still live and its earnings are still claimed.
+  const ATTACHMENT_EXPECTED_STATUSES = [
+    "PENDING",
+    "APPROVED",
+    "PROCESSING",
+    "COMPLETED",
+  ] as const;
   const payouts = await prisma.organizationPayout.findMany({
-    where: opts.organizationId
-      ? { organizationId: opts.organizationId }
-      : undefined,
+    where: {
+      status: { in: [...ATTACHMENT_EXPECTED_STATUSES] },
+      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+    },
     select: {
       id: true,
       organizationId: true,
@@ -643,7 +662,7 @@ async function runReconcileLedgersUnlocked(
         deltaPaise: p.netPayoutPaise - expected,
         details: {
           earningsCount: p.earnings.length,
-          note: "OrganizationPayout.netPayoutPaise diverges from sum(orgShare - refunds) of attached earnings.",
+          note: "OrganizationPayout.netPayoutPaise diverges from sum(orgShare - refunds) of attached earnings. Only PENDING/APPROVED/PROCESSING/COMPLETED payouts are checked: FAILED, REVERSED and CANCELLED payouts release their earnings back to READY with orgPayoutId cleared, so a zero-earnings total on those is the designed outcome, not drift (#1471).",
         },
       });
     }
