@@ -46,13 +46,13 @@ The reason the system is organized this way is to solve a fundamental distribute
 
 | Type             | Model             | Who Attends                 | Sessions   | Appointment Structure                                   | Payment Required |
 | ---------------- | ----------------- | --------------------------- | ---------- | ------------------------------------------------------- | ---------------- |
-| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N AppointmentOccurrence                  | Yes              |
-| **Subscription** | 1:1, recurring    | 1 consultee + 1 consultant  | M sessions | M Appointments (one per session), slots allocated later | Yes              |
-| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment, per-user AppointmentOccurrence        | Yes              |
-| **Class**        | 1:many, recurring | N consultees + 1 consultant | M sessions | M shared Appointments (one per session), per-user slots | Yes              |
-| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N AppointmentOccurrence                  | No (free)        |
+| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence               | Yes              |
+| **Subscription** | 1:1, recurring    | 1 consultee + 1 consultant  | M sessions | 1 placeholder Appointment, occurrences added by allocation | Yes              |
+| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment with 1 AppointmentOccurrence         | Yes              |
+| **Class**        | 1:many, recurring | N consultees + 1 consultant | M sessions | 1 shared Appointment wrapper with M AppointmentOccurrence rows (one per session) | Yes              |
+| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence               | No (free)        |
 
-A common mistake is thinking that "Appointment" means "a single meeting." In this system, an Appointment is a database record that acts as a container for time slots. Webinars and classes use shared Appointments where multiple users each get their own AppointmentOccurrence within the same Appointment record. This matters because it determines how the webhook handler knows which slots to confirm.
+A common mistake is thinking that "Appointment" means "a single meeting." In this system, an Appointment is a database record that acts as a container for held calls. Each AppointmentOccurrence is one row per held call -- there are no 30-minute atom rows to stitch together. Webinars and classes share a single Appointment wrapper across every enrollee; the occurrence rows are the sessions, not per-user copies. Who is seated on an Appointment is answered by AppointmentParticipant alone: it is the only participant list, and it lives on the Appointment, not on the occurrence. This matters because it determines how the webhook handler knows which participant's payment to confirm.
 
 ---
 
@@ -113,7 +113,8 @@ erDiagram
     Trial ||--o| Appointment : "has one"
 
     Appointment ||--o{ AppointmentOccurrence : "has many"
-    AppointmentOccurrence }o--o{ User : "many-to-many"
+    Appointment ||--o{ AppointmentParticipant : "has many (the only roster)"
+    AppointmentParticipant }o--|| User : "belongs to"
 
     Payment }o--o| Appointment : "links to"
     Payment }o--|| User : "belongs to"
@@ -132,9 +133,9 @@ erDiagram
 
 **Consultation and Subscription** use a 1:1 model. Each has its own dedicated Appointment(s) with the consultee as the sole participant. The reason for this is straightforward: these are private sessions.
 
-**Webinar** uses a shared-appointment model. There is ONE Appointment record for the entire webinar. Each participant gets their own AppointmentOccurrence within that shared appointment. This matters because when the webhook confirms a payment, it must only confirm THAT user's slot, not everyone else's.
+**Webinar** uses a shared-appointment model. There is ONE Appointment record for the entire webinar, and it holds exactly ONE AppointmentOccurrence, the call itself. Enrolling does not create a new occurrence; it seats the enrollee as an AppointmentParticipant row on the shared Appointment. This matters because when the webhook confirms a payment, it must only flip THAT user's participant row to CONFIRMED, not seat or unseat anyone else.
 
-**Class** extends the webinar pattern across multiple sessions. Each session is a separate Appointment, but all sessions belong to the same Class. When a user enrolls, they get a AppointmentOccurrence in EVERY session's Appointment. When the webhook confirms, it must find and confirm ALL of that user's slots across ALL sessions.
+**Class** extends the webinar pattern across multiple sessions. There is still ONE Appointment wrapper for the whole class, but it holds M AppointmentOccurrence rows, one per session. When a user enrolls, checkout adds a single AppointmentParticipant row on the wrapper; that one row covers every session, because the roster lives on the Appointment, not per occurrence. When the webhook confirms, it flips that one participant row, which is why the class's sessions all become bookable for that user at once rather than needing a per-session confirmation.
 
 **Subscription placeholder**: When a consultee checks out a subscription, the system creates a placeholder Appointment with NO slots. The reason is that the consultant has not allocated session times yet. The consultant does this later via the Requests tab. This placeholder exists so the webhook handler can use the "new flow" (confirm existing appointment) rather than falling back to the legacy flow.
 
@@ -158,9 +159,9 @@ flowchart TD
     CHECK_TYPE -->|Other| ERR[Throw: Invalid appointment type]
 
     CONSULT --> CONSULT_DB["Creates:<br/>1 Consultation record<br/>1 Appointment<br/>1 AppointmentOccurrence (tentative)"]
-    SUB --> SUB_DB["Creates:<br/>1 Subscription record<br/>1 placeholder Appointment (no slots)<br/>Links trial if exists"]
-    WEB --> WEB_DB["Creates:<br/>1 AppointmentOccurrence (tentative)<br/>in shared Appointment"]
-    CLS --> CLS_DB["Creates:<br/>N AppointmentOccurrence (tentative)<br/>one per session Appointment"]
+    SUB --> SUB_DB["Creates:<br/>1 Subscription record<br/>1 placeholder Appointment (no occurrences)<br/>Links trial if exists"]
+    WEB --> WEB_DB["Seats:<br/>1 AppointmentParticipant row (HELD)<br/>on the shared Appointment's existing occurrence"]
+    CLS --> CLS_DB["Seats:<br/>1 AppointmentParticipant row (HELD)<br/>on the class wrapper, covering all its occurrences"]
     TRIAL --> TRIAL_DB["No checkout handler.<br/>Consultant approves directly.<br/>No payment involved."]
 
     style START fill:#e8f4fd
@@ -399,11 +400,11 @@ If found, it marks that trial as `CONVERTED` and links it to the new subscriptio
 
 ### 5c. Webinar
 
-A webinar is a one-time, 1:many event. The consultant creates and schedules it; consultees enroll by paying. The key architectural decision is that all participants share a single Appointment record, with each participant getting their own AppointmentOccurrence.
+A webinar is a one-time, 1:many event. The consultant creates and schedules it; consultees enroll by paying. The key architectural decision is that all participants share a single Appointment record and a single AppointmentOccurrence, the call itself; enrollment adds a row to the roster, not a new occurrence.
 
-#### Why One Shared Appointment?
+#### Why One Shared Appointment and One Occurrence?
 
-The reason webinars use a shared appointment is that all participants attend at the same time. Creating separate Appointment records per participant would be wasteful and make queries like "how many people are in this webinar?" unnecessarily complex. Instead, you count the AppointmentOccurrence entries within the shared appointment (excluding the consultant's slot).
+The reason webinars use a shared appointment is that all participants attend the same call at the same time, so there is exactly one held call to represent. Creating a separate occurrence per participant would misrepresent a single call as many, and would make counting attendees a matter of counting occurrence rows instead of counting the roster. Instead, "how many people are in this webinar?" is answered by counting live AppointmentParticipant rows on the shared appointment, excluding the consultant.
 
 #### Sequence Diagram
 
@@ -423,7 +424,7 @@ sequenceDiagram
 
     rect rgb(255, 249, 220)
         Note over SYS,DB: handleWebinarCheckout (checkout.ts L1126)
-        SYS->>DB: Fetch webinar with plan and appointment (with all slots + users)
+        SYS->>DB: Fetch webinar with plan, appointment occurrence, and live participants
         SYS->>DB: Count participants excluding consultant (countWebinarParticipants)
 
         alt Capacity reached (currentParticipants >= maxParticipants)
@@ -434,13 +435,13 @@ sequenceDiagram
             end
         end
 
-        SYS->>SYS: Validate webinar has a master slot (is scheduled)
+        SYS->>SYS: Validate webinar has a scheduled occurrence
         SYS->>SYS: Validate status is not COMPLETED or CANCELLED
-        SYS->>SYS: Validate master slot end time has not passed
+        SYS->>SYS: Validate the occurrence's end time has not passed
         SYS->>SYS: Validate user is not already registered
 
         SYS->>DB: Get or create shared Appointment (reuse existing)
-        SYS->>DB: CREATE AppointmentOccurrence for this user<br/>(copies startsAt/endsAt from master slot, isTentative=true)
+        SYS->>DB: Seat user as AppointmentParticipant (role=CONSULTEE, status=HELD)
     end
 
     SYS->>GW: Create payment intent
@@ -452,8 +453,8 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For WEBINAR: updateMany AppointmentOccurrence<br/>WHERE appointmentId AND user.some(id=userId)<br/>SET isTentative=false
-        Note over WH,DB: Only THIS user's slot is confirmed, not others'
+        Note over WH,DB: For WEBINAR: setParticipantStatus<br/>WHERE appointmentId AND userId<br/>role stays, status flips HELD -> CONFIRMED
+        Note over WH,DB: Only THIS user's participant row is confirmed, not others'
         WH->>DB: UPDATE Webinar status = SCHEDULED
     end
 
@@ -472,35 +473,36 @@ sequenceDiagram
     end
 ```
 
-#### Database Records Created at Checkout (Per Participant)
+#### Database Record Created at Checkout (Per Participant)
 
-| Record              | Key Fields                                                                                                          | Notes                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `AppointmentOccurrence` | `appointmentId` (shared), `startsAt` (from master), `endsAt` (from master), `isTentative=true`, connected to `User` | One per participant. All have the same times (copied from master slot). |
+The following table describes the single row checkout adds for each enrollee.
 
-The webinar itself, its Appointment, and the master AppointmentOccurrence already exist (created by the consultant during scheduling). The checkout handler only adds a new AppointmentOccurrence for the enrolling user.
+| Record                   | Key Fields                                                          | Notes                                                                 |
+| ------------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `AppointmentParticipant` | `appointmentId` (shared), `userId`, `role=CONSULTEE`, `status=HELD` | One per enrollee. The occurrence itself is never duplicated or copied. |
+
+The webinar itself, its Appointment, and its single AppointmentOccurrence already exist, created by the consultant during scheduling. The checkout handler only adds a new AppointmentParticipant row for the enrolling user; it never creates another occurrence.
 
 #### Capacity Check Details
 
-The `countWebinarParticipants()` function counts unique users connected to AppointmentOccurrence records within the webinar's shared appointment, excluding the consultant's user ID. This matters because the consultant also has a slot in the appointment (the master slot) but should not count toward the participant cap.
+The `countWebinarParticipants()` function counts live AppointmentParticipant rows on the webinar's shared appointment, excluding the consultant's user ID. This matters because the consultant is also seated on the appointment but should not count toward the participant cap.
 
 #### Webinar-Specific Confirmation Behavior
 
-When `confirmExistingAppointment` runs for a webinar, it uses this filter:
+When `confirmExistingAppointment` runs for a webinar, it flips one participant row using this filter:
 
 ```sql
-WHERE appointmentId = ? AND user.some(id = userId)
+WHERE appointmentId = ? AND userId = ? AND status = 'HELD'
 ```
 
-This ensures only the paying user's slot is confirmed. Without this filter, confirming one participant's payment would accidentally confirm ALL participants' tentative slots, including those who have not paid yet.
+This ensures only the paying user's seat is confirmed. Without this filter, confirming one participant's payment would accidentally confirm every participant seated on the shared appointment, including those who have not paid yet.
 
 #### Source References
 
-- `handleWebinarCheckout()`: `lib/payments/operations/checkout.ts` line 1126
+- `handleWebinarCheckout()`: `lib/payments/operations/checkout.ts` line 2533
 - Capacity check: `countWebinarParticipants()` in `lib/payments/utils/participants.ts`
-- Master slot validation: `lib/payments/operations/checkout.ts` line 1182
-- Webinar-specific confirmation: `lib/payments/webhooks/handlers.ts` line 967
-- `completeWebinars()`: `scripts/appointments/auto-complete-appointments.ts` line 47
+- Webinar-specific confirmation: `lib/payments/webhooks/handlers.ts` line 1903
+- `completeWebinars()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -510,13 +512,13 @@ A class is a recurring, 1:many event with multiple sessions. It combines the mul
 
 #### Key Difference from Webinars
 
-A class has M sessions. Each session is a separate Appointment record. When a user enrolls, they get a AppointmentOccurrence in EVERY session -- not just one. The checkout handler iterates over all the class's appointments and creates a slot in each.
+A class has M sessions, but there is still only ONE Appointment record for the whole class -- the wrapper. Each session is one AppointmentOccurrence row under that wrapper, not a separate Appointment. When a user enrolls, checkout adds a single AppointmentParticipant row on the wrapper; that one row is the enrollee's seat for every session, because the roster is scoped to the Appointment, not to an individual occurrence.
 
-The reason this matters at the database level is the webhook confirmation. When confirming a class enrollment, the system cannot just filter by `appointmentId` (that would only confirm one session). Instead, it filters by `classId + userId` to find and confirm ALL of that user's slots across ALL sessions.
+The reason this matters at the database level is the webhook confirmation. Since the seat lives on the wrapper and not on each session, confirming a class enrollment only ever flips one participant row (filtered by `classId` and `userId`), and that single flip makes every one of the class's occurrences bookable for that user.
 
 #### Capacity: Unique Participant Counting
 
-A user enrolled in 8 sessions counts as 1 participant, not 8. The `countUniqueParticipants()` function collects all user IDs across all sessions into a Set and returns the set's size. This matters because if you naively counted slot records, a class with 3 users and 8 sessions would appear to have 24 participants.
+A user enrolled in a class with 8 sessions still counts as 1 participant, because there is exactly one AppointmentParticipant row for them regardless of how many occurrences the wrapper has. The `countUniqueParticipants()` function counts live participant rows on the wrapper's roster, so it cannot overcount a multi-session enrollment the way counting occurrence rows would.
 
 #### Sequence Diagram
 
@@ -530,14 +532,14 @@ sequenceDiagram
     participant WH as Webhook Handler
 
     CT->>SYS: Create class plan + schedule M sessions
-    SYS->>DB: CREATE Class + M Appointments (one per session) + master slots
+    SYS->>DB: CREATE Class + 1 Appointment wrapper + M AppointmentOccurrence rows (the sessions)
 
     CE->>SYS: Browse class listing, click "Enroll"
 
     rect rgb(255, 249, 220)
-        Note over SYS,DB: handleClassCheckout (checkout.ts L1256)
-        SYS->>DB: Fetch class with plan and ALL appointments (with all slots + users)
-        SYS->>DB: countUniqueParticipants across all appointments
+        Note over SYS,DB: handleClassCheckout (checkout.ts L2656)
+        SYS->>DB: Fetch class with plan, the wrapper's occurrences, and live participants
+        SYS->>DB: countUniqueParticipants across the wrapper's roster
 
         alt Capacity reached
             alt Mock payment
@@ -547,13 +549,11 @@ sequenceDiagram
             end
         end
 
-        SYS->>SYS: Validate class has not ended (check last session's last slot endsAt)
+        SYS->>SYS: Validate class has not ended (check last session's endsAt)
         SYS->>SYS: Validate user not already enrolled (isUserEnrolled)
+        SYS->>SYS: Validate every expected session is already scheduled
 
-        loop For EACH session (appointment)
-            SYS->>DB: Step 1: CREATE AppointmentOccurrence WITHOUT user (startsAt/endsAt from master, isTentative=true)
-            SYS->>DB: Step 2: UPDATE AppointmentOccurrence to CONNECT user
-        end
+        SYS->>DB: Seat user as AppointmentParticipant on the wrapper (role=CONSULTEE, status=HELD)
     end
 
     SYS->>GW: Create payment intent
@@ -565,7 +565,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For CLASS: updateMany AppointmentOccurrence<br/>WHERE appointment.classId = classId AND user.some(id=userId)<br/>SET isTentative=false across ALL sessions
+        Note over WH,DB: For CLASS: setParticipantStatus<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
         WH->>DB: UPDATE Class status = SCHEDULED
     end
 
@@ -579,50 +579,43 @@ sequenceDiagram
 
     rect rgb(240, 230, 255)
         Note over DB: Auto-complete cron (hourly)
-        DB->>DB: Find SCHEDULED/IN_PROGRESS classes<br/>where EVERY appointment's EVERY slot ended > 1hr ago
+        DB->>DB: Find SCHEDULED/IN_PROGRESS classes<br/>where EVERY occurrence on the wrapper ended > 1hr ago
         DB->>DB: UPDATE Class status = COMPLETED
     end
 ```
 
-#### Why the Two-Step Slot Creation?
+#### Why Enrollment Only Ever Writes a Participant Row
 
-Notice that class slot creation uses a two-step process: first create the AppointmentOccurrence without a user, then update it to connect the user:
+Class enrollment does not touch the occurrence rows at all. The consultant already created the wrapper's M occurrences when scheduling the sessions, so checkout's only job is to seat the enrollee once:
 
 ```typescript
-// Step 1: Create without user
-const slot = await tx.appointmentOccurrence.create({
-  data: { appointmentId, startsAt, endsAt, isTentative: !skipPayment },
-});
-
-// Step 2: Connect user separately
-await tx.appointmentOccurrence.update({
-  where: { id: slot.id },
-  data: { user: { connect: { id: userId } } },
+await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
+  status: skipPayment ? "CONFIRMED" : "HELD",
 });
 ```
 
-The reason for this is a foreign key constraint issue in Prisma. When creating a AppointmentOccurrence and connecting a User in the same operation, Prisma may attempt to create the many-to-many relation record before the AppointmentOccurrence row is committed, causing a FK violation. The two-step approach guarantees the slot exists before the relation is created.
-
-This two-step pattern is NOT needed for webinars because webinar slots use a single `create` with `user: { connect: ... }` and do not hit the same FK issue (likely due to a simpler relation path).
+Because AppointmentParticipant is the only participant list and it is scoped to the Appointment, one row grants the seat across every session on the wrapper. There is no per-session participant record to create or update, and no foreign-key ordering concern of the kind an occurrence-plus-user write would have.
 
 #### Class-Specific Confirmation Behavior
 
-```sql
--- confirmExistingAppointment for CLASS:
-UPDATE AppointmentOccurrence
-SET isTentative = false
-WHERE appointment.classId = ? AND user IN (userId)
+```typescript
+// confirmExistingAppointment for CLASS:
+await setParticipantStatus(
+  tx,
+  { appointment: { classId }, userId, status: "HELD" },
+  "CONFIRMED",
+);
 ```
 
-This uses `classId` (not `appointmentId`) to find slots across ALL session appointments. This matters because the Payment record only links to the FIRST appointment (returned by the checkout handler), but the user has slots in all appointments.
+This scopes by `classId` (not a single `appointmentId`) because the class's wrapper is looked up by its class relation, and it flips exactly one participant row rather than any occurrence. This matters because the Payment record links to the wrapper Appointment, and that one Appointment already carries every session as an occurrence.
 
 #### Source References
 
-- `handleClassCheckout()`: `lib/payments/operations/checkout.ts` line 1256
-- Two-step slot creation: `lib/payments/operations/checkout.ts` line 1332-1355
+- `handleClassCheckout()`: `lib/payments/operations/checkout.ts` line 2656
+- Participant seating: `recordParticipants()` call in `lib/payments/operations/checkout.ts` around line 2739
 - Unique participant counting: `countUniqueParticipants()` in `lib/payments/utils/participants.ts`
-- Class-specific confirmation: `lib/payments/webhooks/handlers.ts` line 947
-- `completeClasses()`: `scripts/appointments/auto-complete-appointments.ts` line 115
+- Class-specific confirmation: `lib/payments/webhooks/handlers.ts` line 1851
+- `completeClasses()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -974,7 +967,7 @@ stateDiagram-v2
 
 ### 8e. AppointmentOccurrence.isTentative
 
-This is a boolean field, not an enum, but it follows a clear lifecycle:
+This field only governs consultation, subscription, and trial occurrences, the exclusive event types where one occurrence is one buyer's held call. Webinar and class checkouts never create a tentative occurrence; the consultant's occurrence is confirmed at scheduling time, and a pending seat is instead expressed as an `AppointmentParticipant.status` of `HELD`, promoted to `CONFIRMED` by the webhook. For the exclusive types, `isTentative` is a boolean field, not an enum, but it follows a clear lifecycle:
 
 ```mermaid
 stateDiagram-v2
@@ -996,7 +989,7 @@ This section covers what happens when things go wrong. Understanding these scena
 
 ### 9a. Payment Fails After Tentative Slot Created
 
-**Scenario**: The checkout handler created a tentative AppointmentOccurrence, but the payment fails (card declined, insufficient funds, etc.).
+**Scenario**: The checkout handler created a tentative AppointmentOccurrence (consultation, subscription, or trial), but the payment fails (card declined, insufficient funds, etc.). Webinar and class checkouts hold the seat as an `AppointmentParticipant` row instead, so this scenario is specific to the exclusive event types.
 
 **What happens**:
 
@@ -1017,13 +1010,13 @@ This section covers what happens when things go wrong. Understanding these scena
 
 **What happens**:
 
-1. User A's checkout handler runs, checks capacity (say 9/10), creates tentative slot (now 10/10)
+1. User A's checkout handler runs, checks capacity (say 9/10), seats an AppointmentParticipant row with status HELD (now 10/10)
 2. User B's checkout handler runs, checks capacity (10/10), gets "Webinar is full" error
-3. User A's payment may or may not succeed -- but the slot was reserved tentatively
+3. User A's payment may or may not succeed -- but the seat was reserved as HELD
 
-The reason this works is that tentative slots ARE counted in capacity checks. The `countWebinarParticipants()` function counts ALL AppointmentOccurrence records in the shared appointment, including tentative ones. Additionally, a distributed lock is acquired during checkout to serialize concurrent requests.
+The reason this works is that HELD seats ARE counted in capacity checks. The `countWebinarParticipants()` function counts every live AppointmentParticipant row on the shared appointment, including HELD ones, not just CONFIRMED ones. Additionally, a distributed lock is acquired during checkout to serialize concurrent requests.
 
-If User A's payment fails, the abandoned-checkout cleanup disconnects them from the event's slots and the seat is free again.
+If User A's payment fails, the abandoned-checkout cleanup removes their participant row and the seat is free again.
 
 ### 9c. Duplicate Checkout Attempt
 
@@ -1033,8 +1026,8 @@ If User A's payment fails, the abandoned-checkout cleanup disconnects them from 
 
 - **Consultation**: The `validateSlotAvailability()` check will detect the tentative slot from the first attempt and block the second.
 - **Subscription**: The duplicate subscription check queries for overlapping date ranges with the same plan and consultee. Throws "You already have a pending or active subscription."
-- **Webinar**: The `isAlreadyRegistered` check finds the user's existing slot. Throws "You are already registered for this webinar."
-- **Class**: The `isUserEnrolled()` check finds the user across any session's slots. Throws "You are already enrolled in this class."
+- **Webinar**: The `isAlreadyRegistered` check finds the user's existing AppointmentParticipant row. Throws "You are already registered for this webinar."
+- **Class**: The `isUserEnrolled()` check finds the user's existing AppointmentParticipant row on the class wrapper. Throws "You are already enrolled in this class."
 
 ### 9d. Webhook Arrives Twice (Idempotency)
 
@@ -1073,9 +1066,9 @@ The reason the system marks the payment as SUCCEEDED (not FAILED) is truthfulnes
 
 ### 9f. Class Session Added After Enrollment
 
-**Scenario**: A consultant adds a new session (Appointment) to a class after users have already enrolled.
+**Scenario**: A consultant wants to add a new session to a class after users have already enrolled.
 
-**What happens**: Existing users will NOT automatically get a AppointmentOccurrence for the new session. Their enrollment only covers sessions that existed at checkout time. The consultant must handle this manually or the system needs a separate "sync enrollment" operation.
+**What happens**: Checkout refuses to seat a new enrollee until every session the plan promises (`classPlan.totalSessions`) already exists as an occurrence on the wrapper, so a class does not normally reach "enrolled" and "partially scheduled" at the same time. If a consultant adds an occurrence to an already-enrolled class's wrapper regardless, every existing AppointmentParticipant row picks it up immediately, because the roster is scoped to the Appointment, not to an individual occurrence -- there is no separate "sync enrollment" step required or possible.
 
 ### 9g. Late Failure Webhook After Success
 

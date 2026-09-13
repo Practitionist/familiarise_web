@@ -121,11 +121,13 @@ flowchart TD
 
 **Appointment structure**:
 
+The 30-minute interval is only the unit the allocator counts and validates candidate time in; it is never the persisted shape. `createAppointments` groups every `slotsPerCall` consecutive 30-minute blocks into one call and writes exactly one AppointmentOccurrence per call, spanning from the first block's start to the last block's end.
+
 ```
-1 Appointment record = 1 call/session
-  N AppointmentOccurrence records (N = slotsPerCall)
-    Each: [startsAt, endsAt] = 30-min interval, isTentative flag
-    Connected to: consultant user + consultee user
+1 Appointment record = 1 wrapper (consultation/webinar: 1 call, subscription/class: N calls)
+  1 AppointmentOccurrence per call, not per 30-min block
+    [startsAt, endsAt] = the full call window, isTentative flag
+    Who is attending is answered by AppointmentParticipant on the Appointment, not by a relation on the occurrence
 ```
 
 ---
@@ -180,11 +182,12 @@ erDiagram
     ClassPlan ||--o{ ClassEvent : creates
 
     Consultation ||--o| Appointment : "has one"
-    Subscription ||--o{ Appointment : "has many"
+    Subscription ||--o| Appointment : "has one wrapper"
     Webinar ||--o| Appointment : "has one"
-    ClassEvent ||--o{ Appointment : "has many"
+    ClassEvent ||--o| Appointment : "has one wrapper"
 
-    Appointment ||--|{ AppointmentOccurrence : contains
+    Appointment ||--|{ AppointmentOccurrence : "contains (one per call)"
+    Appointment ||--o{ AppointmentParticipant : "the only roster"
 
     AvailabilityWindowWeekly {
         string id PK
@@ -216,9 +219,9 @@ erDiagram
 
 **Key relationships**:
 
-- One-time events (consultation, webinar) have **1 appointment** with N slots
-- Recurring events (subscription, class) have **M appointments** (one per call/session), each with N slots
-- `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)`
+- One-time events (consultation, webinar) have **1 appointment wrapper** with a single AppointmentOccurrence, the one held call.
+- Recurring events (subscription, class) also have **1 appointment wrapper**, but that wrapper holds N AppointmentOccurrence rows, one per call/session, instead of N separate Appointment records.
+- `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)` still describes the arithmetic the allocator uses to size a call in 30-minute units; it does not describe how many rows get persisted per call, which is always one occurrence regardless of `slotsPerSession`.
 - Weekly availability uses `startDay` / `endDay` DayOfWeek enums and `startTimeUtc` / `endTimeUtc` Int fields (minutes since midnight UTC, 0-1439)
 
 ---
