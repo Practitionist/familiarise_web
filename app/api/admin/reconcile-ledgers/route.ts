@@ -12,8 +12,11 @@
  *    It opens a report row, hands the run id to the background driver
  *    (`netlify/functions/reconcile-ledgers-background/index.mts`) and answers
  *    `202 { reportId }` at once; poll `GET ?id=<reportId>` until
- *    `summary.status` is COMPLETED. A full-scope run already RUNNING and
- *    younger than the stale window answers 409 with its id instead.
+ *    `summary.status` is COMPLETED. If the background function is never
+ *    invoked (it is not on any non-production deploy of this site, #1633),
+ *    the Netlify ticker advances the run one chunk every five minutes, so it
+ *    still completes in about chunks × 5 min. A full-scope run already
+ *    RUNNING and younger than the stale window answers 409 with its id.
  *  - `GET` lists the most recent reports (paginated), or one by `?id=`.
  *
  * Access: platform admins only via `requireBackofficeSurface("payouts.read")`

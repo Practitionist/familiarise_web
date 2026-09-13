@@ -16,26 +16,26 @@ Since at least July 2026 we have measured a reproducible, bimodal latency pathol
 **1. Bimodality correlates exactly with instance creation count.**
 Four batches against one deploy preview, client-side TTFB via curl, correlated with function logs and an in-app diagnostic route that reports per-instance id + `process.uptime()` + event-loop-lag probe:
 
-| Batch | Concurrency | Instance state | Samples | Result |
-|---|---|---|---|---|
-| A | strictly sequential | new each time | 8 | 1.80–2.72s, no outliers |
-| B | 12 concurrent | ~6 pre-existing | 12 | six at 1.9–4.7s, six at 31.0–33.1s |
-| C | 16 concurrent | ~12 pre-existing | 16 | twelve at 2.6–2.9s, four at 30.8–33.1s |
-| D | 12 concurrent | all warm | 12 | 3.3–5.9s, zero slow |
+| Batch | Concurrency         | Instance state   | Samples | Result                                 |
+| ----- | ------------------- | ---------------- | ------- | -------------------------------------- |
+| A     | strictly sequential | new each time    | 8       | 1.80–2.72s, no outliers                |
+| B     | 12 concurrent       | ~6 pre-existing  | 12      | six at 1.9–4.7s, six at 31.0–33.1s     |
+| C     | 16 concurrent       | ~12 pre-existing | 16      | twelve at 2.6–2.9s, four at 30.8–33.1s |
+| D     | 12 concurrent       | all warm         | 12      | 3.3–5.9s, zero slow                    |
 
 Slow-count equals newly-created-instance-count in every batch. The diagnostic route confirmed every stalled sample ran on an instance aged <100ms serving invocation #1.
 
 **2. The stall is an event-loop block BEFORE any application work.**
-On stalled first invocations, a diagnostic route that awaits 400ms of idle *before* touching the database reported the idle phase taking **23.9–24.8s**, max loop lag 23.7–24.7s, while instance age was <100ms. The subsequent DB query connected in ~0.9–1.0s. On warm instances the same probe shows 400–453ms / lag 1–70ms. Downstream effects: `pg` connect timers are plain `setTimeout`s, so they fire only after the stall ends (~26s), which initially misdiagnosed this as a database problem.
+On stalled first invocations, a diagnostic route that awaits 400ms of idle _before_ touching the database reported the idle phase taking **23.9–24.8s**, max loop lag 23.7–24.7s, while instance age was <100ms. The subsequent DB query connected in ~0.9–1.0s. On warm instances the same probe shows 400–453ms / lag 1–70ms. Downstream effects: `pg` connect timers are plain `setTimeout`s, so they fire only after the stall ends (~26s), which initially misdiagnosed this as a database problem.
 
 **3. Memory/CPU scaling does not touch it.**
 We configured the v2 handler correctly by name (`___netlify-server-handler`; verified via `searchSiteFunctions`, field `m`) at **2048 MB** — i.e. doubled vCPU, since your docs state memory and vCPU scale together. Result under the identical 12-way burst protocol:
 
-| Config | Deploy id (ready UTC 2026-08-22) | commit_ref | searchSiteFunctions `m` | Result |
-|---|---|---|---|---|
-| control 1024 MB | `6a894a2398d6…` (07:05) / `6a895a3f4651…` (08:13) | 74f58138 / 08b10ce4 | 1024 | 11/12 slow, TTFB 27.8–31.0s |
-| **treatment 2048 MB** | **`6a8954981e6f…` (07:49)** | **17228d7e** | **2048** | **11/12 slow, TTFB 35.9–37.6s + one platform 500** |
-| post-revert re-run | `6a8974a11d65…` (10:06) | 0646d8f5 | 1024 | 12/12 slow, TTFB 32.6–38.0s |
+| Config                | Deploy id (ready UTC 2026-08-22)                  | commit_ref          | searchSiteFunctions `m` | Result                                             |
+| --------------------- | ------------------------------------------------- | ------------------- | ----------------------- | -------------------------------------------------- |
+| control 1024 MB       | `6a894a2398d6…` (07:05) / `6a895a3f4651…` (08:13) | 74f58138 / 08b10ce4 | 1024                    | 11/12 slow, TTFB 27.8–31.0s                        |
+| **treatment 2048 MB** | **`6a8954981e6f…` (07:49)**                       | **17228d7e**        | **2048**                | **11/12 slow, TTFB 35.9–37.6s + one platform 500** |
+| post-revert re-run    | `6a8974a11d65…` (10:06)                           | 0646d8f5            | 1024                    | 12/12 slow, TTFB 32.6–38.0s                        |
 
 (An intermediate burst on `6a895c2e7d70…`/58fb03fc at 08:22 came back 16/16 fast — an anomaly attributable to residual warm capacity from three deploys and two concurrent agent sessions within nine minutes, not to the memory setting; recorded for completeness.)
 
@@ -54,6 +54,7 @@ No improvement (possibly worse). We reverted.
 3. Why does the server handler not emit AWS-style `Init Duration` in its logs, and are there plans to expose it? It makes cold-start SLO work impractical.
 4. Any guidance on reducing burst-time instance-creation latency from within the deployment (bundle shape, esbuild vs default bundling, region placement), given memory/vcpu scaling showed no effect?
 5. What is the edge's inactivity timeout for a response that has not started streaming (we observe ~26 s), is it configurable on Pro, and why did invocations at ~39 s receive platform 500s when the documented synchronous limit is 60 s?
+6. Are Background Functions expected to execute on Deploy Previews and branch deploys? On this site (`background_functions: true` on the account), a POST to a `-background` function on a Deploy Preview or a branch deploy answers 202 in about one second and then nothing runs: the function log shows exactly one `info` record with an empty message per kick, no console output, and no `Duration` report line, and the function's side effects never happen. This reproduces with a function whose only statement is a `console.log`, in both declaration forms (`-background` suffix and `config = { background: true }`), on deploys `6aa6bed52185aa0008a728af` (Deploy Preview) and `6aa6dc1e9831c30008de6c6e` (branch deploy), while the same deploys run synchronous and scheduled functions normally. The documentation states this restriction for scheduled functions only.
 
 ## Impact
 
