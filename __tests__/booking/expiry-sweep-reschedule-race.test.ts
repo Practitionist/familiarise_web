@@ -155,17 +155,25 @@ describe("expiry sweep × live reschedule proposals", () => {
 
       await expireStaleRequests();
 
-      // A subscription owns MANY appointments, so the guard inverts: none of
-      // its appointments may carry an open proposal.
+      // #1554 — a subscription owns ONE appointment, which may not exist yet
+      // (unallocated), so the guard is "no wrapper, or a wrapper with no open
+      // proposal".
       const expectedGuard = {
-        none: { rescheduleRequests: { some: openStatusFilter } },
+        OR: [
+          { appointment: null },
+          {
+            appointment: {
+              rescheduleRequests: { none: openStatusFilter },
+            },
+          },
+        ],
       };
 
       const cohortRead = (prisma.subscription.findMany as jest.Mock).mock.calls
         .map(([args]) => args)
         .find((args) => args?.where?.status === AppointmentStatus.PENDING);
       expect(cohortRead).toBeDefined();
-      expect(cohortRead.where.appointments).toEqual(expectedGuard);
+      expect(cohortRead.where.OR).toEqual(expectedGuard.OR);
 
       const terminalWrite = (
         prisma.subscription.updateMany as jest.Mock
@@ -173,7 +181,7 @@ describe("expiry sweep × live reschedule proposals", () => {
         .map(([args]) => args)
         .find((args) => args?.data?.status === AppointmentStatus.EXPIRED);
       expect(terminalWrite).toBeDefined();
-      expect(terminalWrite.where.appointments).toEqual(expectedGuard);
+      expect(terminalWrite.where.OR).toEqual(expectedGuard.OR);
     });
   });
 

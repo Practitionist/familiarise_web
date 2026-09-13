@@ -58,23 +58,12 @@ type CancelAuditMeta = {
 };
 
 /**
- * Which rows this cancel sweeps. A whole-subscription or whole-class cancel
- * also ends the sessions of its sibling appointments; every other booking ends
- * only its own. The slot sweep and the participant sweep must never disagree
- * about that, so both read the scope from here (#1383).
+ * Which rows this cancel sweeps. #1554 — a booking is ONE Appointment, so a
+ * whole-subscription or whole-class cancel ends every occurrence of that one
+ * wrapper. The slot sweep and the participant sweep must never disagree about
+ * the scope, so both read it from here (#1383).
  */
-function cancelSweepScope(appointment: {
-  id: string;
-  subscription: { id: string } | null;
-  class: { id: string } | null;
-}) {
-  if (appointment.subscription) {
-    return { appointment: { subscriptionId: appointment.subscription.id } };
-  }
-  if (appointment.class) {
-    return { appointment: { classId: appointment.class.id } };
-  }
-  // Consultation/webinar/trial — single appointment.
+function cancelSweepScope(appointment: { id: string }) {
   return { appointmentId: appointment.id };
 }
 
@@ -355,10 +344,7 @@ export async function POST(
     };
 
     // Audit attribution for every BookingStatusHistory row this cancel writes
-    // (#1322 A12). `appointmentId` is added per call site rather than here: a
-    // subscription/class cancel sweeps slots belonging to sibling appointments,
-    // and stamping this appointment on those rows would file another session's
-    // history under this booking's timeline.
+    // (#1322 A12).
     const auditMeta: CancelAuditMeta = {
       actorUserId: session.user.id,
       reason: validatedData.reason ?? null,

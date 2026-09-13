@@ -171,7 +171,7 @@ export async function readConsulteeEvents(
           // Org scope only — NO slot requirement (see consultation above);
           // take:EVENTS_TAKE bounds the row count without hiding slot-less
           // PENDING subscriptions. #887
-          ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
+          ...(manyApptOrgWhere && { appointment: manyApptOrgWhere }),
         },
         include: {
           subscriptionPlan: {
@@ -191,7 +191,7 @@ export async function readConsulteeEvents(
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
               occurrences: {
@@ -274,13 +274,11 @@ export async function readConsulteeEvents(
       // Classes the user enrolled in.
       prisma.class.findMany({
         where: {
-          appointments: {
-            some: {
-              // TTFB bound: the user must hold a seat AND a call must be in-window.
-              participants: { some: liveParticipant(userId) },
-              occurrences: { some: { startsAt: { gte: since } } },
-              ...(manyApptOrgWhere ?? {}),
-            },
+          appointment: {
+            // TTFB bound: the user must hold a seat AND a call must be in-window.
+            participants: { some: liveParticipant(userId) },
+            occurrences: { some: { startsAt: { gte: since } } },
+            ...(manyApptOrgWhere ?? {}),
           },
         },
         include: {
@@ -318,7 +316,7 @@ export async function readConsulteeEvents(
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
               occurrences: {
                 orderBy: { startsAt: "asc" },

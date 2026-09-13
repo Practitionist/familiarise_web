@@ -86,16 +86,11 @@ export async function appendCreationHistory(
   await appendHistory(tx, entity, entityId, "CREATED", initialStatus, meta);
 }
 
-/**
- * Resolves the appointment id to stamp on a history row for an entity that owns
- * `Appointment[]` rather than a single appointment. A multi-appointment
- * aggregate has no single id, so the column stays null and the timeline falls
- * back to the `{ entity, entityId }` arm of its OR.
- */
-function soleAppointmentId(
-  appointments: { id: string }[] | undefined,
+/** The purchase wrapper's id for a history row, unless it was tombstoned. */
+function liveWrapperId(
+  appointment: { id: string; deletedAt: Date | null } | null | undefined,
 ): string | null {
-  return appointments?.length === 1 ? appointments[0].id : null;
+  return appointment && !appointment.deletedAt ? appointment.id : null;
 }
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
@@ -202,16 +197,12 @@ export async function transitionSubscriptionRequest(
   },
 ): Promise<void> {
   // #1333 — `take: 2` is the whole question: one live appointment resolves, two
-  // proves the aggregate has no single id.
+  // #1554 — one wrapper per purchase, so its id is the history's anchor.
   const before = await tx.subscription.findUnique({
     where: { id: args.where.id },
     select: {
       status: true,
-      appointments: {
-        where: { deletedAt: null },
-        select: { id: true },
-        take: 2,
-      },
+      appointment: { select: { id: true, deletedAt: true } },
     },
   });
   const res = await tx.subscription.updateMany({
@@ -231,8 +222,7 @@ export async function transitionSubscriptionRequest(
     args.to,
     {
       ...args,
-      appointmentId:
-        args.appointmentId ?? soleAppointmentId(before?.appointments),
+      appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
     },
   );
 }
@@ -301,17 +291,13 @@ export async function transitionClassEvent(
     fromIn?: ClassStatus[];
   },
 ): Promise<void> {
-  // A class owns one appointment per SESSION, so a multi-session class leaves
-  // the id null and only a single-session one resolves — see `soleAppointmentId`.
+  // #1554 — a class is one wrapper with N occurrences, so its id is the
+  // history's anchor.
   const before = await tx.class.findUnique({
     where: args.where,
     select: {
       status: true,
-      appointments: {
-        where: { deletedAt: null },
-        select: { id: true },
-        take: 2,
-      },
+      appointment: { select: { id: true, deletedAt: true } },
     },
   });
   const res = await tx.class.updateMany({
@@ -324,8 +310,7 @@ export async function transitionClassEvent(
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
   await appendHistory(tx, "CLASS", args.where.id, before?.status, args.to, {
     ...args,
-    appointmentId:
-      args.appointmentId ?? soleAppointmentId(before?.appointments),
+    appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
   });
 }
 

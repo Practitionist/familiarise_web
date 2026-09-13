@@ -275,11 +275,7 @@ export function AppointmentDetailClient({
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
-  // request. The sessions of a subscription each carry their own child
-  // appointment id, and this used to fan out a request per id — up to 25 — each
-  // re-authorizing and re-reading the appointment graph. `scope=booking` covers
-  // the page's appointment and its siblings, which is every id those sessions
-  // can belong to.
+  // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
 

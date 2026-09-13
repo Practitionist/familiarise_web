@@ -98,11 +98,11 @@ export async function GET(request: NextRequest) {
 
     // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
     // the denormalized Appointment.organizationId, here through the
-    // subscription's to-many `appointments`). #org-appts — an ABSENT param now
+    // subscription's wrapper, #1554). #org-appts — an ABSENT param now
     // means PERSONAL/B2C (matching resolveOrgScope's default), NOT the old
     // union: the personal dashboards dropped the org switcher and must stay B2C.
-    // A subscription whose appointments carry no org stamp — including one with
-    // zero appointment rows — is personal.
+    // A subscription whose wrapper carries no org stamp — including one with
+    // no wrapper yet — is personal.
     const rawOrgScope = searchParams.get("orgScope");
     const explicitPersonal =
       rawOrgScope === "mine" || rawOrgScope === "personal";
@@ -110,17 +110,13 @@ export async function GET(request: NextRequest) {
     // dashboards) but stays unfiltered for ADMIN/STAFF (they oversee all).
     const defaultPersonal = !rawOrgScope && !isPrivileged(session.user.role);
     if (explicitPersonal || defaultPersonal) {
-      // Personal — no membership lookup needed.
-      // #997 — composite index rides #1169 PR 9 (#1176). This anti-join is the
-      // PENDING list's remaining server cost: `none` compiles to a correlated
-      // NOT EXISTS that `@@index([subscriptionId])` can seek but not cover, so
-      // every candidate subscription pays a heap fetch to read organizationId.
-      // No Prisma shape is cheaper — `every: { organizationId: null }` is the
-      // same subquery with an extra negation — so the fix is the index, not
-      // the query.
-      whereClause.appointments = {
-        none: { organizationId: { not: null } },
-      };
+      // Personal — no membership lookup needed. #997 — the composite index
+      // rides #1169 PR 9 (#1176); with one wrapper the filter is a plain
+      // relation predicate.
+      whereClause.OR = [
+        { appointment: null },
+        { appointment: { organizationId: null } },
+      ];
     } else if (rawOrgScope) {
       // Explicit org / all (privileged + absent falls through → no filter).
       const memberships = await prisma.membership.findMany({
@@ -145,9 +141,7 @@ export async function GET(request: NextRequest) {
       // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
       const scopedOrgId = scopeOrgId(scopeResolution.scope);
       if (scopedOrgId) {
-        whereClause.appointments = {
-          some: { organizationId: scopedOrgId },
-        };
+        whereClause.appointment = { organizationId: scopedOrgId };
       }
       // kind === "all": no additional filter
     }
@@ -186,7 +180,7 @@ export async function GET(request: NextRequest) {
             },
           },
           requestedBy: PROFILE_WITH_USER_SELECT,
-          appointments: APPOINTMENT_LIST_SELECT,
+          appointment: APPOINTMENT_LIST_SELECT,
         },
         orderBy: {
           requestedAt: "desc",
@@ -355,7 +349,7 @@ export async function PATCH(request: NextRequest) {
               user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
             },
           },
-          appointments: {
+          appointment: {
             include: {
               occurrences: true,
               payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },

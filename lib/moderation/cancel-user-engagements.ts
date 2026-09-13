@@ -144,7 +144,7 @@ async function collectConsulteeWork(
       where: {
         requestedById: consulteeProfileId,
         status: { in: [...CANCELLABLE_FROM] },
-        appointments: { some: { occurrences: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -205,7 +205,7 @@ async function collectConsultantWork(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: { in: [...CANCELLABLE_FROM] },
-        appointments: { some: { occurrences: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -221,7 +221,7 @@ async function collectConsultantWork(
       where: {
         classPlan: { consultantProfileId },
         status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
-        appointments: { some: { occurrences: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -357,7 +357,7 @@ async function loadExclusiveEngagement(
     select: {
       subscriptionPlan: planSelect,
       requestedBy: requestedBySelect,
-      appointments: appointmentSelect,
+      appointment: appointmentSelect,
     },
   });
   if (!row) return null;
@@ -365,7 +365,7 @@ async function loadExclusiveEngagement(
     planTitle: row.subscriptionPlan?.title,
     consultantUser: row.subscriptionPlan?.consultantProfile?.user,
     consulteeUser: row.requestedBy?.user,
-    appointments: row.appointments,
+    appointments: row.appointment ? [row.appointment] : [],
   };
 }
 

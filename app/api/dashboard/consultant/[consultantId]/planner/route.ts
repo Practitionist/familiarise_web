@@ -75,7 +75,7 @@ const classInclude = (now: Date) =>
         },
       },
     },
-    appointments: {
+    appointment: {
       include: {
         // #1080 — the planner derives a class's joinable session from these
         // rows, and `appointments: true` returned none of them, so every class
@@ -191,7 +191,7 @@ async function getClassParticipantCounts(
       where: { id: { in: classIds } },
       select: {
         id: true,
-        appointments: {
+        appointment: {
           select: {
             participants: {
               where: liveParticipant(),
@@ -203,15 +203,13 @@ async function getClassParticipantCounts(
     });
 
     for (const classEvent of classCounts) {
-      // Use a Set to count unique users across ALL appointments/sessions
+      // Unique users on the class's one wrapper (#1554).
       // FIX #556: Exclude the consultant host from participant count
       const uniqueUserIds = new Set<string>();
 
-      for (const appointment of classEvent.appointments) {
-        for (const seat of appointment.participants) {
-          if (seat.userId !== excludeConsultantUserId) {
-            uniqueUserIds.add(seat.userId);
-          }
+      for (const seat of classEvent.appointment?.participants ?? []) {
+        if (seat.userId !== excludeConsultantUserId) {
+          uniqueUserIds.add(seat.userId);
         }
       }
 
@@ -311,15 +309,13 @@ export async function GET(
       scopeResolution.scope.kind === "personal"
         ? {
             OR: [
-              { appointments: { none: {} } },
-              { appointments: { some: { organizationId: null } } },
+              { appointment: null },
+              { appointment: { organizationId: null } },
             ],
           }
         : plannerOrgId
           ? {
-              appointments: {
-                some: { organizationId: plannerOrgId },
-              },
+              appointment: { organizationId: plannerOrgId },
             }
           : undefined;
 
@@ -437,7 +433,7 @@ export async function GET(
     // the earliest session must be read separately, unwindowed, in one
     // batched query rather than per-card.
     const classAppointmentIds = classes.flatMap((c) =>
-      c.appointments.map((a) => a.id),
+      c.appointment ? [c.appointment.id] : [],
     );
     if (classAppointmentIds.length > 0) {
       const earliestSlots = await prisma.appointmentOccurrence.groupBy({
@@ -451,9 +447,7 @@ export async function GET(
       });
       const appointmentToClassId: Record<string, string> = {};
       for (const c of classes) {
-        for (const a of c.appointments) {
-          appointmentToClassId[a.id] = c.id;
-        }
+        if (c.appointment) appointmentToClassId[c.appointment.id] = c.id;
       }
       const earliestByClassId: Record<string, Date> = {};
       for (const row of earliestSlots) {

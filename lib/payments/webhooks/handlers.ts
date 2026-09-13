@@ -1509,16 +1509,10 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
     },
   });
 
-  // #1319 — a slotless placeholder, which is what handleSubscriptionCheckout
-  // has always produced: a subscription's sessions are allocated later by the
-  // consultant from the Requests tab, so there is no time here to chunk.
-  //
-  // This used to branch on `!isSchedulingPeriodRequest && startsAt && endsAt`
-  // and write one seat row — a row with no `startsAt` and no `endsAt`, which
-  // are NOT NULL with no default. The `as unknown as` cast was what let it
-  // compile; at runtime the branch could only ever throw and take the whole
-  // capture transaction down with it. Matching the checkout counterpart
-  // removes the divergence and the dead branch in one move.
+  // #1554 — the purchase wrapper, which is what handleSubscriptionCheckout
+  // has always produced: a subscription's calls are allocated later by the
+  // consultant from the Requests tab and land on this row as occurrences, so
+  // there is no time here to write.
   return await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
@@ -1571,50 +1565,38 @@ async function createClass(tx: Tx, data: EventData) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
     include: {
-      appointments: {
+      appointment: {
         include: { occurrences: { select: { id: true } } },
       },
     },
   });
   if (!classInstance) throw new Error("Class not found");
 
-  // #1319 — enrol the payer into the sessions that already exist, exactly as
+  // #1319 / #1554 — enrol the payer on the class's one wrapper, exactly as
   // handleClassCheckout does. This used to CREATE an appointment per buyer,
-  // holding one seat row spanning `schedulingPeriodStartsAt` to
-  // `schedulingPeriodEndsAt` — months wide, with no `consultantProfileId`.
-  // Worse than a bad row shape: a class's Appointments ARE its sessions, so
-  // every enrolment added a phantom session to the class, inflating the
-  // session count that capacity, the "fully scheduled" enrolment gate and the
-  // consultee's timeline all read.
-  // A session Appointment with no slots is an unscheduled session: connecting
-  // to it links the payer to nothing. Refusing on `appointments.length` alone
-  // let that case through and still recorded a paid seat, so the buyer was
-  // enrolled in a class with no time on the calendar.
-  const scheduledSessions = classInstance.appointments.filter(
-    (appointment) => appointment.occurrences.length > 0,
-  );
-  const [firstAppointment] = scheduledSessions;
-  if (!firstAppointment) {
-    // Same refusal createWebinar makes for an unscheduled event: there is
-    // nothing to enrol into, and inventing a placeholder is what caused this.
+  // holding one seat row spanning the scheduling period — months wide, with
+  // no `consultantProfileId` — and every enrolment added a phantom session
+  // to the class. A wrapper with no occurrences is an unscheduled class:
+  // seating the payer on it enrols them in a class with no time on the
+  // calendar, so it is refused like an unscheduled webinar.
+  const wrapper = classInstance.appointment;
+  if (!wrapper || wrapper.occurrences.length === 0) {
     throw new Error("Class has not been scheduled. Cannot create booking.");
   }
 
-  // #1319 A9 — one participant row per scheduled session, matching
-  // handleClassCheckout. HELD for the same reason as the webinar arm: the B2
-  // CAS in confirmExistingAppointment, not this creator, decides whether a
-  // capture on a terminal class is allowed to confirm anything.
-  for (const appointment of scheduledSessions) {
-    await recordParticipants(
-      tx,
-      appointment.id,
-      [{ userId: data.userId, role: "CONSULTEE" }],
-      { status: "HELD" },
-    );
-  }
+  // #1319 A9 — one participant row per purchase, matching handleClassCheckout.
+  // HELD for the same reason as the webinar arm: the B2 CAS in
+  // confirmExistingAppointment, not this creator, decides whether a capture
+  // on a terminal class is allowed to confirm anything.
+  await recordParticipants(
+    tx,
+    wrapper.id,
+    [{ userId: data.userId, role: "CONSULTEE" }],
+    { status: "HELD" },
+  );
 
   const createdAppointment = await tx.appointment.findUnique({
-    where: { id: firstAppointment.id },
+    where: { id: wrapper.id },
     include: { occurrences: true },
   });
   if (!createdAppointment) {

@@ -259,23 +259,16 @@ function processConsultation(
 function processSubscription(
   subscription: TSubscriptionWithPlan,
 ): ProcessedEvent | null {
-  const allSlots: SlotWithContext[] = [];
-
-  subscription.appointments?.forEach((appointment) => {
-    allSlots.push(
-      ...toSlotContexts(appointment.occurrences ?? [], appointment.id),
-    );
-  });
+  // #1554 — one wrapper per subscription, N occurrences.
+  const nextAppointment = subscription.appointment;
+  const allSlots: SlotWithContext[] = nextAppointment
+    ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
+    : [];
 
   if (allSlots.length === 0) return null;
 
   const nextSlot = findNextSlot(allSlots);
   if (!nextSlot) return null;
-
-  // Find the appointment that contains the next slot
-  const nextAppointment = subscription.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId,
-  );
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
@@ -400,23 +393,16 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
  * Process a class into a ProcessedEvent
  */
 function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
-  const allSlots: SlotWithContext[] = [];
-
-  classEvent.appointments?.forEach((appointment) => {
-    allSlots.push(
-      ...toSlotContexts(appointment.occurrences ?? [], appointment.id),
-    );
-  });
+  // #1554 — one wrapper per class, N occurrences.
+  const nextAppointment = classEvent.appointment;
+  const allSlots: SlotWithContext[] = nextAppointment
+    ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
+    : [];
 
   if (allSlots.length === 0) return null;
 
   const nextSlot = findNextSlot(allSlots);
   if (!nextSlot) return null;
-
-  // Find the appointment that contains the next slot
-  const nextAppointment = classEvent.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId,
-  );
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
@@ -438,9 +424,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   };
 
   const bookingStatus: BookingStatus =
-    (classEvent.appointments?.some(
-      (a) => (a.occurrences?.length ?? 0) > 0,
-    ) ?? false)
+    (classEvent.appointment?.occurrences?.length ?? 0) > 0
       ? "CONFIRMED"
       : null;
 

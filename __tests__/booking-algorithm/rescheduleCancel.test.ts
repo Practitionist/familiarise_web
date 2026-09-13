@@ -29,6 +29,8 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1554 — the refund context reads the one wrapper; none here.
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     // #1003 — group-event cancel reads the attendee roster off the payments so
     // it can notify them. Default to an empty event.
@@ -535,10 +537,6 @@ describe("Reschedule Route Handler - POST", () => {
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: appointment.occurrences },
-    ]);
-
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
       slotIds: ["slot-1", "slot-2"],
     });
@@ -605,25 +603,9 @@ describe("Reschedule Route Handler - POST", () => {
 
   describe("SUBSCRIPTION", () => {
     it("should mark ALL subscription slots tentative when no slotIds provided", async () => {
+      // #1554 — the subscription is ONE wrapper; every session is a row on it.
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
-
-      // First findMany: gather all subscription slots
-      mockTx.appointment.findMany
-        .mockResolvedValueOnce([
-          { id: "apt-1", occurrences: appointment.occurrences },
-          {
-            id: "apt-2",
-            occurrences: [
-              makeSlot(
-                "slot-3",
-                new Date(FUTURE_DATE.getTime() + 7 * 24 * 60 * 60 * 1000),
-              ),
-            ],
-          },
-        ])
-        // Second findMany: get appointment IDs for updateMany
-        .mockResolvedValueOnce([{ id: "apt-1" }, { id: "apt-2" }]);
 
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION");
       const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -633,14 +615,14 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.success).toBe(true);
       expect(body.rescheduleType).toBe("entire_booking");
 
-      // Should mark all appointment slots tentative
+      // Should mark every live row of the one wrapper tentative
       expect(
         mockTx.appointmentOccurrence.updateManyAndReturn,
       ).toHaveBeenCalledWith(
         // objectContaining: `select` is the helper's own business.
         expect.objectContaining({
           where: {
-            appointmentId: { in: ["apt-1", "apt-2"] },
+            appointmentId: "apt-1",
             completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
           },
           data: { isTentative: true, completionStatus: "RESCHEDULED" },
@@ -673,10 +655,6 @@ describe("Reschedule Route Handler - POST", () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", occurrences: appointment.occurrences },
-      ]);
-
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1"],
       });
@@ -687,16 +665,16 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("individual_session");
       expect(body.slotsAffected).toBe(1);
 
-      // The route marks ALL slots belonging to the affected appointment(s), not just the
-      // specified slot ID. This ensures multi-slot sessions (e.g. 1.5h = 3 × 30-min slots)
-      // are rescheduled atomically — a partial-tentative session would be inconsistent.
+      // #1554 — one row is one session, so exactly the named rows are
+      // released; releasing by appointment would free the whole programme.
       expect(
         mockTx.appointmentOccurrence.updateManyAndReturn,
       ).toHaveBeenCalledWith(
         // objectContaining: `select` is the helper's own business.
         expect.objectContaining({
           where: {
-            appointmentId: { in: ["apt-1"] },
+            appointmentId: "apt-1",
+            id: { in: ["slot-1"] },
             completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
           },
           data: { isTentative: true, completionStatus: "RESCHEDULED" },
@@ -708,19 +686,8 @@ describe("Reschedule Route Handler - POST", () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      // #448 — multiple_sessions means slots from MULTIPLE appointments
-      // (sessions), not merely multiple slots of one session.
-      const slotA = makeSlot("slot-1", FUTURE_DATE, { appointmentId: "apt-1" });
-      const slotB = makeSlot(
-        "slot-2",
-        new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
-        { appointmentId: "apt-2" },
-      );
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", occurrences: [slotA] },
-        { id: "apt-2", occurrences: [slotB] },
-      ]);
-
+      // #448 / #1554 — multiple_sessions means several occurrence rows: each
+      // row is one session of the one wrapper.
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1", "slot-2"],
       });
@@ -737,10 +704,6 @@ describe("Reschedule Route Handler - POST", () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", occurrences: appointment.occurrences },
-      ]);
-
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1", "nonexistent-slot"],
       });
@@ -754,10 +717,6 @@ describe("Reschedule Route Handler - POST", () => {
     it("should support legacy single slotId parameter", async () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
-
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", occurrences: appointment.occurrences },
-      ]);
 
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotId: "slot-1", // legacy single slotId (not array)
@@ -845,9 +804,6 @@ describe("Reschedule Route Handler - POST", () => {
   it("should return session(s) message for partial reschedule", async () => {
     const appointment = makeSubscriptionAppointment();
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: appointment.occurrences },
-    ]);
 
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
       slotIds: ["slot-1"],

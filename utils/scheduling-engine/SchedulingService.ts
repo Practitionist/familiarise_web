@@ -41,6 +41,7 @@ import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import {
   intervalCountOf,
   intervalStartsOf,
+  isDeadOccurrence,
   nextOrdinal,
   SCHEDULING_INTERVAL_MS,
 } from "@/lib/appointments/occurrences";
@@ -362,7 +363,7 @@ export class SchedulingService {
           requestedBy: {
             select: { user: { select: { id: true, name: true } } },
           },
-          appointments: {
+          appointment: {
             select: {
               id: true,
               organizationId: true,
@@ -376,7 +377,7 @@ export class SchedulingService {
           },
         },
       });
-      if (!row || row.appointments.length === 0) return;
+      if (!row?.appointment) return;
       context = {
         userIds: [
           row.subscriptionPlan.consultantProfile.user.id,
@@ -387,9 +388,9 @@ export class SchedulingService {
           row.subscriptionPlan.consultantProfile.user.name || "Consultant",
         consulteeName: row.requestedBy.user.name || "Consultee",
         planTitle: row.subscriptionPlan.title,
-        firstStart: row.appointments[0].occurrences[0]?.startsAt ?? null,
-        organizationId: row.appointments[0].organizationId,
-        appointmentId: row.appointments[0].id,
+        firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
+        organizationId: row.appointment.organizationId,
+        appointmentId: row.appointment.id,
       };
     } else if (eventType === "webinar") {
       const row = await prisma.webinar.findUnique({
@@ -459,7 +460,7 @@ export class SchedulingService {
               },
             },
           },
-          appointments: {
+          appointment: {
             select: {
               id: true,
               organizationId: true,
@@ -477,9 +478,8 @@ export class SchedulingService {
           },
         },
       });
-      if (!row) return;
-      const appts = row.appointments.filter(Boolean);
-      if (appts.length === 0) return;
+      if (!row?.appointment) return;
+      const appts = [row.appointment];
       const plan = row.classPlan;
       const hostUser = plan.consultantProfile?.user;
       if (!hostUser) return;
@@ -939,7 +939,10 @@ export class SchedulingService {
   private static async replayPartialCounts(
     eventType: EventType,
     eventId: string,
-    appointments: { deletedAt?: Date | null }[],
+    appointments: {
+      deletedAt?: Date | null;
+      occurrences?: { deletedAt?: Date | null; completionStatus?: string }[];
+    }[],
   ): Promise<Partial<AllocationResult>> {
     if (!isRecurringEventType(eventType)) return {};
 
@@ -960,9 +963,13 @@ export class SchedulingService {
 
     if (!requiredSessions || requiredSessions <= 0) return {};
 
-    // Tombstoned rows are not placed sessions; the returned batch is left as
-    // it was so the replay still hands back exactly what the first call did.
-    const placedSessions = appointments.filter((a) => !a.deletedAt).length;
+    // #1554 — placed sessions are the wrapper's live occurrences. Tombstoned
+    // rows are not placed sessions; the returned batch is left as it was so
+    // the replay still hands back exactly what the first call did.
+    const placedSessions = appointments
+      .filter((a) => !a.deletedAt)
+      .flatMap((a) => a.occurrences ?? [])
+      .filter((o) => !isDeadOccurrence(o)).length;
     return {
       partial: placedSessions < requiredSessions,
       placedSessions,
@@ -1324,13 +1331,13 @@ export class SchedulingService {
       }
       const isTopUp = topUp === true;
 
-      // 1 Appointment = 1 session, the same identity the reschedule branch
-      // below counts on. Counted by appointment rather than by dividing the
-      // slot count, so a plan whose session duration changed mid-flight cannot
-      // turn the shortfall into a fraction.
-      const existingConfirmedSessionCount = existingAppointments.filter((a) =>
-        a.occurrences.some((s) => !s.isTentative),
-      ).length;
+      // 1 occurrence = 1 session (#1554), the same identity the reschedule
+      // branch below counts on. Counted by row rather than by dividing an
+      // interval count, so a plan whose session duration changed mid-flight
+      // cannot turn the shortfall into a fraction.
+      const existingConfirmedSessionCount = existingAppointments
+        .flatMap((a) => a.occurrences)
+        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
       const topUpPlanSessions = isTopUp
         ? Math.ceil(
             ScheduleCalculationService.calculateRequiredSlots(
@@ -1403,19 +1410,23 @@ export class SchedulingService {
         }
       }
 
-      // Collect appointment IDs to exclude from conflict detection and weekly limits.
-      // For reschedule: exclude tentative appointments (they'll be deleted)
-      // For initial/in-progress allocation: exclude ALL existing appointments (they'll be deleted or preserved)
-      // #1206 top-up: exclude NOTHING. Every confirmed session survives this
-      // run, so its interval must keep blocking candidates and its week and day
-      // must keep counting toward the caps the validator re-checks.
-      const appointmentIdsToExclude = isReschedule
+      // What to leave out of conflict detection and the weekly/daily limits.
+      // #1554 — the wrapper survives a reschedule, so a reschedule excludes
+      // the TENTATIVE OCCURRENCES being replaced (its confirmed calls still
+      // block and still count); initial/in-progress allocation excludes the
+      // whole wrapper (deleted or rebuilt); #1206 top-up excludes NOTHING —
+      // every confirmed session survives this run, so its interval must keep
+      // blocking candidates and its week and day must keep counting.
+      const appointmentIdsToExclude =
+        isReschedule || isTopUp ? [] : existingAppointments.map((a) => a.id);
+      const occurrenceIdsToExclude = isReschedule
         ? existingAppointments
-            .filter((a) => a.occurrences.some((s) => s.isTentative))
-            .map((a) => a.id)
-        : isTopUp
-          ? []
-          : existingAppointments.map((a) => a.id);
+            .flatMap((a) => a.occurrences)
+            .filter((s) => s.isTentative)
+            .map((s) => s.id)
+        : [];
+      // The event's own wrapper never clashes with itself for a co-host.
+      const ownAppointmentIds = existingAppointments.map((a) => a.id);
 
       // Calculate required slots
       let requiredSlots: number;
@@ -1426,9 +1437,9 @@ export class SchedulingService {
         // crud-with-plan case (commit 2b6be4c1, 1 full-duration tentative row per
         // session) — but correctly smaller for a PARTIAL reschedule (e.g. 2 of 10),
         // which calculateRequiredSlots (the full total) would over-allocate.
-        const rescheduleSessions = existingAppointments.filter((a) =>
-          a.occurrences.some((s) => s.isTentative),
-        ).length;
+        const rescheduleSessions = existingAppointments
+          .flatMap((a) => a.occurrences)
+          .filter((s) => s.isTentative).length;
         requiredSlots = rescheduleSessions * slotsPerCall;
       } else {
         const fullRequired = ScheduleCalculationService.calculateRequiredSlots(
@@ -1489,6 +1500,7 @@ export class SchedulingService {
           // being moved, and placing fewer would delete the remainder outright
           // instead of leaving it pending.
           allowPartial && isRecurringEventType(eventType) && !isReschedule,
+          occurrenceIdsToExclude,
         );
       } catch (error) {
         // #1206 — with `allowPartial` on, a shortage is only raised when the
@@ -1503,7 +1515,7 @@ export class SchedulingService {
       }
 
       // Validate (read-only; runs out-of-txn under the locks)
-      // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+      // Pass the exclusions so the rows being replaced don't trigger false conflicts
       const validation = await new ScheduleValidationService(prisma).validate(
         eventType,
         eventId,
@@ -1511,7 +1523,8 @@ export class SchedulingService {
         consultant,
         config,
         appointmentIdsToExclude,
-        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
+        // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId, excludeOccurrenceIds: occurrenceIdsToExclude },
       );
 
       if (!validation.isValid) {
@@ -1559,6 +1572,7 @@ export class SchedulingService {
             consultant.userId,
             appointmentIdsToExclude,
             consulteeUserId,
+            occurrenceIdsToExclude,
           );
           if (!recheck.isValid) {
             throw new AllocationConflictError(
@@ -1574,7 +1588,7 @@ export class SchedulingService {
             eventType,
             planId,
             selectedSlots,
-            appointmentIdsToExclude,
+            ownAppointmentIds,
           );
 
           // In-txn re-check of the multi-tab guard, serialized per event via
@@ -1940,14 +1954,19 @@ export class SchedulingService {
         pastConfirmedSlotCount > 0 &&
         isRecurringEventType(eventType);
 
-      // Collect appointment IDs to exclude from conflict detection and weekly limits.
-      // For reschedule: exclude tentative appointments (they'll be deleted)
-      // For initial/in-progress allocation: exclude ALL existing appointments
+      // What to leave out of conflict detection and the weekly/daily limits
+      // (#1554 — see autoAllocate: a reschedule excludes the tentative
+      // occurrences being replaced, anything else the whole wrapper).
       const appointmentIdsToExclude = isReschedule
-        ? existingAppointments
-            .filter((a) => a.occurrences.some((s) => s.isTentative))
-            .map((a) => a.id)
+        ? []
         : existingAppointments.map((a) => a.id);
+      const occurrenceIdsToExclude = isReschedule
+        ? existingAppointments
+            .flatMap((a) => a.occurrences)
+            .filter((s) => s.isTentative)
+            .map((s) => s.id)
+        : [];
+      const ownAppointmentIds = existingAppointments.map((a) => a.id);
 
       // #1065 — a hand-placed allocation answers a stated preference just as an
       // auto one does (it does not READ the preference — the consultant chose
@@ -1966,9 +1985,9 @@ export class SchedulingService {
           // (commit 2b6be4c1, where each session has 1 full-duration tentative
           // row) — but is correctly smaller for a PARTIAL reschedule (e.g. 2 of
           // 10). calculateRequiredSlots (the full total) wrongly rejected partials.
-          const rescheduleSessions = existingAppointments.filter((a) =>
-            a.occurrences.some((s) => s.isTentative),
-          ).length;
+          const rescheduleSessions = existingAppointments
+            .flatMap((a) => a.occurrences)
+            .filter((s) => s.isTentative).length;
           const rescheduleRequired = rescheduleSessions * slotsPerCall;
           if (slots.length !== rescheduleRequired) {
             throw new AllocationValidationError(
@@ -2011,7 +2030,7 @@ export class SchedulingService {
       }
 
       // Validate (read-only; runs out-of-txn under the locks)
-      // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
+      // Pass the exclusions so the rows being replaced don't trigger false conflicts
       const validation = await new ScheduleValidationService(prisma).validate(
         eventType,
         eventId,
@@ -2019,7 +2038,8 @@ export class SchedulingService {
         consultant,
         config,
         appointmentIdsToExclude,
-        { consulteeUserId }, // #676 AE-1 — also check the consultee's calendar
+        // #676 AE-1 — also check the consultee's calendar
+        { consulteeUserId, excludeOccurrenceIds: occurrenceIdsToExclude },
       );
 
       if (!validation.isValid) {
@@ -2039,6 +2059,7 @@ export class SchedulingService {
             consultant.userId,
             appointmentIdsToExclude,
             consulteeUserId,
+            occurrenceIdsToExclude,
           );
           if (!recheck.isValid) {
             throw new AllocationConflictError(
@@ -2054,7 +2075,7 @@ export class SchedulingService {
             eventType,
             planId,
             slots,
-            appointmentIdsToExclude,
+            ownAppointmentIds,
           );
 
           // In-txn re-check of the multi-tab guard, serialized per event via
@@ -2858,6 +2879,9 @@ export class SchedulingService {
     // #1206 — return what fits instead of throwing SLOT_SHORTAGE. Only the
     // consultant, having been shown the shortfall, can turn this on.
     allowPartial = false,
+    // #1554 — the tentative occurrences a reschedule replaces: left out of
+    // bookedSlots and of the weekly/daily seeds while their wrapper stays.
+    excludeOccurrenceIds: string[] = [],
   ): Promise<Date[]> {
     const walk: AllocationWalkContext = {
       eventType,
@@ -2910,7 +2934,13 @@ export class SchedulingService {
         // materializing them only re-creates pool pressure on long-lived
         // appointments (CodeRabbit triage).
         occurrences: {
-          where: { deletedAt: null, endsAt: { gt: occupancyClock } },
+          where: {
+            deletedAt: null,
+            endsAt: { gt: occupancyClock },
+            ...(excludeOccurrenceIds.length > 0
+              ? { id: { notIn: excludeOccurrenceIds } }
+              : {}),
+          },
         },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
         // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
@@ -3070,20 +3100,25 @@ export class SchedulingService {
     // IMPORTANT: Only count THIS event's own appointments (not consultations or
     // other event types), and exclude the tentative ones being replaced.
     const excludeSet = new Set(excludeAppointmentIds);
+    const excludedOccurrences = new Set(excludeOccurrenceIds);
     const existingSessionsPerWeek = new Map<string, number>();
-    // Sessions per day already spoken for by surviving appointments — the
-    // seed of the per-day cap counter. Seeded for the same reason as the week
-    // map: validatePerDaySessionCap counts existing appointments, so a
-    // partial reschedule that only looked at this run's placements could put
-    // a replacement on a day that is already at its cap and be rejected
-    // downstream.
+    // Sessions per day already spoken for by surviving calls — the seed of
+    // the per-day cap counter. Seeded for the same reason as the week map:
+    // validatePerDaySessionCap counts existing calls, so a partial reschedule
+    // that only looked at this run's placements could put a replacement on a
+    // day that is already at its cap and be rejected downstream.
+    // #1554 — one live occurrence = one session.
     const existingSessionsPerDay = new Map<string, number>();
-    for (const apt of eventOwnAppointments) {
-      if (excludeSet.has(apt.id)) continue; // skip tentative (being replaced)
-      if (apt.occurrences.length === 0) continue;
-      const firstSlot = apt.occurrences.reduce((earliest, s) =>
-        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
+    const survivingOccurrences = eventOwnAppointments
+      .filter((apt) => !excludeSet.has(apt.id))
+      .flatMap((apt) => apt.occurrences)
+      .filter(
+        (s) =>
+          !excludedOccurrences.has(s.id) &&
+          !s.isTentative &&
+          !isDeadOccurrence(s),
       );
+    for (const firstSlot of survivingOccurrences) {
       // ADR B9 — weekly buckets in the event's scheduling timezone
       const weekKey = ScheduleCalculationService.weekKey(
         new Date(firstSlot.startsAt),
@@ -3459,17 +3494,19 @@ export class SchedulingService {
   }
 
   /**
-   * Create appointment records for allocated slots
+   * Create the occurrence rows for allocated slots (#1554).
    *
    * ARCHITECTURE:
-   * - One Appointment = One call/session
-   * - Each Appointment contains multiple AppointmentOccurrence records
-   * - Number of slots per appointment = session duration / 30 minutes
+   * - One Appointment = one PURCHASE (the wrapper checkout or the planner
+   *   created); a subscription or class is one wrapper with N occurrences.
+   * - One AppointmentOccurrence = one call, carrying its real endsAt and a
+   *   1-based ordinal inside the wrapper.
+   * - The 30-minute interval is the unit of arithmetic only.
    *
-   * EXAMPLE: 2.5-hour subscription call
-   * - Creates 1 Appointment record
-   * - With 5 AppointmentOccurrence records (2.5h ÷ 0.5h = 5 slots)
-   * - Each slot: [startTime, startTime + 30min]
+   * The wrapper is REUSED whenever it exists (the payment-bearing row for a
+   * subscription, the class row the planner minted, a preserved 1:1 row); a
+   * fresh wrapper is created only when the event has none. Returns the one
+   * wrapper in a single-element array, which is what every caller reads.
    *
    * DEFENSIVE VALIDATION:
    * This is a defensive check - slot count should already be validated
@@ -3563,96 +3600,93 @@ export class SchedulingService {
       inheritedPolicyId = originating?.cancellationPolicyId ?? null;
     }
 
-    // Create appointment for each call. A concurrent booking that overlaps an
-    // existing confirmed slot trips the #440 exclusion constraint (or the unique
-    // guard); convert it to a typed 409 here at the source so classifyError can
-    // stay typed-only rather than sniffing Postgres error strings (#837).
+    // One wrapper, N occurrences. A concurrent booking that overlaps an
+    // existing confirmed occurrence trips the #440 exclusion constraint (or the
+    // unique guard); convert it to a typed 409 here at the source so
+    // classifyError can stay typed-only rather than sniffing Postgres error
+    // strings (#837).
     // #873 — kept as any[]: tx.appointment.create's include-payload type does
     // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
     let appointments: any[];
+    // The rows THIS batch wrote, by ordinal: a reused wrapper's include also
+    // returns the occurrences it already had (#1554).
+    let newOccurrenceIds: string[] = [];
     try {
-      // #1554 — a replacement on a reused appointment sits beside the
-      // RESCHEDULED row it replaces, so it takes the next ordinal.
-      const reuseOrdinal = reuseAppointmentId
-        ? await nextOrdinal(tx, reuseAppointmentId)
-        : 1;
-      appointments = await Promise.all(
-        calls.map((sessionSlots, callIndex) => {
-          // #837 — key belongs on the first appointment of the batch only.
-          const idempotencyData =
-            idempotencyKey && callIndex === 0
-              ? { allocationIdempotencyKey: idempotencyKey }
-              : {};
-          // #1554 — one occurrence per call with the real end; the 30-minute
-          // intervals stay the unit of arithmetic, not the persisted shape.
-          const slotsToCreate = [
-            {
-              ordinal: reuseAppointmentId ? reuseOrdinal + callIndex : 1,
-              startsAt: sessionSlots[0],
-              endsAt: new Date(
-                sessionSlots[sessionSlots.length - 1].getTime() +
-                  SCHEDULING_INTERVAL_MS,
-              ),
-              isTentative: false,
-              consultantProfileId: consultantProfileRow.id,
+      const relationField = this.getEventRelationField(eventType);
+      // #1554 — the purchase wrapper already exists for every subscription
+      // (checkout minted it) and for a class the planner scheduled; attach to
+      // it. The event FKs are @unique, so a second create would be a P2002.
+      const wrapperId =
+        reuseAppointmentId ??
+        (
+          await tx.appointment.findFirst({
+            where: {
+              [`${relationField}Id`]: eventId,
+            } as Prisma.AppointmentWhereInput,
+            select: { id: true },
+          })
+        )?.id;
+      // A replacement written after a reschedule sits beside the RESCHEDULED
+      // row it replaces, so it continues the wrapper's ordinals.
+      const firstOrdinal = wrapperId ? await nextOrdinal(tx, wrapperId) : 1;
+      // #837 — the batch's dedupe key rides on the wrapper.
+      const idempotencyData = idempotencyKey
+        ? { allocationIdempotencyKey: idempotencyKey }
+        : {};
+      // One occurrence per call with the real end; the 30-minute intervals
+      // stay the unit of arithmetic, not the persisted shape.
+      const occurrencesToCreate = calls.map((sessionSlots, callIndex) => ({
+        ordinal: firstOrdinal + callIndex,
+        startsAt: sessionSlots[0],
+        endsAt: new Date(
+          sessionSlots[sessionSlots.length - 1].getTime() +
+            SCHEDULING_INTERVAL_MS,
+        ),
+        isTentative: false,
+        consultantProfileId: consultantProfileRow.id,
+      }));
+
+      const wrapper = wrapperId
+        ? await tx.appointment.update({
+            where: { id: wrapperId },
+            data: {
+              ...idempotencyData,
+              occurrences: { create: occurrencesToCreate },
             },
-          ];
-
-          // #898 — REUSE the preserved 1:1 appointment: attach the new
-          // occurrence to it rather than creating a second row on the @unique
-          // event FK. Its event link and booking-time cancellationPolicyId are
-          // already set, so leave them untouched.
-          if (reuseAppointmentId) {
-            return tx.appointment.update({
-              where: { id: reuseAppointmentId },
-              data: {
-                ...idempotencyData,
-                occurrences: {
-                  create: slotsToCreate,
-                },
-              },
-              include: {
-                occurrences: true,
-              },
-            });
-          }
-
-          return tx.appointment.create({
+            include: { occurrences: true },
+          })
+        : await tx.appointment.create({
             data: {
               appointmentType: this.getAppointmentType(eventType),
-              [this.getEventRelationField(eventType)]: {
-                connect: { id: eventId },
-              },
+              [relationField]: { connect: { id: eventId } },
               ...idempotencyData,
               ...(organizationId ? { organizationId } : {}),
               // B1/#1499 — inherit the terms the booking was sold under.
               cancellationPolicyId: inheritedPolicyId,
-              occurrences: {
-                create: slotsToCreate,
-              },
+              occurrences: { create: occurrencesToCreate },
             },
-            include: {
-              occurrences: true,
-            },
+            include: { occurrences: true },
           });
-        }),
+      appointments = [wrapper];
+      newOccurrenceIds = (
+        wrapper.occurrences as { id: string; ordinal: number }[]
+      )
+        .filter((row) => row.ordinal >= firstOrdinal)
+        .map((row) => row.id);
+      // #1319 A9 — allocation writes confirmed occurrences, so the participants
+      // are CONFIRMED from the start; a reused wrapper already has its rows
+      // (createMany skips duplicates). Once per purchase (#1554).
+      await recordParticipants(
+        tx,
+        wrapper.id,
+        consulteeUserId
+          ? [
+              { userId: consultantUserId, role: "CONSULTANT" },
+              { userId: consulteeUserId, role: "CONSULTEE" },
+            ]
+          : [{ userId: consultantUserId, role: "CONSULTANT" }],
+        { organizationId: organizationId ?? null, status: "CONFIRMED" },
       );
-      // #1319 A9 — allocation writes confirmed slots, so the participants are
-      // CONFIRMED from the start; a reused 1:1 appointment already has its
-      // rows (createMany skips duplicates).
-      for (const appt of appointments) {
-        await recordParticipants(
-          tx,
-          appt.id,
-          consulteeUserId
-            ? [
-                { userId: consultantUserId, role: "CONSULTANT" },
-                { userId: consulteeUserId, role: "CONSULTEE" },
-              ]
-            : [{ userId: consultantUserId, role: "CONSULTANT" }],
-          { organizationId: organizationId ?? null, status: "CONFIRMED" },
-        );
-      }
     } catch (error) {
       // Not captured here — createAppointments only runs inside
       // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
@@ -3672,10 +3706,10 @@ export class SchedulingService {
     //
     // CONSULTATION/WEBINAR debit at checkout (1 engagement, slots known
     // synchronously). CLASS debits at enrolment (N engagements, all
-    // appointments pre-allocated by the consultant). SUBSCRIPTION is the
-    // only event type with truly lazy slot allocation — the consultant
-    // adds calls one-at-a-time via the Requests tab — so the cap debit
-    // must happen here, once per Appointment row created.
+    // occurrences pre-allocated by the consultant). SUBSCRIPTION is the
+    // only event type with truly lazy allocation — the consultant adds calls
+    // one-at-a-time via the Requests tab — so the cap debit must happen
+    // here, once per occurrence created (#1554: the engagement is the call).
     //
     // The original Payment carries the org tag; we re-resolve the
     // ProgramAssignment fresh because cycles may have rolled since
@@ -3685,13 +3719,13 @@ export class SchedulingService {
     if (
       eventType === "subscription" &&
       consulteeUserId &&
-      appointments.length > 0
+      newOccurrenceIds.length > 0
     ) {
       await this.recordSubscriptionAllocationCap(
         tx,
         eventId,
         consulteeUserId,
-        appointments.map((a) => a.id),
+        newOccurrenceIds,
       );
     }
 
@@ -3699,9 +3733,11 @@ export class SchedulingService {
   }
 
   /**
-   * For SUBSCRIPTION: debit `engagementsConsumed` per Appointment created
-   * in this allocation batch against the consultee's active org program
-   * assignment. No-op when the booking isn't org-sponsored.
+   * For SUBSCRIPTION: debit `engagementsConsumed` per occurrence created in
+   * this allocation batch against the consultee's active org program
+   * assignment. No-op when the booking isn't org-sponsored. #1554 —
+   * `BookingUtilization.appointmentIds` holds the OCCURRENCE ids here: the
+   * engagement is the call, and the wrapper is one row for the whole plan.
    *
    * Throws `ProgramAssignmentLimitError` if the cap is BLOCK and would
    * be exceeded — the surrounding transaction rolls back the new slots.
@@ -3710,29 +3746,28 @@ export class SchedulingService {
     tx: Tx,
     subscriptionId: string,
     consulteeUserId: string,
-    newAppointmentIds: string[],
+    newOccurrenceIds: string[],
   ): Promise<void> {
-    // Find the original signup Payment via the placeholder Appointment.
-    // SUBSCRIPTION checkout creates exactly one Appointment with a
-    // linked Payment; subsequent allocation appointments have no Payment
-    // of their own.
+    // Find the original signup Payment via the purchase wrapper (#1554).
     const subscription = await tx.subscription.findUnique({
       where: { id: subscriptionId },
       include: {
-        appointments: {
-          include: { payment: true },
+        appointment: {
+          include: {
+            payment: true,
+            occurrences: { where: { deletedAt: null }, select: { id: true } },
+          },
         },
       },
     });
 
     // Schema declares Appointment.payment as Payment[] (one Appointment
     // can carry multiple Payments historically — refunds/retries chain
-    // off the original). Flatten and pick the EARLIEST org-tagged one:
-    // an unordered .find() over a retry chain debits whichever row the DB
-    // happened to return first, landing utilization on the wrong
-    // ProgramAssignment cycle (#1169 PR 1).
-    const orgPayment = subscription?.appointments
-      .flatMap((a) => a.payment)
+    // off the original). Pick the EARLIEST org-tagged one: an unordered
+    // .find() over a retry chain debits whichever row the DB happened to
+    // return first, landing utilization on the wrong ProgramAssignment cycle
+    // (#1169 PR 1).
+    const orgPayment = (subscription?.appointment?.payment ?? [])
       .filter((p) => !!p.organizationId)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
 
@@ -3795,14 +3830,16 @@ export class SchedulingService {
     });
     const priceAtBookingPaise = existingUtil ? 0 : orgPayment.amount;
 
-    // Re-allocation deletes counted appointments and recreates them with
+    // Re-allocation deletes counted occurrences and recreates them with
     // fresh ids, so an id-set diff alone re-debits every replaced session.
     // Substitute stale tracked ids (no longer live on this subscription)
     // with incoming ids 1:1 WITHOUT debiting; only ids beyond the
     // substitution budget are genuinely additional sessions.
-    let idsToDebit = newAppointmentIds;
+    let idsToDebit = newOccurrenceIds;
     if (existingUtil) {
-      const liveIds = new Set(subscription!.appointments.map((a) => a.id));
+      const liveIds = new Set(
+        (subscription!.appointment?.occurrences ?? []).map((o) => o.id),
+      );
       const trackedLive = existingUtil.appointmentIds.filter((id) =>
         liveIds.has(id),
       );
@@ -3810,7 +3847,7 @@ export class SchedulingService {
         existingUtil.appointmentIds.length - trackedLive.length;
       if (staleCount > 0) {
         const alreadyTracked = new Set(trackedLive);
-        const incomingNew = newAppointmentIds.filter(
+        const incomingNew = newOccurrenceIds.filter(
           (id) => !alreadyTracked.has(id),
         );
         const substituted = incomingNew.slice(0, staleCount);
@@ -3851,8 +3888,8 @@ export class SchedulingService {
       paymentId: orgPayment.id,
       engagementsConsumed: idsToDebit.length,
       priceAtBookingPaise,
-      // PR-1e (G3): pass the appointment ids so re-allocation
-      // (delete+recreate of the same slot) can't double-debit. The
+      // PR-1e (G3): pass the occurrence ids so re-allocation
+      // (delete+recreate of the same call) can't double-debit. The
       // helper computes the set diff against
       // BookingUtilization.appointmentIds and increments only by the
       // genuinely-new ids.
@@ -4436,7 +4473,7 @@ export class SchedulingService {
               include: { consultantProfile: consultantProfileSelect },
             },
             requestedBy: { include: { user: true } },
-            appointments: {
+            appointment: {
               include: {
                 occurrences: true,
                 payment: { select: { organizationId: true } },
@@ -4458,16 +4495,15 @@ export class SchedulingService {
         };
         consulteeUserId = event.requestedBy?.user?.id;
         // #1319 — same coverage rule as the consultation arm above.
-        requestedSlots = event.appointments?.flatMap((app) =>
-          app.occurrences.flatMap((s) => intervalStartsOf(s)),
+        requestedSlots = event.appointment?.occurrences.flatMap((s) =>
+          intervalStartsOf(s),
         );
-        // #768 — placeholder Appointment from checkout carries the org
-        // tag. New lazy-allocated slots inherit it.
+        // #768 — the purchase wrapper from checkout carries the org tag.
+        // New lazy-allocated occurrences inherit it.
         organizationId =
-          event.appointments?.find((a) => a.organizationId)?.organizationId ??
-          event.appointments
-            ?.flatMap((a) => a.payment)
-            .find((p) => p?.organizationId)?.organizationId ??
+          event.appointment?.organizationId ??
+          event.appointment?.payment.find((p) => p?.organizationId)
+            ?.organizationId ??
           null;
         break;
       }
@@ -4502,7 +4538,7 @@ export class SchedulingService {
                 consultantProfile: consultantProfileSelect,
               },
             },
-            appointments: { include: { occurrences: true } },
+            appointment: { include: { occurrences: true } },
           },
         });
         if (!event) return null;

@@ -77,7 +77,7 @@ const subscriptionInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: {
       occurrences: true,
       payment: true,
@@ -135,7 +135,7 @@ const classInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: {
       occurrences: true,
       payment: true,
@@ -230,7 +230,7 @@ export async function GET(
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            appointments: { some: PERSONAL_ORG_PIN },
+            appointment: PERSONAL_ORG_PIN,
           },
           include: subscriptionInclude,
           orderBy: {
@@ -270,14 +270,12 @@ export async function GET(
             OR: [
               // Get classes where consultee is registered through appointments
               {
-                appointments: {
-                  some: {
-                    ...PERSONAL_ORG_PIN,
-                    participants: {
-                      some: {
-                        ...liveParticipant(),
-                        user: { consulteeProfile: { id: consulteeId } },
-                      },
+                appointment: {
+                  ...PERSONAL_ORG_PIN,
+                  participants: {
+                    some: {
+                      ...liveParticipant(),
+                      user: { consulteeProfile: { id: consulteeId } },
                     },
                   },
                 },

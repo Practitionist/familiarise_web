@@ -443,10 +443,6 @@ describe("Reschedule — 24-hour policy", () => {
       makeSlot("slot-2", NEAR_DATE), // 12h out — too close
     ]);
     const mockTx = makeMockTx(appointment);
-    // For subscription, route fetches all slots
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: appointment.occurrences },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
@@ -519,9 +515,6 @@ describe("Reschedule — Response shape", () => {
   it("should return individual_session for single slotId in subscription", async () => {
     const appointment = makeSubscriptionAppointment();
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: appointment.occurrences },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
@@ -536,46 +529,36 @@ describe("Reschedule — Response shape", () => {
     expect(body.slotsAffected).toBe(1);
   });
 
-  // #448 — a one-hour session is 2 × 30-min slots of the SAME appointment, so
-  // rescheduling it is ONE session (individual_session), not multiple_sessions.
-  it("should return individual_session for a one-hour (2-slot) session — #448", async () => {
-    const twoSlots = [
-      makeSlot("slot-1", FUTURE_DATE),
-      makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
-    ];
-    const appointment = makeSubscriptionAppointment(twoSlots);
+  // #448 / #1554 — a one-hour session is ONE occurrence row, so rescheduling
+  // it is ONE session (individual_session), not multiple_sessions.
+  it("should return individual_session for a one-hour session — #448", async () => {
+    const oneRow = [makeSlot("slot-1", FUTURE_DATE)];
+    const appointment = makeSubscriptionAppointment(oneRow);
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: twoSlots },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
     const req = makeRequest("apt-1", "SUBSCRIPTION", {
-      slotIds: ["slot-1", "slot-2"],
+      slotIds: ["slot-1"],
     });
     const res = await rescheduleHandler(req, makeParams("apt-1"));
     const body = await res.json();
 
     expect(body.rescheduleType).toBe("individual_session");
     expect(body.sessionsAffected).toBe(1);
-    expect(body.slotsAffected).toBe(2);
+    expect(body.slotsAffected).toBe(1);
   });
 
-  it("should return multiple_sessions when slots span multiple appointments", async () => {
+  it("should return multiple_sessions when several rows of the wrapper are named", async () => {
     const slotA = makeSlot("slot-1", FUTURE_DATE, "apt-1");
     const slotB = makeSlot(
       "slot-2",
       new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
-      "apt-2",
+      "apt-1",
     );
-    const appointment = makeSubscriptionAppointment([slotA]);
+    const appointment = makeSubscriptionAppointment([slotA, slotB]);
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", occurrences: [slotA] },
-      { id: "apt-2", occurrences: [slotB] },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );

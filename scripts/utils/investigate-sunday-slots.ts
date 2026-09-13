@@ -59,7 +59,7 @@ async function investigateSundaySlots() {
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
             occurrences: {
               orderBy: { startsAt: "asc" },
@@ -94,9 +94,10 @@ async function investigateSundaySlots() {
 
     // 3. Check all appointment slots for this subscription
     console.log("=== ALL APPOINTMENT SLOTS FOR THIS SUBSCRIPTION ===");
-    console.log(`Total Appointments: ${subscription.appointments.length}\n`);
+    const wrappers = subscription.appointment ? [subscription.appointment] : [];
+    console.log(`Total Appointments: ${wrappers.length}\n`);
 
-    subscription.appointments.forEach((appt, idx) => {
+    wrappers.forEach((appt, idx) => {
       console.log(`Appointment ${idx + 1} (${appt.id}):`);
       console.log(`  Total slots: ${appt.occurrences.length}`);
 

@@ -580,15 +580,13 @@ async function expireRequestAndReleaseSlots(
       to: AppointmentStatus.EXPIRED,
     });
   } else if (appointment.subscription) {
-    // Subscription→Appointment is to-many (one per session), so the predicate
-    // is "no appointment under this subscription carries a succeeded payment".
+    // #1554 — one wrapper per subscription: the money predicate rides in the
+    // CAS WHERE as "its wrapper carries no succeeded payment".
     await transitionSubscriptionRequest(tx, {
       where: {
         id: appointment.subscription.id,
-        appointments: {
-          none: {
-            payment: { some: { paymentStatus: PaymentStatus.SUCCEEDED } },
-          },
+        appointment: {
+          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
         },
       },
       to: AppointmentStatus.EXPIRED,

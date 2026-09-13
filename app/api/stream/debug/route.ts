@@ -167,10 +167,8 @@ export async function GET(req: NextRequest) {
           })
         : prisma.class.count({
             where: {
-              appointments: {
-                some: {
-                  participants: { some: liveParticipant(userId) },
-                },
+              appointment: {
+                participants: { some: liveParticipant(userId) },
               },
             },
           }),

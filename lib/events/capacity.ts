@@ -21,7 +21,6 @@
  */
 
 import {
-  countUniqueParticipants,
   countWebinarParticipants,
   type SeatBearingAppointment,
 } from "@/lib/payments/utils/participants";
@@ -90,23 +89,21 @@ export function getWebinarCapacity(params: {
 }
 
 /**
- * Class capacity. One appointment per session, and a student holds a seat on
- * every session's appointment, so seats are unique users across all of them.
+ * Class capacity. #1554 — one wrapper per class with N occurrences, so like a
+ * webinar the roster is the wrapper's live participant rows.
  */
 export function getClassCapacity(params: {
   classInstance: CapacityInstance & {
-    appointments?: SeatBearingAppointment[];
+    appointment?: SeatBearingAppointment | null;
   };
   plan: CapacityPlan;
   excludeUserIds?: string[];
 }): EventCapacity {
   const { classInstance, plan, excludeUserIds = [] } = params;
-  for (const appointment of classInstance.appointments ?? []) {
-    assertParticipantsIncluded(appointment, "getClassCapacity");
-  }
+  assertParticipantsIncluded(classInstance.appointment, "getClassCapacity");
   return toCapacity(
     effectiveMaxParticipants(classInstance, plan),
-    countUniqueParticipants(classInstance.appointments ?? [], excludeUserIds),
+    countWebinarParticipants(classInstance.appointment ?? null, excludeUserIds),
   );
 }
 

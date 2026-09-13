@@ -8,11 +8,14 @@ import type { ICollaboratorInfo } from "../../types";
 import type { ConsultantPublicScalars } from "@/lib/data/consultant-public";
 
 type TClassSessionWithSchedule = PrismaClass & {
-  appointments: (PrismaAppointment & {
-    occurrences: PrismaAppointmentOccurrence[];
-    // #1554 — seat ids only; the capacity gate counts these.
-    participants: { userId: string }[];
-  })[];
+  // #1554 — one wrapper per class, N occurrences.
+  appointment:
+    | (PrismaAppointment & {
+        occurrences: PrismaAppointmentOccurrence[];
+        // Seat ids only; the capacity gate counts these.
+        participants: { userId: string }[];
+      })
+    | null;
 };
 
 export type TClassPlanDetailsData = Omit<

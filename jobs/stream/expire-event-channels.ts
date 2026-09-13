@@ -356,7 +356,7 @@ async function loadDmPairs(): Promise<{
             consultantProfile: { select: { user: { select: { id: true } } } },
           },
         },
-        appointments: {
+        appointment: {
           select: {
             organizationId: true,
             occurrences: {
@@ -442,13 +442,8 @@ async function loadDmPairs(): Promise<{
   }
 
   for (const sub of subscriptions) {
-    // A subscription holds many appointments; the pair is as active as the
-    // latest slot across all of them.
-    let latest: Date | null = null;
-    for (const appt of sub.appointments) {
-      const endsAt = appt.occurrences[0]?.endsAt;
-      if (endsAt && (!latest || latest < endsAt)) latest = endsAt;
-    }
+    // #1554 — one wrapper; the pair is as active as its latest occurrence.
+    const latest: Date | null = sub.appointment?.occurrences[0]?.endsAt ?? null;
     add(
       "subscription",
       sub.id,

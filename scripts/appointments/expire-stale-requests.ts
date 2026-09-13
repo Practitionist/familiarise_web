@@ -259,14 +259,18 @@ async function expirePendingSubscriptions(): Promise<{
   // the reschedule machine (accept/decline/withdraw/expire), not be swept out
   // from under it. Hoisted because the condition has to hold at WRITE time,
   // so it rides the CAS WHERE below as well as the cohort read.
+  // #1554 — one wrapper (or none yet): no open reschedule hangs off it.
   const NO_LIVE_PROPOSAL = {
-    appointments: {
-      none: {
-        rescheduleRequests: {
-          some: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          rescheduleRequests: {
+            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+          },
         },
       },
-    },
+    ],
   };
 
   try {
@@ -458,11 +462,9 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
   // write must take its subscription out of this cohort (#1423).
   const NO_LIVE_SESSION = {
     NOT: {
-      appointments: {
-        some: {
-          occurrences: {
-            some: { isTentative: false, deletedAt: null },
-          },
+      appointment: {
+        occurrences: {
+          some: { isTentative: false, deletedAt: null },
         },
       },
     },
@@ -585,12 +587,17 @@ async function expirePaymentPendingRequests(): Promise<{
       payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
     },
   };
-  // Subscription→Appointment is to-many (one per session), so the predicate
-  // inverts: no appointment under this subscription carries a paid payment.
+  // #1554 — one wrapper per subscription, or none yet: either way no paid
+  // payment hangs off it. The money predicate is repeated in the CAS WHERE.
   const UNPAID_SUBSCRIPTION = {
-    appointments: {
-      none: { payment: { some: { paymentStatus: PaymentStatus.SUCCEEDED } } },
-    },
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+        },
+      },
+    ],
   };
 
   try {

@@ -89,20 +89,16 @@ beforeEach(() => {
 
 describe("#1012 expectedTentativeSlotCount", () => {
   it("returns 409 when the page's tentative count no longer matches", async () => {
-    // First tab already finished: zero tentative, two confirmed.
+    // First tab already finished: zero tentative, one confirmed hour (#1554 —
+    // one occurrence row per held call, so the count is in rows, not atoms).
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
         occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: false,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
@@ -115,8 +111,8 @@ describe("#1012 expectedTentativeSlotCount", () => {
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      // Stale tab still thinks the reschedule has 2 tentative slots.
-      expectedTentativeSlotCount: 2,
+      // Stale tab still thinks the reschedule has 1 tentative occurrence.
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.success).toBe(false);
@@ -132,13 +128,8 @@ describe("#1012 expectedTentativeSlotCount", () => {
         occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: true,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: true,
           },
@@ -159,7 +150,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      expectedTentativeSlotCount: 2,
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.httpStatus).not.toBe(409);
@@ -174,7 +165,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
+            endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
         ],
@@ -197,7 +188,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
   });
 
   it("re-asserts the tentative count inside the write transaction", async () => {
-    // Pre-txn view still matches (2 tentative) so we enter the write txn;
+    // Pre-txn view still matches (1 tentative) so we enter the write txn;
     // inside the txn another tab already confirmed — in-txn re-read 409s.
     const matchingTentative = [
       {
@@ -205,13 +196,8 @@ describe("#1012 expectedTentativeSlotCount", () => {
         occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: true,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: true,
           },
@@ -224,13 +210,8 @@ describe("#1012 expectedTentativeSlotCount", () => {
         occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: false,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
@@ -268,7 +249,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      expectedTentativeSlotCount: 2,
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.success).toBe(false);

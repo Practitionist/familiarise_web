@@ -882,7 +882,7 @@ export async function calculateAmountAndValidate(
             classPlan: {
               include: { consultantProfile: true },
             },
-            appointments: {
+            appointment: {
               include: {
                 occurrences: true,
                 participants: {
@@ -1567,7 +1567,7 @@ async function readEventCapacity(
     where: { id: eventId },
     include: {
       classPlan: { include: { consultantProfile: true } },
-      appointments: {
+      appointment: {
         include: {
           participants: {
             where: liveParticipant(),
@@ -2211,7 +2211,7 @@ async function revalidateInsideLock(
             classPlan: {
               include: { consultantProfile: true },
             },
-            appointments: {
+            appointment: {
               include: {
                 occurrences: true,
                 participants: {
@@ -2665,9 +2665,15 @@ export async function handleClassCheckout(
       classPlan: {
         include: { consultantProfile: true },
       },
-      appointments: {
+      appointment: {
         include: {
-          occurrences: true,
+          occurrences: {
+            where: {
+              deletedAt: null,
+              completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+            },
+            orderBy: { startsAt: "asc" },
+          },
           participants: {
             where: liveParticipant(),
             select: { userId: true },
@@ -2683,6 +2689,9 @@ export async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
   const consultantUserId = plan.consultantProfile?.userId;
+  // #1554 — one wrapper per class; its live occurrences are the sessions.
+  const wrapper = classInstance.appointment;
+  const sessions = wrapper?.occurrences ?? [];
 
   const capacity = getClassCapacity({
     classInstance,
@@ -2696,65 +2705,53 @@ export async function handleClassCheckout(
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).
   // Similar to webinar validation — prevents booking a class whose last session is over.
-  if (classInstance.appointments.length > 0) {
-    const lastSession =
-      classInstance.appointments[classInstance.appointments.length - 1];
-    const lastMasterSlot = lastSession.occurrences[0];
-    if (lastMasterSlot && lastMasterSlot.endsAt < new Date()) {
-      throw new Error(
-        "This class has already ended. It can no longer accept enrollments.",
-      );
-    }
+  const lastSession = sessions[sessions.length - 1];
+  if (lastSession && lastSession.endsAt < new Date()) {
+    throw new Error(
+      "This class has already ended. It can no longer accept enrollments.",
+    );
   }
 
   // Check if user is already enrolled - OPT-2: Use extracted utility
-  if (isUserEnrolled(classInstance.appointments, userId)) {
+  if (isUserEnrolled(wrapper, userId)) {
     throw new Error("You are already enrolled in this class");
   }
 
   // B11 — a partially-scheduled class (consultant hasn't allocated every
-  // session yet) must not accept paid enrollments: the loop below links the
-  // buyer only to EXISTING sessions, silently shorting them the rest.
+  // session yet) must not accept paid enrollments: the seat below covers
+  // only EXISTING sessions, silently shorting the buyer the rest.
   const expectedSessions = classInstance.classPlan?.totalSessions;
   if (
     typeof expectedSessions === "number" &&
     expectedSessions > 0 &&
-    classInstance.appointments.length < expectedSessions
+    sessions.length < expectedSessions
   ) {
     throw new Error(
-      `This class is not fully scheduled yet (${classInstance.appointments.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
+      `This class is not fully scheduled yet (${sessions.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
     );
   }
-
-  // Class participants attend every session on the consultant's occurrences;
-  // the seat is one participant row per appointment (#1554), never new rows.
-  for (const appointment of classInstance.appointments) {
-    await recordParticipants(
-      tx,
-      appointment.id,
-      [{ userId, role: "CONSULTEE" }],
-      { status: _skipPayment ? "CONFIRMED" : "HELD" },
-    );
-  }
-
-  // Return the first appointment for compatibility
-  const firstAppointment = classInstance.appointments[0];
-  if (!firstAppointment) {
+  if (!wrapper) {
     throw new Error("No class sessions found");
   }
 
+  // Class participants attend every session on the consultant's occurrences;
+  // the seat is one participant row on the wrapper (#1554), never new rows.
+  await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
+    status: _skipPayment ? "CONFIRMED" : "HELD",
+  });
+
   return {
-    appointment: firstAppointment,
+    appointment: wrapper,
     plan,
     amount: plan.price,
-    slotsLinked: classInstance.appointments.reduce(
-      (n, appointment) => n + appointment.occurrences.length,
-      0,
-    ),
+    slotsLinked: sessions.length,
     // For enterprise cap counting (issue #710): one engagement per
-    // class day. The learner is enrolling in every existing class
-    // appointment at this moment, so the count is fully known here.
-    engagementsConsumed: classInstance.appointments.length,
+    // class session. The learner is enrolling in every existing session
+    // at this moment, so the count is fully known here.
+    engagementsConsumed: sessions.length,
+    // #1554 — the metered unit is the session, so the utilization row names
+    // the occurrence ids (the wrapper is one row for the whole class).
+    engagementIds: sessions.map((session) => session.id),
   };
 }
 
@@ -3507,6 +3504,8 @@ export async function handleCheckout(
             //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
+            // #1554 — CLASS meters its occurrence ids, not the one wrapper.
+            let classEngagementIds: string[] = [];
 
             // FIX #520: Zero-amount payments (credits cover full cost) skip the
             // gateway, so slots should be confirmed immediately just like mock payments.
@@ -3576,10 +3575,10 @@ export async function handleCheckout(
                   userId,
                   skipPayment,
                 );
-                // Class creates slots across multiple appointments
-                // Use first appointment for payment linkage
+                // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
                 engagementsForCap = classResult.engagementsConsumed;
+                classEngagementIds = classResult.engagementIds;
                 break;
               }
 
@@ -3776,15 +3775,10 @@ export async function handleCheckout(
                   // order) incremented the meter a second time.
                   // CONSULTATION/WEBINAR are one engagement on the appointment
                   // just created; CLASS meters one per class session, which is
-                  // exactly the set handleClassCheckout counted.
+                  // exactly the occurrence set handleClassCheckout counted.
                   appointmentIds:
                     validatedData.appointmentType === "CLASS"
-                      ? (
-                          await tx.appointment.findMany({
-                            where: { classId: validatedData.eventId },
-                            select: { id: true },
-                          })
-                        ).map((a) => a.id)
+                      ? classEngagementIds
                       : createdAppointment
                         ? [createdAppointment.id]
                         : [],

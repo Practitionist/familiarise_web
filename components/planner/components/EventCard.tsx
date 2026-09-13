@@ -196,15 +196,14 @@ function getEventStartDate(event: Event): Date | null {
     // day arrives with zero slots here; firstSessionAt travels as its own,
     // unwindowed field for exactly that consumer and takes priority.
     if (event.firstSessionAt) return new Date(event.firstSessionAt);
-    // The card promises the first session, so read the scheduled slot like
-    // the webinar arm above (this arm still serves /api/bookings/classes,
-    // which includes slots unwindowed). A class fans out over many
-    // appointments and the include carries no ordering, so take the earliest
-    // live slot rather than trusting position 0. schedulingPeriodStartsAt is
-    // only the window the run was authored with and drifts from the sessions
-    // actually allocated; it stays as the fallback for a class that has none yet.
-    const firstSlotStartsAt = (event.appointments ?? [])
-      .flatMap((appointment) => appointment.occurrences ?? [])
+    // The card promises the first session, so read the scheduled occurrence
+    // like the webinar arm above (this arm still serves /api/bookings/classes,
+    // which includes occurrences unwindowed). The include carries no ordering,
+    // so take the earliest live row rather than trusting position 0.
+    // schedulingPeriodStartsAt is only the window the run was authored with
+    // and drifts from the sessions actually allocated; it stays as the
+    // fallback for a class that has none yet.
+    const firstSlotStartsAt = (event.appointment?.occurrences ?? [])
       .filter((slot) => !slot.deletedAt)
       .map((slot) => new Date(slot.startsAt).getTime())
       .reduce<number | null>(

@@ -62,17 +62,9 @@ export async function GET(
     const asProvider =
       appointmentRaterRole(auth.userId, auth.detail) === "PROVIDER";
 
-    // #1540 — one request for the whole BOOKING, not one per child appointment.
-    //
-    // The timeline renders every session of a booking, and a subscription's
-    // sessions each carry their own child appointment id — up to 25 of them. The
-    // hook fanned out one request per id, each re-authorizing and re-reading the
-    // appointment graph, so rendering one page cost roughly a hundred Prisma
-    // operations. Under `PG_POOL_MAX=1` on Netlify every one of those serialises,
-    // so the parallelism the client appeared to buy did not exist at the database.
-    //
-    // `authorizeAppointment` already loaded the siblings to decide the answer, so
-    // widening the scope costs NO extra query — the ids are in hand.
+    // #1540 — one request for the whole BOOKING. #1554 made a booking ONE
+    // Appointment, so `scope=booking` and the default now read the same row;
+    // the parameter stays accepted so existing callers do not 400.
     const scope = scopeSchema.safeParse(
       new URL(req.url).searchParams.get("scope") ?? undefined,
     );
@@ -84,10 +76,7 @@ export async function GET(
         context: { route: FEEDBACK_ROUTE, action: "get", appointmentId },
       });
     }
-    const scopeIds =
-      scope.data === "booking"
-        ? [auth.detail.appointment.id, ...auth.detail.siblings.map((s) => s.id)]
-        : [appointmentId];
+    const scopeIds = [auth.detail.appointment.id];
 
     // Which calls of this booking the caller may rate at all, so the timeline
     // offers stars only where a rating would be accepted rather than erroring

@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     if (includeRegistration) {
       classesInclude = {
         include: {
-          appointments: {
+          appointment: {
             include: {
               // #1554 — seat ids only; the explore card's enrolment check.
               participants: {
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
           id: true,
           classes: {
             select: {
-              appointments: {
+              appointment: {
                 select: {
                   id: true,
                   // #1554 — one row per held call, so the count is the rows.
@@ -110,12 +110,7 @@ export async function GET(request: NextRequest) {
         .map((p) => ({
           id: p.id,
           count: p.classes.reduce(
-            (sum, cls) =>
-              sum +
-              cls.appointments.reduce(
-                (s, apt) => s + apt._count.occurrences,
-                0,
-              ),
+            (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
             0,
           ),
         }))

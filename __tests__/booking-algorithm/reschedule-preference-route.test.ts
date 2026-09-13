@@ -73,15 +73,35 @@ function consulteeSession() {
   };
 }
 
-/** A two-session subscription; both sessions are released together. */
+/** The wrapper's two sessions; the preference is keyed by released row id. */
+const SESSION_ROWS = [
+  // `completionStatus` is `@default(SCHEDULED)` and non-nullable; whole-series
+  // flows now filter on SLOT_RESCHEDULABLE_FROM so a delivered session cannot
+  // brick the aggregate request, and an unset fixture reads as not-live.
+  {
+    id: "slot-1",
+    appointmentId: APPOINTMENT_ID,
+    startsAt: FUTURE,
+    completionStatus: "SCHEDULED",
+  },
+  {
+    id: "slot-2",
+    appointmentId: APPOINTMENT_ID,
+    startsAt: FUTURE,
+    completionStatus: "SCHEDULED",
+  },
+];
+
+/**
+ * A two-session subscription; both sessions are released together. #1554 —
+ * both rows live on the ONE wrapper.
+ */
 function subscriptionAppointment() {
   return {
     id: APPOINTMENT_ID,
     appointmentType: "SUBSCRIPTION",
     organizationId: null,
-    occurrences: [
-      { id: "slot-1", appointmentId: APPOINTMENT_ID, startsAt: FUTURE },
-    ],
+    occurrences: SESSION_ROWS,
     consultation: null,
     subscription: {
       id: "sub-1",
@@ -101,38 +121,12 @@ function subscriptionAppointment() {
   };
 }
 
-/**
- * Sibling sessions live on their own appointments, which is the whole reason
- * the row's appointmentId is not a safe key for the preference.
- */
-const SIBLING_SLOTS = [
-  // `completionStatus` is `@default(SCHEDULED)` and non-nullable; whole-series
-  // flows now filter on SLOT_RESCHEDULABLE_FROM so a delivered session cannot
-  // brick the aggregate request, and an unset fixture reads as not-live.
-  {
-    id: "slot-1",
-    appointmentId: APPOINTMENT_ID,
-    startsAt: FUTURE,
-    completionStatus: "SCHEDULED",
-  },
-  {
-    id: "slot-2",
-    appointmentId: "apt-2",
-    startsAt: FUTURE,
-    completionStatus: "SCHEDULED",
-  },
-];
-
 let createdData: Record<string, unknown> | null = null;
 
 function makeMockTx() {
   return {
     appointment: {
       findUnique: jest.fn().mockResolvedValue(subscriptionAppointment()),
-      findMany: jest.fn().mockResolvedValue([
-        { id: APPOINTMENT_ID, occurrences: [SIBLING_SLOTS[0]] },
-        { id: "apt-2", occurrences: [SIBLING_SLOTS[1]] },
-      ]),
     },
     // Each transition helper reads the from-status before its CAS and appends
     // one BookingStatusHistory row after it.
@@ -218,12 +212,11 @@ describe("reschedule route — preference without times", () => {
     expect(createdData?.openForAppointmentId).toBe(APPOINTMENT_ID);
   });
 
-  it("stores every released slot, including a sibling appointment's", async () => {
+  it("stores every released occurrence of the wrapper", async () => {
     await rescheduleHandler(post({ preferredDays: "WEEKENDS" }), params);
 
-    // This is what the allocator matches the preference on. A row filed against
-    // apt-1 must still carry apt-2's slot, or releasing a later session loses
-    // the preference entirely.
+    // This is what the allocator matches the preference on: every row the
+    // whole-series release freed, or a later session loses the preference.
     expect(createdData?.releasedOccurrenceIds).toEqual(["slot-1", "slot-2"]);
   });
 

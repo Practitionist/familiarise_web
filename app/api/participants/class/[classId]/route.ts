@@ -76,7 +76,7 @@ export async function GET(
       },
       include: {
         classPlan: true,
-        appointments: {
+        appointment: {
           select: {
             id: true,
             participants: {
@@ -95,14 +95,15 @@ export async function GET(
     // Get unique participants by user ID
     const participants = Array.from(
       new Map(
-        classEvent.appointments
-          ?.flatMap((appointment) => appointment.participants)
-          .map((participant) => [participant.user.id, participant.user]) || [],
+        classEvent.appointment?.participants.map((participant) => [
+          participant.user.id,
+          participant.user,
+        ]) || [],
       ).values(),
     );
 
     const seatPayments = await readSeatPayments(
-      (classEvent.appointments ?? []).map((a) => a.id),
+      classEvent.appointment ? [classEvent.appointment.id] : [],
       participants.map((u) => u.id),
     );
 

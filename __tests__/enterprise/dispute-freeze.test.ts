@@ -17,15 +17,11 @@ import {
 } from "@/lib/payments/dispute-status";
 
 const mockDisputeFindFirst = jest.fn();
-const mockAppointmentFindUnique = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     dispute: { findFirst: (...a: unknown[]) => mockDisputeFindFirst(...a) },
-    appointment: {
-      findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
-    },
   },
 }));
 
@@ -33,14 +29,6 @@ import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 
 beforeEach(() => {
   mockDisputeFindFirst.mockReset();
-  mockAppointmentFindUnique.mockReset();
-  mockAppointmentFindUnique.mockResolvedValue({
-    id: "appt1",
-    consultationId: "cons-1",
-    subscriptionId: null,
-    classId: null,
-    webinarId: null,
-  });
 });
 
 describe("hasActiveDisputeForAppointment (#1008)", () => {
@@ -49,7 +37,8 @@ describe("hasActiveDisputeForAppointment (#1008)", () => {
     const active = await hasActiveDisputeForAppointment("appt1");
     expect(active).toBe(true);
     const where = mockDisputeFindFirst.mock.calls[0][0].where;
-    expect(where.payment).toEqual({ appointment: { consultationId: "cons-1" } });
+    // #1554 — the appointment IS the booking, so its payments are the scope.
+    expect(where.payment).toEqual({ appointmentId: "appt1" });
     // #1019 — terminal verdicts AND a resolved WARNING_CLOSED must not freeze.
     expect(where.status.notIn).toEqual(DISPUTE_INACTIVE_FOR_GATING);
     expect(where.status.notIn).toContain("WARNING_CLOSED");
@@ -58,35 +47,6 @@ describe("hasActiveDisputeForAppointment (#1008)", () => {
   it("returns false when no live dispute is found", async () => {
     mockDisputeFindFirst.mockResolvedValue(null);
     expect(await hasActiveDisputeForAppointment("appt1")).toBe(false);
-  });
-
-  it("looks across the whole booking, not the row it was handed", async () => {
-    // A subscription's payment — and therefore its dispute — hangs off the
-    // slot-less placeholder appointment, never the session row the dashboards
-    // pass in. Scoped to that row the guard never fired for a subscription.
-    mockAppointmentFindUnique.mockResolvedValue({
-      id: "session-3",
-      consultationId: null,
-      subscriptionId: "sub-1",
-      classId: null,
-      webinarId: null,
-    });
-    mockDisputeFindFirst.mockResolvedValue({ id: "d1" });
-
-    expect(await hasActiveDisputeForAppointment("session-3")).toBe(true);
-    expect(mockDisputeFindFirst.mock.calls[0][0].where.payment).toEqual({
-      appointment: { subscriptionId: "sub-1" },
-    });
-  });
-
-  it("falls back to the row itself when the appointment is gone", async () => {
-    mockAppointmentFindUnique.mockResolvedValue(null);
-    mockDisputeFindFirst.mockResolvedValue(null);
-
-    expect(await hasActiveDisputeForAppointment("appt1")).toBe(false);
-    expect(mockDisputeFindFirst.mock.calls[0][0].where.payment).toEqual({
-      appointmentId: "appt1",
-    });
   });
 
   it("terminal statuses are exactly WON/LOST/CHARGE_REFUNDED/CLOSED", () => {

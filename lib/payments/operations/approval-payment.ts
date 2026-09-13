@@ -614,7 +614,7 @@ export async function findExistingLivePayment(params: {
     const subscription = await prisma.subscription.findUnique({
       where: { id: params.subscriptionId },
       include: {
-        appointments: {
+        appointment: {
           include: {
             payment: true,
           },
@@ -622,8 +622,10 @@ export async function findExistingLivePayment(params: {
       },
     });
 
-    // Check any appointment for payment
-    for (const apt of subscription?.appointments ?? []) {
+    // Check the wrapper for a payment (#1554: one per subscription)
+    for (const apt of subscription?.appointment
+      ? [subscription.appointment]
+      : []) {
       const payment = apt.payment?.find((p) =>
         REUSABLE_STATUSES.includes(p.paymentStatus),
       );

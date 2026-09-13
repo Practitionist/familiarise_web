@@ -3,7 +3,7 @@
  *
  * Covers:
  * - Week key format consistency (Bug A fix verification)
- * - Appointment-per-call counting (Bug B fix verification)
+ * - Occurrence-per-call counting (Bug B fix verification, #1554)
  * - Weekly limit enforcement (Bug C fix verification)
  * - Subscription period boundary validation
  * - generateWeeklyInfo with proposed and existing calls
@@ -93,8 +93,8 @@ describe("Bug A Fix: Week key format consistency", () => {
 
 // ─── Bug B: Appointment Per-Call Counting ───────────────────────────────────
 
-describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
-  it("should count a 2-slot appointment as 1 call, not 2", async () => {
+describe("Bug B Fix: Occurrence counting (1 occurrence = 1 call, #1554)", () => {
+  it("should count a two-interval occurrence as 1 call, not 2", async () => {
     const existingAppointments = [
       makeAppointmentWithSlots("apt-1", [
         "2025-01-06T10:00:00.000Z",
@@ -114,7 +114,8 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
 
     const result = await service.validateSubscriptionSlots("sub-1", []);
 
-    // The week containing Jan 6 should show 1 existing call, not 2.
+    // The week containing Jan 6 should show 1 existing call, not 2 — the
+    // 10:00–11:00 call is one occurrence row, not two half-hour atoms.
     // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
     const expectedWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
       new Date("2025-01-06T10:00:00.000Z"),
@@ -387,12 +388,14 @@ describe("excludeAppointmentIds", () => {
       existingAppointments,
     );
 
-    // When we exclude apt-1, it should pass the findMany with notIn filter
-    await service.validateSubscriptionSlots("sub-1", [], ["apt-1"]);
-    expect(mockPrisma.appointment.findMany).toHaveBeenCalledWith(
+    // #1554 — the read is over occurrence rows; the wrapper exclusion rides
+    // the relation filter and the occurrence exclusion rides the row id.
+    await service.validateSubscriptionSlots("sub-1", [], ["apt-1"], ["occ-9"]);
+    expect(mockPrisma.appointmentOccurrence.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          id: { notIn: ["apt-1"] },
+          id: { notIn: ["occ-9"] },
+          appointment: expect.objectContaining({ id: { notIn: ["apt-1"] } }),
         }),
       }),
     );

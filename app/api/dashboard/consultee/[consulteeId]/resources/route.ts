@@ -75,7 +75,7 @@ const subscriptionInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: slotsWithRecordings,
   },
 } satisfies Prisma.SubscriptionInclude;
@@ -109,7 +109,7 @@ const classInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: slotsWithRecordings,
   },
 } satisfies Prisma.ClassInclude;
@@ -233,7 +233,7 @@ export async function GET(
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            appointments: { some: { organizationId: null } },
+            appointment: { organizationId: null },
           },
           include: subscriptionInclude,
           orderBy: { requestedAt: "desc" },
@@ -286,11 +286,9 @@ export async function GET(
             OR: [
               // Instances the user directly attended
               {
-                appointments: {
-                  some: {
-                    organizationId: null,
-                    participants: { some: liveParticipant(userId) },
-                  },
+                appointment: {
+                  organizationId: null,
+                  participants: { some: liveParticipant(userId) },
                 },
               },
               // Other instances from paid plans that have recordings
@@ -298,19 +296,17 @@ export async function GET(
                 ? [
                     {
                       classPlanId: { in: paidClassPlanIds },
-                      appointments: {
-                        some: {
-                          occurrences: {
-                            some: {
-                              meetingSession: {
-                                recordings: {
-                                  some: {
-                                    status: {
-                                      notIn: [
-                                        "FAILED" as const,
-                                        "EXPIRED" as const,
-                                      ],
-                                    },
+                      appointment: {
+                        occurrences: {
+                          some: {
+                            meetingSession: {
+                              recordings: {
+                                some: {
+                                  status: {
+                                    notIn: [
+                                      "FAILED" as const,
+                                      "EXPIRED" as const,
+                                    ],
                                   },
                                 },
                               },
@@ -372,7 +368,9 @@ export async function GET(
             status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
-            recordings: await extractRecordings(s.appointments),
+            recordings: await extractRecordings(
+              s.appointment ? [s.appointment] : [],
+            ),
           })),
         )
       ).filter((e) => e.status !== "PENDING" && shouldInclude(e)),
@@ -403,10 +401,12 @@ export async function GET(
             status: cl.status,
             date:
               cl.schedulingPeriodStartsAt ||
-              cl.appointments?.[0]?.occurrences?.[0]?.startsAt ||
+              cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
-            recordings: await extractRecordings(cl.appointments),
+            recordings: await extractRecordings(
+              cl.appointment ? [cl.appointment] : [],
+            ),
           })),
         )
       ).filter(shouldInclude),

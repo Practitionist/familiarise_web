@@ -5,7 +5,7 @@
 /**
  * The cancel route must actually refund. There was no test that it did.
  *
- * Both existing cancel-route suites stub `appointment.findMany -> []`, which
+ * Both existing cancel-route suites stub the wrapper read to nothing, which
  * makes the payment lookup come back empty and kills the entire refund block —
  * so every check on those suites was compatible with the refund path being
  * dead. It was: resolving the booking context AFTER the cancel transaction
@@ -13,7 +13,7 @@
  * CANCELLED, the "next undelivered session" came back empty, and every
  * consultee-initiated cancellation silently fell to the 0% tier.
  *
- * The prisma stub here models that ordering honestly: `appointment.findMany`
+ * The prisma stub here models that ordering honestly: the wrapper read
  * answers with live slots before `$transaction` runs and with CANCELLED slots
  * afterwards, exactly as the database would. A resolver called on the wrong
  * side of the transaction therefore scores 0% and these tests fail.
@@ -80,6 +80,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+      // #1554 — the refund context reads the ONE wrapper.
+      findFirst: async (...a: unknown[]) =>
+        (await mockAppointmentFindMany(...a))[0] ?? null,
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },

@@ -161,13 +161,12 @@ function makeCancelledClass() {
       id: "plan-1",
       consultantProfile: { userId: "consultant-1" },
     },
-    // A class's Appointments ARE its sessions; the payer joins these.
-    appointments: [
-      {
-        id: "session-appt-1",
-        occurrences: [{ id: "slot-1" }, { id: "slot-2" }],
-      },
-    ],
+    // #1554 — a class is ONE wrapper whose occurrences are its sittings;
+    // the payer is seated on the wrapper.
+    appointment: {
+      id: "session-appt-1",
+      occurrences: [{ id: "slot-1" }, { id: "slot-2" }],
+    },
   };
 }
 

@@ -377,7 +377,7 @@ describe("approval routes thread the appointment (source contract)", () => {
     expect(fn).toContain("appointmentId: appointment?.id ?? undefined");
   });
 
-  it("the subscription route passes its first request-time appointment", () => {
+  it("the subscription route passes its one request-time appointment", () => {
     const src = read(
       "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
     );
@@ -385,7 +385,8 @@ describe("approval routes thread the appointment (source contract)", () => {
       src.indexOf("async function generatePaymentLinkForSubscription"),
     );
     expect(fn).toContain("appointmentId,");
-    expect(fn).toContain("subscription.appointments[0]?.id ?? undefined");
+    // #1554 — one wrapper per subscription, so there is no `[0]` to pick.
+    expect(fn).toContain("subscription.appointment?.id ?? undefined");
   });
 
   it('the metadata builder no longer carries the "pending" sentinel', () => {

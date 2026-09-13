@@ -140,7 +140,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       },
       classes: {
         include: {
-          appointments: {
+          appointment: {
             include: {
               occurrences: true,
               participants: {

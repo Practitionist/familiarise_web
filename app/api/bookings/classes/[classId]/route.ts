@@ -41,7 +41,7 @@ export async function GET(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
             occurrences: {
               include: { // Changed from consulteeProfile to user
@@ -158,7 +158,7 @@ export async function PUT(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
             occurrences: {
               include: { // Changed from consulteeProfile to user
@@ -226,9 +226,7 @@ export async function DELETE(
     const hasActivePayments = !!(await prisma.class.findFirst({
       where: {
         id: classId,
-        appointments: {
-          some: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
-        },
+        appointment: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
       },
       select: { id: true },
     }));
@@ -242,9 +240,7 @@ export async function DELETE(
     const hasUpcomingSlots = !!(await prisma.class.findFirst({
       where: {
         id: classId,
-        appointments: {
-          some: { occurrences: { some: { endsAt: { gt: now } } } },
-        },
+        appointment: { occurrences: { some: { endsAt: { gt: now } } } },
       },
       select: { id: true },
     }));
@@ -284,7 +280,7 @@ export async function DELETE(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
             occurrences: {
               include: { // Changed from consulteeProfile to user

@@ -4,7 +4,7 @@
 
 /**
  * #1080 — the planner's class Join always reported "No joinable session found
- * for this class". `classInclude` was `appointments: true`, so the slot rows
+ * for this class". `classInclude` was `appointment: true`, so the slot rows
  * the component derives the session from never left the database, the `?? []`
  * fallback swallowed the absence, and the message was indistinguishable from
  * the legitimate out-of-window case.
@@ -113,7 +113,7 @@ interface SlotSpec {
   select?: Record<string, true | { select: Record<string, true> }>;
 }
 interface ClassIncludeSpec {
-  appointments?: true | { include?: { occurrences?: SlotSpec } };
+  appointment?: true | { include?: { occurrences?: SlotSpec } };
 }
 
 function projectSlots(spec: SlotSpec, slots: StoredSlot[]) {
@@ -137,10 +137,11 @@ let classRows: Array<{
   id: string;
   classPlanId: string;
   classPlan: Record<string, unknown>;
-  appointments: StoredAppointment[];
+  /** #1554 — one wrapper per class carries every sitting. */
+  appointment: StoredAppointment | null;
 }> = [];
 
-function seedClass(appointments: StoredAppointment[]) {
+function seedClass(appointment: StoredAppointment | null) {
   classRows = [
     {
       id: "class-1",
@@ -152,7 +153,7 @@ function seedClass(appointments: StoredAppointment[]) {
         topics: [{ name: "architecture" }],
         classContents: [],
       },
-      appointments,
+      appointment,
     },
   ];
 }
@@ -202,23 +203,22 @@ beforeEach(() => {
         _min: { startsAt: Date };
       }> = [];
       for (const row of classRows) {
-        for (const appt of row.appointments) {
-          if (!ids.has(appt.id)) continue;
-          const live = appt.occurrences.filter(
-            (slot) =>
-              !excludedStatuses.has(slot.completionStatus) &&
-              (!requiresNotDeleted || slot.deletedAt === null),
-          );
-          const earliest = live.reduce<Date | null>(
-            (min, slot) => (!min || slot.startsAt < min ? slot.startsAt : min),
-            null,
-          );
-          if (earliest) {
-            results.push({
-              appointmentId: appt.id,
-              _min: { startsAt: earliest },
-            });
-          }
+        const appt = row.appointment;
+        if (!appt || !ids.has(appt.id)) continue;
+        const live = appt.occurrences.filter(
+          (slot) =>
+            !excludedStatuses.has(slot.completionStatus) &&
+            (!requiresNotDeleted || slot.deletedAt === null),
+        );
+        const earliest = live.reduce<Date | null>(
+          (min, slot) => (!min || slot.startsAt < min ? slot.startsAt : min),
+          null,
+        );
+        if (earliest) {
+          results.push({
+            appointmentId: appt.id,
+            _min: { startsAt: earliest },
+          });
         }
       }
       return results;
@@ -234,9 +234,13 @@ beforeEach(() => {
       if (!args.include) {
         return classRows.map((row) => ({
           id: row.id,
-          appointments: row.appointments.map((appt) => ({
-            participants: appt.participants ?? [{ userId: "user-attendee" }],
-          })),
+          appointment: row.appointment
+            ? {
+                participants: row.appointment.participants ?? [
+                  { userId: "user-attendee" },
+                ],
+              }
+            : null,
         }));
       }
       // Only the owned-plans query matches; the collaborated one returns none.
@@ -245,22 +249,27 @@ beforeEach(() => {
       ) {
         return [];
       }
-      const spec = args.include.appointments;
+      const spec = args.include.appointment;
       const slotSpec = spec === true ? undefined : spec?.include?.occurrences;
-      return classRows.map((row) => ({
-        ...row,
-        appointments: row.appointments.map((appt) => {
-          const { occurrences, participants: _seats, ...scalars } = appt;
-          // `appointments: true` — scalars only, and no slots at all. This is
-          // the shape the route used to ask for.
-          return slotSpec
+      return classRows.map((row) => {
+        if (!row.appointment) return { ...row, appointment: null };
+        const {
+          occurrences,
+          participants: _seats,
+          ...scalars
+        } = row.appointment;
+        // `appointment: true` — scalars only, and no slots at all. This is
+        // the shape the route used to ask for.
+        return {
+          ...row,
+          appointment: slotSpec
             ? {
                 ...scalars,
                 occurrences: projectSlots(slotSpec, occurrences),
               }
-            : scalars;
-        }),
-      }));
+            : scalars,
+        };
+      });
     },
   );
 });
@@ -291,26 +300,29 @@ async function plannerClasses() {
   return body.data.classes as Array<{
     id: string;
     firstSessionAt: string | null;
-    appointments: Array<{
+    appointment: {
       id: string;
       occurrences?: PayloadSlot[];
-    }>;
+    } | null;
   }>;
 }
 
-/** A one-hour sitting, live right now: one occurrence row (#1554). */
-const liveSitting = (extra: Partial<StoredSlot> = {}): StoredAppointment => ({
-  id: "appt-live",
+/** The class wrapper with a one-hour sitting live right now (#1554). */
+const liveSitting = (
+  extra: Partial<StoredSlot> = {},
+  more: StoredSlot[] = [],
+): StoredAppointment => ({
+  id: "appt-class",
   organizationId: null,
-  occurrences: [storedSlot("slot-a1", hoursFromNow(-0.5), extra)],
+  occurrences: [storedSlot("slot-a1", hoursFromNow(-0.5), extra), ...more],
 });
 
 describe("the planner payload carries what a class join reads", () => {
   it("returns the slot rows at all, with exactly the join path's fields", async () => {
-    seedClass([liveSitting()]);
+    seedClass(liveSitting());
 
     const [cls] = await plannerClasses();
-    const slots = cls.appointments[0].occurrences;
+    const slots = cls.appointment!.occurrences;
 
     expect(slots).toHaveLength(1);
     // An exact key set, both ways: the join path's fields are all present, and
@@ -326,10 +338,10 @@ describe("the planner payload carries what a class join reads", () => {
   });
 
   it("resolves to the live occurrence", async () => {
-    seedClass([liveSitting()]);
+    seedClass(liveSitting());
 
     const [cls] = await plannerClasses();
-    const run = getJoinableOccurrence(cls.appointments[0].occurrences!, {
+    const run = getJoinableOccurrence(cls.appointment!.occurrences!, {
       joinWindowMs: 10 * 60 * 1000,
       now: NOW,
     });
@@ -343,7 +355,7 @@ describe("the planner payload carries what a class join reads", () => {
   it("sees a host-ended call rather than only the clock", async () => {
     // The `meetingSession` select is what makes the ended guard reachable:
     // the row is still inside its window, so the clock alone says "joinable".
-    seedClass([
+    seedClass(
       liveSitting({
         meetingSession: {
           id: "ms-1",
@@ -351,10 +363,10 @@ describe("the planner payload carries what a class join reads", () => {
           endedReason: null,
         },
       }),
-    ]);
+    );
 
     const [cls] = await plannerClasses();
-    const slots = cls.appointments[0].occurrences!;
+    const slots = cls.appointment!.occurrences!;
     const run = getCurrentOrNextOccurrence(slots, NOW);
 
     expect(run).not.toBeNull();
@@ -364,18 +376,11 @@ describe("the planner payload carries what a class join reads", () => {
   });
 
   it("drops rows a day out while keeping the live occurrence", async () => {
-    seedClass([
-      liveSitting(),
-      {
-        id: "appt-next-month",
-        organizationId: null,
-        occurrences: [storedSlot("slot-far", hoursFromNow(24 * 30))],
-      },
-    ]);
+    seedClass(liveSitting({}, [storedSlot("slot-far", hoursFromNow(24 * 30))]));
 
     const [cls] = await plannerClasses();
-    const ids = cls.appointments.flatMap((appt) =>
-      (appt.occurrences ?? []).map((slot) => slot.id as string),
+    const ids = (cls.appointment!.occurrences ?? []).map(
+      (slot) => slot.id as string,
     );
 
     // The bound has to keep anything currently joinable.
@@ -387,24 +392,22 @@ describe("the planner payload carries what a class join reads", () => {
     // classInclude's ±24h window, so the card's date must come from the
     // separate, unwindowed firstSessionAt field.
     const farStart = hoursFromNow(24 * 5);
-    seedClass([
-      {
-        id: "appt-far",
-        organizationId: null,
-        occurrences: [storedSlot("slot-far", farStart)],
-      },
-    ]);
+    seedClass({
+      id: "appt-class",
+      organizationId: null,
+      occurrences: [storedSlot("slot-far", farStart)],
+    });
 
     const [cls] = await plannerClasses();
 
-    expect(cls.appointments[0].occurrences).toHaveLength(0);
+    expect(cls.appointment!.occurrences).toHaveLength(0);
     expect(cls.firstSessionAt).toBe(farStart.toISOString());
   });
 
   it("still counts participants from its own batched query", async () => {
     // The slot select carries no roster, so the count must not have silently
     // moved onto the trimmed rows.
-    seedClass([liveSitting()]);
+    seedClass(liveSitting());
 
     const res = await GET(
       new Request(

@@ -161,26 +161,17 @@ async function completeClasses(): Promise<{
   const classesToComplete = await prisma.class.findMany({
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
-      appointments: {
-        some: {
-          occurrences: {
-            some: {
-              endsAt: { lt: bufferTime },
-            },
-          },
-        },
-        every: {
-          occurrences: {
-            every: {
-              endsAt: { lt: bufferTime },
-            },
-          },
+      // #1554 — one wrapper: at least one occurrence, and every one ended.
+      appointment: {
+        occurrences: {
+          some: { endsAt: { lt: bufferTime } },
+          every: { endsAt: { lt: bufferTime } },
         },
       },
     },
     include: {
       classPlan: { select: { title: true } },
-      appointments: {
+      appointment: {
         include: {
           occurrences: {
             orderBy: { endsAt: "desc" },
@@ -195,14 +186,9 @@ async function completeClasses(): Promise<{
 
   for (const cls of classesToComplete) {
     try {
-      // Find the latest slot end time across all appointments
-      let latestEnd: Date | null = null;
-      for (const apt of cls.appointments) {
-        const slot = apt.occurrences[0];
-        if (slot && (!latestEnd || slot.endsAt > latestEnd)) {
-          latestEnd = slot.endsAt;
-        }
-      }
+      // The latest occurrence end on the wrapper
+      const latestEnd: Date | null =
+        cls.appointment?.occurrences[0]?.endsAt ?? null;
 
       console.log(`\nCompleting class ${cls.id}`);
       console.log(`   Title: ${cls.classPlan.title}`);
@@ -404,20 +390,11 @@ async function completeSubscriptions(): Promise<{
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointments: {
-        some: {
-          occurrences: {
-            some: {
-              endsAt: { lt: bufferTime },
-            },
-          },
-        },
-        every: {
-          occurrences: {
-            every: {
-              endsAt: { lt: bufferTime },
-            },
-          },
+      // #1554 — one wrapper: at least one occurrence, and every one ended.
+      appointment: {
+        occurrences: {
+          some: { endsAt: { lt: bufferTime } },
+          every: { endsAt: { lt: bufferTime } },
         },
       },
     },
@@ -433,7 +410,7 @@ async function completeSubscriptions(): Promise<{
       requestedBy: {
         select: { userId: true, user: { select: { name: true } } },
       },
-      appointments: {
+      appointment: {
         include: {
           occurrences: {
             orderBy: { endsAt: "desc" },
@@ -450,14 +427,9 @@ async function completeSubscriptions(): Promise<{
 
   for (const subscription of subscriptionsToComplete) {
     try {
-      // Find the latest slot end time across all appointments
-      let latestEnd: Date | null = null;
-      for (const apt of subscription.appointments) {
-        const slot = apt.occurrences[0];
-        if (slot && (!latestEnd || slot.endsAt > latestEnd)) {
-          latestEnd = slot.endsAt;
-        }
-      }
+      // The latest occurrence end on the wrapper
+      const latestEnd: Date | null =
+        subscription.appointment?.occurrences[0]?.endsAt ?? null;
 
       console.log(`\nCompleting subscription ${subscription.id}`);
       console.log(`   Title: ${subscription.subscriptionPlan.title}`);
@@ -492,7 +464,7 @@ async function completeSubscriptions(): Promise<{
       );
       if (userIds.length > 0) {
         void notifyAppointmentCompleted(userIds, {
-          ...notificationScope(subscription.appointments[0]?.organizationId),
+          ...notificationScope(subscription.appointment?.organizationId),
           appointmentType: "subscription",
           consultantName:
             subscription.subscriptionPlan?.consultantProfile?.user?.name ??
@@ -500,7 +472,7 @@ async function completeSubscriptions(): Promise<{
           consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
           planTitle: subscription.subscriptionPlan.title,
           dashboardUrl: notificationHref(
-            subscription.appointments[0]?.organizationId,
+            subscription.appointment?.organizationId,
             "appointments",
           ),
         }).catch((error) =>

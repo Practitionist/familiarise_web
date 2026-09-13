@@ -107,15 +107,13 @@ beforeEach(() => {
 });
 
 describe("#1540 — one read for the whole booking", () => {
-  /** The subscription shape: the page's appointment plus two child appointments,
-   *  which is what `authorizeAppointment` already loaded to answer at all. */
+  /** #1554 — the subscription shape is ONE wrapper; there are no siblings. */
   const withSiblings = {
     userId: "u1",
     isOrgParty: false,
     organizationId: null,
     detail: {
       appointment: { id: APPT },
-      siblings: [{ id: "appt-child-1" }, { id: "appt-child-2" }],
     },
   };
 
@@ -130,13 +128,12 @@ describe("#1540 — one read for the whole booking", () => {
     mockedFindMany.mockResolvedValue([]);
   });
 
-  it("covers the booking and its siblings under scope=booking", async () => {
-    // This is the whole fix: the timeline renders sessions belonging to child
-    // appointments, and fanning out one request per child cost ~100 Prisma
-    // operations for one page — serialised, because PG_POOL_MAX=1.
+  it("covers the whole booking under scope=booking with one row", async () => {
+    // #1554 — the booking IS the one appointment, so the widened scope reads
+    // the same id; the parameter is still accepted for older callers.
     await get(`http://x/api/appointments/${APPT}/feedback?scope=booking`);
 
-    const ids = { in: [APPT, "appt-child-1", "appt-child-2"] };
+    const ids = { in: [APPT] };
     expect(mockedFindMany.mock.calls[0][0].where.appointmentId).toEqual(ids);
     expect(mockedFeedbackFindMany.mock.calls[0][0].where.appointmentId).toEqual(
       ids,

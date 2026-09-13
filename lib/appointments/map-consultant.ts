@@ -9,7 +9,11 @@
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import { occurrencesOfAppointment } from "./occurrences";
-import { getAnchorTime, isOccurrenceOver } from "./occurrences";
+import {
+  getAnchorTime,
+  isOccurrenceOver,
+  liveOccurrences,
+} from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
@@ -236,10 +240,9 @@ function mapGroup(
     children.flatMap((c) => occurrencesOfAppointment(c)),
   );
   const { title, counterpart, status } = eventFacts(first);
-  const withSlots = children.filter((c) => (c.occurrences?.length ?? 0) > 0);
-  const completed = withSlots.filter((c) =>
-    occurrencesOfAppointment(c).every((s) => isOccurrenceOver(s, now)),
-  ).length;
+  // #1554 — progress is counted over live occurrence rows, not wrappers.
+  const live = liveOccurrences(occurrences);
+  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
@@ -257,7 +260,7 @@ function mapGroup(
     ...deriveBucket({ status, occurrences, now }),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: { total: withSlots.length, completed },
+    group: { total: live.length, completed },
     meta: null,
     organizationId: first.organizationId ?? null,
     pendingPaymentUrl: null,

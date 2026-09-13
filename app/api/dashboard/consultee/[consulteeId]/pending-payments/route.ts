@@ -119,7 +119,7 @@ export async function GET(
         where: {
           requestedById: consulteeId,
           status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-          appointments: { some: personalOrgPin },
+          appointment: personalOrgPin,
         },
         include: {
           subscriptionPlan: {
@@ -135,15 +135,11 @@ export async function GET(
           // the parent subscription from it and transitions the whole row.
           // Ordered like the mint's pick (#1181) so take: 1 lands on the
           // appointment the pay-link anchored to, which carries the frozen
-          // charge (#1182). Pinned to PERSONAL appointments (matching this
-          // surface's organizationId: null filter): a mixed subscription
-          // with an earlier org-funded appointment must not leak its frozen
-          // amount onto the personal dashboard.
-          appointments: {
-            where: personalOrgPin,
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          // charge (#1182). The `where` above pins the wrapper to PERSONAL
+          // (matching this surface's organizationId: null filter). #1554 —
+          // one wrapper per subscription.
+          appointment: {
             select: { id: true, payment: frozenPaymentSelect },
-            take: 1,
           },
         },
         orderBy: { updatedAt: "desc" },
@@ -251,11 +247,11 @@ export async function GET(
         const isExpiringSoon =
           expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
         // #1182 — frozen charge first; the plan is only the pre-mint quote.
-        const frozen = subscription.appointments[0]?.payment[0];
+        const frozen = subscription.appointment?.payment[0];
 
         return {
           id: subscription.id,
-          appointmentId: subscription.appointments[0]?.id ?? null,
+          appointmentId: subscription.appointment?.id ?? null,
           type: "subscription" as const,
           title: subscription.subscriptionPlan?.title || "Subscription",
           consultantName:

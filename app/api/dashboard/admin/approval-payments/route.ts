@@ -112,7 +112,7 @@ export async function GET() {
                 },
               },
             },
-            appointments: {
+            appointment: {
               include: {
                 payment: {
                   where: {
@@ -126,7 +126,6 @@ export async function GET() {
                   take: 1,
                 },
               },
-              take: 1,
             },
           },
           orderBy: {

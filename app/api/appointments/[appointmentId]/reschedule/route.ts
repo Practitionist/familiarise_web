@@ -310,29 +310,12 @@ export async function POST(
             );
           }
 
-          // For SUBSCRIPTION and CLASS types, we need to get ALL slots across ALL appointments
-          // because the UI collects slots from all appointments but only passes one appointmentId
-          let allSubscriptionSlots: typeof appointment.occurrences = [];
-
-          if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
-            // Fetch all appointments for this subscription with their slots
-            const allAppointments = await tx.appointment.findMany({
-              where: { subscriptionId: appointment.subscription.id },
-              include: { occurrences: { orderBy: { startsAt: "asc" } } },
-            });
-            allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.occurrences,
-            );
-          } else if (derivedType === "CLASS" && appointment.class) {
-            // Fetch all appointments for this class with their slots
-            const allAppointments = await tx.appointment.findMany({
-              where: { classId: appointment.class.id },
-              include: { occurrences: { orderBy: { startsAt: "asc" } } },
-            });
-            allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.occurrences,
-            );
-          }
+          // #1554 — a subscription or class is ONE wrapper, so every session
+          // of the programme is already on `appointment.occurrences`.
+          let allSubscriptionSlots: typeof appointment.occurrences =
+            derivedType === "SUBSCRIPTION" || derivedType === "CLASS"
+              ? appointment.occurrences
+              : [];
 
           // E2E-audit fix — whole-series flows must act on LIVE slots only.
           // The 24-hour gate and the proposal-count check used to iterate every
@@ -392,9 +375,7 @@ export async function POST(
           }
 
           // Audit attribution for every BookingStatusHistory row this
-          // reschedule writes (#1322 A12). `appointmentId` is added per call
-          // site: a whole-subscription or whole-class release moves slots of
-          // sibling appointments, whose history belongs on their own timeline.
+          // reschedule writes (#1322 A12).
           const auditMeta = {
             actorUserId: session.user.id,
             reason: reason ?? null,
@@ -430,39 +411,15 @@ export async function POST(
             ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
               (derivedType === "CLASS" && appointment.class))
           ) {
-            // Individual/multiple session reschedule - mark ALL slots of the affected appointments
-            // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
-            const affectedAppointmentIds = Array.from(
-              new Set(slotsToReschedule.map((s) => s.appointmentId)),
-            );
+            // #1554 — one occurrence row is one session, so a per-session
+            // reschedule releases exactly the rows named; releasing by
+            // appointment would free every session of the programme.
             await releaseSlots({
-              appointmentId: { in: affectedAppointmentIds },
+              appointmentId,
+              id: { in: slotsToReschedule.map((s) => s.id) },
             });
-          } else if (
-            derivedType === "SUBSCRIPTION" &&
-            appointment.subscription
-          ) {
-            // Entire subscription reschedule - mark ALL slots in ALL appointments
-            const allAppointmentIds = (
-              await tx.appointment.findMany({
-                where: { subscriptionId: appointment.subscription.id },
-                select: { id: true },
-              })
-            ).map((a) => a.id);
-
-            await releaseSlots({ appointmentId: { in: allAppointmentIds } });
-          } else if (derivedType === "CLASS" && appointment.class) {
-            // Entire class reschedule - mark ALL slots in ALL appointments
-            const allAppointmentIds = (
-              await tx.appointment.findMany({
-                where: { classId: appointment.class.id },
-                select: { id: true },
-              })
-            ).map((a) => a.id);
-
-            await releaseSlots({ appointmentId: { in: allAppointmentIds } });
           } else {
-            // Non-multi-appointment: mark all slots in the single appointment
+            // Whole booking: every live row of the one wrapper.
             await releaseSlots({ appointmentId });
           }
 
@@ -637,12 +594,9 @@ export async function POST(
             if (proposedSlots?.length) rescheduleRequestId = created.id;
           }
 
-          // #448 — count SESSIONS, not raw slots: one Appointment is one session
-          // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
-          // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
-          const sessionsAffected = new Set(
-            slotsToReschedule.map((s) => s.appointmentId),
-          ).size;
+          // #448 / #1554 — one occurrence row is one session, so the count
+          // is the number of rows released.
+          const sessionsAffected = slotsToReschedule.length;
 
           // Determine reschedule type for response — session-based (#448)
           const getRescheduleType = () => {

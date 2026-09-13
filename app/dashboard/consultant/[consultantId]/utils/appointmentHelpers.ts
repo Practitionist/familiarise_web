@@ -1,6 +1,11 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  isOccurrenceOver,
+  liveOccurrences,
+  occurrencesOfAppointment,
+} from "@/lib/appointments/occurrences";
 
 /**
  * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
@@ -219,7 +224,8 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
 
 /**
  * Calculates session progress metrics for a group of appointments
- * @param groupAppointments - Array of appointments in the group (e.g., subscription sessions)
+ * @param groupAppointments - The group's wrapper(s); #1554 — a subscription or
+ * class is one Appointment whose live occurrence rows are its sessions
  * @param referenceDate - Optional reference date for comparison (defaults to now)
  * @returns Session progress metrics including total, completed, remaining sessions and percentage
  */
@@ -232,23 +238,14 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  // Exclude slot-less appointments (e.g. the zero-slot subscription checkout
-  // placeholder that carries the signup Payment — preserved by allocation, never
-  // deleted). A row with no slots is not a session, so counting it inflated
-  // totalSessions/remaining by 1 ("11 remaining" for a 10-session sub). This
-  // mirrors the completedSessions rule below, which already requires slots.
-  const appointmentsWithSlots = groupAppointments.filter(
-    (app) => getSlotTimes(app).length > 0,
+  const sessions = liveOccurrences(
+    groupAppointments.flatMap((app) => occurrencesOfAppointment(app)),
   );
 
-  const totalSessions = appointmentsWithSlots.length;
-  const completedSessions = appointmentsWithSlots.filter((app) => {
-    const slotTimes = getSlotTimes(app);
-    return (
-      slotTimes.length > 0 &&
-      slotTimes.every((time) => new Date(time) < referenceDate)
-    );
-  }).length;
+  const totalSessions = sessions.length;
+  const completedSessions = sessions.filter((session) =>
+    isOccurrenceOver(session, referenceDate),
+  ).length;
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
     totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;

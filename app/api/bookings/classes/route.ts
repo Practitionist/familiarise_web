@@ -109,13 +109,11 @@ export async function GET(request: NextRequest) {
           OR: [
             // Get classes where consultee is registered through appointments
             {
-              appointments: {
-                some: {
-                  participants: {
-                    some: {
-                      ...liveParticipant(),
-                      user: { consulteeProfile: { id: consulteeProfileId } },
-                    },
+              appointment: {
+                participants: {
+                  some: {
+                    ...liveParticipant(),
+                    user: { consulteeProfile: { id: consulteeProfileId } },
                   },
                 },
               },
@@ -146,7 +144,7 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
               occurrences: true,
               payment: true,
@@ -184,9 +182,9 @@ export async function GET(request: NextRequest) {
             },
           },
           // #1346 — the planner card shows a class's first session, so the
-          // allocated slots have to travel with the run; `appointments: true`
+          // allocated slots have to travel with the run; `appointment: true`
           // alone left the card falling back to the authoring window.
-          appointments: {
+          appointment: {
             include: {
               occurrences: { orderBy: { startsAt: "asc" } },
             },
@@ -205,7 +203,7 @@ export async function GET(request: NextRequest) {
               topics: true,
             },
           },
-          appointments: true,
+          appointment: true,
         },
       });
     }

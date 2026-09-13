@@ -353,15 +353,12 @@ describe("capacity include-trap (#676 CN-4)", () => {
     expect(capacity.isFull).toBe(false);
   });
 
-  it("throws for class capacity with participants missing on any session", () => {
+  it("throws for class capacity when the wrapper was loaded without participants", () => {
     expect(() =>
       getClassCapacity({
         classInstance: {
           maxParticipants: 1,
-          appointments: [
-            { participants: [{ userId: "u1" }] },
-            {} as { participants?: { userId: string }[] },
-          ],
+          appointment: {} as { participants?: { userId: string }[] },
         },
         plan,
       }),

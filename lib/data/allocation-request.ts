@@ -88,7 +88,7 @@ export async function readAllocationRequest(
             totalSessions: true,
           },
         },
-        appointments: {
+        appointment: {
           select: { occurrences: slotSelect },
         },
       },
@@ -111,12 +111,10 @@ export async function readAllocationRequest(
       schedulingTimezone: subscription.schedulingTimezone,
       allowedStart: subscription.schedulingPeriodStartsAt,
       allowedEnd: subscription.schedulingPeriodEndsAt,
-      hasReleasedSlots: subscription.appointments.some((appointment) =>
-        appointment.occurrences.some((slot) => slot.isTentative),
-      ),
-      slots: subscription.appointments.flatMap(
-        (appointment) => appointment.occurrences,
-      ),
+      hasReleasedSlots:
+        subscription.appointment?.occurrences.some((slot) => slot.isTentative) ??
+        false,
+      slots: subscription.appointment?.occurrences ?? [],
     });
   }
 

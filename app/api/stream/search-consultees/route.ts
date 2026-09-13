@@ -207,7 +207,7 @@ export async function GET(req: NextRequest) {
         },
       },
       include: {
-        appointments: {
+        appointment: {
           select: {
             participants: {
               where: liveParticipant(),
@@ -223,9 +223,8 @@ export async function GET(req: NextRequest) {
     });
 
     for (const classItem of classes) {
-      const classAttendees = classItem.appointments.flatMap((apt) =>
-        apt.participants.map((seat) => seat.user),
-      );
+      const classAttendees =
+        classItem.appointment?.participants.map((seat) => seat.user) ?? [];
       for (const attendeeUser of classAttendees) {
         if (
           attendeeUser &&

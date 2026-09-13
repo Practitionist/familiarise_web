@@ -149,18 +149,29 @@ export function makeSubscription(overrides: Record<string, any> = {}) {
 
 // ─── Appointment Mocks ──────────────────────────────────────────────────────
 
+/**
+ * #1554 — one held call is ONE occurrence row spanning its 30-minute
+ * intervals, so a list of interval starts collapses into a single row from the
+ * earliest start to the latest start plus one interval.
+ */
 export function makeAppointmentWithSlots(
   id: string,
   slotStartISOs: string[],
 ): {
   id: string;
-  occurrences: { startsAt: Date }[];
+  occurrences: { id: string; startsAt: Date; endsAt: Date }[];
 } {
+  if (slotStartISOs.length === 0) return { id, occurrences: [] };
+  const starts = slotStartISOs.map((iso) => new Date(iso).getTime());
   return {
     id,
-    occurrences: slotStartISOs.map((iso) => ({
-      startsAt: new Date(iso),
-    })),
+    occurrences: [
+      {
+        id: `${id}-occ-1`,
+        startsAt: new Date(Math.min(...starts)),
+        endsAt: new Date(Math.max(...starts) + 30 * 60 * 1000),
+      },
+    ],
   };
 }
 
@@ -177,6 +188,18 @@ export function makeMockPrisma(
     appointment: {
       findMany: jest.fn().mockResolvedValue(appointmentData),
       findFirst: jest.fn().mockResolvedValue(null),
+    },
+    // #1554 — the validator counts occurrence rows, so flatten the wrappers.
+    appointmentOccurrence: {
+      findMany: jest.fn().mockResolvedValue(
+        appointmentData.flatMap(
+          (appointment: { id: string; occurrences?: object[] }) =>
+            (appointment.occurrences ?? []).map((occurrence) => ({
+              ...occurrence,
+              appointmentId: appointment.id,
+            })),
+        ),
+      ),
     },
   } as any;
 }

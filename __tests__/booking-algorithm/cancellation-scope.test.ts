@@ -3,36 +3,33 @@
  */
 
 /**
- * Cancellation is a whole-booking act; a booking is not one Appointment row.
+ * Cancellation is a whole-booking act. #1554 — a booking is ONE Appointment
+ * row: the wrapper checkout created carries the Payment and the frozen terms,
+ * and every held session is an occurrence row on it.
  *
- * A subscription is a slot-less placeholder created at checkout — the row that
- * carries the Payment — plus one further Appointment per allocated session,
- * none of which carry money. The dashboards always target a SESSION row, so
- * reading the payment off "the appointment we were handed" found nothing and
- * cancelling a paid subscription refunded NOTHING while still cancelling every
- * slot and the subscription itself.
- *
- * The refund tier had the matching defect: it read the earliest slot of that
- * one appointment, COMPLETED sessions included, so the tier depended on which
- * session you cancelled from and a live plan whose first session had already
- * been held always scored 0%.
+ * Before the reset a subscription was a slot-less placeholder plus one
+ * Appointment per session, and reading the payment off "the appointment we
+ * were handed" found nothing, so cancelling a paid subscription refunded
+ * NOTHING. The tier had the matching defect: it read the earliest slot of that
+ * one appointment, COMPLETED sessions included.
  *
  * Pinned here:
- *  - the payment is found from ANY appointment of the booking
- *  - the tier reads the earliest UNDELIVERED session of the whole booking
+ *  - the ref resolves to the one wrapper, by id when the caller has it
+ *  - the tier reads the earliest UNDELIVERED occurrence of the booking
  *  - already-delivered sessions are counted, so the caller can refuse to guess
  *    a proration rule (#1006)
- *  - a consultation still resolves exactly as it always did
+ *  - the "several payments" alarm is per payer, since a class wrapper carries
+ *    one Payment per attendee
  */
 
-const mockAppointmentFindMany = jest.fn();
+const mockAppointmentFindFirst = jest.fn();
 const mockRecordSystemError = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: {
-      findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+      findFirst: (...a: unknown[]) => mockAppointmentFindFirst(...a),
     },
   },
 }));
@@ -48,9 +45,7 @@ import {
 } from "../../lib/booking/cancellation-scope";
 
 const HOUR = 3_600_000;
-const PLACEHOLDER = "appt-placeholder";
-const SESSION_1 = "appt-s1";
-const SESSION_2 = "appt-s2";
+const WRAPPER = "appt-wrapper";
 
 function hoursFromNow(h: number) {
   return new Date(Date.now() + h * HOUR);
@@ -72,34 +67,19 @@ function policyRow(
 
 /**
  * A subscription mid-plan: session 1 delivered, sessions 2 and 3 still owed,
- * and the money sitting on the slot-less placeholder.
+ * the money on the one wrapper they all hang off.
  */
-function subscriptionRows() {
-  return [
-    {
-      id: PLACEHOLDER,
-      cancellationPolicy: null,
-      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-      occurrences: [],
-    },
-    {
-      id: SESSION_1,
-      cancellationPolicy: null,
-      payment: [],
-      occurrences: [
-        { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
-      ],
-    },
-    {
-      id: SESSION_2,
-      cancellationPolicy: null,
-      payment: [],
-      occurrences: [
-        { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
-        { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
-      ],
-    },
-  ];
+function subscriptionRow() {
+  return {
+    id: WRAPPER,
+    cancellationPolicy: null,
+    payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+    occurrences: [
+      { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
+      { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
+      { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
+    ],
+  };
 }
 
 beforeEach(() => {
@@ -108,22 +88,23 @@ beforeEach(() => {
 });
 
 describe("bookingAppointmentFilter", () => {
-  it("selects the whole subscription, not the one appointment handed in", () => {
+  it("selects by id when the caller already holds the wrapper", () => {
+    // #1554 — the id IS the booking; there is no sibling set to widen to.
     expect(
       bookingAppointmentFilter({
-        appointmentId: SESSION_2,
+        appointmentId: WRAPPER,
         subscriptionId: "sub-1",
       }),
-    ).toEqual({ subscriptionId: "sub-1" });
+    ).toEqual({ id: WRAPPER });
   });
 
-  it("selects every session of a class", () => {
+  it("selects the class's one wrapper by its parent link", () => {
     expect(bookingAppointmentFilter({ classId: "class-1" })).toEqual({
       classId: "class-1",
     });
   });
 
-  it("falls back to the lone appointment for trials and unlinked rows", () => {
+  it("resolves a lone id for trials and unlinked rows", () => {
     expect(bookingAppointmentFilter({ appointmentId: "appt-trial" })).toEqual({
       id: "appt-trial",
     });
@@ -136,15 +117,14 @@ describe("bookingAppointmentFilter", () => {
 });
 
 describe("resolveBookingRefundContext", () => {
-  it("finds the subscription's payment even when handed a session row", async () => {
-    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+  it("finds the subscription's payment on the wrapper", async () => {
+    mockAppointmentFindFirst.mockResolvedValue(subscriptionRow());
 
     const ctx = await resolveBookingRefundContext({
-      appointmentId: SESSION_2,
+      appointmentId: WRAPPER,
       subscriptionId: "sub-1",
     });
 
-    // This is the bug: the money lives on the placeholder the UI never targets.
     expect(ctx.paidPayment).toEqual({
       id: "pay-1",
       amountPaise: 100_000,
@@ -153,7 +133,7 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("times the tier off the next UNDELIVERED session of the booking", async () => {
-    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+    mockAppointmentFindFirst.mockResolvedValue(subscriptionRow());
 
     const ctx = await resolveBookingRefundContext({
       subscriptionId: "sub-1",
@@ -166,7 +146,7 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("counts what has been delivered and what is still owed", async () => {
-    mockAppointmentFindMany.mockResolvedValue(subscriptionRows());
+    mockAppointmentFindFirst.mockResolvedValue(subscriptionRow());
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -176,16 +156,14 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("treats a RESCHEDULED slot as still owed, not as delivered", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: SESSION_1,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [
-          { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
-        ],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
+      ],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -195,14 +173,12 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("reports no live session for a paid but unallocated subscription", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -212,25 +188,15 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.paidPayment).not.toBeNull();
   });
 
-  it("takes the terms stamped on the row the buyer actually paid for", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: SESSION_1,
-        cancellationPolicy: policyRow("policy-session", [
-          { hoursBefore: 0, refundBps: 0 },
-        ]),
-        payment: [],
-        occurrences: [],
-      },
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: policyRow("policy-paid", [
-          { hoursBefore: 48, refundBps: 9_000 },
-        ]),
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-    ]);
+  it("takes the terms stamped on the wrapper the buyer paid for", async () => {
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: policyRow("policy-paid", [
+        { hoursBefore: 48, refundBps: 9_000 },
+      ]),
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -238,41 +204,13 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.policy.tiers).toEqual([{ hoursBefore: 48, refundPct: 90 }]);
   });
 
-  it("falls back to a session's policy when the paid row carries none", async () => {
-    // Bookings sold before #1499 stamped the FK on the subscription placeholder;
-    // without this fallback every one of them silently dropped to the defaults.
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-      {
-        id: SESSION_1,
-        cancellationPolicy: policyRow("policy-session", [
-          { hoursBefore: 12, refundBps: 2_500 },
-        ]),
-        payment: [],
-        occurrences: [],
-      },
-    ]);
-
-    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
-
-    expect(ctx.policy.policyId).toBe("policy-session");
-    expect(ctx.policy.tiers).toEqual([{ hoursBefore: 12, refundPct: 25 }]);
-  });
-
   it("reads a booking with no policy row at all as the platform ladder", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -280,13 +218,13 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("scopes the payment lookup to one buyer for group events", async () => {
-    mockAppointmentFindMany.mockResolvedValue([]);
+    mockAppointmentFindFirst.mockResolvedValue(null);
 
     await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
 
     // Every attendee's Payment hangs off the same appointment, so an unscoped
     // lookup would refund whoever the DB returned first.
-    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+    expect(mockAppointmentFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
           payment: expect.objectContaining({
@@ -298,14 +236,14 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("reads the shared occurrences unscoped by buyer (#1554)", async () => {
-    mockAppointmentFindMany.mockResolvedValue([]);
+    mockAppointmentFindFirst.mockResolvedValue(null);
 
     await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
 
     // Every attendee of a class shares the appointment's occurrences, so
     // there is no per-buyer subset to scope to; the buyer filter lives on the
     // payment lookup instead.
-    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+    expect(mockAppointmentFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
           occurrences: expect.objectContaining({
@@ -317,12 +255,12 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("leaves the slot lookup unscoped for a 1:1 booking", async () => {
-    mockAppointmentFindMany.mockResolvedValue([]);
+    mockAppointmentFindFirst.mockResolvedValue(null);
 
     await resolveBookingRefundContext({ consultationId: "cons-1" });
 
     const where =
-      mockAppointmentFindMany.mock.calls[0][0].select.occurrences.where;
+      mockAppointmentFindFirst.mock.calls[0][0].select.occurrences.where;
     expect(where).toEqual({ deletedAt: null });
   });
 
@@ -332,17 +270,15 @@ describe("resolveBookingRefundContext", () => {
     // created with appointmentId: null precisely to avoid that clash. Which is
     // why it must be loud if it ever happens: the buyer would be refunded less
     // than they paid, and nothing else would say so.
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [
-          { id: "pay-1", amount: 100_000, refunds: [], disputes: [] },
-          { id: "pay-2", amount: 40_000, refunds: [], disputes: [] },
-        ],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [
+        { id: "pay-1", amount: 100_000, refunds: [], disputes: [] },
+        { id: "pay-2", amount: 40_000, refunds: [], disputes: [] },
+      ],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -358,31 +294,48 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("stays quiet for the ordinary single-payment booking", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [],
+    });
 
     await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
     expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
 
+  it("stays quiet for a class wrapper carrying one payment per attendee (#1554)", async () => {
+    // Unscoped, a group wrapper legitimately holds N SUCCEEDED payments; the
+    // alarm is about one PAYER being refunded less than they paid, so it only
+    // has meaning once the lookup is scoped to a payer.
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [
+        { id: "pay-a", amount: 10_000, refunds: [], disputes: [] },
+        { id: "pay-b", amount: 10_000, refunds: [], disputes: [] },
+      ],
+      occurrences: [],
+    });
+
+    await resolveBookingRefundContext({ classId: "class-1" });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+
+    await resolveBookingRefundContext({ classId: "class-1" }, "user-a");
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves a consultation exactly as before — one row, one payment", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: "appt-c1",
-        cancellationPolicy: null,
-        payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
-        occurrences: [
-          { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
-        ],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: "appt-c1",
+      cancellationPolicy: null,
+      payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
+      occurrences: [
+        { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
+      ],
+    });
 
     const ctx = await resolveBookingRefundContext({
       appointmentId: "appt-c1",
@@ -399,33 +352,31 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("nets prior refunds and lost chargebacks out of the refundable balance", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [
-          {
-            id: "pay-1",
-            amount: 100_000,
-            refunds: [
-              { amountPaise: 20_000, status: "SUCCEEDED" },
-              { amountPaise: 5_000, status: "PENDING" },
-              // Moved no money, so it must not reduce the balance.
-              { amountPaise: 40_000, status: "FAILED" },
-            ],
-            disputes: [
-              { amountPaise: 10_000, status: "LOST" },
-              // The bank already returned this one, so it reduces the balance
-              // exactly as a LOST verdict does.
-              { amountPaise: 5_000, status: "CHARGE_REFUNDED" },
-              // Still contested — nothing has been pulled yet.
-              { amountPaise: 30_000, status: "UNDER_REVIEW" },
-            ],
-          },
-        ],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [
+        {
+          id: "pay-1",
+          amount: 100_000,
+          refunds: [
+            { amountPaise: 20_000, status: "SUCCEEDED" },
+            { amountPaise: 5_000, status: "PENDING" },
+            // Moved no money, so it must not reduce the balance.
+            { amountPaise: 40_000, status: "FAILED" },
+          ],
+          disputes: [
+            { amountPaise: 10_000, status: "LOST" },
+            // The bank already returned this one, so it reduces the balance
+            // exactly as a LOST verdict does.
+            { amountPaise: 5_000, status: "CHARGE_REFUNDED" },
+            // Still contested — nothing has been pulled yet.
+            { amountPaise: 30_000, status: "UNDER_REVIEW" },
+          ],
+        },
+      ],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -436,21 +387,19 @@ describe("resolveBookingRefundContext", () => {
   });
 
   it("never reports a negative refundable balance", async () => {
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [
-          {
-            id: "pay-1",
-            amount: 100_000,
-            refunds: [{ amountPaise: 100_000, status: "SUCCEEDED" }],
-            disputes: [{ amountPaise: 100_000, status: "LOST" }],
-          },
-        ],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [
+        {
+          id: "pay-1",
+          amount: 100_000,
+          refunds: [{ amountPaise: 100_000, status: "SUCCEEDED" }],
+          disputes: [{ amountPaise: 100_000, status: "LOST" }],
+        },
+      ],
+      occurrences: [],
+    });
 
     const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
@@ -462,28 +411,24 @@ describe("resolveBookingRefundContext", () => {
     // both zero — but only the first means the consultant never held time.
     // Conflating them hands a full refund to anyone reading the booking after
     // a cancel has already terminalised its slots.
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [],
+    });
     expect(
       (await resolveBookingRefundContext({ subscriptionId: "s" })).slotsTotal,
     ).toBe(0);
 
-    mockAppointmentFindMany.mockResolvedValue([
-      {
-        id: PLACEHOLDER,
-        cancellationPolicy: null,
-        payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        occurrences: [
-          { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
-        ],
-      },
-    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
+      ],
+    });
     const cancelled = await resolveBookingRefundContext({
       subscriptionId: "s",
     });
@@ -492,12 +437,12 @@ describe("resolveBookingRefundContext", () => {
     expect(cancelled.sessionsCompleted).toBe(0);
   });
 
-  it("skips soft-deleted appointments", async () => {
-    mockAppointmentFindMany.mockResolvedValue([]);
+  it("skips a soft-deleted wrapper", async () => {
+    mockAppointmentFindFirst.mockResolvedValue(null);
 
     await resolveBookingRefundContext({ subscriptionId: "sub-1" });
 
-    expect(mockAppointmentFindMany).toHaveBeenCalledWith(
+    expect(mockAppointmentFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { subscriptionId: "sub-1", deletedAt: null },
       }),

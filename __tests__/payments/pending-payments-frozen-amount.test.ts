@@ -130,12 +130,10 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
         id: "sub-1",
         updatedAt: new Date("2026-08-01T10:00:00Z"),
         pendingPaymentUrl: "order_456",
-        appointments: [
-          {
-            id: "appt-s1",
-            payment: frozenPayment(1_250_000),
-          },
-        ],
+        appointment: {
+          id: "appt-s1",
+          payment: frozenPayment(1_250_000),
+        },
         subscriptionPlan: {
           title: "Weekly Mentoring",
           price: 999_999, // repriced down after acceptance

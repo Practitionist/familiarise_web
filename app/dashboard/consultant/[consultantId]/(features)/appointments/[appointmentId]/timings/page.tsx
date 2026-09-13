@@ -62,13 +62,11 @@ async function manageTimingsAllowed(
 
   const detail = await loadDetail(appointmentId);
   if (!detail) return false;
-  // Program-wide, same as the menu's group card: a subscription session is one
-  // Appointment among several and any of them may carry the committed time.
-  const slots = [
-    ...detail.appointment.occurrences,
-    ...detail.siblings.flatMap((sibling) => sibling.occurrences),
-  ];
-  return allowsManageTimings(kind, upcomingOccurrences(slots));
+  // #1554 — the wrapper's rows are the whole programme.
+  return allowsManageTimings(
+    kind,
+    upcomingOccurrences(detail.appointment.occurrences),
+  );
 }
 
 /**

@@ -49,7 +49,7 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
         user: true;
       };
     };
-    appointments: {
+    appointment: {
       include: {
         occurrences: {
           include: {
@@ -111,7 +111,7 @@ export type TClass = Prisma.ClassGetPayload<{
         };
       };
     };
-    appointments: {
+    appointment: {
       include: {
         occurrences: {
           include: {

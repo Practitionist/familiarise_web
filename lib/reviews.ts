@@ -357,10 +357,9 @@ function loadReviewableAppointments(
           },
           occurrences: { some: heldSlot(userId) },
         },
-        // Group arms — there is no Attendee model: registration IS the m:n
-        // between the user and every slot of the shared appointment. A paid
-        // seat is required as well, so a cancelled or comped registration
-        // cannot buy a review.
+        // Group arms — registration is a live AppointmentParticipant row on
+        // the event's one wrapper (#1554). A paid seat is required as well, so
+        // a cancelled or comped registration cannot buy a review.
         // #1580 C-P0-2 — an ACCEPTED collaborator on the plan is a consultant-
         // side party and cannot review the host as a consultee of their own event.
         {

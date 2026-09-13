@@ -95,6 +95,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+      // #1554 — the refund context reads the ONE wrapper.
+      findFirst: async (...a: unknown[]) =>
+        (await mockAppointmentFindMany(...a))[0] ?? null,
     },
     payment: {
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),

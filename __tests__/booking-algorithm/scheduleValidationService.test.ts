@@ -40,6 +40,10 @@ const mockPrisma = {
     findFirst: jest.fn().mockResolvedValue(null),
     findMany: jest.fn().mockResolvedValue([]),
   },
+  // #1554 — the weekly/daily seeds read the event's occurrence rows directly.
+  appointmentOccurrence: {
+    findMany: jest.fn().mockResolvedValue([]),
+  },
   subscription: {
     findUnique: jest.fn().mockResolvedValue(null),
   },
@@ -53,6 +57,7 @@ beforeEach(() => {
   service = new ScheduleValidationService(mockPrisma);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
   mockPrisma.appointment.findMany.mockResolvedValue([]);
+  mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -581,21 +586,21 @@ describe("validate: per-day session cap (#898)", () => {
 
   it("counts existing same-day sessions toward the cap (partial reschedule)", async () => {
     // Two confirmed same-day sessions already exist; proposing a third on the
-    // same day pushes Monday to 3 > 2.
-    mockPrisma.appointment.findMany.mockResolvedValue([
+    // same day pushes Monday to 3 > 2. #1554 — one occurrence row per session.
+    mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([
       {
-        id: "existing-1",
-        occurrences: [
-          { startsAt: new Date("2025-06-02T09:00:00Z"), isTentative: false },
-          { startsAt: new Date("2025-06-02T09:30:00Z"), isTentative: false },
-        ],
+        id: "occ-1",
+        appointmentId: "class-wrapper",
+        startsAt: new Date("2025-06-02T09:00:00Z"),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
       },
       {
-        id: "existing-2",
-        occurrences: [
-          { startsAt: new Date("2025-06-02T11:00:00Z"), isTentative: false },
-          { startsAt: new Date("2025-06-02T11:30:00Z"), isTentative: false },
-        ],
+        id: "occ-2",
+        appointmentId: "class-wrapper",
+        startsAt: new Date("2025-06-02T11:00:00Z"),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
       },
     ]);
     const result = await service.validate(
@@ -799,16 +804,15 @@ describe("validate: class event", () => {
     const session2 = futureSlots(2, "2025-06-17T10:00:00Z"); // Tue 10:00-11:00
 
     it("FAILS when proposed sessions plus a surviving confirmed session exceed the limit", async () => {
-      // No conflicts from the universal conflict scan…
-      mockPrisma.appointment.findMany.mockResolvedValueOnce([]);
-      // …but the class already has 1 CONFIRMED (non-tentative) session this week.
-      mockPrisma.appointment.findMany.mockResolvedValueOnce([
+      // No conflicts from the universal conflict scan, but the class already
+      // has 1 CONFIRMED (non-tentative) session this week (#1554 — one row).
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValueOnce([
         {
-          id: "confirmed-apt",
-          occurrences: [
-            { startsAt: new Date("2025-06-18T10:00:00Z"), isTentative: false },
-            { startsAt: new Date("2025-06-18T10:30:00Z"), isTentative: false },
-          ],
+          id: "confirmed-occ",
+          appointmentId: "class-wrapper",
+          startsAt: new Date("2025-06-18T10:00:00Z"),
+          isTentative: false,
+          completionStatus: "SCHEDULED",
         },
       ]);
 
@@ -828,16 +832,15 @@ describe("validate: class event", () => {
     });
 
     it("does NOT count the class's own tentative session being replaced", async () => {
-      mockPrisma.appointment.findMany.mockResolvedValueOnce([]);
       // The only existing session this week is TENTATIVE (the one being
       // rescheduled). It must be excluded from the seed, so 2 proposed + 0 = 2.
-      mockPrisma.appointment.findMany.mockResolvedValueOnce([
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValueOnce([
         {
-          id: "tentative-apt",
-          occurrences: [
-            { startsAt: new Date("2025-06-18T10:00:00Z"), isTentative: true },
-            { startsAt: new Date("2025-06-18T10:30:00Z"), isTentative: true },
-          ],
+          id: "tentative-occ",
+          appointmentId: "class-wrapper",
+          startsAt: new Date("2025-06-18T10:00:00Z"),
+          isTentative: true,
+          completionStatus: "SCHEDULED",
         },
       ]);
 

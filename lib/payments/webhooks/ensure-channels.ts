@@ -105,23 +105,9 @@ export async function ensureChannelsForAppointment(
               consultantProfile: { select: { userId: true } },
             },
           },
-          // The org-tagged sibling, not the appointment being paid for.
-          // `appointment` is one appointment of many under a subscription and
-          // may be the personal one, while createSubscriptionChannel resolves
-          // the first ORG-tagged row — so without this the creator mints
-          // `dmo-…` and this path looks for `dm-…`. Filtered in the query
-          // because `take: 1` truncates server-side, before bookingOrgId's
-          // `find` can choose.
-          appointments: {
-            where: { organizationId: { not: null } },
-            select: { organizationId: true },
-            // Deterministic, not just filtered: `take: 1` over an unordered
-            // result can hand different callers different rows if a
-            // subscription ever carries two org-tagged appointments, which is
-            // the same divergence one layer down.
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-            take: 1,
-          },
+          // #1554 — one wrapper per subscription carries the org tag, the same
+          // row createSubscriptionChannel resolves, so the two cannot drift.
+          appointment: { select: { organizationId: true } },
         },
       },
       webinar: {
@@ -190,7 +176,6 @@ export async function ensureChannelsForAppointment(
   const dmOrgId = bookingOrgId({
     consultationPlan: consultation?.consultationPlan,
     subscriptionPlan: subscription?.subscriptionPlan,
-    appointments: subscription?.appointments,
     appointment,
   });
 

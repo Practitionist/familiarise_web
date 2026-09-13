@@ -18,7 +18,7 @@ import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { checkConsultantVerification } from "@/lib/verification";
-import { countUniqueParticipants } from "@/lib/payments/utils/participants";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
@@ -306,22 +306,27 @@ export async function POST(request: NextRequest) {
                 consultantProfile.user.timezone,
               ),
               classPlan: { connect: { id: classPlan.id } },
-              // Create appointments for the full duration
-              appointments: {
-                // Only create appointments if startDate is defined
-                create: sessionStarts.map((slotStart) => ({
-                  // #1554 — one occurrence per session (allocator parity).
-                  appointmentType: "CLASS" as const,
-                  occurrences: {
-                    create: buildOccurrence({
-                      startsAt: slotStart,
-                      durationInHours: sessionDurationInHours,
-                      consultantProfileId,
-                      isTentative: true,
-                    }),
-                  },
-                })),
-              },
+              // #1554 — one wrapper with one tentative occurrence per session
+              // (allocator parity); only when a start date is defined.
+              appointment:
+                sessionStarts.length > 0
+                  ? {
+                      create: {
+                        appointmentType: "CLASS" as const,
+                        occurrences: {
+                          create: sessionStarts.map((slotStart, index) =>
+                            buildOccurrence({
+                              startsAt: slotStart,
+                              durationInHours: sessionDurationInHours,
+                              consultantProfileId,
+                              isTentative: true,
+                              ordinal: index + 1,
+                            }),
+                          ),
+                        },
+                      },
+                    }
+                  : undefined,
             },
             include: {
               classPlan: {
@@ -331,7 +336,7 @@ export async function POST(request: NextRequest) {
                   classContents: true,
                 },
               },
-              appointments: {
+              appointment: {
                 include: {
                   occurrences: true,
                 },
@@ -731,7 +736,7 @@ export async function PATCH(request: NextRequest) {
             // paying learners. Checked inside the tx (the old guard ran before
             // it and left a TOCTOU window).
             if (maxParticipants !== undefined) {
-              const classAppointments = await tx.appointment.findMany({
+              const classAppointment = await tx.appointment.findUnique({
                 where: { classId: updatedClass.id },
                 include: {
                   participants: {
@@ -741,8 +746,8 @@ export async function PATCH(request: NextRequest) {
                 },
               });
               const consultantUserId = existingPlan.consultantProfile?.userId;
-              const enrolledCount = countUniqueParticipants(
-                classAppointments,
+              const enrolledCount = countWebinarParticipants(
+                classAppointment,
                 consultantUserId ? [consultantUserId] : [],
               );
               if (maxParticipants < enrolledCount) {
@@ -874,7 +879,7 @@ export async function PATCH(request: NextRequest) {
                       classContents: true,
                     },
                   },
-                  appointments: {
+                  appointment: {
                     include: {
                       occurrences: true,
                     },
@@ -894,7 +899,7 @@ export async function PATCH(request: NextRequest) {
                       classContents: true,
                     },
                   },
-                  appointments: {
+                  appointment: {
                     include: {
                       occurrences: true,
                     },

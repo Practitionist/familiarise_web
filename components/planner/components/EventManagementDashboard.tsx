@@ -135,14 +135,11 @@ export function EventManagementDashboard({
     }
 
     for (const cls of classes) {
-      // For classes, check the nearest upcoming appointment
-      for (const appt of cls.appointments ?? []) {
-        const run = getJoinableOccurrence(appt.occurrences ?? [], {
-          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-          now,
-        });
-        if (run && cls.id) ids.add(cls.id);
-      }
+      const run = getJoinableOccurrence(cls.appointment?.occurrences ?? [], {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+        now,
+      });
+      if (run && cls.id) ids.add(cls.id);
     }
 
     return ids;
@@ -271,20 +268,11 @@ export function EventManagementDashboard({
     // the same room) past its first half hour instead of reporting "No
     // joinable session found".
     const now = new Date();
-    let targetAppt = null;
-    let targetSlot = null;
-
-    for (const appt of classEvent.appointments ?? []) {
-      const run = getJoinableOccurrence(appt.occurrences ?? [], {
-        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-        now,
-      });
-      if (run) {
-        targetAppt = appt;
-        targetSlot = run;
-        break;
-      }
-    }
+    const targetAppt = classEvent.appointment;
+    const targetSlot = getJoinableOccurrence(targetAppt?.occurrences ?? [], {
+      joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      now,
+    });
 
     if (!targetAppt || !targetSlot) {
       toast({

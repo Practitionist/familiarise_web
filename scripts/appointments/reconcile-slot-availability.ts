@@ -525,22 +525,13 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         deletedAt: null,
         // Nothing can be placed in a window that has closed.
         schedulingPeriodEndsAt: { gt: now },
-        appointments: {
-          some: {
-            deletedAt: null,
-            occurrences: {
-              some: { isTentative: false, deletedAt: null },
-            },
-          },
-        },
-        NOT: {
-          appointments: {
-            some: {
-              deletedAt: null,
-              occurrences: {
-                some: { isTentative: true, deletedAt: null },
-              },
-            },
+        // #1554 — one live wrapper holding a confirmed occurrence and no
+        // tentative one (a reschedule or a checkout hold in flight).
+        appointment: {
+          deletedAt: null,
+          occurrences: {
+            some: { isTentative: false, deletedAt: null },
+            none: { isTentative: true, deletedAt: null },
           },
         },
       },
@@ -558,17 +549,22 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
             totalSessions: true,
           },
         },
-        // Only live appointments that hold a confirmed slot come back, and only
-        // their ids: the count IS the confirmed-session count (1 appointment =
-        // 1 session), so no slot rows travel.
-        appointments: {
-          where: {
-            deletedAt: null,
-            occurrences: {
-              some: { isTentative: false, deletedAt: null },
+        // The confirmed-session count is the wrapper's live confirmed rows
+        // (#1554: one occurrence = one session).
+        appointment: {
+          select: {
+            _count: {
+              select: {
+                occurrences: {
+                  where: {
+                    isTentative: false,
+                    deletedAt: null,
+                    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+                  },
+                },
+              },
             },
           },
-          select: { id: true },
         },
       },
       orderBy: { updatedAt: "asc" },
@@ -586,7 +582,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
       });
-      const confirmed = subscription.appointments.length;
+      const confirmed = subscription.appointment?._count.occurrences ?? 0;
       if (required === null || confirmed >= required) continue;
       candidates.push({
         eventType: "subscription",
@@ -610,22 +606,13 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         status: { in: [...OCCUPIED_EVENT_STATUSES] },
         deletedAt: null,
         schedulingPeriodEndsAt: { gt: now },
-        appointments: {
-          some: {
-            deletedAt: null,
-            occurrences: {
-              some: { isTentative: false, deletedAt: null },
-            },
-          },
-        },
-        NOT: {
-          appointments: {
-            some: {
-              deletedAt: null,
-              occurrences: {
-                some: { isTentative: true, deletedAt: null },
-              },
-            },
+        // #1554 — one live wrapper holding a confirmed occurrence and no
+        // tentative one (a reschedule or a checkout hold in flight).
+        appointment: {
+          deletedAt: null,
+          occurrences: {
+            some: { isTentative: false, deletedAt: null },
+            none: { isTentative: true, deletedAt: null },
           },
         },
       },
@@ -643,17 +630,22 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
             totalSessions: true,
           },
         },
-        // Only live appointments that hold a confirmed slot come back, and only
-        // their ids: the count IS the confirmed-session count (1 appointment =
-        // 1 session), so no slot rows travel.
-        appointments: {
-          where: {
-            deletedAt: null,
-            occurrences: {
-              some: { isTentative: false, deletedAt: null },
+        // The confirmed-session count is the wrapper's live confirmed rows
+        // (#1554: one occurrence = one session).
+        appointment: {
+          select: {
+            _count: {
+              select: {
+                occurrences: {
+                  where: {
+                    isTentative: false,
+                    deletedAt: null,
+                    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+                  },
+                },
+              },
             },
           },
-          select: { id: true },
         },
       },
       orderBy: { updatedAt: "asc" },
@@ -672,7 +664,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
           classRun.schedulingPeriodStartsAt ?? undefined,
         schedulingPeriodEndsAt: classRun.schedulingPeriodEndsAt ?? undefined,
       });
-      const confirmed = classRun.appointments.length;
+      const confirmed = classRun.appointment?._count.occurrences ?? 0;
       // `ClassPlan.consultantProfileId` is nullable; a plan with no consultant
       // has no availability to search and the allocator would answer NOT_FOUND.
       if (
@@ -825,9 +817,16 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         continue;
       }
       summary.placed++;
-      summary.sessionsPlaced += result.appointments?.length ?? 0;
+      // #1554 — the wrapper is one row, so this run's placements are the
+      // allocator's "now scheduled" total minus what the candidate already had.
+      const sessionsPlaced = Math.max(
+        0,
+        (result.placedSessions ?? candidate.confirmedSessions) -
+          candidate.confirmedSessions,
+      );
+      summary.sessionsPlaced += sessionsPlaced;
       console.log(
-        `   ✅ ${candidate.eventType} ${candidate.eventId}: ${result.appointments?.length ?? 0} session(s) placed ` +
+        `   ✅ ${candidate.eventType} ${candidate.eventId}: ${sessionsPlaced} session(s) placed ` +
           `(${result.placedSessions ?? "?"} of ${result.requiredSessions ?? candidate.requiredSessions} now scheduled)`,
       );
     } catch (error) {

@@ -3799,7 +3799,7 @@ model Subscription {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
 
-  appointments       Appointment[]
+  appointment        Appointment?
   convertedFromTrial TrialSession?
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
@@ -4184,7 +4184,7 @@ model Class {
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
 
-  appointments Appointment[]
+  appointment Appointment?
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4355,14 +4355,16 @@ model Appointment {
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique
 
+  // #1554 — one Appointment per purchase: a subscription or class is one
+  // wrapper with N occurrences, so its link is unique like the other three.
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  subscriptionId String?
+  subscriptionId String?       @unique
 
   webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarId String?  @unique
 
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String?
+  classId String? @unique
 
   trialSession TrialSession?
 

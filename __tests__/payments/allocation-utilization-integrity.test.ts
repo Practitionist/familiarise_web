@@ -88,8 +88,18 @@ const ORG_PAYMENT = {
   createdAt: new Date("2024-12-01T00:00:00Z"),
 };
 
-/** The org-funded signup placeholder the lazy debit hangs off. */
-function subscriptionFixture() {
+/** A live occurrence row on the wrapper (#1554 — the engagement is the call). */
+function occurrence(id: string, ordinal: number) {
+  return { id, ordinal, deletedAt: null };
+}
+
+/**
+ * The org-funded purchase wrapper the lazy debit hangs off. #1554 — one
+ * Appointment per subscription; its occurrence rows are the metered unit.
+ */
+function subscriptionFixture(
+  occurrences: ReturnType<typeof occurrence>[] = [],
+) {
   return {
     id: "sub-1",
     subscriptionPlan: {
@@ -117,14 +127,12 @@ function subscriptionFixture() {
     requestedBy: { user: { id: "consultee-1" } },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
     schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
-    appointments: [
-      {
-        id: "placeholder-apt",
-        organizationId: "org-1",
-        occurrences: [],
-        payment: [ORG_PAYMENT],
-      },
-    ],
+    appointment: {
+      id: "placeholder-apt",
+      organizationId: "org-1",
+      occurrences,
+      payment: [ORG_PAYMENT],
+    },
   };
 }
 
@@ -150,10 +158,11 @@ const mockTx = {
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   appointment: {
     findMany: jest.fn().mockResolvedValue([]),
-    // #1499 — createAppointments reads the originating appointment to
-    // inherit the policy version the booking was sold under. Null here:
-    // these fixtures predate the FK, so the created rows carry no policy.
-    findFirst: jest.fn().mockResolvedValue(null),
+    // #1554 — createAppointments attaches to the purchase wrapper checkout
+    // minted (the #1499 policy read shares this mock).
+    findFirst: jest
+      .fn()
+      .mockResolvedValue({ id: "placeholder-apt", cancellationPolicyId: null }),
     create: jest.fn(),
     update: jest.fn(),
     deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -164,6 +173,7 @@ const mockTx = {
     updateMany: jest.fn(),
     deleteMany: jest.fn(),
     count: jest.fn().mockResolvedValue(0),
+    aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: null } }),
   },
   $executeRaw: jest.fn().mockResolvedValue(1),
 };
@@ -184,9 +194,10 @@ beforeEach(() => {
 
   mockTx.subscription.findUnique.mockResolvedValue(subscriptionFixture());
   mockTx.appointment.findMany.mockResolvedValue([]);
-  mockTx.appointment.create.mockResolvedValue({
-    id: "apt-new-1",
-    occurrences: [],
+  // The wrapper comes back with the row this batch attached (ordinal 1).
+  mockTx.appointment.update.mockResolvedValue({
+    id: "placeholder-apt",
+    occurrences: [occurrence("occ-new-1", 1)],
   });
   mockTx.membership.findUnique.mockResolvedValue({
     id: "membership-1",
@@ -254,7 +265,8 @@ describe("#1132 — a dead assignment cannot be debited at allocation time", () 
       expect.objectContaining({
         programAssignmentId: "assign-live",
         paymentId: "pay-1",
-        appointmentIds: ["apt-new-1"],
+        // #1554 — the metered ids are occurrence rows, not wrappers.
+        appointmentIds: ["occ-new-1"],
       }),
     );
   });
@@ -270,31 +282,17 @@ describe("removed subscription sessions return the engagement", () => {
     mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
     mockTx.bookingUtilization.findUnique.mockResolvedValue({
       id: "util-1",
-      appointmentIds: ["apt-old-1", "apt-old-2", "apt-old-3"],
+      appointmentIds: ["occ-old-1", "occ-old-2", "occ-old-3"],
     });
   }
 
   it("reverses the net removal when 3 sessions become 1", async () => {
     trackedThreeSessions();
-    // Post-delete/post-create state: only the placeholder and the new session
-    // are still live, so all three tracked ids are stale.
-    mockTx.subscription.findUnique.mockResolvedValue({
-      ...subscriptionFixture(),
-      appointments: [
-        {
-          id: "placeholder-apt",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [ORG_PAYMENT],
-        },
-        {
-          id: "apt-new-1",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [],
-        },
-      ],
-    });
+    // Post-delete/post-create state: only the new session is still live on
+    // the wrapper, so all three tracked ids are stale.
+    mockTx.subscription.findUnique.mockResolvedValue(
+      subscriptionFixture([occurrence("occ-new-1", 4)]),
+    );
 
     const result = await allocateOneSession();
 
@@ -315,25 +313,11 @@ describe("removed subscription sessions return the engagement", () => {
     mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
     mockTx.bookingUtilization.findUnique.mockResolvedValue({
       id: "util-1",
-      appointmentIds: ["apt-old-1"],
+      appointmentIds: ["occ-old-1"],
     });
-    mockTx.subscription.findUnique.mockResolvedValue({
-      ...subscriptionFixture(),
-      appointments: [
-        {
-          id: "placeholder-apt",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [ORG_PAYMENT],
-        },
-        {
-          id: "apt-new-1",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [],
-        },
-      ],
-    });
+    mockTx.subscription.findUnique.mockResolvedValue(
+      subscriptionFixture([occurrence("occ-new-1", 2)]),
+    );
 
     const result = await allocateOneSession();
 
@@ -347,31 +331,14 @@ describe("removed subscription sessions return the engagement", () => {
     mockTx.programAssignment.findFirst.mockResolvedValue({ id: "assign-live" });
     mockTx.bookingUtilization.findUnique.mockResolvedValue({
       id: "util-1",
-      appointmentIds: ["apt-old-1"],
+      appointmentIds: ["occ-old-1"],
     });
-    mockTx.subscription.findUnique.mockResolvedValue({
-      ...subscriptionFixture(),
-      appointments: [
-        {
-          id: "placeholder-apt",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [ORG_PAYMENT],
-        },
-        {
-          id: "apt-old-1",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [],
-        },
-        {
-          id: "apt-new-1",
-          organizationId: "org-1",
-          occurrences: [],
-          payment: [],
-        },
-      ],
-    });
+    mockTx.subscription.findUnique.mockResolvedValue(
+      subscriptionFixture([
+        occurrence("occ-old-1", 1),
+        occurrence("occ-new-1", 2),
+      ]),
+    );
 
     const result = await allocateOneSession();
 
@@ -380,7 +347,7 @@ describe("removed subscription sessions return the engagement", () => {
     // The new session is genuinely additional, so it IS debited.
     expect(recordBookingUtilization).toHaveBeenCalledWith(
       mockTx,
-      expect.objectContaining({ appointmentIds: ["apt-new-1"] }),
+      expect.objectContaining({ appointmentIds: ["occ-new-1"] }),
     );
   });
 });

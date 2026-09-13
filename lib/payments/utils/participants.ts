@@ -32,24 +32,7 @@ export function liveSeatUserIds(
   return ids;
 }
 
-/**
- * Count unique participants across multiple appointments — a class student
- * holds a seat on every session's appointment, so seats are unique users.
- */
-export function countUniqueParticipants(
-  appointments: SeatBearingAppointment[],
-  excludeUserIds: string[] = [],
-): number {
-  const uniqueUserIds = new Set<string>();
-  for (const appointment of appointments) {
-    for (const id of liveSeatUserIds(appointment, excludeUserIds)) {
-      uniqueUserIds.add(id);
-    }
-  }
-  return uniqueUserIds.size;
-}
-
-/** Count participants of a webinar's single appointment. */
+/** Count participants of an event's one appointment (webinar or class, #1554). */
 export function countWebinarParticipants(
   appointment: SeatBearingAppointment | null,
   excludeUserIds: string[] = [],
@@ -57,14 +40,12 @@ export function countWebinarParticipants(
   return liveSeatUserIds(appointment, excludeUserIds).size;
 }
 
-/** Whether the user holds a seat on any of the appointments (class enrolment). */
+/** Whether the user holds a seat on the class's appointment (enrolment). */
 export function isUserEnrolled(
-  appointments: SeatBearingAppointment[],
+  appointment: SeatBearingAppointment | null | undefined,
   userId: string,
 ): boolean {
-  return appointments.some((appointment) =>
-    liveSeatUserIds(appointment).has(userId),
-  );
+  return liveSeatUserIds(appointment).has(userId);
 }
 
 /** Whether the user holds a seat on any of the webinars' appointments. */

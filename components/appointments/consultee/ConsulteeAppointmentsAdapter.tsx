@@ -50,7 +50,7 @@ type DialogKind = "cancel" | "leave" | "report" | "documents";
  * ## Why two lookups?
  *
  * `map-consultee` sets `raw.source` to the webinar/class/trial row (has `.id`).
- * `map-detail` sets `raw.source` to `{ appointment, siblings }` — no event id.
+ * `map-detail` sets `raw.source` to `{ appointment }` — no event id.
  * The same adapter mounts on list AND detail, so gating on `source.id` alone
  * hid Leave / Cancel trial on `/appointments/[appointmentId]` after #1005.
  *

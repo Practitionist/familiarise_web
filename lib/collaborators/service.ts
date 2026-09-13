@@ -1164,7 +1164,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             classes: {
               where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
               include: {
-                appointments: {
+                appointment: {
                   include: {
                     // #1554 — enrolment is the live participant count on the appointment.
                     _count: {
@@ -1297,7 +1297,7 @@ export async function getHostedCollaborations(
         classes: {
           where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
           include: {
-            appointments: {
+            appointment: {
               include: {
                 // #1554 — enrolment is the live participant count on the appointment.
                 _count: {

@@ -597,14 +597,15 @@ describe("Manual allocation", () => {
     });
   });
 
-  it("should create multiple appointments for subscription with multiple calls", async () => {
+  it("creates ONE wrapper with one occurrence per call for a multi-call subscription", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
       }),
     );
 
-    // 4 slots → 2 appointments of 2 slots each (1hr sessions)
+    // #1554 — 4 slots → one Appointment carrying 2 occurrences (1hr sessions),
+    // ordinal 1..N, each spanning its real end.
     await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
@@ -617,7 +618,20 @@ describe("Manual allocation", () => {
       ],
     });
 
-    expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    const created = mockTx.appointment.create.mock.calls[0][0].data;
+    expect(created.occurrences.create).toEqual([
+      expect.objectContaining({
+        ordinal: 1,
+        startsAt: new Date("2025-01-06T10:00:00Z"),
+        endsAt: new Date("2025-01-06T11:00:00Z"),
+      }),
+      expect.objectContaining({
+        ordinal: 2,
+        startsAt: new Date("2025-01-13T10:00:00Z"),
+        endsAt: new Date("2025-01-13T11:00:00Z"),
+      }),
+    ]);
   });
 });
 
@@ -1212,7 +1226,7 @@ describe("Auto allocation", () => {
         },
         schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2025-01-27T00:00:00Z"),
-        appointments: [],
+        appointment: null,
       }),
     );
     mockTx.appointment.findMany.mockResolvedValue([]); // no existing bookings
@@ -1228,11 +1242,13 @@ describe("Auto allocation", () => {
     // on some days (the validator's ≤2/day cap). The old one-per-day cursor
     // found at most 6 sessions and failed with "Could only find 12 of 16".
     expect(result.success).toBe(true);
-    expect(mockTx.appointment.create).toHaveBeenCalledTimes(8);
+    // #1554 — one wrapper, eight occurrence rows.
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    const occurrences =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
+    expect(occurrences).toHaveLength(8);
 
-    const sessionStarts = mockTx.appointment.create.mock.calls.map(
-      (call: any[]) => new Date(call[0].data.occurrences.create[0].startsAt),
-    );
+    const sessionStarts = occurrences.map((row: any) => new Date(row.startsAt));
     // Two sessions stacked on the first Monday (09:00 and 10:00) — the
     // per-day-cap behavior the validator already allowed.
     const jan6 = sessionStarts.filter((d: Date) =>
@@ -1266,7 +1282,7 @@ describe("Auto allocation", () => {
         },
         schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2025-01-13T00:00:00Z"),
-        appointments: [],
+        appointment: null,
       }),
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
@@ -1534,7 +1550,8 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array), // appointmentIdsToExclude
       // #676 AE-1 — consulteeUserId threaded for the conflict scan, now inside
       // the options object that brought validate() back under the param limit.
-      { consulteeUserId: "consultee-1" },
+      // #1554 — a reschedule also names the occurrence rows being replaced.
+      { consulteeUserId: "consultee-1", excludeOccurrenceIds: [] },
     );
   });
 
@@ -1558,7 +1575,7 @@ describe("fetchEventData - config extraction", () => {
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
       // event has no single consultee.
-      { consulteeUserId: undefined },
+      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
     );
   });
 
@@ -1612,7 +1629,7 @@ describe("fetchEventData - config extraction", () => {
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
       // event has no single consultee.
-      { consulteeUserId: undefined },
+      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
     );
   });
 });
@@ -1797,7 +1814,7 @@ describe("updateEventStatus", () => {
 // ─── createAppointments (tested indirectly) ─────────────────────────────────
 
 describe("createAppointments - grouping and validation", () => {
-  it("should group 4 slots into 2 appointments for 1-hour sessions", async () => {
+  it("should group 4 slots into 2 occurrences on one wrapper for 1-hour sessions", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
@@ -1816,21 +1833,16 @@ describe("createAppointments - grouping and validation", () => {
       ],
     });
 
-    expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
-
-    // First appointment: one occurrence covering the first 2 intervals
-    const call1 = mockTx.appointment.create.mock.calls[0][0];
-    expect(call1.data.occurrences.create).toHaveLength(1);
-    expect(call1.data.occurrences.create[0].endsAt).toEqual(
-      new Date("2025-01-06T11:00:00Z"),
-    );
-
-    // Second appointment: one occurrence covering the next 2 intervals
-    const call2 = mockTx.appointment.create.mock.calls[1][0];
-    expect(call2.data.occurrences.create).toHaveLength(1);
+    // #1554 — one wrapper; each occurrence covers its 2 intervals.
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    const rows =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
+    expect(rows).toHaveLength(2);
+    expect(rows[0].endsAt).toEqual(new Date("2025-01-06T11:00:00Z"));
+    expect(rows[1].startsAt).toEqual(new Date("2025-01-13T10:00:00Z"));
   });
 
-  it("should group 6 slots into 2 appointments for 1.5-hour sessions", async () => {
+  it("should group 6 slots into 2 occurrences on one wrapper for 1.5-hour sessions", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         subscriptionPlan: {
@@ -1858,11 +1870,12 @@ describe("createAppointments - grouping and validation", () => {
       ],
     });
 
-    expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
-    // Each appointment has one 90-minute occurrence (#1554)
-    for (const call of mockTx.appointment.create.mock.calls) {
-      const [occurrence] = call[0].data.occurrences.create;
-      expect(call[0].data.occurrences.create).toHaveLength(1);
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    // The wrapper carries two 90-minute occurrences (#1554)
+    const rows =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
+    expect(rows).toHaveLength(2);
+    for (const occurrence of rows) {
       expect(
         new Date(occurrence.endsAt).getTime() -
           new Date(occurrence.startsAt).getTime(),
@@ -2082,20 +2095,16 @@ describe("deleteExistingAppointments", () => {
   it("reconnects enrolled learners after a class tentative reschedule", async () => {
     mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
 
-    // One tentative session (2 slots for a 1h class) the learner is enrolled in.
+    // One tentative 1h session (one occurrence row, #1554) the learner is
+    // enrolled in.
     const tentativeClassAppt = {
       id: "class-apt-1",
       occurrences: [
         {
           id: "ts1",
+          ordinal: 1,
           isTentative: true,
           startsAt: new Date("2025-01-06T10:00:00Z"),
-          endsAt: new Date("2025-01-06T10:30:00Z"),
-        },
-        {
-          id: "ts2",
-          isTentative: true,
-          startsAt: new Date("2025-01-06T10:30:00Z"),
           endsAt: new Date("2025-01-06T11:00:00Z"),
         },
       ],
@@ -2103,11 +2112,9 @@ describe("deleteExistingAppointments", () => {
       _count: { payment: 0 },
     };
     mockTx.appointment.findMany.mockResolvedValue([tentativeClassAppt]);
-    // New appointment must expose BOTH slots (a 1h class session = 2×30-min
-    // slots) so reconnect re-links the learner to every new slot (#898 #6).
     mockTx.appointment.create.mockResolvedValue({
       id: "new-class-apt",
-      occurrences: [{ id: "new-slot-1" }, { id: "new-slot-1b" }],
+      occurrences: [{ id: "new-occ-1" }],
     });
 
     const result = await SchedulingService.allocate({
@@ -2938,7 +2945,7 @@ describe("allocation resilience — error codes", () => {
         // Period ended before "now" (2025-01-01)
         schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2024-02-01T00:00:00Z"),
-        appointments: [],
+        appointment: null,
       }),
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
@@ -2971,7 +2978,7 @@ describe("allocation resilience — error codes", () => {
         },
         schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2025-01-27T00:00:00Z"),
-        appointments: [],
+        appointment: null,
       }),
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
@@ -3054,10 +3061,12 @@ describe("#1206 partial allocation", () => {
     expect(result.placedSessions).toBe(refusal.placeableSessions);
     expect(result.requiredSessions).toBe(6);
     expect(result.unplacedSessions).toBe(6 - (result.placedSessions ?? 0));
-    // One Appointment per placed session — the rest stay unallocated.
-    expect(mockTx.appointment.create).toHaveBeenCalledTimes(
-      result.placedSessions ?? 0,
-    );
+    // #1554 — one wrapper, one occurrence per placed session; the rest stay
+    // unallocated.
+    expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    expect(
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create,
+    ).toHaveLength(result.placedSessions ?? 0);
   });
 
   it("is ignored for a single-session consultation", async () => {

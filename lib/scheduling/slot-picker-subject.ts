@@ -37,16 +37,11 @@ export interface RescheduleSubject {
 
 /** Slots that a reschedule could still act on: ahead of now, and not already dead. */
 function liveFutureSlots(detail: TAppointmentDetail): OccurrenceLike[] {
-  const { appointment, siblings } = detail;
-  // Program-wide. A subscription or class session is one Appointment among
-  // many, and "every session" has to mean all of them — the reschedule API
-  // reads the whole program off a single appointment id for the same reason.
-  const all = [
-    ...appointment.occurrences,
-    ...siblings.flatMap((sibling) => sibling.occurrences),
-  ];
+  const { appointment } = detail;
+  // #1554 — programme-wide is the wrapper's own rows: a subscription or class
+  // is one Appointment carrying every session.
   const now = Date.now();
-  return all
+  return appointment.occurrences
     .filter(
       (slot) =>
         new Date(slot.endsAt).getTime() >= now &&

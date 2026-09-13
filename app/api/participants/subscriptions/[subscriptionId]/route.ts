@@ -48,7 +48,7 @@ export async function GET(
       },
       include: {
         subscriptionPlan: true,
-        appointments: {
+        appointment: {
           include: {
             participants: {
               where: liveParticipant(),
@@ -76,10 +76,11 @@ export async function GET(
       participants.push(subscription.requestedBy.user);
     }
 
-    // Add every seat holder on the appointments (typically the consultant)
-    const slotUsers = subscription.appointments.flatMap((appointment) =>
-      appointment.participants.map((participant) => participant.user),
-    );
+    // Add every seat holder on the wrapper (typically the consultant)
+    const slotUsers =
+      subscription.appointment?.participants.map(
+        (participant) => participant.user,
+      ) ?? [];
 
     // Get unique participants by user ID (avoid duplicates)
     const uniqueUsers = Array.from(

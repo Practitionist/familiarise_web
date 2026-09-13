@@ -37,7 +37,7 @@ export interface ClassInstance {
   schedulingPeriodStartsAt?: string | Date | null;
   /** Per-instance capacity override; null inherits the plan's value. */
   maxParticipants?: number | null;
-  appointments?: ClassAppointment[];
+  appointment?: ClassAppointment | null;
 }
 
 type ProgramConsultantProfile = {

@@ -358,7 +358,7 @@ export async function createClassChannel(
           },
         },
       },
-      appointments: {
+      appointment: {
         include: {
           participants: {
             where: liveParticipant(),
@@ -379,9 +379,7 @@ export async function createClassChannel(
   }
 
   const appointmentIds =
-    classData.appointments?.flatMap((apt) =>
-      apt.participants.map((p) => p.userId),
-    ) || [];
+    classData.appointment?.participants.map((p) => p.userId) || [];
 
   const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
 
@@ -534,23 +532,10 @@ export async function createSubscriptionChannel(
       requestedBy: {
         include: { user: { select: { id: true } } },
       },
-      // Pull a single org-tagged appointment so we can fall back to
-      // its org id when the plan itself isn't org-hosted but the
-      // subscription is funded through an org-funded membership.
-      // Subscription has a 1:N appointments relation; all appointments
-      // in one subscription share the same org context (the org pays
-      // for the whole subscription upfront) so taking the first is
-      // sufficient. (C.3 / #674)
-      appointments: {
-        where: { organizationId: { not: null } },
-        select: { organizationId: true },
-        // Deterministic, not just filtered: `take: 1` over an
-        // unordered result can hand different callers different
-        // rows if a subscription ever carries two org-tagged
-        // appointments, which is the same divergence one layer down.
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        take: 1,
-      },
+      // The wrapper's org tag is the fallback when the plan itself isn't
+      // org-hosted but the subscription is funded through an org-funded
+      // membership (C.3 / #674). #1554 — one wrapper per subscription.
+      appointment: { select: { organizationId: true } },
     },
   });
 

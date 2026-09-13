@@ -141,7 +141,7 @@ async function verifyConsultantSlots() {
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
             occurrences: {
               where: {
@@ -168,7 +168,8 @@ async function verifyConsultantSlots() {
       );
       console.log(`  Start: ${sub.schedulingPeriodStartsAt.toISOString()}`);
       console.log(`  End: ${sub.schedulingPeriodEndsAt.toISOString()}`);
-      console.log(`  Appointments: ${sub.appointments.length}`);
+      const wrappers = sub.appointment ? [sub.appointment] : [];
+      console.log(`  Appointments: ${wrappers.length}`);
 
       // Check if date range is in the future relative to subscription end date
       if (START_DATE > sub.schedulingPeriodEndsAt) {
@@ -182,7 +183,7 @@ async function verifyConsultantSlots() {
       }
 
       // Show slots for this subscription in the date range
-      sub.appointments.forEach((appt, apptIdx) => {
+      wrappers.forEach((appt, apptIdx) => {
         if (appt.occurrences.length > 0) {
           console.log(`\n  Appointment ${apptIdx + 1} (${appt.id}):`);
           appt.occurrences.forEach((slot) => {

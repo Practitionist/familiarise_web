@@ -8,7 +8,20 @@
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  SCHEDULING_INTERVAL_MS,
+} from "@/lib/appointments/occurrences";
+
+/** A stored occurrence as the cap counters read it. */
+type ExistingOccurrenceRow = {
+  id: string;
+  appointmentId: string;
+  startsAt: Date | string;
+  isTentative: boolean;
+  completionStatus?: string | null;
+  deletedAt?: Date | string | null;
+};
 import {
   AppointmentStatus,
   ScheduleType,
@@ -140,12 +153,14 @@ export class ScheduleValidationService {
     consultantUserId: string,
     excludeAppointmentIds?: string[],
     consulteeUserId?: string,
+    excludeOccurrenceIds?: string[],
   ): Promise<ValidationResult> {
     return await this.validateNoConflicts(
       slots,
       consultantUserId,
       excludeAppointmentIds,
       consulteeUserId,
+      excludeOccurrenceIds,
     );
   }
 
@@ -185,6 +200,12 @@ export class ScheduleValidationService {
        * consultant or a privileged user before setting this.
        */
       overrideAvailabilityWindow?: boolean;
+      /**
+       * #1554 — occurrence rows to leave out of conflicts, weekly and daily
+       * counts: a reschedule replaces rows on a wrapper it keeps, so the
+       * wrapper's other calls must still count while the released ones do not.
+       */
+      excludeOccurrenceIds?: string[];
     },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
@@ -201,6 +222,7 @@ export class ScheduleValidationService {
       consultant.userId,
       excludeAppointmentIds,
       options?.consulteeUserId,
+      options?.excludeOccurrenceIds,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -227,6 +249,7 @@ export class ScheduleValidationService {
           slots,
           config,
           excludeAppointmentIds,
+          options?.excludeOccurrenceIds,
         );
 
       case "webinar":
@@ -240,6 +263,7 @@ export class ScheduleValidationService {
           slots,
           config,
           excludeAppointmentIds,
+          options?.excludeOccurrenceIds,
         );
 
       default:
@@ -320,7 +344,12 @@ export class ScheduleValidationService {
     // #676 AE-1 — the consultee is a participant too; an overlapping slot
     // sharing either party is a real conflict.
     consulteeUserId?: string,
+    excludeOccurrenceIds?: string[],
   ): Promise<ValidationResult> {
+    const occurrenceExclusion =
+      excludeOccurrenceIds && excludeOccurrenceIds.length > 0
+        ? [{ id: { notIn: excludeOccurrenceIds } }]
+        : [];
     const errors: string[] = [];
 
     if (slots.length === 0) {
@@ -380,6 +409,7 @@ export class ScheduleValidationService {
                     // No completionStatus filter here — RESCHEDULED rows are
                     // a pending reschedule's live hold and must still block.
                     { deletedAt: null },
+                    ...occurrenceExclusion,
                   ],
                 },
               },
@@ -398,6 +428,7 @@ export class ScheduleValidationService {
                 { startsAt: { lt: new Date(latestEnd) } },
                 { endsAt: { gt: new Date(earliestStart) } },
                 { deletedAt: null },
+                ...occurrenceExclusion,
               ],
             },
             select: { startsAt: true, endsAt: true },
@@ -798,6 +829,7 @@ export class ScheduleValidationService {
     slots: Date[],
     config: EventConfig,
     excludeAppointmentIds?: string[],
+    excludeOccurrenceIds?: string[],
   ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -841,28 +873,33 @@ export class ScheduleValidationService {
       this.prismaClient as PrismaLike,
     );
 
-    // Exclude tentative appointments from weekly call count.
-    // During re-allocation after a reschedule, the old tentative slots still
-    // exist in the DB and would otherwise be counted as "existing calls",
-    // causing a false weekly-limit violation when the consultant proposes
-    // the same number of new slots (1 per week).
-    const tentativeAppointments = await this.prismaClient.appointment.findMany({
-      where: {
-        subscriptionId,
-        occurrences: { some: { isTentative: true } },
-      },
-      select: { id: true },
-    });
-    const tentativeIds = tentativeAppointments.map((a) => a.id);
-    // Merge caller-provided exclusions with tentative lookup for reliability
-    const allExcludeIds = Array.from(
-      new Set([...(excludeAppointmentIds || []), ...tentativeIds]),
-    );
+    // #1554 — one wrapper, N occurrences: the weekly and daily counts are
+    // over the wrapper's live rows. The tentative rows still exist in the DB
+    // during a re-allocation after a reschedule and would otherwise count as
+    // "existing calls", causing a false weekly-limit violation when the
+    // consultant proposes the same number of new slots (1 per week).
+    const subscriptionOccurrences =
+      await this.prismaClient.appointmentOccurrence.findMany({
+        where: { appointment: { subscriptionId }, deletedAt: null },
+        select: {
+          id: true,
+          appointmentId: true,
+          startsAt: true,
+          isTentative: true,
+          completionStatus: true,
+        },
+      });
+    const excludedAppointments = new Set(excludeAppointmentIds || []);
+    const excludedOccurrences = new Set([
+      ...(excludeOccurrenceIds || []),
+      ...subscriptionOccurrences.filter((o) => o.isTentative).map((o) => o.id),
+    ]);
 
     const result = await validationService.validateSubscriptionSlots(
       subscriptionId,
       slots.map((s) => s.toISOString()),
-      allExcludeIds,
+      [...excludedAppointments],
+      [...excludedOccurrences],
     );
 
     // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
@@ -870,17 +907,10 @@ export class ScheduleValidationService {
     // previously lived only in allocation selection + the client guard.
     // Constant shared with the allocator (utils/scheduling-engine/sessionCaps.ts)
     // so selection and validation can never disagree.
-    const subscriptionAppointments =
-      await this.prismaClient.appointment.findMany({
-        where: { subscriptionId },
-        select: {
-          id: true,
-          occurrences: { select: { startsAt: true, isTentative: true } },
-        },
-      });
     const perDayErrors = this.validatePerDaySessionCap(
-      subscriptionAppointments,
-      new Set(allExcludeIds),
+      subscriptionOccurrences,
+      excludedAppointments,
+      excludedOccurrences,
       slots,
       slotsPerSession,
       MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
@@ -973,6 +1003,7 @@ export class ScheduleValidationService {
     slots: Date[],
     config: EventConfig,
     excludeAppointmentIds?: string[],
+    excludeOccurrenceIds?: string[],
   ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -1051,38 +1082,41 @@ export class ScheduleValidationService {
     }
 
     // RV-5 — seed each week with this class's surviving confirmed sessions.
-    // Fetch the class's appointments and exclude the tentative ones (and any
-    // caller exclusions) that are about to be replaced, so the seed reflects
-    // exactly the calls the allocator would also count.
-    const classAppointments = await this.prismaClient.appointment.findMany({
-      where: { classId },
-      select: {
-        id: true,
-        occurrences: {
-          select: { startsAt: true, isTentative: true },
+    // #1554 — one wrapper, N occurrences: fetch the class's live rows and
+    // exclude the tentative ones (and any caller exclusions) that are about
+    // to be replaced, so the seed reflects exactly the calls the allocator
+    // would also count.
+    const classOccurrences =
+      await this.prismaClient.appointmentOccurrence.findMany({
+        where: { appointment: { classId }, deletedAt: null },
+        select: {
+          id: true,
+          appointmentId: true,
+          startsAt: true,
+          isTentative: true,
+          completionStatus: true,
         },
-      },
-    });
-    const tentativeIds = classAppointments
-      .filter((a) => a.occurrences.some((s) => s.isTentative))
-      .map((a) => a.id);
-    const excludeSet = new Set([
-      ...(excludeAppointmentIds || []),
-      ...tentativeIds,
+      });
+    const excludedAppointments = new Set(excludeAppointmentIds || []);
+    const excludedOccurrences = new Set([
+      ...(excludeOccurrenceIds || []),
+      ...classOccurrences.filter((o) => o.isTentative).map((o) => o.id),
     ]);
 
-    // One confirmed appointment = one session, keyed by its earliest slot's
-    // week (same scheduling-timezone key the allocator and groupSlotsByWeek
-    // use, ADR B9).
+    // One live occurrence = one session, keyed by its week (same
+    // scheduling-timezone key the allocator and groupSlotsByWeek use, ADR B9).
     const existingSessionsPerWeek = new Map<string, number>();
-    for (const appt of classAppointments) {
-      if (excludeSet.has(appt.id)) continue;
-      if (appt.occurrences.length === 0) continue;
-      const firstSlot = appt.occurrences.reduce((earliest, s) =>
-        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
-      );
+    for (const row of classOccurrences) {
+      if (
+        !this.countsAsExistingSession(
+          row,
+          excludedAppointments,
+          excludedOccurrences,
+        )
+      )
+        continue;
       const weekKey = ScheduleCalculationService.weekKey(
-        new Date(firstSlot.startsAt),
+        new Date(row.startsAt),
         config.schedulingTimezone,
       );
       existingSessionsPerWeek.set(
@@ -1120,8 +1154,9 @@ export class ScheduleValidationService {
     // allocator (utils/scheduling-engine/sessionCaps.ts).
     errors.push(
       ...this.validatePerDaySessionCap(
-        classAppointments,
-        excludeSet,
+        classOccurrences,
+        excludedAppointments,
+        excludedOccurrences,
         slots,
         slotsPerSession,
         MAX_CLASS_SESSIONS_PER_DAY,
@@ -1137,20 +1172,34 @@ export class ScheduleValidationService {
   }
 
   /**
+   * #1554 — whether a stored row still counts as an existing session for the
+   * weekly and daily caps: live, not tentative, and not one of the rows the
+   * caller is replacing.
+   */
+  private countsAsExistingSession(
+    row: ExistingOccurrenceRow,
+    excludedAppointments: Set<string>,
+    excludedOccurrences: Set<string>,
+  ): boolean {
+    if (excludedAppointments.has(row.appointmentId)) return false;
+    if (excludedOccurrences.has(row.id)) return false;
+    if (row.isTentative) return false;
+    return !isDeadOccurrence(row);
+  }
+
+  /**
    * #898 follow-up — server-side per-DAY session cap (subscription 1/day,
    * class 2/day). Keyed by the event's scheduling-timezone day via
    * ScheduleCalculationService.dayKey (ADR B9) — the same key the client guards
    * and auto-allocate use. The old toDateString() key depended on the
    * server's local timezone, so verdicts could differ between environments
-   * and from the client. One Appointment = one session, keyed by its first
-   * slot's day; tentative/excluded appointments are skipped.
+   * and from the client. One occurrence = one session (#1554), keyed by its
+   * day; tentative, dead and excluded rows are skipped.
    */
   private validatePerDaySessionCap(
-    existingAppointments: {
-      id: string;
-      occurrences: { startsAt: Date | string; isTentative: boolean }[];
-    }[],
-    excludeSet: Set<string>,
+    existingOccurrences: ExistingOccurrenceRow[],
+    excludedAppointments: Set<string>,
+    excludedOccurrences: Set<string>,
     slots: Date[],
     slotsPerSession: number,
     maxPerDay: number,
@@ -1158,14 +1207,17 @@ export class ScheduleValidationService {
   ): string[] {
     const errors: string[] = [];
     const existingPerDay = new Map<string, number>();
-    for (const appt of existingAppointments) {
-      if (excludeSet.has(appt.id)) continue;
-      if (appt.occurrences.length === 0) continue;
-      const firstSlot = appt.occurrences.reduce((earliest, s) =>
-        new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
-      );
+    for (const row of existingOccurrences) {
+      if (
+        !this.countsAsExistingSession(
+          row,
+          excludedAppointments,
+          excludedOccurrences,
+        )
+      )
+        continue;
       const dayKey = ScheduleCalculationService.dayKey(
-        new Date(firstSlot.startsAt),
+        new Date(row.startsAt),
         schedulingTimezone,
       );
       existingPerDay.set(dayKey, (existingPerDay.get(dayKey) || 0) + 1);

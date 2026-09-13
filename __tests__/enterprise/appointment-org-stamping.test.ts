@@ -77,13 +77,11 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     const event = {
       subscriptionPlan: { consultantProfile: CONSULTANT, totalSessions: 4 },
       requestedBy: { user: { id: "consultee-1" } },
-      appointments: [
-        {
-          organizationId: "wipro-org-id",
-          occurrences: [],
-          payment: { organizationId: null },
-        },
-      ],
+      appointment: {
+        organizationId: "wipro-org-id",
+        occurrences: [],
+        payment: [{ organizationId: null }],
+      },
     };
     await expect(resolveOrg("subscription", "subscription", event)).resolves.toBe(
       "wipro-org-id",
@@ -96,13 +94,11 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     const event = {
       subscriptionPlan: { consultantProfile: CONSULTANT, totalSessions: 4 },
       requestedBy: { user: { id: "consultee-1" } },
-      appointments: [
-        {
-          organizationId: null,
-          occurrences: [],
-          payment: { organizationId: "wipro-org-id" },
-        },
-      ],
+      appointment: {
+        organizationId: null,
+        occurrences: [],
+        payment: [{ organizationId: "wipro-org-id" }],
+      },
     };
     await expect(resolveOrg("subscription", "subscription", event)).resolves.toBe(
       "wipro-org-id",
@@ -113,13 +109,11 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     const event = {
       subscriptionPlan: { consultantProfile: CONSULTANT, totalSessions: 4 },
       requestedBy: { user: { id: "consultee-1" } },
-      appointments: [
-        {
-          organizationId: null,
-          occurrences: [],
-          payment: { organizationId: null },
-        },
-      ],
+      appointment: {
+        organizationId: null,
+        occurrences: [],
+        payment: [{ organizationId: null }],
+      },
     };
     await expect(
       resolveOrg("subscription", "subscription", event),
@@ -150,7 +144,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
 
   it("CLASS uses the classPlan host org (host wins; marketplace = null)", async () => {
     const base = {
-      appointments: [],
+      appointment: null,
     };
     await expect(
       resolveOrg("class", "class", {

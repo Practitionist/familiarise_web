@@ -34,6 +34,8 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1554 — the refund context reads the one wrapper; none here.
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     payment: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED

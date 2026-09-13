@@ -1,5 +1,5 @@
 /**
- * Detail-payload mapper: readAppointmentDetail's { appointment, siblings }
+ * Detail-payload mapper: readAppointmentDetail's { appointment }
  * → one AppointmentVM (plus flattened recordings) so the detail page reuses
  * the shared timeline/badge/action machinery. Role decides the counterpart:
  * consultees see the consultant; consultants see the consultee (or the plan
@@ -125,22 +125,16 @@ export function mapAppointmentDetail(
   role: Role,
   now: Date = new Date(),
 ): { vm: AppointmentVM; recordings: DetailRecordingVM[] } {
-  const { appointment, siblings } = detail;
+  const { appointment } = detail;
   const facts = eventOf(appointment);
-  const all = [appointment, ...siblings];
-  // Grouped PER APPOINTMENT before the flatten, or two sittings on different
-  // days would merge into one session.
-  const occurrences = sortOccurrences(
-    all.flatMap((a) => occurrencesOfAppointment(a)),
-  );
+  // #1554 — one wrapper per purchase: the programme IS its occurrence rows.
+  const all = [appointment];
+  const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
 
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
-  const withSlots = all.filter((a) => a.occurrences.length > 0);
-  const completed = withSlots.filter((a) =>
-    occurrencesOfAppointment(a).every((s) => isOccurrenceOver(s, now)),
-  ).length;
+  const completed = occurrences.filter((s) => isOccurrenceOver(s, now)).length;
 
   const counterpart =
     role === "consultee"
@@ -170,7 +164,7 @@ export function mapAppointmentDetail(
     ...deriveBucket({ status: facts.status, occurrences, now }),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: isGroup ? { total: withSlots.length, completed } : null,
+    group: isGroup ? { total: occurrences.length, completed } : null,
     meta: appointment.trialSession
       ? trialMeta(
           appointment.trialSession.subscriptionPlan?.trialPriceInPaise ?? null,

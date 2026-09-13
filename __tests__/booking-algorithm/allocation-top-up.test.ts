@@ -80,34 +80,43 @@ const mockPrisma = prisma as unknown as {
 const notifyBooked = notifyAppointmentBooked as jest.Mock;
 
 /** One 1-hour session = one confirmed occurrence row (#1554). */
-function confirmedSession(id: string, startISO: string) {
+function confirmedOccurrence(ordinal: number, startISO: string) {
   const startsAt = new Date(startISO);
   return {
-    id,
+    id: `occ-week-${ordinal}`,
+    ordinal,
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
+    isTentative: false,
+    completionStatus: "SCHEDULED",
+  };
+}
+
+const WRAPPER_ID = "apt-sub-topup";
+
+/** The subscription's ONE purchase wrapper carrying its held calls (#1554). */
+function wrapperWith(occurrences: ReturnType<typeof confirmedOccurrence>[]) {
+  return {
+    id: WRAPPER_ID,
     organizationId: null,
+    cancellationPolicyId: null,
     payment: [],
     // #1554 — the roster the delete branches harvest for the re-seat.
     participants: [{ userId: "consultee-1" }],
-    occurrences: [
-      {
-        id: `${id}-occurrence`,
-        ordinal: 1,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
-        isTentative: false,
-      },
-    ],
+    occurrences,
   };
 }
 
 // Weeks 1 and 2 of a four-session plan are already booked and paid for.
-const WEEK_1 = confirmedSession("apt-week-1", "2025-01-06T09:00:00.000Z");
-const WEEK_2 = confirmedSession("apt-week-2", "2025-01-13T09:00:00.000Z");
+const WEEK_1 = confirmedOccurrence(1, "2025-01-06T09:00:00.000Z");
+const WEEK_2 = confirmedOccurrence(2, "2025-01-13T09:00:00.000Z");
 // What the same event looks like once the top-up has run.
-const WEEK_3 = confirmedSession("apt-week-3", "2025-01-20T09:00:00.000Z");
-const WEEK_4 = confirmedSession("apt-week-4", "2025-01-27T09:00:00.000Z");
+const WEEK_3 = confirmedOccurrence(3, "2025-01-20T09:00:00.000Z");
+const WEEK_4 = confirmedOccurrence(4, "2025-01-27T09:00:00.000Z");
 
-function makeSubscription(appointments: ReturnType<typeof confirmedSession>[]) {
+function makeSubscription(
+  occurrences: ReturnType<typeof confirmedOccurrence>[],
+) {
   return {
     id: "sub-topup",
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
@@ -127,7 +136,7 @@ function makeSubscription(appointments: ReturnType<typeof confirmedSession>[]) {
       },
     },
     requestedBy: { user: { id: "consultee-1", name: "Consultee" } },
-    appointments,
+    appointment: wrapperWith(occurrences),
   };
 }
 
@@ -147,14 +156,31 @@ function makeNoDeleteTx() {
     },
     appointment: {
       findMany: jest.fn().mockResolvedValue([]),
-      // #1499 — createAppointments reads the originating appointment to
-      // inherit the policy version the booking was sold under. Null here:
-      // these fixtures predate the FK, so the created rows carry no policy.
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest
+      // #1554 — createAppointments finds the purchase wrapper and attaches
+      // the new rows to it (the #1499 policy read shares the same mock).
+      findFirst: jest
         .fn()
-        .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-          Promise.resolve({ id: `created-${Math.random()}`, ...data }),
+        .mockResolvedValue({ id: WRAPPER_ID, cancellationPolicyId: null }),
+      create: jest.fn(),
+      update: jest
+        .fn()
+        .mockImplementation(
+          ({
+            data,
+          }: {
+            data: { occurrences: { create: { ordinal: number }[] } };
+          }) =>
+            Promise.resolve({
+              id: WRAPPER_ID,
+              occurrences: [
+                WEEK_1,
+                WEEK_2,
+                ...data.occurrences.create.map((row) => ({
+                  ...row,
+                  id: `occ-week-${row.ordinal}`,
+                })),
+              ],
+            }),
         ),
     },
     appointmentParticipant: {
@@ -167,6 +193,8 @@ function makeNoDeleteTx() {
     appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      // #1554 — nextOrdinal continues the wrapper's numbering.
+      aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 2 } }),
     },
     $executeRaw: jest.fn().mockResolvedValue(1),
   };
@@ -174,9 +202,9 @@ function makeNoDeleteTx() {
 
 let mockTx: ReturnType<typeof makeNoDeleteTx>;
 
-/** Slot start times, in order, of every appointment this run created. */
+/** Start times, in order, of every occurrence this run attached to the wrapper. */
 function createdSlotStarts(): string[] {
-  return mockTx.appointment.create.mock.calls.flatMap(
+  return mockTx.appointment.update.mock.calls.flatMap(
     ([args]: [{ data: { occurrences: { create: { startsAt: Date }[] } } }]) =>
       args.data.occurrences.create.map((slot) => slot.startsAt.toISOString()),
   );
@@ -204,10 +232,12 @@ beforeEach(() => {
   mockPrisma.subscription.findUnique.mockImplementation(() =>
     mockTx.subscription.findUnique(),
   );
-  // One array answers all three reads: the event's own appointments, the
+  // One array answers all three reads: the event's own wrapper, the
   // consultant's occupancy scan and the consultee's. The confirmed sessions
   // therefore block their own intervals, which is what a top-up requires.
-  mockPrisma.appointment.findMany.mockResolvedValue([WEEK_1, WEEK_2]);
+  mockPrisma.appointment.findMany.mockResolvedValue([
+    wrapperWith([WEEK_1, WEEK_2]),
+  ]);
 
   mockValidateFn.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
   mockRevalidateConflictsFn.mockResolvedValue({
@@ -233,8 +263,15 @@ describe("#1206 top-up allocation", () => {
 
     expect(result.success).toBe(true);
     expect(result.noChange).toBeUndefined();
-    // Two new Appointment rows = the two sessions the plan was short.
-    expect(result.appointments).toHaveLength(2);
+    // #1554 — the wrapper is reused, never re-created; the two sessions the
+    // plan was short continue its ordinals.
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    expect(result.appointments).toHaveLength(1);
+    expect(
+      mockTx.appointment.update.mock.calls[0][0].data.occurrences.create.map(
+        (row: { ordinal: number }) => row.ordinal,
+      ),
+    ).toEqual([3, 4]);
     // Weeks 1 and 2 are untouched: they are already at the weekly cap and
     // their intervals are in the booked set, so the search skipped straight
     // to weeks 3 and 4 — one occurrence row per call (#1554).
@@ -252,7 +289,7 @@ describe("#1206 top-up allocation", () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscription(complete),
     );
-    mockPrisma.appointment.findMany.mockResolvedValue(complete);
+    mockPrisma.appointment.findMany.mockResolvedValue([wrapperWith(complete)]);
 
     const result = await SchedulingService.allocate({
       eventType: "subscription",
@@ -280,7 +317,9 @@ describe("#1206 top-up allocation", () => {
     // The contrast that makes the pin above mean something. Same fixture, no
     // flag: the ordinary auto path re-plans, which starts by deleting the two
     // paid sessions — and this transaction has no delete to give it.
-    mockTx.appointment.findMany.mockResolvedValue([WEEK_1, WEEK_2]);
+    mockTx.appointment.findMany.mockResolvedValue([
+      wrapperWith([WEEK_1, WEEK_2]),
+    ]);
 
     const result = await SchedulingService.allocate({
       eventType: "subscription",

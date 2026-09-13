@@ -192,20 +192,9 @@ export async function readAppointmentDetail(appointmentId: string) {
 
   if (!appointment) return null;
 
-  // Whole-program timeline: sibling sessions of the same subscription/class.
-  const siblingWhere = appointment.subscriptionId
-    ? { subscriptionId: appointment.subscriptionId }
-    : appointment.classId
-      ? { classId: appointment.classId }
-      : null;
-  const siblings = siblingWhere
-    ? await prisma.appointment.findMany({
-        where: { ...siblingWhere, id: { not: appointment.id } },
-        include: { occurrences: slotsInclude },
-      })
-    : [];
-
-  return toPlain({ appointment, siblings });
+  // #1554 — the whole programme is this one wrapper's occurrences; there are
+  // no sibling appointments to fetch.
+  return toPlain({ appointment });
 }
 
 export type TAppointmentDetail = NonNullable<
