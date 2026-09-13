@@ -30,6 +30,7 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableSlot,
   getSessionVMJoinState,
+  isSessionOver,
   type SessionSlotLike,
 } from "@/lib/appointments/slots";
 import { isConfirmedStatus } from "@/lib/appointments/status";
@@ -157,6 +158,28 @@ describe("#1270 — a SessionVM row knows when its session has ended", () => {
         }),
       ).toBe("ended");
     }
+  });
+
+  it("is over only after a deliberate end, never after a timeout (#1607)", () => {
+    // The bucketing bug: `sessionEnd` read any `meetingEndedAt`, so a
+    // 15-minute inactivity timeout mid-hour filed the booking under Past and
+    // hid Join while the gate above still admitted everyone.
+    const timedOut = session({
+      meetingEndedAt: at("10:10"),
+      meetingEndedReason: "session_timeout",
+    });
+    const endedEarly = session({
+      meetingEndedAt: at("09:50"),
+      meetingEndedReason: "ended_early",
+    });
+    const closed = session({
+      meetingEndedAt: at("10:10"),
+      meetingEndedReason: "call_ended",
+    });
+
+    expect(isSessionOver(timedOut, at("10:20"))).toBe(false);
+    expect(isSessionOver(endedEarly, at("10:20"))).toBe(false);
+    expect(isSessionOver(closed, at("10:20"))).toBe(true);
   });
 
   it("counts down before the window opens and ends after the session", () => {

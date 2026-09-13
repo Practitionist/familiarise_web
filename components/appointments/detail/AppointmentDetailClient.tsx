@@ -418,7 +418,7 @@ export function AppointmentDetailClient({
     !!soleSession &&
     !isDeadSlot(soleSession) &&
     getSessionVMJoinState(soleSession, { joinWindowMs }) !== "joinable" &&
-    (soleSession.meetingEndedAt !== null || isSessionOver(soleSession));
+    isSessionOver(soleSession);
   const anchorSession = vm.nextAt
     ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;

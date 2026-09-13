@@ -38,6 +38,9 @@ import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 const slotIdSchema = z.string().min(1, "Slot ID is required");
 const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
+/** #1607 — stamped by the call.ended webhook when the host ends before the booked start. */
+const ENDED_EARLY_REASON = "ended_early";
+
 /**
  * Only what `findSessionRun` and `MeetingSlot` need — see #1061.
  * `completionStatus` is selected because the grouping helper, not this file,
@@ -1056,7 +1059,8 @@ export type ProvisionedMeeting =
  *
  * The room id is unchanged — `slot-<anchorSlotId>`, derived from the run's
  * first row (#1061) — because both sides and every existing MeetingSession row
- * depend on it.
+ * depend on it. The one exception is a room rebuilt after a pre-start end,
+ * which carries an `-r<suffix>` (#1607); the row's `streamCallId` is the truth.
  *
  * Deliberately NOT sent (still deferred to #1070): `backstage`,
  * `join_ahead_time_seconds`, and `settings_override.limits.max_duration_seconds`.
@@ -1084,11 +1088,17 @@ export async function provisionAppointmentMeeting(
     (await resolveSessionAnchorSlot(slot.id)) ?? slot;
 
   // An existing session is the common case and short-circuits everything else:
-  // the room already exists, and nothing below may rewrite it.
+  // the room already exists, and nothing below may rewrite it — with one
+  // exception. #1607: a room the host closed BEFORE the booked start is dead on
+  // Stream (a call's `ended_at` never clears, so the SDK renders "ended" even
+  // though a new session opens), so an `ended_early` row gets a fresh call id
+  // through the same entitlement and refusal gates as a first mint.
   const existingMeetingSession = await findDbMeetingSessionBySlot(
     anchorSlot.id,
   );
-  if (existingMeetingSession) {
+  const rebuildEndedEarly =
+    existingMeetingSession?.endedReason === ENDED_EARLY_REASON;
+  if (existingMeetingSession && !rebuildEndedEarly) {
     return { ok: true, streamCallId: existingMeetingSession.streamCallId };
   }
 
@@ -1129,7 +1139,10 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  const streamCallId = `slot-${anchorSlot.id}`;
+  // A rebuilt room carries a suffix so it never collides with the dead call.
+  const streamCallId = rebuildEndedEarly
+    ? `slot-${anchorSlot.id}-r${Date.now().toString(36)}`
+    : `slot-${anchorSlot.id}`;
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
   // The RUN's start, not the clicked row's: joining a 10:00–11:00 session from
@@ -1241,6 +1254,37 @@ export async function provisionAppointmentMeeting(
           cause: error,
         })
       : new Error("Failed to create meeting session.", { cause: error });
+  }
+
+  if (rebuildEndedEarly && existingMeetingSession) {
+    // Rebind the run's one row to the fresh call. CAS on the reason: if a
+    // concurrent join already rebuilt it, keep that room rather than a third.
+    const rebound = await prisma.meetingSession.updateMany({
+      where: { id: existingMeetingSession.id, endedReason: ENDED_EARLY_REASON },
+      data: {
+        streamCallId,
+        endedAt: null,
+        endedReason: null,
+        isRecording: false,
+      },
+    });
+    if (rebound.count === 0) {
+      const current = await prisma.meetingSession.findUnique({
+        where: { id: existingMeetingSession.id },
+        select: { streamCallId: true },
+      });
+      return {
+        ok: true,
+        streamCallId: current?.streamCallId ?? streamCallId,
+      };
+    }
+    streamLogger.info("Rebuilt the room after a pre-start end", {
+      sessionId: existingMeetingSession.id,
+      slotId: anchorSlot.id,
+      previousStreamCallId: existingMeetingSession.streamCallId,
+      streamCallId,
+    });
+    return { ok: true, streamCallId };
   }
 
   // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
