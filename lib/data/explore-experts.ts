@@ -186,14 +186,20 @@ export function orderByForSort(
       return { user: { name: "desc" } };
     case "reviewCount":
       // The number the card prints is the 1:1 client count, so "Most Reviews"
-      // orders on it — the order and the number shown agree.
-      return { ratedClientsOneToOne: "desc" };
+      // orders on it — the order and the number shown agree — with rated
+      // events as the tie-break so a group-only expert ranks by their events
+      // rather than sinking with every other zero (#1554).
+      return [{ ratedClientsOneToOne: "desc" }, { ratedEventsGroup: "desc" }];
     case "trending":
-      // #705 / #1554 — a denormalized count, which excludes soft-deleted
-      // reviews (Prisma cannot filter a relation _count inside orderBy, so a
-      // moderated-away review kept pushing its consultant up); the 1:1 client
-      // count is the one the card prints.
-      return { ratedClientsOneToOne: "desc" };
+      // #1554 — "trending" is recent review ACTIVITY: `ratingAggregatedAt` is
+      // stamped by every recompute, i.e. every review mutation, and excludes
+      // moderated-away rows the same way the retired count did (Prisma cannot
+      // filter a relation _count inside orderBy). Distinct from "Most
+      // Reviews", which is volume.
+      return [
+        { ratingAggregatedAt: { sort: "desc", nulls: "last" } },
+        { ratedClientsOneToOne: "desc" },
+      ];
     case "rating":
       // The same two-track policy as the card's star, so the order and the
       // number shown agree. Sorting on the raw mean let a 5.0 from a single
