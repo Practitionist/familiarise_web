@@ -5,10 +5,14 @@
  */
 
 import prisma from "@/lib/prisma";
-import { seatPaymentsByUser } from "@/lib/appointments/seat-payments";
+import {
+  paymentDisplayStatus,
+  seatPaymentsByUser,
+} from "@/lib/appointments/seat-payments";
 
 export type SeatPaymentWire = {
   userId: string;
+  /** The DISPLAY status — REFUNDED / PARTIALLY_REFUNDED are derived. */
   paymentStatus: string;
   /** Paise as a string — the row holds a BigInt. */
   amount: string;
@@ -33,11 +37,15 @@ export async function readSeatPayments(
       amount: true,
       currency: true,
       createdAt: true,
+      refunds: {
+        where: { deletedAt: null, status: "SUCCEEDED" },
+        select: { amountPaise: true },
+      },
     },
   });
   return Array.from(seatPaymentsByUser(rows).values()).map((p) => ({
     userId: p.userId,
-    paymentStatus: p.paymentStatus,
+    paymentStatus: paymentDisplayStatus(p),
     amount: p.amount.toString(),
     currency: p.currency,
   }));
