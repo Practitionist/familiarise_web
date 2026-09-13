@@ -57,7 +57,7 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
     // Resolved by the call id stripped from call_cid ("default:call_abc")
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { streamCallId: "call_abc" },
-      select: { id: true },
+      select: { id: true, endedAt: true, endedReason: true },
     });
 
     const arg = mockUpsert.mock.calls[0][0];
