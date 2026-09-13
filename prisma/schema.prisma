@@ -1760,8 +1760,10 @@ model ProgramAssignment {
   membershipId String
   membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
-  periodStart DateTime
-  periodEnd   DateTime
+  // #1554 — timestamptz so the ACTIVE-overlap exclusion below can index tstzrange()
+  // (the timestamp→timestamptz cast is only STABLE and Postgres refuses it, 42P17).
+  periodStart DateTime @db.Timestamptz
+  periodEnd   DateTime @db.Timestamptz
 
   /// Engagements consumed in the current cycle (1 per Appointment).
   /// Atomically incremented by recordBookingUtilization, decremented by
