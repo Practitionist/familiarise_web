@@ -635,7 +635,7 @@ export function CollapsibleSidebarSkeleton() {
         </div>
       </aside>
       {/* Main content skeleton */}
-      <main className="min-h-0 flex-1 p-6">
+      <main className="relative min-h-0 flex-1 p-6">
         <Skeleton className="h-8 w-64 mb-4" />
         <Skeleton className="h-48 w-full rounded-xl" />
       </main>

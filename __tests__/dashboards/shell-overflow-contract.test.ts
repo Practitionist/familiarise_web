@@ -96,6 +96,13 @@ describe("dashboard shell overflow contract", () => {
           /\bmin-h-0\b/.test(tag) && /\boverflow-y-auto\b/.test(tag),
       );
       expect(scrollMains.length).toBe(1);
+      // <main> must be the containing block for every absolutely positioned
+      // descendant. Radix Checkbox/Switch/RadioGroup render a hidden bubble
+      // <input> with position:absolute and no offsets inside a <form>; with an
+      // unpositioned <main> it anchors to the document at its UNSCROLLED
+      // static position and grows the document past the shell — the dead
+      // white over-scroll on the consultant settings page.
+      expect(scrollMains[0]).toMatch(/\brelative\b/);
       // Flex chain between shell and main must allow shrinking.
       expect(src).toContain("min-h-0");
     },
@@ -151,15 +158,19 @@ describe("dashboard shell overflow contract", () => {
     expect(skeleton).not.toMatch(/\bmin-h-screen\b/);
   });
 
-  it("Radix Select's hidden bubble input is pinned app-wide (globals.css)", () => {
-    // Radix renders `select[aria-hidden="true"]` with position:absolute and no
-    // top/left (primitives#3875, unfixed in 2.2.6). Uncontained, it anchors to
-    // the document and extended the dashboard's document scrollHeight ~620px
+  it("Radix hidden bubble inputs are pinned app-wide (globals.css)", () => {
+    // Radix renders `select[aria-hidden="true"]` (Select) and
+    // `input[aria-hidden="true"]` (Checkbox/Switch/RadioGroup) with
+    // position:absolute and no top/left (primitives#3875, unfixed through
+    // select 2.3.7 / checkbox 1.3.11). Uncontained, they anchor to the
+    // document and extended the dashboard's document scrollHeight ~620px
     // past the viewport — the dead white over-scroll. FormItem is `relative`
-    // (form-bound case); this unlayered rule is the sweep for every other
-    // Select. It must never be removed or layered.
+    // (form-bound case) and every shell <main> is `relative` (structural
+    // fix); this unlayered rule is the sweep for everything else. It must
+    // never be removed, narrowed back to <select>, or layered.
     const css = read("app/globals.css");
     const rule = extractCssRule(css, 'select[aria-hidden="true"]');
+    expect(rule).toContain('input[aria-hidden="true"]');
     expect(rule).toContain("top: 0");
     expect(rule).toContain("left: 0");
     // The rule must sit OUTSIDE every @layer block (unlayered = always
