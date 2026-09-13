@@ -14,6 +14,7 @@ import {
   IndianRupee,
   Layers,
   MessageSquareQuote,
+  Video,
 } from "lucide-react";
 import type { OfferingManifest, SectionSpec } from "./manifest";
 
@@ -123,6 +124,7 @@ const faqSection: SectionSpec = {
   icon: MessageSquareQuote,
   fields: [],
   slot: "faq",
+  slotFields: ["faqs"],
 };
 
 /**
@@ -163,6 +165,7 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
   id: "extras",
   title: "Extras",
   description: "Recordings and certificates.",
+  icon: Video,
   fields: [
     {
       name: "recordingEnabled",
@@ -285,6 +288,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       icon: CalendarRange,
       fields: [],
       slot: "roadmap",
+      slotFields: ["subscriptionContents"],
     },
     faqSection,
   ],
@@ -429,6 +433,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
       icon: CalendarRange,
       fields: [],
       slot: "curriculum",
+      slotFields: ["classContents"],
     },
     collaboratorsSection,
     faqSection,

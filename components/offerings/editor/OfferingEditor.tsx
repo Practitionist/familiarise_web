@@ -14,12 +14,12 @@
  */
 
 import * as React from "react";
-import type { FieldValues, UseFormReturn } from "react-hook-form";
+import type { FieldErrors, FieldValues, UseFormReturn } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
-import { cn } from "@/utils/tailwind";
 import type { TPlanImageType } from "@/lib/supabase";
 import { FormSection } from "@/components/planner/components/form-fields/FormSection";
 import { OfferingField } from "./OfferingFields";
@@ -77,45 +77,23 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   onCancel,
 }: Readonly<OfferingEditorProps<T>>) {
   const [activeSection, setActiveSection] = React.useState(
-    manifest.sections[0]?.id,
+    manifest.sections[0]?.id ?? "",
   );
 
   const isSaving = savingAction !== null;
 
-  const scrollTo = (id: string) => {
-    setActiveSection(id);
-    document
-      .getElementById(`offering-section-${id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  // Keep the section tab in sync with whichever block is in view — otherwise
-  // a wheel-scroll leaves the highlight on the tab the user last clicked.
-  // Root is <main>: that is the dashboard scrollport (see PersonalDashboardShell).
-  React.useEffect(() => {
-    const nodes = manifest.sections
-      .map((section) =>
-        document.getElementById(`offering-section-${section.id}`),
-      )
-      .filter((node): node is HTMLElement => node !== null);
-    if (nodes.length === 0) return;
-
-    const root = document.querySelector("main");
-    const observer = new IntersectionObserver(
-      (entries) => {
-        // The topmost intersecting section wins; entries arrive unordered.
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        const id = visible[0]?.target.id.replace(/^offering-section-/, "");
-        if (id) setActiveSection(id);
-      },
-      // Bias toward the band just under the sticky section nav.
-      { root, rootMargin: "-20% 0px -55% 0px", threshold: 0 },
+  // Open the first tab (manifest order) that owns an errored field, so a
+  // hidden panel can never swallow a validation error. react-hook-form
+  // re-focuses the field after onInvalid, by which time the tab is shown.
+  const revealFirstError = (names: string[]) => {
+    const errored = new Set(names);
+    const section = manifest.sections.find((s) =>
+      [...s.fields.map((f) => f.name), ...(s.slotFields ?? [])].some((n) =>
+        errored.has(n),
+      ),
     );
-    for (const node of nodes) observer.observe(node);
-    return () => observer.disconnect();
-  }, [manifest.sections]);
+    if (section) setActiveSection(section.id);
+  };
 
   // Publishing validates in full; a draft only has to clear the errors that are
   // not publish-only, so partial work can still be parked.
@@ -126,7 +104,12 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
         (name) => !publishOnlyFields?.includes(name),
       );
       if (blocking.length === 0) void onSaveDraft(form.getValues());
+      else revealFirstError(blocking);
     },
+  );
+  const submitPublish = form.handleSubmit(
+    (values) => onPublish(values),
+    (errors: FieldErrors<T>) => revealFirstError(Object.keys(errors)),
   );
 
   return (
@@ -146,78 +129,87 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
         }}
       >
         {/*
-          Second navbar (Basics / Pricing / …): sticky to the top of <main>
-          under the dashboard context bar. Solid background — translucent
-          backdrop-blur let section content bleed through while scrolling.
+          Real tabs, one section visible at a time. The strip used to be jump
+          links over one long form with a scroll-spy highlight, which could not
+          top-align the trailing sections (the scroller ran out of room) and lit
+          "Extras" while Content's tail sat under the header. `contents` keeps
+          the band and the panels direct flex children of the form, so the
+          save bar's mt-auto below still pins to the bottom on a short panel.
+          The band is the page's only title: the sticky one survives scrolling
+          and carries the Draft/Published badge.
         */}
-        <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-1">
-          <div className="mb-3 flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold capitalize">
-              {planId ? "Edit" : "New"} {manifest.noun}
-            </h1>
-            {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
-            {status === "PUBLISHED" && <Badge>Published</Badge>}
+        <Tabs
+          value={activeSection}
+          onValueChange={setActiveSection}
+          className="contents"
+        >
+          <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-1">
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-semibold">
+                {planId ? "Edit" : "New"} {manifest.noun}
+              </h1>
+              {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
+              {status === "PUBLISHED" && <Badge>Published</Badge>}
+            </div>
+
+            <TabsList
+              aria-label="Offering sections"
+              className="h-auto flex-wrap gap-2 rounded-none bg-transparent p-0"
+            >
+              {manifest.sections.map((section) => (
+                <TabsTrigger
+                  key={section.id}
+                  value={section.id}
+                  className="px-3 py-1.5 font-normal text-muted-foreground hover:bg-secondary/50 data-[state=active]:bg-secondary data-[state=active]:font-medium data-[state=active]:text-secondary-foreground data-[state=active]:shadow-none"
+                >
+                  {section.title}
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
 
-          <nav aria-label="Offering sections" className="flex flex-wrap gap-2">
+          {/* pb-8 keeps the standing gap above the save bar: the bar's mt-auto
+              collapses to 0 once the panel is taller than <main>, so the spacer
+              lives here rather than on the bar. forceMount keeps every field
+              registered with react-hook-form across tab switches — values and
+              validation must not reset when a panel is hidden. */}
+          <div className="pb-8">
             {manifest.sections.map((section) => (
-              <button
+              <TabsContent
                 key={section.id}
-                type="button"
-                onClick={() => scrollTo(section.id)}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-sm transition-colors",
-                  activeSection === section.id
-                    ? "bg-secondary font-medium text-secondary-foreground"
-                    : "text-muted-foreground hover:bg-secondary/50",
-                )}
+                value={section.id}
+                forceMount
+                className="mt-0 data-[state=inactive]:hidden"
               >
-                {section.title}
-              </button>
+                <FormSection
+                  title={section.title}
+                  description={section.description}
+                  icon={section.icon}
+                >
+                  {section.slot ? (
+                    (slots?.[section.slot] ?? (
+                      <p className="text-sm text-muted-foreground">
+                        Nothing to configure here yet.
+                      </p>
+                    ))
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
+                      {section.fields.map((spec) => (
+                        <OfferingField
+                          key={spec.name}
+                          control={form.control}
+                          spec={spec}
+                          planId={planId}
+                          planImageType={planImageType}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </FormSection>
+              </TabsContent>
             ))}
-          </nav>
-        </div>
-
-        {/* pb-8 keeps the standing gap above the save bar: the bar's mt-auto
-            collapses to 0 once the form is taller than <main>, so the spacer
-            lives here rather than on the bar. */}
-        <div className="space-y-8 pb-8">
-          {manifest.sections.map((section) => (
-            <div
-              key={section.id}
-              id={`offering-section-${section.id}`}
-              // Clear the sticky title+tabs band so scrollIntoView / deep links
-              // don't land the heading under the chrome.
-              className="scroll-mt-36"
-            >
-              <FormSection
-                title={section.title}
-                description={section.description}
-                icon={section.icon}
-              >
-                {section.slot ? (
-                  (slots?.[section.slot] ?? (
-                    <p className="text-sm text-muted-foreground">
-                      Nothing to configure here yet.
-                    </p>
-                  ))
-                ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-                    {section.fields.map((spec) => (
-                      <OfferingField
-                        key={spec.name}
-                        control={form.control}
-                        spec={spec}
-                        planId={planId}
-                        planImageType={planImageType}
-                      />
-                    ))}
-                  </div>
-                )}
-              </FormSection>
-            </div>
-          ))}
-        </div>
+          </div>
+        </Tabs>
 
         {/*
           Sticky to <main> (the dashboard scrollport) rather than the viewport:
@@ -265,7 +257,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
             <Button
               type="button"
               disabled={isSaving || !!publishBlockedReason}
-              onClick={form.handleSubmit(onPublish)}
+              onClick={submitPublish}
             >
               {savingAction === "publish" && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

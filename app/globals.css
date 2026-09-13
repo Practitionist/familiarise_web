@@ -271,6 +271,25 @@ main > div:has(> .content-flush-bottom) {
     height: calc(100dvh - var(--maintenance-banner-height, 0px));
   }
 
+  /* Content-column fill under the context bar (3.5rem) and, below md, above
+     the mobile tab bar (4rem); subtracts both banners a shell can show. Every
+     full-height dashboard surface (messages, calendars, skeletons) uses this
+     rather than its own calc, so none can outgrow <main> when a banner is up. */
+  .h-dashboard-fill {
+    height: calc(
+      100dvh - 3.5rem - 4rem - var(--maintenance-banner-height, 0px) -
+        var(--dashboard-banner-height, 0px)
+    );
+  }
+  @media (min-width: 768px) {
+    .h-dashboard-fill {
+      height: calc(
+        100dvh - 3.5rem - var(--maintenance-banner-height, 0px) -
+          var(--dashboard-banner-height, 0px)
+      );
+    }
+  }
+
   /* Safe area inset utilities */
   .safe-top {
     padding-top: env(safe-area-inset-top, 0px);

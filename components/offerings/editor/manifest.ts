@@ -80,6 +80,8 @@ export interface SectionSpec {
    * up in its slot map instead of laying out fields.
    */
   slot?: string;
+  /** Form fields the slot registers, so a validation error can open its tab. */
+  slotFields?: string[];
 }
 
 export interface OfferingManifest {

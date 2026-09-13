@@ -240,9 +240,19 @@ export function OfferingField<T extends FieldValues = FieldValues>({
       render={({ field }) => (
         <FormItem className={span}>
           {spec.label && <FormLabel>{spec.label}</FormLabel>}
-          <FormControl>
-            {renderControl(spec, field, planId, planImageType)}
-          </FormControl>
+          {spec.kind === "switch" ? (
+            // A switch is inline, so it sat on the label's line; the h-9 row
+            // stacks it under the label at the same height as its neighbours.
+            <div className="flex h-9 items-center">
+              <FormControl>
+                {renderControl(spec, field, planId, planImageType)}
+              </FormControl>
+            </div>
+          ) : (
+            <FormControl>
+              {renderControl(spec, field, planId, planImageType)}
+            </FormControl>
+          )}
           {spec.description && (
             <FormDescription>{spec.description}</FormDescription>
           )}

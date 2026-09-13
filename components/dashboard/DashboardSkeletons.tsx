@@ -28,7 +28,7 @@ export function PageSkeleton() {
  * Sized to the same box the real chat surface occupies. It previously had NO
  * height — just `flex-1 flex m-4` — which only fills the viewport if the parent
  * is a flex container with a height. `loading.tsx` renders it as the whole
- * route, outside the `h-[calc(100dvh-…)]` wrapper the live `MessagesTab`
+ * route, outside the `.h-dashboard-fill` wrapper the live `MessagesTab`
  * applies, so it collapsed to content height and covered a fraction of the
  * screen. The height calc here mirrors that wrapper: full viewport minus the
  * context bar, and minus the mobile tab bar below `md`.
@@ -38,7 +38,7 @@ export function PageSkeleton() {
  */
 export function ChatSkeleton() {
   return (
-    <div className="-m-4 flex h-[calc(100dvh-3.5rem-4rem-var(--maintenance-banner-height,0px))] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem-var(--maintenance-banner-height,0px))] lg:-m-8">
+    <div className="-m-4 flex h-dashboard-fill overflow-hidden border-border bg-card sm:-m-6 lg:-m-8">
       <ChatSkeletonPanes />
     </div>
   );
