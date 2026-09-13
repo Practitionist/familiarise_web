@@ -73,6 +73,12 @@ const paymentDisplaySelect = {
   userId: true,
   // #1365 — the buyer's tax invoice is the receipt; a link, not the row.
   consumerInvoice: { select: { id: true } },
+  // `PaymentStatus` never reaches REFUNDED; the shown status is derived from
+  // the refunds that went through (lib/appointments/seat-payments.ts).
+  refunds: {
+    where: { deletedAt: null, status: "SUCCEEDED" as const },
+    select: { amountPaise: true },
+  },
 } as const;
 
 const collaboratorsInclude = {

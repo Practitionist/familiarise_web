@@ -11,6 +11,7 @@ import {
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import {
+  paymentDisplayStatus,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
@@ -227,12 +228,14 @@ describe("seat payments", () => {
       paid: 1,
       pending: 1,
       lapsed: 0,
+      refunded: 0,
       collectedPaise: 2,
       currency: "INR",
+      otherCurrency: 0,
     });
   });
 
-  it("names the currency from the first seat and counts a zero-amount seat as paid", () => {
+  it("counts a zero-amount seat as paid and never adds paise of two currencies", () => {
     const byUser = seatPaymentsByUser([
       {
         userId: A,
@@ -249,12 +252,58 @@ describe("seat payments", () => {
         createdAt: "2026-09-01T00:00:00Z",
       },
     ]);
+    // An appointment settles in one currency (ADR 15); a row that breaks
+    // that is counted, not summed into an INR total.
     expect(summarizeSeatPayments(byUser)).toEqual({
       paid: 2,
       pending: 0,
       lapsed: 0,
-      collectedPaise: 500,
+      refunded: 0,
+      collectedPaise: 0,
       currency: "INR",
+      otherCurrency: 1,
+    });
+  });
+
+  it("derives the refund state and nets it out of what was collected", () => {
+    const full = {
+      userId: A,
+      paymentStatus: "SUCCEEDED",
+      amount: 1000,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+      refunds: [{ amountPaise: 1000 }],
+    };
+    const partial = {
+      userId: B,
+      paymentStatus: "SUCCEEDED",
+      amount: 1000,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+      refunds: [{ amountPaise: 250 }, { amountPaise: 100, status: "FAILED" }],
+    };
+    expect(paymentDisplayStatus(full)).toBe("REFUNDED");
+    expect(paymentDisplayStatus(partial)).toBe("PARTIALLY_REFUNDED");
+    // A refund on a PENDING row is not a refund of a capture.
+    expect(paymentDisplayStatus({ ...full, paymentStatus: "PENDING" })).toBe(
+      "PENDING",
+    );
+    // A newer PENDING row (a rebooking) speaks for the seat over the refund.
+    const rebooked = {
+      ...full,
+      paymentStatus: "PENDING",
+      refunds: [],
+      createdAt: "2026-09-02T00:00:00Z",
+    };
+    expect(seatPaymentsByUser([full, rebooked]).get(A)).toBe(rebooked);
+    expect(summarizeSeatPayments(seatPaymentsByUser([full, partial]))).toEqual({
+      paid: 1,
+      pending: 0,
+      lapsed: 0,
+      refunded: 1,
+      collectedPaise: 750,
+      currency: "INR",
+      otherCurrency: 0,
     });
   });
 });
