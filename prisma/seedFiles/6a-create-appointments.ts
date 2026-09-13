@@ -842,4 +842,17 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(
     `Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`,
   );
+
+  // #1554 — what the auto-complete sweep does on a live database: a confirmed
+  // call that has ended is UNVERIFIED, so the review seed (7b) has held calls.
+  const held = await prisma.appointmentOccurrence.updateMany({
+    where: {
+      endsAt: { lt: new Date() },
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+    },
+    data: { completionStatus: "UNVERIFIED" },
+  });
+  console.log(`Marked ${held.count} past occurrences UNVERIFIED (held).`);
 }
