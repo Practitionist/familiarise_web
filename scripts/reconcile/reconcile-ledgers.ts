@@ -72,6 +72,10 @@
  *
  *   // Or scoped to one org:
  *   await runReconcileLedgers({ scope: `org:${orgId}`, organizationId: orgId });
+ *
+ *   // Or one bounded chunk at a time over HTTP (#1454):
+ *   const runId = await createReconcileRun({ scope: "full" });
+ *   await advanceReconcileRun({ runId, limit: 100 }); // until status COMPLETED
  */
 
 import prisma from "@/lib/prisma";
@@ -192,6 +196,11 @@ export type ReconcileReport = {
     payoutsChecked: number;
     discrepanciesCount: number;
     earningsPaymentsWithoutBookingTxn: number;
+    activeDiscrepanciesCount?: number;
+    baselinedDiscrepanciesCount?: number;
+    /** #1454 — absent on rows written before runs became resumable. */
+    status?: ReconcileRunStatus;
+    calls?: number;
   };
   findings: Finding[];
 };
@@ -249,35 +258,117 @@ export function clawbackDualWriteGapFindings(
   return out;
 }
 
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: read-only auditor, lock is belt-and-braces.
-export async function runReconcileLedgers(
-  opts: ReconcileScope,
-): Promise<ReconcileReport> {
-  return withCronLock(
-    "reconcile-ledgers",
-    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
-    () => runReconcileLedgersUnlocked(opts),
-  );
+// #1454 — resumable steps; run state lives on the report row itself. See
+// docs/enterprise/10-money-and-ledger/13-ledger-integrity.md, "Resumable runs".
+
+export type ReconcileRunStatus = "RUNNING" | "COMPLETED" | "FAILED";
+
+export type ReconcileRunProgress = {
+  /** Index into {@link STEPS} of the next step to run. */
+  step: number;
+  /** Last id the current paged step consumed, or null at the step's start. */
+  cursor: string | null;
+  /** Chunk calls so far; a single-process run counts one. */
+  calls: number;
+  /** ISO timestamp the run began; the `now` every time-scoped check uses. */
+  startedAt: string;
+};
+
+export type ReconcileCounts = {
+  orgsChecked: number;
+  accountsChecked: number;
+  assignmentsChecked: number;
+  subscriptionsChecked: number;
+  paymentsChecked: number;
+  payoutsChecked: number;
+  earningsPaymentsWithoutBookingTxn: number;
+};
+
+type StoredSummary = ReconcileCounts & {
+  status: ReconcileRunStatus;
+  progress?: ReconcileRunProgress;
+  /** Why a FAILED run stopped; never set on the other statuses. */
+  error?: string;
+};
+
+type StepCtx = {
+  opts: ReconcileScope;
+  now: Date;
+  findings: Finding[];
+  counts: ReconcileCounts;
+};
+
+type Step =
+  | {
+      name: string;
+      kind: "paged";
+      /** Full-scope only when true; org-scoped runs skip the step. */
+      fullOnly?: boolean;
+      run: (
+        ctx: StepCtx,
+        cursor: string | null,
+        take: number,
+        deadline: number,
+      ) => Promise<{ nextCursor: string | null; rows: number }>;
+    }
+  | {
+      name: string;
+      kind: "set";
+      fullOnly?: boolean;
+      run: (ctx: StepCtx) => Promise<void>;
+    };
+
+/** Keyset page: rows after `cursor` by id, oldest-id first. */
+function pageArgs(cursor: string | null, take: number) {
+  return {
+    where: cursor ? { id: { gt: cursor } } : {},
+    orderBy: { id: "asc" as const },
+    take,
+  };
 }
 
-async function runReconcileLedgersUnlocked(
-  opts: ReconcileScope,
-): Promise<ReconcileReport> {
-  const startedAt = Date.now();
-  const findings: Finding[] = [];
+/** `done` of `fetched` were processed; exhausted only if a short page was fully done. */
+function pageResult<T extends { id: string }>(
+  fetched: T[],
+  done: number,
+  take: number,
+  cursor: string | null,
+): { nextCursor: string | null; rows: number } {
+  const exhausted = done === fetched.length && fetched.length < take;
+  return {
+    nextCursor: exhausted ? null : (fetched[done - 1]?.id ?? cursor),
+    rows: done,
+  };
+}
 
-  const orgFilter = opts.organizationId
-    ? { id: opts.organizationId }
-    : undefined;
-
-  // --- (A): per BillingAccount wallet balance vs derived WALLET account ---
+// --- (A): per BillingAccount wallet balance vs derived WALLET account ---
+async function stepWalletBalance(
+  ctx: StepCtx,
+  cursor: string | null,
+  take: number,
+  deadline: number,
+): Promise<{ nextCursor: string | null; rows: number }> {
+  const pg = pageArgs(cursor, take);
   const accounts = await prisma.billingAccount.findMany({
-    where: orgFilter ? { ownerOrgId: orgFilter.id } : undefined,
-    select: { id: true, walletBalance: true, ownerOrgId: true, currency: true },
+    where: {
+      ...(ctx.opts.organizationId
+        ? { ownerOrgId: ctx.opts.organizationId }
+        : {}),
+      ...pg.where,
+    },
+    select: {
+      id: true,
+      walletBalance: true,
+      ownerOrgId: true,
+      currency: true,
+    },
+    orderBy: pg.orderBy,
+    take: pg.take,
   });
 
+  let done = 0;
   for (const acct of accounts) {
+    if (done > 0 && Date.now() > deadline) break;
     // #772 B3 — WalletEntry removed; the wallet balance derives from the org's
     // WALLET LedgerAccount. WALLET is a credit-normal liability, so the amount
     // owed = Σ CREDIT − Σ DEBIT = −(signed Dr−Cr balance). The cached
@@ -294,7 +385,7 @@ async function runReconcileLedgersUnlocked(
     const bal = acct.walletBalance ?? 0;
 
     if (walletTotal !== bal) {
-      findings.push({
+      ctx.findings.push({
         kind: "WALLET_BALANCE_DRIFT",
         billingAccountId: acct.id,
         organizationId: acct.ownerOrgId ?? undefined,
@@ -303,38 +394,51 @@ async function runReconcileLedgersUnlocked(
         deltaPaise: bal - walletTotal,
       });
     }
+    done += 1;
   }
+  ctx.counts.accountsChecked += done;
+  return pageResult(accounts, done, take, cursor);
+}
 
-  // --- (C) + (D): per-Organization settlement coverage ---
-  const organizations = await prisma.organization.findMany({
-    where: orgFilter,
-    select: { id: true },
+// #772 B2 — SettlementLedgerEntry removed; settlement coverage checks (C/D)
+// dropped. The organisation count is retained for the summary only.
+async function stepOrgCount(ctx: StepCtx): Promise<void> {
+  ctx.counts.orgsChecked = await prisma.organization.count({
+    where: ctx.opts.organizationId
+      ? { id: ctx.opts.organizationId }
+      : undefined,
   });
+}
 
-  // #772 B2 — SettlementLedgerEntry removed; settlement coverage checks (C/D)
-  // dropped. INVOICE_ISSUED / INVOICE_PAID / PAYOUT events now live in the
-  // double-entry journal (LedgerTransaction.kind) + OrgAuditLog. `organizations`
-  // is retained for the summary count.
-  void organizations.length;
-
-  // --- (E): per ProgramAssignment engagement-counter drift ---
-  // engagementsUsed is denormalized for query performance — checkout
-  // reads it on every booking to evaluate the per-cycle cap. It's
-  // incremented atomically inside recordBookingUtilization() in the
-  // same transaction that writes the UsageLedgerEntry, so under correct
-  // operation the two never drift. Drift here implies a
-  // partial-rollback bug, a manual SQL fix, or a missing-ledger-write
-  // code path. Scoped to ACTIVE assignments (periodEnd >= now()) — we
-  // don't re-check historical cycles every run. Reversed
-  // UsageLedgerEntry rows post a negative engagementsConsumed, so the
-  // SUM here naturally accounts for refunds without a separate filter.
-  const now = new Date();
+// --- (E): per ProgramAssignment engagement-counter drift ---
+// engagementsUsed is denormalized for query performance — checkout
+// reads it on every booking to evaluate the per-cycle cap. It's
+// incremented atomically inside recordBookingUtilization() in the
+// same transaction that writes the UsageLedgerEntry, so under correct
+// operation the two never drift. Drift here implies a
+// partial-rollback bug, a manual SQL fix, or a missing-ledger-write
+// code path. Scoped to ACTIVE assignments (periodEnd >= now()) — we
+// don't re-check historical cycles every run. Reversed
+// UsageLedgerEntry rows post a negative engagementsConsumed, so the
+// SUM here naturally accounts for refunds without a separate filter.
+async function stepAssignmentMeters(
+  ctx: StepCtx,
+  cursor: string | null,
+  take: number,
+  deadline: number,
+): Promise<{ nextCursor: string | null; rows: number }> {
+  const pg = pageArgs(cursor, take);
   const liveAssignments = await prisma.programAssignment.findMany({
     where: {
-      periodEnd: { gte: now },
-      ...(opts.organizationId
-        ? { program: { contract: { organizationId: opts.organizationId } } }
+      periodEnd: { gte: ctx.now },
+      ...(ctx.opts.organizationId
+        ? {
+            program: {
+              contract: { organizationId: ctx.opts.organizationId },
+            },
+          }
         : {}),
+      ...pg.where,
     },
     select: {
       id: true,
@@ -344,19 +448,26 @@ async function runReconcileLedgersUnlocked(
       // #782 — over-cap booking cache.
       overageCount: true,
       program: {
-        select: { type: true, contract: { select: { organizationId: true } } },
+        select: {
+          type: true,
+          contract: { select: { organizationId: true } },
+        },
       },
     },
+    orderBy: pg.orderBy,
+    take: pg.take,
   });
 
+  let done = 0;
   for (const a of liveAssignments) {
+    if (done > 0 && Date.now() > deadline) break;
     const ledgerSum = await prisma.usageLedgerEntry.aggregate({
       where: { programAssignmentId: a.id },
       _sum: { engagementsConsumed: true, priceAtBookingPaise: true },
     });
     const ledgerTotal = ledgerSum._sum?.engagementsConsumed ?? 0;
     if (ledgerTotal !== a.engagementsUsed) {
-      findings.push({
+      ctx.findings.push({
         kind: "PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT",
         programAssignmentId: a.id,
         organizationId: a.program.contract.organizationId,
@@ -382,7 +493,7 @@ async function runReconcileLedgersUnlocked(
       // #780 — aggregate _sum bypasses the result extension: bigint at runtime.
       const priceTotal = sumPaise(ledgerSum._sum?.priceAtBookingPaise);
       if (priceTotal !== a.consumedPaise) {
-        findings.push({
+        ctx.findings.push({
           kind: "CREDIT_POOL_CONSUMED_DRIFT",
           programAssignmentId: a.id,
           organizationId: a.program.contract.organizationId,
@@ -410,7 +521,7 @@ async function runReconcileLedgersUnlocked(
       },
     });
     if (liveOverage !== a.overageCount) {
-      findings.push({
+      ctx.findings.push({
         kind: "OVERAGE_COUNT_DRIFT",
         programAssignmentId: a.id,
         organizationId: a.program.contract.organizationId,
@@ -423,19 +534,26 @@ async function runReconcileLedgersUnlocked(
         },
       });
     }
+    done += 1;
   }
+  ctx.counts.assignmentsChecked += done;
+  return pageResult(liveAssignments, done, take, cursor);
+}
 
-  // --- (G2) #782: OverageEvent link/state integrity ---
-  // A CHARGE_MEMBER event that is pending/failed/charged must carry its
-  // side-Payment; a CHARGE_ORG event that is accrued/charged must carry its
-  // invoice line item; any CHARGED event must be settled. Violations mean the
-  // transitionOverage state machine was bypassed or a write half-completed.
+// --- (G2) #782: OverageEvent link/state integrity ---
+// A CHARGE_MEMBER event that is pending/failed/charged must carry its
+// side-Payment; a CHARGE_ORG event that is accrued/charged must carry its
+// invoice line item; any CHARGED event must be settled. Violations mean the
+// transitionOverage state machine was bypassed or a write half-completed.
+async function stepOverageIntegrity(ctx: StepCtx): Promise<void> {
   const badOverage = await prisma.overageEvent.findMany({
     where: {
-      ...(opts.organizationId
+      ...(ctx.opts.organizationId
         ? {
             programAssignment: {
-              program: { contract: { organizationId: opts.organizationId } },
+              program: {
+                contract: { organizationId: ctx.opts.organizationId },
+              },
             },
           }
         : {}),
@@ -491,7 +609,7 @@ async function runReconcileLedgersUnlocked(
     take: 500,
   });
   for (const ev of badOverage) {
-    findings.push({
+    ctx.findings.push({
       kind: "OVERAGE_CHARGESTATUS_INTEGRITY",
       programAssignmentId: ev.programAssignment.id,
       organizationId: ev.programAssignment.program.contract.organizationId,
@@ -510,22 +628,26 @@ async function runReconcileLedgersUnlocked(
       },
     });
   }
+}
 
-  // --- (G3) #783: ledger is INR-denominated ---
-  // Razorpay settles INR and amounts post as INR paise with no FX conversion,
-  // so every LedgerAccount must be INR. A non-INR account means a posting keyed
-  // an INR-paise amount by a display currency (would break clearing). Holds
-  // until a real multi-currency model is designed (#783).
+// --- (G3) #783: ledger is INR-denominated ---
+// Razorpay settles INR and amounts post as INR paise with no FX conversion,
+// so every LedgerAccount must be INR. A non-INR account means a posting keyed
+// an INR-paise amount by a display currency (would break clearing). Holds
+// until a real multi-currency model is designed (#783).
+async function stepLedgerInr(ctx: StepCtx): Promise<void> {
   const nonInrAccounts = await prisma.ledgerAccount.findMany({
     where: {
       currency: { not: "INR" },
-      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+      ...(ctx.opts.organizationId
+        ? { organizationId: ctx.opts.organizationId }
+        : {}),
     },
     select: { id: true, kind: true, currency: true, organizationId: true },
     take: 200,
   });
   for (const acct of nonInrAccounts) {
-    findings.push({
+    ctx.findings.push({
       kind: "LEDGER_ACCOUNT_NON_INR",
       organizationId: acct.organizationId ?? undefined,
       expectedPaise: 0,
@@ -540,21 +662,34 @@ async function runReconcileLedgersUnlocked(
       },
     });
   }
+}
 
-  // --- (H): per Payment leg-sum invariant ---
-  // The hot checkout path log-warns on mismatch (we don't break booking
-  // for a leg-accounting bug); this is the retroactive detector. We only
-  // walk Payments associated with org bookings — B2C card-only payments
-  // have a single CARD leg whose sum is trivially equal and the read
-  // would balloon for no audit value. Org legs (WALLET, INVOICE_ACCRUAL,
-  // LICENSE) are the ones that benefit from a sweep.
+// --- (H): per Payment leg-sum invariant ---
+// The hot checkout path log-warns on mismatch (we don't break booking
+// for a leg-accounting bug); this is the retroactive detector. We only
+// walk Payments associated with org bookings — B2C card-only payments
+// have a single CARD leg whose sum is trivially equal and the read
+// would balloon for no audit value. Org legs (WALLET, INVOICE_ACCRUAL,
+// LICENSE) are the ones that benefit from a sweep.
+async function stepPaymentLegs(
+  ctx: StepCtx,
+  cursor: string | null,
+  take: number,
+  deadline: number,
+): Promise<{ nextCursor: string | null; rows: number }> {
+  const pg = pageArgs(cursor, take);
   const paymentsWithOrgLegs = await prisma.payment.findMany({
     where: {
-      organizationId: opts.organizationId ?? { not: null },
+      organizationId: ctx.opts.organizationId ?? { not: null },
+      ...pg.where,
     },
     select: { id: true, amount: true, organizationId: true },
+    orderBy: pg.orderBy,
+    take: pg.take,
   });
+  let done = 0;
   for (const p of paymentsWithOrgLegs) {
+    if (done > 0 && Date.now() > deadline) break;
     const legs = await prisma.paymentLeg.findMany({
       where: { paymentId: p.id },
       select: { source: true, amountPaise: true },
@@ -564,7 +699,7 @@ async function runReconcileLedgersUnlocked(
       legs,
     });
     if (mismatch) {
-      findings.push({
+      ctx.findings.push({
         kind: "PAYMENT_LEG_SUM_MISMATCH",
         organizationId: p.organizationId ?? undefined,
         paymentId: p.id,
@@ -577,14 +712,21 @@ async function runReconcileLedgersUnlocked(
         },
       });
     }
+    done += 1;
   }
+  ctx.counts.paymentsChecked += done;
+  return pageResult(paymentsWithOrgLegs, done, take, cursor);
+}
 
-  // --- (F2 / #776): OrganizationInvoice total integrity ---
-  // totalPaise must equal subtotalPaise + CGST + SGST + IGST. The issue-time
-  // assertion in invoice-rollup.ts prevents new drift; this is the retroactive
-  // sweep for legacy / manually-edited rows.
+// --- (F2 / #776): OrganizationInvoice total integrity ---
+// totalPaise must equal subtotalPaise + CGST + SGST + IGST. The issue-time
+// assertion in invoice-rollup.ts prevents new drift; this is the retroactive
+// sweep for legacy / manually-edited rows.
+async function stepInvoiceTotals(ctx: StepCtx): Promise<void> {
   const invoicesToCheck = await prisma.organizationInvoice.findMany({
-    where: opts.organizationId ? { organizationId: opts.organizationId } : {},
+    where: ctx.opts.organizationId
+      ? { organizationId: ctx.opts.organizationId }
+      : {},
     select: {
       id: true,
       organizationId: true,
@@ -599,7 +741,7 @@ async function runReconcileLedgersUnlocked(
     const expected =
       inv.subtotalPaise + inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
     if (inv.totalPaise !== expected) {
-      findings.push({
+      ctx.findings.push({
         kind: "INVOICE_TOTAL_MISMATCH",
         organizationId: inv.organizationId,
         expectedPaise: expected,
@@ -612,21 +754,23 @@ async function runReconcileLedgersUnlocked(
       });
     }
   }
+}
 
-  // --- (G): per OrganizationPayout total vs claimed earnings ---
-  // The createOrgPayoutBatch tx claims READY earnings, computes totals,
-  // and writes them to the payout in one go. If anything ever diverges
-  // (manual SQL, partial migration, future code changes) this catches
-  // the drift before the next bank transfer is initiated.
-  //
-  // #1471 review — scoped to the statuses where the attachment is EXPECTED to
-  // hold. A FAILED payout (markOrgPayoutFailedInternal) and a REVERSED one
-  // (markOrgPayoutReversed) both detach their earnings back to READY with
-  // `orgPayoutId: null` on purpose, so they legitimately end up with zero
-  // attached earnings against a retained `netPayoutPaise` — every one of them
-  // was being reported as drift. CANCELLED is excluded for the same reason.
-  // APPROVED is included with PENDING/PROCESSING/COMPLETED because the batch is
-  // still live and its earnings are still claimed.
+// --- (G): per OrganizationPayout total vs claimed earnings ---
+// The createOrgPayoutBatch tx claims READY earnings, computes totals,
+// and writes them to the payout in one go. If anything ever diverges
+// (manual SQL, partial migration, future code changes) this catches
+// the drift before the next bank transfer is initiated.
+//
+// #1471 review — scoped to the statuses where the attachment is EXPECTED to
+// hold. A FAILED payout (markOrgPayoutFailedInternal) and a REVERSED one
+// (markOrgPayoutReversed) both detach their earnings back to READY with
+// `orgPayoutId: null` on purpose, so they legitimately end up with zero
+// attached earnings against a retained `netPayoutPaise` — every one of them
+// was being reported as drift. CANCELLED is excluded for the same reason.
+// APPROVED is included with PENDING/PROCESSING/COMPLETED because the batch is
+// still live and its earnings are still claimed.
+async function stepPayoutTotals(ctx: StepCtx): Promise<void> {
   const ATTACHMENT_EXPECTED_STATUSES = [
     "PENDING",
     "APPROVED",
@@ -636,7 +780,9 @@ async function runReconcileLedgersUnlocked(
   const payouts = await prisma.organizationPayout.findMany({
     where: {
       status: { in: [...ATTACHMENT_EXPECTED_STATUSES] },
-      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+      ...(ctx.opts.organizationId
+        ? { organizationId: ctx.opts.organizationId }
+        : {}),
     },
     select: {
       id: true,
@@ -653,7 +799,7 @@ async function runReconcileLedgersUnlocked(
       0,
     );
     if (expected !== p.netPayoutPaise) {
-      findings.push({
+      ctx.findings.push({
         kind: "ORG_PAYOUT_TOTAL_MISMATCH",
         organizationId: p.organizationId,
         payoutId: p.id,
@@ -667,19 +813,31 @@ async function runReconcileLedgersUnlocked(
       });
     }
   }
+  ctx.counts.payoutsChecked = payouts.length;
+}
 
-  // --- (F): per BillingSubscription activeSeatCount drift ---
-  // activeSeatCount is denormalized from ProgramAssignment count for
-  // billing-cron read efficiency (the invoice cron must compute
-  // line-items in O(1) lookups across thousands of subs). It is written
-  // by adjustActiveSeatCount() in lib/api/organizations/seat-count.ts on
-  // assignment create/delete. Drift means a missed write or manual SQL.
-  // We only count assignments whose program is currently ACTIVE — paused
-  // / archived programs don't contribute to billable seats.
+// --- (F): per BillingSubscription activeSeatCount drift ---
+// activeSeatCount is denormalized from ProgramAssignment count for
+// billing-cron read efficiency (the invoice cron must compute
+// line-items in O(1) lookups across thousands of subs). It is written
+// by adjustActiveSeatCount() in lib/api/organizations/seat-count.ts on
+// assignment create/delete. Drift means a missed write or manual SQL.
+// We only count assignments whose program is currently ACTIVE — paused
+// / archived programs don't contribute to billable seats.
+async function stepSeatCounts(
+  ctx: StepCtx,
+  cursor: string | null,
+  take: number,
+  deadline: number,
+): Promise<{ nextCursor: string | null; rows: number }> {
+  const pg = pageArgs(cursor, take);
   const subscriptions = await prisma.billingSubscription.findMany({
-    where: opts.organizationId
-      ? { contract: { organizationId: opts.organizationId } }
-      : undefined,
+    where: {
+      ...(ctx.opts.organizationId
+        ? { contract: { organizationId: ctx.opts.organizationId } }
+        : {}),
+      ...pg.where,
+    },
     select: {
       id: true,
       activeSeatCount: true,
@@ -688,12 +846,16 @@ async function runReconcileLedgersUnlocked(
         select: { organizationId: true },
       },
     },
+    orderBy: pg.orderBy,
+    take: pg.take,
   });
 
+  let done = 0;
   for (const sub of subscriptions) {
+    if (done > 0 && Date.now() > deadline) break;
     const expected = await prisma.programAssignment.count({
       where: {
-        periodEnd: { gte: now },
+        periodEnd: { gte: ctx.now },
         program: {
           contractId: sub.contractId,
           type: "LICENSED_SEAT",
@@ -702,7 +864,7 @@ async function runReconcileLedgersUnlocked(
       },
     });
     if (expected !== sub.activeSeatCount) {
-      findings.push({
+      ctx.findings.push({
         kind: "ACTIVE_SEAT_COUNT_DRIFT",
         organizationId: sub.contract.organizationId,
         billingSubscriptionId: sub.id,
@@ -715,167 +877,188 @@ async function runReconcileLedgersUnlocked(
         },
       });
     }
+    done += 1;
   }
+  ctx.counts.subscriptionsChecked += done;
+  return pageResult(subscriptions, done, take, cursor);
+}
 
-  // --- (H) #771 D1/D5 — double-entry invariant: every LedgerTransaction must
-  // balance (Σ DEBIT === Σ CREDIT). postLedgerTxn enforces this at write time;
-  // this nightly check catches manual SQL edits or a future writer bug. ZERO
-  // findings here across a reseed is the GATE that lets the three single-entry
-  // logs (Wallet/Funding/Settlement) above be safely removed (#771 cutover).
-  // Global integrity check — runs on full scope only.
-  if (!opts.organizationId) {
-    const ledgerSums = await prisma.ledgerEntry.groupBy({
-      by: ["transactionId", "direction"],
-      _sum: { amountPaise: true },
-    });
-    const perTxn = new Map<string, { debit: number; credit: number }>();
-    for (const row of ledgerSums) {
-      const cur = perTxn.get(row.transactionId) ?? { debit: 0, credit: 0 };
-      const amt = sumPaise(row._sum.amountPaise);
-      if (row.direction === "DEBIT") cur.debit += amt;
-      else cur.credit += amt;
-      perTxn.set(row.transactionId, cur);
+// --- (H) #771 D1/D5 — double-entry invariant: every LedgerTransaction must
+// balance (Σ DEBIT === Σ CREDIT). postLedgerTxn enforces this at write time;
+// this nightly check catches manual SQL edits or a future writer bug. ZERO
+// findings here across a reseed is the GATE that lets the three single-entry
+// logs (Wallet/Funding/Settlement) above be safely removed (#771 cutover).
+// Global integrity check — runs on full scope only.
+async function stepLedgerBalance(ctx: StepCtx): Promise<void> {
+  const ledgerSums = await prisma.ledgerEntry.groupBy({
+    by: ["transactionId", "direction"],
+    _sum: { amountPaise: true },
+  });
+  const perTxn = new Map<string, { debit: number; credit: number }>();
+  for (const row of ledgerSums) {
+    const cur = perTxn.get(row.transactionId) ?? { debit: 0, credit: 0 };
+    const amt = sumPaise(row._sum.amountPaise);
+    if (row.direction === "DEBIT") cur.debit += amt;
+    else cur.credit += amt;
+    perTxn.set(row.transactionId, cur);
+  }
+  perTxn.forEach((sums, transactionId) => {
+    if (sums.debit !== sums.credit) {
+      ctx.findings.push({
+        kind: "LEDGER_TXN_IMBALANCE",
+        expectedPaise: sums.debit,
+        actualPaise: sums.credit,
+        deltaPaise: sums.debit - sums.credit,
+        details: {
+          transactionId,
+          unit: "paise",
+          note: "Double-entry LedgerTransaction does not balance (Σdebit ≠ Σcredit).",
+        },
+      });
     }
-    perTxn.forEach((sums, transactionId) => {
-      if (sums.debit !== sums.credit) {
-        findings.push({
-          kind: "LEDGER_TXN_IMBALANCE",
-          expectedPaise: sums.debit,
-          actualPaise: sums.credit,
-          deltaPaise: sums.debit - sums.credit,
-          details: {
-            transactionId,
-            unit: "paise",
-            note: "Double-entry LedgerTransaction does not balance (Σdebit ≠ Σcredit).",
-          },
-        });
-      }
-    });
+  });
+}
 
-    // --- (H2) #776 — LedgerAccountBalance snapshot integrity. The maintained
-    // running balance is a derived cache; the journal is the source of truth.
-    // Compare every account's snapshot against Σ(DEBIT) − Σ(CREDIT) from
-    // entries. Catches a snapshot that drifted from a bad writer or a posting
-    // that bypassed postLedgerTxn. Zero findings here on a reseed is the gate
-    // that lets dashboards/credit-limit checks trust the O(1) snapshot read.
-    const entrySums = await prisma.ledgerEntry.groupBy({
-      by: ["accountId", "direction"],
-      _sum: { amountPaise: true },
-    });
-    const journalByAccount = new Map<string, number>();
-    for (const row of entrySums) {
-      const amt = sumPaise(row._sum.amountPaise);
-      const cur = journalByAccount.get(row.accountId) ?? 0;
-      journalByAccount.set(
-        row.accountId,
-        row.direction === "DEBIT" ? cur + amt : cur - amt,
-      );
-    }
-    const snapshots = await prisma.ledgerAccountBalance.findMany({
-      select: { accountId: true, balancePaise: true },
-    });
-    const snapshotByAccount = new Map<string, number>(
-      snapshots.map((s) => [s.accountId, s.balancePaise]),
+// --- (H2) #776 — LedgerAccountBalance snapshot integrity. The maintained
+// running balance is a derived cache; the journal is the source of truth.
+// Compare every account's snapshot against Σ(DEBIT) − Σ(CREDIT) from
+// entries. Catches a snapshot that drifted from a bad writer or a posting
+// that bypassed postLedgerTxn. Zero findings here on a reseed is the gate
+// that lets dashboards/credit-limit checks trust the O(1) snapshot read.
+async function stepLedgerSnapshots(ctx: StepCtx): Promise<void> {
+  const entrySums = await prisma.ledgerEntry.groupBy({
+    by: ["accountId", "direction"],
+    _sum: { amountPaise: true },
+  });
+  const journalByAccount = new Map<string, number>();
+  for (const row of entrySums) {
+    const amt = sumPaise(row._sum.amountPaise);
+    const cur = journalByAccount.get(row.accountId) ?? 0;
+    journalByAccount.set(
+      row.accountId,
+      row.direction === "DEBIT" ? cur + amt : cur - amt,
     );
-    const allAccountIds = new Set<string>(
-      Array.from(journalByAccount.keys()).concat(
-        Array.from(snapshotByAccount.keys()),
-      ),
-    );
-    for (const accountId of Array.from(allAccountIds)) {
-      const journal = journalByAccount.get(accountId) ?? 0;
-      const snapshot = snapshotByAccount.get(accountId);
-      // A missing snapshot for an account with no entries nets to 0 — fine.
-      const snapshotVal = snapshot ?? 0;
-      if (snapshotVal !== journal) {
-        findings.push({
-          kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
-          expectedPaise: journal,
-          actualPaise: snapshotVal,
-          deltaPaise: snapshotVal - journal,
-          details: {
-            ledgerAccountId: accountId,
-            unit: "paise",
-            snapshotMissing: snapshot === undefined,
-            note: "LedgerAccountBalance snapshot disagrees with the journal-derived balance.",
-          },
-        });
-      }
+  }
+  const snapshots = await prisma.ledgerAccountBalance.findMany({
+    select: { accountId: true, balancePaise: true },
+  });
+  const snapshotByAccount = new Map<string, number>(
+    snapshots.map((s) => [s.accountId, s.balancePaise]),
+  );
+  const allAccountIds = new Set<string>(
+    Array.from(journalByAccount.keys()).concat(
+      Array.from(snapshotByAccount.keys()),
+    ),
+  );
+  for (const accountId of Array.from(allAccountIds)) {
+    const journal = journalByAccount.get(accountId) ?? 0;
+    const snapshot = snapshotByAccount.get(accountId);
+    // A missing snapshot for an account with no entries nets to 0 — fine.
+    const snapshotVal = snapshot ?? 0;
+    if (snapshotVal !== journal) {
+      ctx.findings.push({
+        kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
+        expectedPaise: journal,
+        actualPaise: snapshotVal,
+        deltaPaise: snapshotVal - journal,
+        details: {
+          ledgerAccountId: accountId,
+          unit: "paise",
+          snapshotMissing: snapshot === undefined,
+          note: "LedgerAccountBalance snapshot disagrees with the journal-derived balance.",
+        },
+      });
     }
+  }
+}
 
-    // --- (H3) #776 §C — refund ↔ utilization coherence. A fully-refunded
-    // payment must have its BookingUtilization reversed (else the seat/cap
-    // leaks: the member got their money back but still consumes an
-    // engagement). The inverse — a reversed utilization with no SUCCEEDED
-    // refund — means a seat was released for free. The reversal engine keeps
-    // these in lockstep; this catches a partial-failure or a CLASS multi-
-    // booking refund that skipped a child.
-    const utilizations = await prisma.bookingUtilization.findMany({
-      select: {
-        id: true,
-        paymentId: true,
-        reversedAt: true,
-        payment: {
-          select: {
-            amount: true,
-            refunds: { select: { amountPaise: true, status: true } },
-          },
+// --- (H3) #776 §C — refund ↔ utilization coherence. A fully-refunded
+// payment must have its BookingUtilization reversed (else the seat/cap
+// leaks: the member got their money back but still consumes an
+// engagement). The inverse — a reversed utilization with no SUCCEEDED
+// refund — means a seat was released for free. The reversal engine keeps
+// these in lockstep; this catches a partial-failure or a CLASS multi-
+// booking refund that skipped a child.
+async function stepRefundCoherence(ctx: StepCtx): Promise<void> {
+  const utilizations = await prisma.bookingUtilization.findMany({
+    select: {
+      id: true,
+      paymentId: true,
+      reversedAt: true,
+      payment: {
+        select: {
+          amount: true,
+          refunds: { select: { amountPaise: true, status: true } },
         },
       },
-    });
-    for (const u of utilizations) {
-      const settledRefunds = u.payment.refunds
-        .filter((r) => r.status === "SUCCEEDED")
-        .reduce((s, r) => s + r.amountPaise, 0);
-      const fullyRefunded =
-        u.payment.amount > 0 && settledRefunds >= u.payment.amount;
-      const isReversed = u.reversedAt !== null;
-      if (fullyRefunded && !isReversed) {
-        findings.push({
-          kind: "REFUND_BOOKING_COHERENCE",
-          paymentId: u.paymentId,
-          expectedPaise: u.payment.amount,
-          actualPaise: settledRefunds,
-          deltaPaise: settledRefunds - u.payment.amount,
-          details: {
-            bookingUtilizationId: u.id,
-            unit: "paise",
-            note: "Payment fully refunded but BookingUtilization not reversed (cap leak).",
-          },
-        });
-      } else if (isReversed && settledRefunds === 0) {
-        findings.push({
-          kind: "REFUND_BOOKING_COHERENCE",
-          paymentId: u.paymentId,
-          expectedPaise: 0,
-          actualPaise: u.payment.amount,
-          deltaPaise: u.payment.amount,
-          details: {
-            bookingUtilizationId: u.id,
-            unit: "paise",
-            note: "BookingUtilization reversed with no SUCCEEDED refund (seat released for free).",
-          },
-        });
-      }
+    },
+  });
+  for (const u of utilizations) {
+    const settledRefunds = u.payment.refunds
+      .filter((r) => r.status === "SUCCEEDED")
+      .reduce((s, r) => s + r.amountPaise, 0);
+    const fullyRefunded =
+      u.payment.amount > 0 && settledRefunds >= u.payment.amount;
+    const isReversed = u.reversedAt !== null;
+    if (fullyRefunded && !isReversed) {
+      ctx.findings.push({
+        kind: "REFUND_BOOKING_COHERENCE",
+        paymentId: u.paymentId,
+        expectedPaise: u.payment.amount,
+        actualPaise: settledRefunds,
+        deltaPaise: settledRefunds - u.payment.amount,
+        details: {
+          bookingUtilizationId: u.id,
+          unit: "paise",
+          note: "Payment fully refunded but BookingUtilization not reversed (cap leak).",
+        },
+      });
+    } else if (isReversed && settledRefunds === 0) {
+      ctx.findings.push({
+        kind: "REFUND_BOOKING_COHERENCE",
+        paymentId: u.paymentId,
+        expectedPaise: 0,
+        actualPaise: u.payment.amount,
+        deltaPaise: u.payment.amount,
+        details: {
+          bookingUtilizationId: u.id,
+          unit: "paise",
+          note: "BookingUtilization reversed with no SUCCEEDED refund (seat released for free).",
+        },
+      });
     }
   }
+}
 
-  // --- (E2) booking-ledger drift (covered payments only) — #772 B4 ----------
-  // Earnings amount columns are a reconciled cache; the journal is the source
-  // of truth. For every payment that HAS a booking journal txn, the journal's
-  // earnings-relevant credits (PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE)
-  // must equal the cached Earnings amounts. #776 — multi-collaborator bookings
-  // now post per-collaborator CONSULTANT_PAYABLE credits (no longer deferred), so
-  // they carry a BOOKING txn and are covered here; the only payments without a txn
-  // are pre-#776 seed rows (counted below for visibility, not flagged).
+// --- (E2) booking-ledger drift (covered payments only) — #772 B4 ----------
+// Earnings amount columns are a reconciled cache; the journal is the source
+// of truth. For every payment that HAS a booking journal txn, the journal's
+// earnings-relevant credits (PLATFORM_FEE + CONSULTANT_PAYABLE + ORG_PAYABLE)
+// must equal the cached Earnings amounts. #776 — multi-collaborator bookings
+// now post per-collaborator CONSULTANT_PAYABLE credits (no longer deferred), so
+// they carry a BOOKING txn and are covered here; the only payments without a txn
+// are pre-#776 seed rows (counted by the next step for visibility, not flagged).
+async function stepEarningsLedger(
+  ctx: StepCtx,
+  cursor: string | null,
+  take: number,
+  deadline: number,
+): Promise<{ nextCursor: string | null; rows: number }> {
+  const pg = pageArgs(cursor, take);
   const bookingTxns = await prisma.ledgerTransaction.findMany({
-    where: { kind: "BOOKING", paymentId: { not: null } },
+    where: {
+      kind: "BOOKING",
+      paymentId: { not: null },
+      ...pg.where,
+    },
     select: { id: true, paymentId: true },
+    orderBy: pg.orderBy,
+    take: pg.take,
   });
-  const coveredPaymentIds = new Set(
-    bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
-  );
+  let done = 0;
   for (const txn of bookingTxns) {
+    if (done > 0 && Date.now() > deadline) break;
+    done += 1;
     if (!txn.paymentId) continue;
     const creditRows = await prisma.ledgerEntry.findMany({
       where: {
@@ -906,7 +1089,7 @@ async function runReconcileLedgersUnlocked(
       sumPaise(ce._sum.consultantSharePaise) +
       sumPaise(oe._sum.orgSharePaise);
     if (journalEarnings !== cacheEarnings) {
-      findings.push({
+      ctx.findings.push({
         kind: "EARNINGS_LEDGER_DRIFT",
         paymentId: txn.paymentId,
         expectedPaise: cacheEarnings,
@@ -919,12 +1102,22 @@ async function runReconcileLedgersUnlocked(
       });
     }
   }
+  return pageResult(bookingTxns, done, take, cursor);
+}
 
-  // #773/#778 §G — earnings-bearing payments with no booking journal txn.
-  // Now that the multi-collaborator path posts its own balanced booking txn,
-  // this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
-  // (env, default 0) is a finding, not an info metric — the platform must
-  // never silently run partially-journaled again.
+// #773/#778 §G — earnings-bearing payments with no booking journal txn.
+// Now that the multi-collaborator path posts its own balanced booking txn,
+// this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
+// (env, default 0) is a finding, not an info metric — the platform must
+// never silently run partially-journaled again.
+async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
+  const bookingTxns = await prisma.ledgerTransaction.findMany({
+    where: { kind: "BOOKING", paymentId: { not: null } },
+    select: { paymentId: true },
+  });
+  const coveredPaymentIds = new Set(
+    bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
+  );
   const earningsPaymentRows = await prisma.consultantEarnings.findMany({
     select: { paymentId: true },
     distinct: ["paymentId"],
@@ -935,7 +1128,7 @@ async function runReconcileLedgersUnlocked(
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
   const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
   if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
-    findings.push({
+    ctx.findings.push({
       kind: "EARNINGS_WITHOUT_BOOKING_TXN",
       expectedPaise: unjournaledMax,
       actualPaise: earningsPaymentsWithoutBookingTxn,
@@ -947,18 +1140,22 @@ async function runReconcileLedgersUnlocked(
       },
     });
   }
+  ctx.counts.earningsPaymentsWithoutBookingTxn =
+    earningsPaymentsWithoutBookingTxn;
+}
 
-  // #812 — a reversed earning with no REFUND ledger transaction. The new
-  // blocking-ledger behaviour prevents this going forward (a refund that can't
-  // post a balanced journal rolls back), but the check surfaces any legacy or
-  // back-dated divergence the nightly run should page on. #813 — batched into a
-  // single REFUND-txn findMany + Set membership (was a per-row findFirst loop),
-  // matching the (E2) pattern above.
+// #812 — a reversed earning with no REFUND ledger transaction. The new
+// blocking-ledger behaviour prevents this going forward (a refund that can't
+// post a balanced journal rolls back), but the check surfaces any legacy or
+// back-dated divergence the nightly run should page on. #813 — batched into a
+// single REFUND-txn findMany + Set membership (was a per-row findFirst loop),
+// matching the (E2) pattern above.
+async function stepReversedEarnings(ctx: StepCtx): Promise<void> {
   const reversedEarnings = await prisma.consultantEarnings.findMany({
     where: {
       refundedShareAmount: { gt: 0 },
-      ...(opts.organizationId
-        ? { payment: { organizationId: opts.organizationId } }
+      ...(ctx.opts.organizationId
+        ? { payment: { organizationId: ctx.opts.organizationId } }
         : {}),
     },
     select: {
@@ -981,7 +1178,7 @@ async function runReconcileLedgersUnlocked(
   for (const rev of reversedEarnings) {
     if (!rev.paymentId) continue;
     if (!refundedPaymentIds.has(rev.paymentId)) {
-      findings.push({
+      ctx.findings.push({
         kind: "REVERSED_EARNING_WITHOUT_REFUND_TXN",
         paymentId: rev.paymentId,
         organizationId: rev.payment?.organizationId ?? undefined,
@@ -995,17 +1192,21 @@ async function runReconcileLedgersUnlocked(
       });
     }
   }
+}
 
-  // #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger transaction:
-  // the cash left but the payable was never cleared in the journal. #813 —
-  // batched via a Set keyed on the ORIGINAL posting's idempotencyKey
-  // (`orgpayout:<id>`, matching org-payout-service); a plain {kind,payoutId} would
-  // be satisfied by the #812 REVERSAL posting (`orgpayout-reversal:<id>`), which
-  // shares kind+payoutId and would mask a missing original.
+// #812 — a COMPLETED OrganizationPayout with no ORG_PAYOUT ledger transaction:
+// the cash left but the payable was never cleared in the journal. #813 —
+// batched via a Set keyed on the ORIGINAL posting's idempotencyKey
+// (`orgpayout:<id>`, matching org-payout-service); a plain {kind,payoutId} would
+// be satisfied by the #812 REVERSAL posting (`orgpayout-reversal:<id>`), which
+// shares kind+payoutId and would mask a missing original.
+async function stepCompletedOrgPayouts(ctx: StepCtx): Promise<void> {
   const completedPayouts = await prisma.organizationPayout.findMany({
     where: {
       status: "COMPLETED",
-      ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+      ...(ctx.opts.organizationId
+        ? { organizationId: ctx.opts.organizationId }
+        : {}),
     },
     select: { id: true, organizationId: true, netPayoutPaise: true },
   });
@@ -1020,7 +1221,7 @@ async function runReconcileLedgersUnlocked(
   const orgPayoutTxnKeys = new Set(orgPayoutTxns.map((t) => t.idempotencyKey));
   for (const po of completedPayouts) {
     if (!orgPayoutTxnKeys.has(`orgpayout:${po.id}`)) {
-      findings.push({
+      ctx.findings.push({
         kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
         organizationId: po.organizationId,
         payoutId: po.id,
@@ -1034,393 +1235,653 @@ async function runReconcileLedgersUnlocked(
       });
     }
   }
+}
 
-  // #1408 — the clawback dual-write. A refund against an already-paid org
-  // payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
-  // but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
-  // reversePayoutClawback posts it inside a try/catch that swallows the
-  // failure, and refund.ts / booking-refund.ts never post it at all. The
-  // stamped payout then claims cash was recovered that the journal has never
-  // seen. Matched on the soft link plus the `clawback:` key prefix because the
-  // full key embeds the refund id, which the payout row does not carry — and
-  // compared on summed amounts, not presence, since the counter is cumulative
-  // and a second clawback's lost posting hides behind the first one's.
-  {
-    const clawedBackPayouts = await prisma.organizationPayout.findMany({
+// #1408 — the clawback dual-write. A refund against an already-paid org
+// payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
+// but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
+// reversePayoutClawback posts it inside a try/catch that swallows the
+// failure, and refund.ts / booking-refund.ts never post it at all. The
+// stamped payout then claims cash was recovered that the journal has never
+// seen. Matched on the soft link plus the `clawback:` key prefix because the
+// full key embeds the refund id, which the payout row does not carry — and
+// compared on summed amounts, not presence, since the counter is cumulative
+// and a second clawback's lost posting hides behind the first one's.
+async function stepClawbackGap(ctx: StepCtx): Promise<void> {
+  const clawedBackPayouts = await prisma.organizationPayout.findMany({
+    where: {
+      clawbackAmountPaise: { gt: 0 },
+      ...(ctx.opts.organizationId
+        ? { organizationId: ctx.opts.organizationId }
+        : {}),
+    },
+    select: { id: true, organizationId: true, clawbackAmountPaise: true },
+  });
+  if (clawedBackPayouts.length === 0) return;
+  // Chunked IN to stay under the bind-param cap, like the sibling lookups
+  // below; a full-scope run can carry more payout ids than one statement.
+  const CLAWBACK_CHUNK = 5_000;
+  const clawbackPostedByPayout = new Map<string, number>();
+  for (let i = 0; i < clawedBackPayouts.length; i += CLAWBACK_CHUNK) {
+    const clawbackTxns = await prisma.ledgerTransaction.findMany({
       where: {
-        clawbackAmountPaise: { gt: 0 },
-        ...(opts.organizationId ? { organizationId: opts.organizationId } : {}),
+        payoutId: {
+          in: clawedBackPayouts.slice(i, i + CLAWBACK_CHUNK).map((po) => po.id),
+        },
+        idempotencyKey: { startsWith: "clawback:" },
       },
-      select: { id: true, organizationId: true, clawbackAmountPaise: true },
+      select: {
+        payoutId: true,
+        entries: {
+          where: { direction: "DEBIT", account: { kind: "CASH" } },
+          select: { amountPaise: true },
+        },
+      },
     });
-    if (clawedBackPayouts.length > 0) {
-      // Chunked IN to stay under the bind-param cap, like the sibling lookups
-      // below; a full-scope run can carry more payout ids than one statement.
-      const CLAWBACK_CHUNK = 5_000;
-      const clawbackPostedByPayout = new Map<string, number>();
-      for (let i = 0; i < clawedBackPayouts.length; i += CLAWBACK_CHUNK) {
-        const clawbackTxns = await prisma.ledgerTransaction.findMany({
-          where: {
-            payoutId: {
-              in: clawedBackPayouts
-                .slice(i, i + CLAWBACK_CHUNK)
-                .map((po) => po.id),
-            },
-            idempotencyKey: { startsWith: "clawback:" },
-          },
-          select: {
-            payoutId: true,
-            entries: {
-              where: { direction: "DEBIT", account: { kind: "CASH" } },
-              select: { amountPaise: true },
-            },
-          },
-        });
-        for (const t of clawbackTxns) {
-          if (!t.payoutId) continue;
-          const posted = t.entries.reduce((sum, e) => {
-            // Same reasoning as the detector's guard: a leg that does not
-            // survive the narrowing would under-report the posted side, which
-            // manufactures a phantom gap or hides a real one.
-            const paise = Number(e.amountPaise);
-            if (!Number.isSafeInteger(paise)) {
-              throw new Error(
-                `clawback posting for payout ${t.payoutId} has amountPaise=${e.amountPaise}, outside the safe-integer range.`,
-              );
-            }
-            return sum + paise;
-          }, 0);
-          clawbackPostedByPayout.set(
-            t.payoutId,
-            (clawbackPostedByPayout.get(t.payoutId) ?? 0) + posted,
+    for (const t of clawbackTxns) {
+      if (!t.payoutId) continue;
+      const posted = t.entries.reduce((sum, e) => {
+        // Same reasoning as the detector's guard: a leg that does not
+        // survive the narrowing would under-report the posted side, which
+        // manufactures a phantom gap or hides a real one.
+        const paise = Number(e.amountPaise);
+        if (!Number.isSafeInteger(paise)) {
+          throw new Error(
+            `clawback posting for payout ${t.payoutId} has amountPaise=${e.amountPaise}, outside the safe-integer range.`,
           );
         }
-      }
-      findings.push(
-        ...clawbackDualWriteGapFindings(
-          clawedBackPayouts,
-          clawbackPostedByPayout,
-        ),
+        return sum + paise;
+      }, 0);
+      clawbackPostedByPayout.set(
+        t.payoutId,
+        (clawbackPostedByPayout.get(t.payoutId) ?? 0) + posted,
       );
     }
   }
+  ctx.findings.push(
+    ...clawbackDualWriteGapFindings(clawedBackPayouts, clawbackPostedByPayout),
+  );
+}
 
-  // #813 — parallel coverage for consultant payouts: a COMPLETED ConsultantPayout
-  // must carry its original PAYOUT posting (`payout:<id>`). Same Set-membership
-  // shape; keyed on idempotencyKey so the #813 reversal posting
-  // (`payout-reversal:<id>`) can't mask a missing original. (ConsultantPayout is
-  // not org-scoped, so no organizationId; org-filtered runs skip this check.)
-  if (!opts.organizationId) {
-    // amount>0 only: the completion posting is skipped for a zero-amount payout
-    // (no cash moved), so a zero-amount COMPLETED row legitimately has no txn.
-    const completedConsultantPayouts = await prisma.consultantPayout.findMany({
-      where: { status: "COMPLETED", amount: { gt: 0 } },
-      select: { id: true, amount: true },
+// #813 — parallel coverage for consultant payouts: a COMPLETED ConsultantPayout
+// must carry its original PAYOUT posting (`payout:<id>`). Same Set-membership
+// shape; keyed on idempotencyKey so the #813 reversal posting
+// (`payout-reversal:<id>`) can't mask a missing original. (ConsultantPayout is
+// not org-scoped, so no organizationId; org-filtered runs skip this check.)
+async function stepConsultantPayouts(ctx: StepCtx): Promise<void> {
+  // amount>0 only: the completion posting is skipped for a zero-amount payout
+  // (no cash moved), so a zero-amount COMPLETED row legitimately has no txn.
+  const completedConsultantPayouts = await prisma.consultantPayout.findMany({
+    where: { status: "COMPLETED", amount: { gt: 0 } },
+    select: { id: true, amount: true },
+  });
+  const consultantPayoutTxns = await prisma.ledgerTransaction.findMany({
+    where: {
+      idempotencyKey: {
+        in: completedConsultantPayouts.map((p) => `payout:${p.id}`),
+      },
+    },
+    select: { idempotencyKey: true },
+  });
+  const consultantPayoutTxnKeys = new Set(
+    consultantPayoutTxns.map((t) => t.idempotencyKey),
+  );
+  for (const p of completedConsultantPayouts) {
+    if (!consultantPayoutTxnKeys.has(`payout:${p.id}`)) {
+      ctx.findings.push({
+        kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
+        payoutId: p.id,
+        expectedPaise: p.amount,
+        actualPaise: 0,
+        deltaPaise: p.amount,
+        details: {
+          scope: "consultant",
+          note: "ConsultantPayout.status=COMPLETED but no PAYOUT ledger transaction.",
+        },
+      });
+    }
+  }
+}
+
+// --- (P) #778 §C/§G — split-sums-to-the-paise. Per earnings-bearing
+// payment: Σ CE.platformFee + Σ CE.consultantShare + Σ OE.orgShare ==
+// payment.originalAmount exactly (#773 netting model: settled collaborators
+// store NET share + their org-card fee slice, so the allocation columns
+// partition the gross with no overlap). Allocation columns never change on
+// refund (refundedShareAmount is separate), so this holds for refunded
+// payments too.
+async function stepSplitSums(ctx: StepCtx): Promise<void> {
+  const ceAgg = await prisma.consultantEarnings.groupBy({
+    by: ["paymentId"],
+    _sum: { platformFeePaise: true, consultantSharePaise: true },
+    ...(ctx.opts.organizationId
+      ? { where: { payment: { organizationId: ctx.opts.organizationId } } }
+      : {}),
+  });
+  const paymentIdsWithCe = ceAgg
+    .map((r) => r.paymentId)
+    .filter((p): p is string => !!p);
+  // Review fix — no giant `IN` lists (Postgres caps bind params at 65,535):
+  // the org-earnings sum takes the same org filter as ceAgg and joins via
+  // the map; the gross lookup chunks its ids.
+  const oeAgg = await prisma.organizationEarnings.groupBy({
+    by: ["paymentId"],
+    _sum: { orgSharePaise: true },
+    ...(ctx.opts.organizationId
+      ? { where: { payment: { organizationId: ctx.opts.organizationId } } }
+      : {}),
+  });
+  const oeByPayment = new Map(
+    oeAgg.map((r) => [r.paymentId, sumPaise(r._sum.orgSharePaise)]),
+  );
+  const grossById = new Map<
+    string,
+    { id: string; originalAmount: number; organizationId: string | null }
+  >();
+  const CHUNK = 5_000;
+  for (let i = 0; i < paymentIdsWithCe.length; i += CHUNK) {
+    const rows = await prisma.payment.findMany({
+      where: { id: { in: paymentIdsWithCe.slice(i, i + CHUNK) } },
+      select: { id: true, originalAmount: true, organizationId: true },
     });
-    const consultantPayoutTxns = await prisma.ledgerTransaction.findMany({
+    for (const p of rows) grossById.set(p.id, p);
+  }
+  for (const row of ceAgg) {
+    if (!row.paymentId) continue;
+    const p = grossById.get(row.paymentId);
+    if (!p) continue;
+    const splitSum =
+      sumPaise(row._sum.platformFeePaise) +
+      sumPaise(row._sum.consultantSharePaise) +
+      (oeByPayment.get(row.paymentId) ?? 0);
+    if (splitSum !== p.originalAmount) {
+      ctx.findings.push({
+        kind: "SPLIT_SUM_MISMATCH",
+        paymentId: p.id,
+        organizationId: p.organizationId ?? undefined,
+        expectedPaise: p.originalAmount,
+        actualPaise: splitSum,
+        deltaPaise: splitSum - p.originalAmount,
+        details: {
+          unit: "paise",
+          note: "Σ(platform fee + consultant shares + org shares) diverges from Payment.originalAmount — a split leaked or minted paise (#778 §C).",
+        },
+      });
+    }
+  }
+}
+
+// --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence (the
+// exact semantics from the 2026-06-10 overage audit). settledAt is the
+// "first settlement milestone", which differs per behavior — CHARGE_ORG
+// stamps at ACCRUED (issued invoice), CHARGE_MEMBER at CHARGED (collected).
+async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
+  const memberEvents = await prisma.overageEvent.findMany({
+    where: { overageBehavior: "CHARGE_MEMBER" },
+    select: {
+      id: true,
+      chargeStatus: true,
+      marginalPaise: true,
+      paymentId: true,
+      settledAt: true,
+      payment: {
+        select: {
+          paymentStatus: true,
+          amount: true,
+          parentPaymentId: true,
+          organizationId: true,
+        },
+      },
+    },
+  });
+  const sideIds = memberEvents
+    .map((e) => e.paymentId)
+    .filter((p): p is string => !!p);
+  // Review-fix class — chunked IN to stay under the bind-param cap.
+  const txnKeys = new Set<string>();
+  const TXN_CHUNK = 5_000;
+  for (let i = 0; i < sideIds.length; i += TXN_CHUNK) {
+    const overageTxns = await prisma.ledgerTransaction.findMany({
       where: {
         idempotencyKey: {
-          in: completedConsultantPayouts.map((p) => `payout:${p.id}`),
+          in: sideIds.slice(i, i + TXN_CHUNK).map((id) => `overage:${id}`),
         },
       },
       select: { idempotencyKey: true },
     });
-    const consultantPayoutTxnKeys = new Set(
-      consultantPayoutTxns.map((t) => t.idempotencyKey),
-    );
-    for (const p of completedConsultantPayouts) {
-      if (!consultantPayoutTxnKeys.has(`payout:${p.id}`)) {
-        findings.push({
-          kind: "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN",
-          payoutId: p.id,
-          expectedPaise: p.amount,
-          actualPaise: 0,
-          deltaPaise: p.amount,
-          details: {
-            scope: "consultant",
-            note: "ConsultantPayout.status=COMPLETED but no PAYOUT ledger transaction.",
-          },
-        });
-      }
-    }
+    for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
   }
-
-  // --- (P) #778 §C/§G — split-sums-to-the-paise. Per earnings-bearing
-  // payment: Σ CE.platformFee + Σ CE.consultantShare + Σ OE.orgShare ==
-  // payment.originalAmount exactly (#773 netting model: settled collaborators
-  // store NET share + their org-card fee slice, so the allocation columns
-  // partition the gross with no overlap). Allocation columns never change on
-  // refund (refundedShareAmount is separate), so this holds for refunded
-  // payments too.
-  {
-    const ceAgg = await prisma.consultantEarnings.groupBy({
-      by: ["paymentId"],
-      _sum: { platformFeePaise: true, consultantSharePaise: true },
-      ...(opts.organizationId
-        ? { where: { payment: { organizationId: opts.organizationId } } }
-        : {}),
-    });
-    const paymentIdsWithCe = ceAgg
-      .map((r) => r.paymentId)
-      .filter((p): p is string => !!p);
-    // Review fix — no giant `IN` lists (Postgres caps bind params at 65,535):
-    // the org-earnings sum takes the same org filter as ceAgg and joins via
-    // the map; the gross lookup chunks its ids.
-    const oeAgg = await prisma.organizationEarnings.groupBy({
-      by: ["paymentId"],
-      _sum: { orgSharePaise: true },
-      ...(opts.organizationId
-        ? { where: { payment: { organizationId: opts.organizationId } } }
-        : {}),
-    });
-    const oeByPayment = new Map(
-      oeAgg.map((r) => [r.paymentId, sumPaise(r._sum.orgSharePaise)]),
-    );
-    const grossById = new Map<
-      string,
-      { id: string; originalAmount: number; organizationId: string | null }
-    >();
-    const CHUNK = 5_000;
-    for (let i = 0; i < paymentIdsWithCe.length; i += CHUNK) {
-      const rows = await prisma.payment.findMany({
-        where: { id: { in: paymentIdsWithCe.slice(i, i + CHUNK) } },
-        select: { id: true, originalAmount: true, organizationId: true },
-      });
-      for (const p of rows) grossById.set(p.id, p);
-    }
-    for (const row of ceAgg) {
-      if (!row.paymentId) continue;
-      const p = grossById.get(row.paymentId);
-      if (!p) continue;
-      const splitSum =
-        sumPaise(row._sum.platformFeePaise) +
-        sumPaise(row._sum.consultantSharePaise) +
-        (oeByPayment.get(row.paymentId) ?? 0);
-      if (splitSum !== p.originalAmount) {
-        findings.push({
-          kind: "SPLIT_SUM_MISMATCH",
-          paymentId: p.id,
-          organizationId: p.organizationId ?? undefined,
-          expectedPaise: p.originalAmount,
-          actualPaise: splitSum,
-          deltaPaise: splitSum - p.originalAmount,
-          details: {
-            unit: "paise",
-            note: "Σ(platform fee + consultant shares + org shares) diverges from Payment.originalAmount — a split leaked or minted paise (#778 §C).",
-          },
-        });
-      }
-    }
-  }
-
-  // --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence (the
-  // exact semantics from the 2026-06-10 overage audit). settledAt is the
-  // "first settlement milestone", which differs per behavior — CHARGE_ORG
-  // stamps at ACCRUED (issued invoice), CHARGE_MEMBER at CHARGED (collected).
-  {
-    const memberEvents = await prisma.overageEvent.findMany({
-      where: { overageBehavior: "CHARGE_MEMBER" },
-      select: {
-        id: true,
-        chargeStatus: true,
-        marginalPaise: true,
-        paymentId: true,
-        settledAt: true,
-        payment: {
-          select: {
-            paymentStatus: true,
-            amount: true,
-            parentPaymentId: true,
-            organizationId: true,
-          },
+  for (const ev of memberEvents) {
+    const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+    const flag = (note: string) =>
+      ctx.findings.push({
+        kind: "OVERAGE_SETTLEMENT_MISMATCH",
+        paymentId: ev.paymentId ?? undefined,
+        organizationId: ev.payment?.organizationId ?? undefined,
+        expectedPaise: ev.marginalPaise,
+        actualPaise: ev.payment?.amount ?? 0,
+        deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
+        details: {
+          overageEventId: ev.id,
+          chargeStatus: ev.chargeStatus,
+          unit: "paise",
+          note,
         },
-      },
-    });
-    const sideIds = memberEvents
-      .map((e) => e.paymentId)
-      .filter((p): p is string => !!p);
-    // Review-fix class — chunked IN to stay under the bind-param cap.
-    const txnKeys = new Set<string>();
-    const TXN_CHUNK = 5_000;
-    for (let i = 0; i < sideIds.length; i += TXN_CHUNK) {
-      const overageTxns = await prisma.ledgerTransaction.findMany({
-        where: {
-          idempotencyKey: {
-            in: sideIds.slice(i, i + TXN_CHUNK).map((id) => `overage:${id}`),
-          },
-        },
-        select: { idempotencyKey: true },
       });
-      for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
-    }
-    for (const ev of memberEvents) {
-      const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
-      const flag = (note: string) =>
-        findings.push({
-          kind: "OVERAGE_SETTLEMENT_MISMATCH",
-          paymentId: ev.paymentId ?? undefined,
-          organizationId: ev.payment?.organizationId ?? undefined,
-          expectedPaise: ev.marginalPaise,
-          actualPaise: ev.payment?.amount ?? 0,
-          deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
-          details: {
-            overageEventId: ev.id,
-            chargeStatus: ev.chargeStatus,
-            unit: "paise",
-            note,
-          },
-        });
-      if (ev.chargeStatus === "CHARGED") {
-        if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
-          flag("CHARGED member overage without a SUCCEEDED side-payment.");
-        } else if (!hasTxn) {
-          flag(
-            "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
-          );
-        } else if (ev.payment.amount !== ev.marginalPaise) {
-          flag("Side-payment amount diverges from the event's marginalPaise.");
-        } else if (!ev.settledAt) {
-          flag("CHARGED member overage missing settledAt.");
-        }
-      } else if (
-        (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
-        hasTxn
-      ) {
+    if (ev.chargeStatus === "CHARGED") {
+      if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
+        flag("CHARGED member overage without a SUCCEEDED side-payment.");
+      } else if (!hasTxn) {
         flag(
-          "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+          "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
         );
+      } else if (ev.payment.amount !== ev.marginalPaise) {
+        flag("Side-payment amount diverges from the event's marginalPaise.");
+      } else if (!ev.settledAt) {
+        flag("CHARGED member overage missing settledAt.");
       }
+    } else if (
+      (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+      hasTxn
+    ) {
+      flag(
+        "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+      );
     }
   }
+}
 
-  // --- (O) #778 §B — no two ACTIVE assignments for the same (program,
-  // membership) may overlap in period. Sort-then-sweep per group; the row
-  // count is bounded by live assignments so the in-memory pass is cheap.
-  {
-    const active = await prisma.programAssignment.findMany({
-      where: { status: "ACTIVE" },
-      select: {
-        id: true,
-        programId: true,
-        membershipId: true,
-        periodStart: true,
-        periodEnd: true,
-      },
-      orderBy: [
-        { programId: "asc" },
-        { membershipId: "asc" },
-        { periodStart: "asc" },
-      ],
-    });
-    // Review fix — track the MAX periodEnd seen in the group, not just the
-    // previous row: one long cycle overlapping several later short ones would
-    // otherwise only flag the first (prev resets to the short row).
-    let maxEnd: (typeof active)[number] | null = null;
-    for (const a of active) {
-      if (
-        maxEnd &&
-        maxEnd.programId === a.programId &&
-        maxEnd.membershipId === a.membershipId
-      ) {
-        if (maxEnd.periodEnd.getTime() > a.periodStart.getTime()) {
-          findings.push({
-            kind: "ASSIGNMENT_PERIOD_OVERLAP",
-            programAssignmentId: a.id,
-            expectedPaise: 0,
-            actualPaise: 0,
-            deltaPaise: 0,
-            details: {
-              unit: "none",
-              overlapsAssignmentId: maxEnd.id,
-              programId: a.programId,
-              membershipId: a.membershipId,
-              note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
-            },
-          });
-        }
-        if (a.periodEnd.getTime() > maxEnd.periodEnd.getTime()) {
-          maxEnd = a;
-        }
-      } else {
+// --- (O) #778 §B — no two ACTIVE assignments for the same (program,
+// membership) may overlap in period. Sort-then-sweep per group; the row
+// count is bounded by live assignments so the in-memory pass is cheap.
+async function stepAssignmentOverlap(ctx: StepCtx): Promise<void> {
+  const active = await prisma.programAssignment.findMany({
+    where: { status: "ACTIVE" },
+    select: {
+      id: true,
+      programId: true,
+      membershipId: true,
+      periodStart: true,
+      periodEnd: true,
+    },
+    orderBy: [
+      { programId: "asc" },
+      { membershipId: "asc" },
+      { periodStart: "asc" },
+    ],
+  });
+  // Review fix — track the MAX periodEnd seen in the group, not just the
+  // previous row: one long cycle overlapping several later short ones would
+  // otherwise only flag the first (prev resets to the short row).
+  let maxEnd: (typeof active)[number] | null = null;
+  for (const a of active) {
+    if (
+      maxEnd &&
+      maxEnd.programId === a.programId &&
+      maxEnd.membershipId === a.membershipId
+    ) {
+      if (maxEnd.periodEnd.getTime() > a.periodStart.getTime()) {
+        ctx.findings.push({
+          kind: "ASSIGNMENT_PERIOD_OVERLAP",
+          programAssignmentId: a.id,
+          expectedPaise: 0,
+          actualPaise: 0,
+          deltaPaise: 0,
+          details: {
+            unit: "none",
+            overlapsAssignmentId: maxEnd.id,
+            programId: a.programId,
+            membershipId: a.membershipId,
+            note: "Two ACTIVE assignments overlap for the same (program, membership) — caps/seats double-count.",
+          },
+        });
+      }
+      if (a.periodEnd.getTime() > maxEnd.periodEnd.getTime()) {
         maxEnd = a;
       }
+    } else {
+      maxEnd = a;
     }
   }
+}
 
-  // --- (M) #780 — money values within Number safe range. Aggregate _max reads
-  // bypass the boundary extension, so compare as bigint — sumPaise() would
-  // throw on exactly the values this check exists to report.
+// --- (M) #780 — money values within Number safe range. Aggregate _max reads
+// bypass the boundary extension, so compare as bigint — sumPaise() would
+// throw on exactly the values this check exists to report.
+async function stepMoneyRange(ctx: StepCtx): Promise<void> {
+  const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
+  const maxima: Array<[string, bigint | number | null]> = [
+    [
+      "Payment.amount",
+      (await prisma.payment.aggregate({ _max: { amount: true } }))._max.amount,
+    ],
+    [
+      "LedgerEntry.amountPaise",
+      (await prisma.ledgerEntry.aggregate({ _max: { amountPaise: true } }))._max
+        .amountPaise,
+    ],
+    [
+      "OrganizationInvoice.totalPaise",
+      (
+        await prisma.organizationInvoice.aggregate({
+          _max: { totalPaise: true },
+        })
+      )._max.totalPaise,
+    ],
+    [
+      "OrganizationPayout.amountPaise",
+      (
+        await prisma.organizationPayout.aggregate({
+          _max: { amountPaise: true },
+        })
+      )._max.amountPaise,
+    ],
+    [
+      "ConsultantPayout.amount",
+      (await prisma.consultantPayout.aggregate({ _max: { amount: true } }))._max
+        .amount,
+    ],
+    [
+      "BillingAccount.walletBalance",
+      (
+        await prisma.billingAccount.aggregate({
+          _max: { walletBalance: true },
+        })
+      )._max.walletBalance,
+    ],
+  ];
+  for (const [column, raw] of maxima) {
+    if (raw === null || raw === undefined) continue;
+    const v = typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw));
+    if (v > SAFE_MAX) {
+      ctx.findings.push({
+        kind: "MONEY_VALUE_WITHIN_SAFE_RANGE",
+        expectedPaise: Number.MAX_SAFE_INTEGER,
+        actualPaise: Number(v), // imprecise past 2^53 — exact value in details
+        deltaPaise: Number(v - SAFE_MAX),
+        details: {
+          column,
+          rawValue: v.toString(),
+          unit: "paise",
+          note: "Money value exceeds Number.MAX_SAFE_INTEGER — the bigint→number boundary loses precision here.",
+        },
+      });
+    }
+  }
+}
+
+const STEPS: Step[] = [
+  { name: "wallet-balance", kind: "paged", run: stepWalletBalance },
+  { name: "org-count", kind: "set", run: stepOrgCount },
+  { name: "assignment-meters", kind: "paged", run: stepAssignmentMeters },
+  { name: "overage-integrity", kind: "set", run: stepOverageIntegrity },
+  { name: "ledger-inr", kind: "set", run: stepLedgerInr },
+  { name: "payment-legs", kind: "paged", run: stepPaymentLegs },
+  { name: "invoice-totals", kind: "set", run: stepInvoiceTotals },
+  { name: "payout-totals", kind: "set", run: stepPayoutTotals },
+  { name: "seat-counts", kind: "paged", run: stepSeatCounts },
   {
-    const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
-    const maxima: Array<[string, bigint | number | null]> = [
-      [
-        "Payment.amount",
-        (await prisma.payment.aggregate({ _max: { amount: true } }))._max
-          .amount,
-      ],
-      [
-        "LedgerEntry.amountPaise",
-        (await prisma.ledgerEntry.aggregate({ _max: { amountPaise: true } }))
-          ._max.amountPaise,
-      ],
-      [
-        "OrganizationInvoice.totalPaise",
-        (
-          await prisma.organizationInvoice.aggregate({
-            _max: { totalPaise: true },
-          })
-        )._max.totalPaise,
-      ],
-      [
-        "OrganizationPayout.amountPaise",
-        (
-          await prisma.organizationPayout.aggregate({
-            _max: { amountPaise: true },
-          })
-        )._max.amountPaise,
-      ],
-      [
-        "ConsultantPayout.amount",
-        (await prisma.consultantPayout.aggregate({ _max: { amount: true } }))
-          ._max.amount,
-      ],
-      [
-        "BillingAccount.walletBalance",
-        (
-          await prisma.billingAccount.aggregate({
-            _max: { walletBalance: true },
-          })
-        )._max.walletBalance,
-      ],
-    ];
-    for (const [column, raw] of maxima) {
-      if (raw === null || raw === undefined) continue;
-      const v = typeof raw === "bigint" ? raw : BigInt(Math.trunc(raw));
-      if (v > SAFE_MAX) {
-        findings.push({
-          kind: "MONEY_VALUE_WITHIN_SAFE_RANGE",
-          expectedPaise: Number.MAX_SAFE_INTEGER,
-          actualPaise: Number(v), // imprecise past 2^53 — exact value in details
-          deltaPaise: Number(v - SAFE_MAX),
-          details: {
-            column,
-            rawValue: v.toString(),
-            unit: "paise",
-            note: "Money value exceeds Number.MAX_SAFE_INTEGER — the bigint→number boundary loses precision here.",
-          },
-        });
-      }
-    }
+    name: "ledger-balance",
+    kind: "set",
+    fullOnly: true,
+    run: stepLedgerBalance,
+  },
+  {
+    name: "ledger-snapshots",
+    kind: "set",
+    fullOnly: true,
+    run: stepLedgerSnapshots,
+  },
+  {
+    name: "refund-coherence",
+    kind: "set",
+    fullOnly: true,
+    run: stepRefundCoherence,
+  },
+  { name: "earnings-ledger", kind: "paged", run: stepEarningsLedger },
+  { name: "unjournaled-earnings", kind: "set", run: stepUnjournaledEarnings },
+  { name: "reversed-earnings", kind: "set", run: stepReversedEarnings },
+  { name: "completed-org-payouts", kind: "set", run: stepCompletedOrgPayouts },
+  { name: "clawback-gap", kind: "set", run: stepClawbackGap },
+  {
+    name: "consultant-payouts",
+    kind: "set",
+    fullOnly: true,
+    run: stepConsultantPayouts,
+  },
+  { name: "split-sums", kind: "set", run: stepSplitSums },
+  { name: "overage-settlement", kind: "set", run: stepOverageSettlement },
+  { name: "assignment-overlap", kind: "set", run: stepAssignmentOverlap },
+  { name: "money-range", kind: "set", run: stepMoneyRange },
+];
+
+/** Rows per chunk when the caller passes no `limit`; the soft deadline is the real bound. */
+export const RECONCILE_CHUNK_DEFAULT_LIMIT = 100;
+/** Hard ceiling for `limit`, matching the ticker routes' cap. */
+export const RECONCILE_CHUNK_MAX_LIMIT = 500;
+/** Soft wall-clock budget for one chunk call, checked between rows and steps. */
+export const RECONCILE_CHUNK_BUDGET_MS = Number(
+  process.env.RECONCILE_CHUNK_BUDGET_MS ?? 12_000,
+);
+/** A RUNNING row older than this is a stuck run and no longer blocks a new kick. */
+export const RECONCILE_RUN_STALE_MS = 45 * 60 * 1000;
+/** Lock TTL for one chunk call: outlives the 60 s Lambda limit, frees fast after a kill. */
+const CHUNK_LOCK_TTL_MS = 90 * 1000;
+
+export type ReconcileRunSnapshot = {
+  runId: string;
+  scope: string;
+  status: ReconcileRunStatus;
+  progress: ReconcileRunProgress | null;
+  /** Present once the run is COMPLETED. */
+  report: ReconcileReport | null;
+  /** Present once the run is FAILED. */
+  error?: string;
+};
+
+const EMPTY_COUNTS: ReconcileCounts = {
+  orgsChecked: 0,
+  accountsChecked: 0,
+  assignmentsChecked: 0,
+  subscriptionsChecked: 0,
+  paymentsChecked: 0,
+  payoutsChecked: 0,
+  earningsPaymentsWithoutBookingTxn: 0,
+};
+
+function pickCounts(s: ReconcileCounts): ReconcileCounts {
+  return {
+    orgsChecked: s.orgsChecked,
+    accountsChecked: s.accountsChecked,
+    assignmentsChecked: s.assignmentsChecked,
+    subscriptionsChecked: s.subscriptionsChecked,
+    paymentsChecked: s.paymentsChecked,
+    payoutsChecked: s.payoutsChecked,
+    earningsPaymentsWithoutBookingTxn: s.earningsPaymentsWithoutBookingTxn,
+  };
+}
+
+function readSummary(raw: unknown): StoredSummary {
+  const s = (raw ?? {}) as Partial<StoredSummary>;
+  return {
+    ...EMPTY_COUNTS,
+    ...s,
+    // Rows written before #1454 carry no status; they were single-process
+    // runs, so they are complete by construction.
+    status: s.status ?? "COMPLETED",
+  };
+}
+
+/** True when the row belongs to a run that is still being advanced. */
+export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
+  return readSummary(row.summary).status === "RUNNING";
+}
+
+function scopeToOpts(scope: string): ReconcileScope {
+  return scope.startsWith("org:")
+    ? { scope, organizationId: scope.slice("org:".length) }
+    : { scope };
+}
+
+/** Open a run as `ok=false` + RUNNING, so an abandoned run reads dirty, never clean. */
+export async function createReconcileRun(
+  opts: ReconcileScope,
+  id?: string,
+): Promise<string> {
+  const progress: ReconcileRunProgress = {
+    step: 0,
+    cursor: null,
+    calls: 0,
+    startedAt: new Date().toISOString(),
+  };
+  const summary: StoredSummary = {
+    ...EMPTY_COUNTS,
+    status: "RUNNING",
+    progress,
+  };
+  const row = await prisma.ledgerReconciliationReport.create({
+    data: {
+      ...(id ? { id } : {}),
+      scope: opts.scope,
+      ok: false,
+      durationMs: 0,
+      summary: summary as unknown as Prisma.InputJsonValue,
+      findings: [],
+      triggeredById: opts.triggeredById ?? null,
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/** One bounded chunk (`limit` rows / soft deadline); progress + findings land in ONE
+ * update so a killed chunk is redone, never double-counted. No-op once COMPLETED. */
+export async function advanceReconcileRunUnlocked(args: {
+  runId: string;
+  limit?: number;
+  budgetMs?: number;
+  /** Open the run under `runId` if no row exists yet (the driver's first call). */
+  createIfMissing?: ReconcileScope;
+}): Promise<ReconcileRunSnapshot> {
+  let row = await prisma.ledgerReconciliationReport.findUnique({
+    where: { id: args.runId },
+  });
+  if (!row && args.createIfMissing) {
+    await createReconcileRun(args.createIfMissing, args.runId);
+    row = await prisma.ledgerReconciliationReport.findUnique({
+      where: { id: args.runId },
+    });
+  }
+  if (!row) throw new Error(`reconcile run ${args.runId} not found`);
+  const stored = readSummary(row.summary);
+  if (stored.status === "FAILED") {
+    return {
+      runId: row.id,
+      scope: row.scope,
+      status: "FAILED",
+      progress: null,
+      report: null,
+      error: stored.error,
+    };
+  }
+  if (stored.status !== "RUNNING" || !stored.progress) {
+    return {
+      runId: row.id,
+      scope: row.scope,
+      status: "COMPLETED",
+      progress: null,
+      report: toReport(row),
+    };
   }
 
-  const durationMs = Date.now() - startedAt;
+  const limit = Math.min(
+    Math.max(args.limit ?? RECONCILE_CHUNK_DEFAULT_LIMIT, 1),
+    RECONCILE_CHUNK_MAX_LIMIT,
+  );
+  const deadline = Date.now() + (args.budgetMs ?? RECONCILE_CHUNK_BUDGET_MS);
+  const progress = stored.progress;
+  const ctx: StepCtx = {
+    opts: scopeToOpts(row.scope),
+    now: new Date(progress.startedAt),
+    findings: (row.findings as unknown as Finding[]) ?? [],
+    counts: pickCounts(stored),
+  };
+
+  let step = progress.step;
+  let cursor = progress.cursor;
+  let rowsLeft = limit;
+  while (step < STEPS.length) {
+    const s = STEPS[step];
+    if (s.fullOnly && ctx.opts.organizationId) {
+      step += 1;
+      cursor = null;
+      continue;
+    }
+    if (s.kind === "set") {
+      await s.run(ctx);
+      step += 1;
+      cursor = null;
+    } else {
+      const r = await s.run(ctx, cursor, rowsLeft, deadline);
+      rowsLeft -= r.rows;
+      cursor = r.nextCursor;
+      if (cursor === null) step += 1;
+    }
+    if (rowsLeft <= 0 || Date.now() > deadline) break;
+  }
+
+  const next: ReconcileRunProgress = {
+    step,
+    cursor,
+    calls: progress.calls + 1,
+    startedAt: progress.startedAt,
+  };
+  if (step < STEPS.length) {
+    const summary: StoredSummary = {
+      ...ctx.counts,
+      status: "RUNNING",
+      progress: next,
+    };
+    await prisma.ledgerReconciliationReport.update({
+      where: { id: row.id },
+      data: {
+        summary: summary as unknown as Prisma.InputJsonValue,
+        findings: ctx.findings as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return {
+      runId: row.id,
+      scope: row.scope,
+      status: "RUNNING",
+      progress: next,
+      report: null,
+    };
+  }
+
+  const report = await finalizeRun(row.id, row.scope, ctx, next);
+  return {
+    runId: row.id,
+    scope: row.scope,
+    status: "COMPLETED",
+    progress: null,
+    report,
+  };
+}
+
+async function finalizeRun(
+  runId: string,
+  scope: string,
+  ctx: StepCtx,
+  progress: ReconcileRunProgress,
+): Promise<ReconcileReport> {
+  const durationMs = Date.now() - new Date(progress.startedAt).getTime();
 
   // Known, entity-specific, time-boxed drift does not fail the run. Everything
   // is still reported and persisted — the split only decides whether ops gets
   // paged. See lib/payments/ledger/baseline.ts for why a permanently-red
   // reconciler is worse than a slightly narrower one.
   const { active, baselined, expired } = applyLedgerBaseline(
-    findings,
+    ctx.findings,
     new Date(),
   );
   if (baselined.length > 0) {
@@ -1440,37 +1901,116 @@ async function runReconcileLedgersUnlocked(
   const ok = active.length === 0;
 
   const summary = {
-    orgsChecked: organizations.length,
-    accountsChecked: accounts.length,
-    assignmentsChecked: liveAssignments.length,
-    subscriptionsChecked: subscriptions.length,
-    paymentsChecked: paymentsWithOrgLegs.length,
-    payoutsChecked: payouts.length,
-    discrepanciesCount: findings.length,
+    ...ctx.counts,
+    discrepanciesCount: ctx.findings.length,
     /** Findings that failed this run (baselined ones excluded). */
     activeDiscrepanciesCount: active.length,
     baselinedDiscrepanciesCount: baselined.length,
-    earningsPaymentsWithoutBookingTxn,
+    status: "COMPLETED" as const,
+    calls: progress.calls,
   };
 
-  const report = await prisma.ledgerReconciliationReport.create({
+  const report = await prisma.ledgerReconciliationReport.update({
+    where: { id: runId },
     data: {
-      scope: opts.scope,
       ok,
       durationMs,
       summary: summary as unknown as Prisma.InputJsonValue,
-      findings: findings as unknown as Prisma.InputJsonValue,
-      triggeredById: opts.triggeredById ?? null,
+      findings: ctx.findings as unknown as Prisma.InputJsonValue,
     },
   });
 
   return {
     id: report.id,
     runAt: report.runAt,
-    scope: report.scope,
+    scope,
     ok: report.ok,
     durationMs: report.durationMs,
     summary,
-    findings,
+    findings: ctx.findings,
   };
+}
+
+function toReport(row: {
+  id: string;
+  runAt: Date;
+  scope: string;
+  ok: boolean;
+  durationMs: number;
+  summary: unknown;
+  findings: unknown;
+}): ReconcileReport {
+  return {
+    id: row.id,
+    runAt: row.runAt,
+    scope: row.scope,
+    ok: row.ok,
+    durationMs: row.durationMs,
+    summary: row.summary as ReconcileReport["summary"],
+    findings: (row.findings as Finding[]) ?? [],
+  };
+}
+
+/** Close a RUNNING run that can no longer be advanced (e.g. the driver never started). */
+export async function markReconcileRunFailed(
+  runId: string,
+  error: string,
+): Promise<void> {
+  const row = await prisma.ledgerReconciliationReport.findUnique({
+    where: { id: runId },
+    select: { summary: true },
+  });
+  if (!row || !isReconcileRunInProgress(row)) return;
+  const stored = readSummary(row.summary);
+  const summary: StoredSummary = {
+    ...pickCounts(stored),
+    status: "FAILED",
+    error,
+  };
+  await prisma.ledgerReconciliationReport.update({
+    where: { id: runId },
+    data: { summary: summary as unknown as Prisma.InputJsonValue },
+  });
+}
+
+/** One chunk under the shared job lock; the short TTL keeps a killed chunk from
+ * parking the lock for the 35 minutes a single-process run needs. */
+export async function advanceReconcileRun(args: {
+  runId: string;
+  limit?: number;
+  budgetMs?: number;
+  createIfMissing?: ReconcileScope;
+}): Promise<ReconcileRunSnapshot> {
+  return withCronLock(
+    "reconcile-ledgers",
+    { failMode: "open", ttlMs: CHUNK_LOCK_TTL_MS },
+    () => advanceReconcileRunUnlocked(args),
+  );
+}
+
+// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
+// mutual exclusion; fail-open: read-only auditor, lock is belt-and-braces.
+export async function runReconcileLedgers(
+  opts: ReconcileScope,
+): Promise<ReconcileReport> {
+  return withCronLock(
+    "reconcile-ledgers",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => runReconcileLedgersUnlocked(opts),
+  );
+}
+
+/** The whole run in one process: no row cap and no deadline, one report row. */
+async function runReconcileLedgersUnlocked(
+  opts: ReconcileScope,
+): Promise<ReconcileReport> {
+  const runId = await createReconcileRun(opts);
+  for (;;) {
+    const snap = await advanceReconcileRunUnlocked({
+      runId,
+      limit: RECONCILE_CHUNK_MAX_LIMIT,
+      budgetMs: Number.MAX_SAFE_INTEGER,
+    });
+    if (snap.status === "COMPLETED" && snap.report) return snap.report;
+  }
 }
