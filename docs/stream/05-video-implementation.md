@@ -718,8 +718,8 @@ has since been applied on the live type: `call_member` keeps `join-ended-call`
 and nothing else that ends or records a call (#1607).
 
 The route does not write `MeetingSession.endedAt`. The `call.ended` webhook owns
-that column, and it also sets the slot's completion status and the session's
-actual duration. Since #1607 the handler treats an end event as authoritative
+that column, and it also sets the slot's completion status and logs the
+session's actual duration. Since #1607 the handler treats an end event as authoritative
 only when it is later than the recorded `endedAt`, so a route that wrote the
 column first would win the race and the webhook's own timestamp would be lost.
 

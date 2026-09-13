@@ -105,7 +105,13 @@ export async function handleSessionEnded(
 
     const endedAt = new Date(created_at);
 
-    if (!supersedesRecordedEnd(meetingSession.endedAt, endedAt)) {
+    // A deliberate end is final: the session_ended Stream fires right after a
+    // host's call.ended must not downgrade `call_ended` to a timeout that a
+    // later join could clear.
+    if (
+      isDeliberateEnd(meetingSession) ||
+      !supersedesRecordedEnd(meetingSession.endedAt, endedAt)
+    ) {
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meetingSession.id,
         streamCallId,
@@ -367,8 +373,14 @@ export async function handleSessionParticipantJoined(
     // #1607 — Stream reuses the call id across sessions, so a join after a
     // timeout or a pre-start end means the room is live again: clear the
     // non-deliberate end so heldSlot and the maintenance drain see it open.
-    // CAS on the end we read, so a concurrent real end is never clobbered.
-    if (meetingSession.endedAt && !isDeliberateEnd(meetingSession)) {
+    // Only a join AFTER that end counts (a late-delivered older join must not
+    // reopen it); CAS on the end we read, so a concurrent real end is never
+    // clobbered.
+    if (
+      meetingSession.endedAt &&
+      joinedAt > meetingSession.endedAt &&
+      !isDeliberateEnd(meetingSession)
+    ) {
       await prisma.meetingSession.updateMany({
         where: { id: meetingSessionId, endedAt: meetingSession.endedAt },
         data: { endedAt: null, endedReason: null },

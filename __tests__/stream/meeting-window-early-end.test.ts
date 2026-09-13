@@ -123,6 +123,20 @@ describe("the last end wins (#1607)", () => {
     );
   });
 
+  it("never downgrades a deliberate end to a timeout", async () => {
+    db.meetingSession.findUnique.mockResolvedValue(
+      session(new Date("2026-09-13T10:30:00.000Z"), "call_ended"),
+    );
+
+    await handleSessionEnded({
+      call_cid: "default:slot_1",
+      type: "call.session_ended",
+      created_at: "2026-09-13T10:30:00.400Z",
+    });
+
+    expect(db.__tx.meetingSession.update).not.toHaveBeenCalled();
+  });
+
   it("ignores an older end once a later one is recorded", async () => {
     db.meetingSession.findUnique.mockResolvedValue(
       session(new Date("2026-09-13T11:02:00.000Z"), "call_ended"),
@@ -162,6 +176,19 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
       where: { id: "ms_1", endedAt: stale },
       data: { endedAt: null, endedReason: null },
     });
+    expect(db.meetingAttendance.upsert).toHaveBeenCalled();
+  });
+
+  it("ignores a late-delivered join that predates the end", async () => {
+    db.meetingSession.findUnique.mockResolvedValue({
+      id: "ms_1",
+      endedAt: new Date("2026-09-13T10:15:00.000Z"),
+      endedReason: "session_timeout",
+    });
+
+    await handleSessionParticipantJoined(joined);
+
+    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
     expect(db.meetingAttendance.upsert).toHaveBeenCalled();
   });
 
