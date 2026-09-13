@@ -40,13 +40,27 @@ export const NON_RETRYABLE_STREAM_CODES: ReadonlySet<number> = new Set([
 
 const ACCOUNT_DISABLED_CODE = 16;
 
+/** A string for `detail` that never degrades to "[object Object]". */
+function describeUnknown(error: unknown, message: unknown): string {
+  if (typeof message === "string") return message;
+  if (typeof error === "string") return error;
+  if (error === null || error === undefined) return "";
+  if (typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "[unserialisable error]";
+    }
+  }
+  return String(error);
+}
+
 function readStreamError(error: unknown): {
   code: number | null;
   message: string;
 } {
   const e = error as { code?: unknown; message?: unknown } | null;
-  const message =
-    typeof e?.message === "string" ? e.message : String(error ?? "");
+  const message = describeUnknown(error, e?.message);
   if (typeof e?.code === "number") return { code: e.code, message };
   // The WS path stringifies its payload into Error.message.
   if (message.startsWith("{")) {

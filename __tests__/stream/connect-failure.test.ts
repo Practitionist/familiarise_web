@@ -69,6 +69,11 @@ describe("classifyConnectFailure", () => {
     expect(timeout.kind).toBe("retryable");
 
     expect(classifyConnectFailure("not even an Error").kind).toBe("retryable");
+    // A bare object never degrades to "[object Object]" in `detail`.
+    expect(classifyConnectFailure({ status: 500 }).detail).toBe(
+      '{"status":500}',
+    );
+    expect(classifyConnectFailure(undefined).detail).toBe("");
     expect(classifyConnectFailure(new Error("{not json")).kind).toBe(
       "retryable",
     );

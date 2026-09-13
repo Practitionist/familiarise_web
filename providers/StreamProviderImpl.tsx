@@ -30,6 +30,41 @@ import {
 } from "@/lib/stream/connect-failure";
 import * as Sentry from "@sentry/nextjs";
 
+/** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
+const MAX_CONNECT_ATTEMPTS = 5;
+
+const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
+  result.status === "fulfilled" ? result.value : null;
+
+/**
+ * One Sentry event per non-retryable connect outcome — `warning` for an
+ * account state, `error` otherwise — with a stable fingerprint so a disabled
+ * account groups into one issue instead of one per page load.
+ */
+function reportNonRetryableConnectFailure(
+  error: unknown,
+  classified: ConnectFailure,
+): void {
+  if (process.env.NODE_ENV === "development") return;
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(classified.detail),
+    {
+      level: classified.kind === "account-disabled" ? "warning" : "error",
+      fingerprint: [
+        "stream-connect",
+        classified.kind,
+        String(classified.code ?? "none"),
+      ],
+      tags: {
+        subsystem: "stream",
+        "stream.failure": classified.kind,
+        "stream.code": String(classified.code ?? ""),
+      },
+      contexts: { stream: { operation: "connect" } },
+    },
+  );
+}
+
 /**
  * The connector takes no `children`. It renders nothing and publishes the
  * connection to the store instead — see lib/stream/connection-store.ts for why
@@ -516,10 +551,7 @@ const StreamProviderImpl = ({
         connectVideo(),
       ]);
 
-      setClients({
-        chat: chatResult.status === "fulfilled" ? chatResult.value : null,
-        video: videoResult.status === "fulfilled" ? videoResult.value : null,
-      });
+      setClients({ chat: settled(chatResult), video: settled(videoResult) });
 
       const failure = [chatResult, videoResult].find(
         (result) => result.status === "rejected",
@@ -537,53 +569,35 @@ const StreamProviderImpl = ({
       connectionAttemptsRef.current += 1;
       setRetryCount(connectionAttemptsRef.current); // Sync state for UI display
       const currentAttempts = connectionAttemptsRef.current;
+      const signedOut = signedOutRef.current;
 
       if (classified.kind !== "retryable") {
         // Stream said this cannot succeed as-is (deactivated user, bad token,
-        // suspended app). Report once with a stable fingerprint and stop: the
-        // five backoff retries per client per page were the Sentry noise.
-        if (!signedOutRef.current && process.env.NODE_ENV !== "development") {
-          Sentry.captureException(
-            error instanceof Error ? error : new Error(classified.detail),
-            {
-              level:
-                classified.kind === "account-disabled" ? "warning" : "error",
-              fingerprint: [
-                "stream-connect",
-                classified.kind,
-                String(classified.code ?? "none"),
-              ],
-              tags: {
-                subsystem: "stream",
-                "stream.failure": classified.kind,
-                "stream.code": String(classified.code ?? ""),
-              },
-              contexts: { stream: { operation: "connect" } },
-            },
-          );
-        }
+        // suspended app). Report once and stop: the five backoff retries per
+        // client per page were the Sentry noise.
+        if (!signedOut) reportNonRetryableConnectFailure(error, classified);
         return;
       }
-
-      if (currentAttempts < 5 && !signedOutRef.current) {
-        // Max 5 attempts
-        const delay = getRetryDelay(currentAttempts);
-        streamLogger.debug(`Retrying connection in ${delay}ms`, {
-          attempt: currentAttempts,
-        });
-        setIsConnecting(false);
-        retryTimeoutRef.current = setTimeout(() => {
-          // Re-run connection (the ref ensures we get current attempt count)
-          connectServices();
-        }, delay);
-        return;
-      } else if (signedOutRef.current) {
+      if (signedOut) {
         streamLogger.debug("Skipping retry — signed out", {
           attempt: currentAttempts,
         });
-      } else {
-        streamLogger.error("Max connection attempts reached", error);
+        return;
       }
+      if (currentAttempts >= MAX_CONNECT_ATTEMPTS) {
+        streamLogger.error("Max connection attempts reached", error);
+        return;
+      }
+
+      const delay = getRetryDelay(currentAttempts);
+      streamLogger.debug(`Retrying connection in ${delay}ms`, {
+        attempt: currentAttempts,
+      });
+      setIsConnecting(false);
+      retryTimeoutRef.current = setTimeout(() => {
+        // Re-run connection (the ref ensures we get current attempt count)
+        connectServices();
+      }, delay);
     } finally {
       setIsConnecting(false);
     }
