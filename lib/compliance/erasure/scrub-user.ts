@@ -54,6 +54,7 @@ import {
   type CollaborationRef,
 } from "@/lib/collaborators/standing";
 import { reportSentryError } from "@/lib/observability/report";
+import { nextRetryAt } from "@/lib/retry/backoff";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -122,6 +123,7 @@ export async function scrubUser(
   );
 
   let collaborationsRemoved: CollaborationRef[] = [];
+  let erasureRequestId: string | null = null;
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -190,6 +192,28 @@ export async function scrubUser(
     // every split and roster; the same flip the moderation ban runs.
     collaborationsRemoved = await removeCollaboratorStanding(tx, userId);
 
+    // #1593 — the OUTBOX: every Stream revocation this scrub owes is a durable
+    // row before the side effect is attempted, in the same transaction as the
+    // rows it follows from, so a crash between commit and Stream leaves a
+    // sweep-visible debt rather than a silent one. The post-commit attempt
+    // below completes the row; the retry sweep drains whatever it could not.
+    const request = await tx.erasureRequest.findFirst({
+      where: { userId, status: { in: ["PENDING", "IN_PROGRESS"] } },
+      orderBy: { requestedAt: "desc" },
+      select: { id: true },
+    });
+    erasureRequestId = request?.id ?? null;
+    if (erasureRequestId && collaborationsRemoved.length > 0) {
+      await tx.streamRevocationRetry.createMany({
+        data: collaborationsRemoved.map(({ planType, planId }) => ({
+          erasureRequestId: erasureRequestId as string,
+          planType: planType === "webinar" ? "WEBINAR" : "CLASS",
+          planId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately. BetterAuth caches sessions in Redis;
     // those entries expire on TTL and are non-load-bearing.
@@ -230,11 +254,11 @@ export async function scrubUser(
   });
 
   // Stream revocation is best-effort after commit, as in the moderation
-  // side-effects; the rows are REMOVED either way and a miss is reported.
-  // #1593 — and RECORDED: a pair that failed is written onto the erasure
-  // request so the retry sweep re-drives it instead of a human noticing.
-  const pending: CollaborationRef[] = [];
+  // side-effects; the rows are REMOVED either way. #1593 — each attempt
+  // settles its outbox row: SUCCEEDED here, or FAILED with the first retry
+  // slot for the sweep to pick up.
   for (const { planType, planId } of collaborationsRemoved) {
+    let error: string | null = null;
     try {
       // Lazy: the service pulls Stream and Novu, which the scrub does not need
       // unless a collaboration was actually flipped.
@@ -246,37 +270,41 @@ export async function scrubUser(
         userId,
         { notify: false },
       );
-      if (!success) {
-        pending.push({ planType, planId });
-        reportSentryError(
-          new Error("Collaborator Stream access not fully revoked on erasure"),
-          {
-            subsystem: "compliance",
-            op: "scrubUser.revokeCollaboratorAccess",
-            extra: { planType, planId },
-          },
-        );
-      }
-    } catch (error) {
-      pending.push({ planType, planId });
-      reportSentryError(error, {
+      if (!success) error = "Collaborator Stream access not fully revoked";
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+    if (error) {
+      reportSentryError(new Error(`${error} on erasure`), {
         subsystem: "compliance",
         op: "scrubUser.revokeCollaboratorAccess",
         extra: { planType, planId },
       });
     }
-  }
-  if (pending.length > 0) {
-    await prisma.erasureRequest
-      .updateMany({
-        where: { userId, status: { not: "REJECTED" } },
-        data: { pendingStreamRevocations: pending },
+    if (!erasureRequestId) continue;
+    await prisma.streamRevocationRetry
+      .update({
+        where: {
+          erasureRequestId_planType_planId: {
+            erasureRequestId,
+            planType: planType === "webinar" ? "WEBINAR" : "CLASS",
+            planId,
+          },
+        },
+        data: error
+          ? {
+              status: "FAILED",
+              attempts: 1,
+              lastError: error,
+              nextRetryAt: nextRetryAt(1, now),
+            }
+          : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
       })
-      .catch((error) =>
-        reportSentryError(error, {
+      .catch((caught) =>
+        reportSentryError(caught, {
           subsystem: "compliance",
-          op: "scrubUser.recordPendingRevocations",
-          extra: { userId, pending },
+          op: "scrubUser.settleRevocationOutbox",
+          extra: { planType, planId },
         }),
       );
   }

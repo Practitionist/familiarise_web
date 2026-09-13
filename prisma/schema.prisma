@@ -6966,28 +6966,55 @@ model ScimGroupMapping {
 /// migration — Prisma 7's `partialIndexes` is still preview and the DB
 /// is the authoritative gate for "at most one open request per user".
 model ErasureRequest {
-  id                       String        @id @default(cuid())
-  userId                   String
-  user                     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  requestedAt              DateTime      @default(now())
-  completedAt              DateTime?
-  status                   ErasureStatus @default(PENDING)
-  reason                   String?       @db.Text
+  id                      String                  @id @default(cuid())
+  userId                  String
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt             DateTime                @default(now())
+  completedAt             DateTime?
+  status                  ErasureStatus           @default(PENDING)
+  reason                  String?                 @db.Text
   /// FK to the admin (User row with role=ADMIN) who processed or
   /// rejected the request. SetNull on admin deletion so the audit row
   /// survives — the regulatory evidence-of-erasure trail must outlive
   /// staff turnover. The processor's role is verified at the route
   /// layer; no DB-side enum constraint.
-  processedByAdminId       String?
-  processedByAdmin         User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
-  notes                    String?       @db.Text
-  /// #1593 — `(planType, planId)` pairs whose Stream revocation failed during the
-  /// scrub; the retry sweep re-drives them and clears this. NULL = nothing owed.
-  pendingStreamRevocations Json?
+  processedByAdminId      String?
+  processedByAdmin        User?                   @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
+  notes                   String?                 @db.Text
+  /// #1593 — the Stream revocations the scrub still owes, one outbox row each.
+  streamRevocationRetries StreamRevocationRetry[]
 
   @@index([status, requestedAt])
   @@index([processedByAdminId])
   @@index([userId])
+}
+
+/// #1593 — an outbox row per (plan, erasure) whose Stream revocation failed inside
+/// the scrub; the retry sweep drains it, like FailedEmail / OutboundWebhookDelivery.
+model StreamRevocationRetry {
+  id               String           @id @default(cuid())
+  erasureRequest   ErasureRequest   @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
+  erasureRequestId String
+  planType         CollaboratorType
+  planId           String
+  status           RetryStatus      @default(PENDING)
+  attempts         Int              @default(0)
+  nextRetryAt      DateTime?        @db.Timestamptz
+  lastError        String?          @db.Text
+  completedAt      DateTime?        @db.Timestamptz
+  createdAt        DateTime         @default(now()) @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @db.Timestamptz
+
+  @@unique([erasureRequestId, planType, planId])
+  @@index([status, nextRetryAt])
+}
+
+/// Declared after the model that uses it. FAILED = the last attempt failed and
+/// the next is scheduled; SUCCEEDED is terminal.
+enum RetryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
 }
 
 enum ErasureStatus {

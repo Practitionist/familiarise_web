@@ -29,8 +29,8 @@ import type {
   ModerationReportType,
 } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   applyStreamEnforcement,
@@ -231,54 +231,63 @@ async function retryModerationEnforcementUnlocked(
   return result;
 }
 
-/** A `(planType, planId)` pair as `scrubUser` wrote it. */
-type PendingRevocation = { planType: "webinar" | "class"; planId: string };
-
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
 ): Promise<void> {
-  const requests = await prisma.erasureRequest.findMany({
-    where: { pendingStreamRevocations: { not: Prisma.DbNull } },
-    select: { id: true, userId: true, pendingStreamRevocations: true },
-    orderBy: { requestedAt: "asc" },
+  const now = new Date();
+  // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
+  // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
+  const rows = await prisma.streamRevocationRetry.findMany({
+    where: {
+      status: { in: ["PENDING", "FAILED"] },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      planType: true,
+      planId: true,
+      attempts: true,
+      erasureRequest: { select: { userId: true } },
+    },
+    orderBy: { createdAt: "asc" },
     take: limit,
   });
-  if (requests.length === 0) return;
+  if (rows.length === 0) return;
 
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
-  for (const request of requests) {
-    const owed = (request.pendingStreamRevocations ??
-      []) as PendingRevocation[];
-    const stillFailing: PendingRevocation[] = [];
-    for (const { planType, planId } of owed) {
-      try {
-        const { success } = await revokeCollaboratorAccess(
-          planType,
-          planId,
-          request.userId,
-          { notify: false },
-        );
-        if (!success) stillFailing.push({ planType, planId });
-      } catch {
-        stillFailing.push({ planType, planId });
-      }
-    }
-    await prisma.erasureRequest.update({
-      where: { id: request.id },
-      data: {
-        pendingStreamRevocations:
-          stillFailing.length > 0 ? stillFailing : Prisma.DbNull,
-      },
-    });
-    if (stillFailing.length === 0) {
-      result.erasureRevocationsRecovered++;
-    } else {
-      result.stillFailing++;
-      result.errors.push(
-        `erasure ${request.id}: ${stillFailing.map((p) => `${p.planType}:${p.planId}`).join(", ")}`,
+  for (const row of rows) {
+    const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+    let error: string | null = null;
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        row.planId,
+        row.erasureRequest.userId,
+        { notify: false },
       );
+      if (!success) error = "Collaborator Stream access not fully revoked";
+    } catch (caught) {
+      error = errMsg(caught);
+    }
+    const attempts = row.attempts + 1;
+    await prisma.streamRevocationRetry.update({
+      where: { id: row.id },
+      data: error
+        ? {
+            status: "FAILED",
+            attempts,
+            lastError: error,
+            nextRetryAt: nextRetryAt(attempts, now),
+          }
+        : { status: "SUCCEEDED", attempts, completedAt: now },
+    });
+    if (error) {
+      result.stillFailing++;
+      result.errors.push(`erasure-revoke ${row.id}: ${error}`);
+    } else {
+      result.erasureRevocationsRecovered++;
     }
   }
 }

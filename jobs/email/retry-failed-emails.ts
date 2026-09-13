@@ -41,22 +41,17 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { nextRetryAt } from "@/lib/retry/backoff";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
 
 /**
- * Backoff keyed by the attempt number AFTER incrementing. A row at
- * `attempts = 0` that we just re-sent once looks up `BACKOFF_MS[1]` for when
- * to try next. Identical schedule to the webhook worker by design.
+ * The shared outbox schedule (lib/retry/backoff.ts), re-exported so the
+ * existing pins keep reading it from here. Identical to the webhook worker
+ * and the erasure revocation retry by design (#1593).
  */
-export const BACKOFF_MS: Record<number, number> = {
-  1: 60_000, // 1 min
-  2: 5 * 60_000, // 5 min
-  3: 30 * 60_000, // 30 min
-  4: 2 * 60 * 60_000, // 2 h
-  5: 8 * 60 * 60_000, // 8 h
-};
+export { BACKOFF_MS } from "@/lib/retry/backoff";
 
 export interface EmailRetryRunResult {
   scanned: number;
@@ -177,13 +172,12 @@ export async function runEmailRetryTick(params: {
       });
       result.deadLettered += 1;
     } else {
-      const backoff = BACKOFF_MS[nextAttemptNumber] ?? BACKOFF_MS[MAX_ATTEMPTS];
       await prisma.failedEmail.update({
         where: { id: row.id },
         data: {
           status: "RETRY",
           attempts: attemptNumber,
-          nextRetryAt: new Date(now() + backoff),
+          nextRetryAt: nextRetryAt(nextAttemptNumber, new Date(now())),
           lastError: sendError,
         },
       });
