@@ -75,11 +75,18 @@ const RETIRED_IDENTIFIERS = [
 const RETIRED_SUBSTRINGS = ["prisma.feedback.", "/api/slots/"];
 
 /**
- * Files exempt from the code-tree scan. EMPTY by design: the reset retired the
- * names everywhere, and an allowlist is how a retired name outlives its model.
- * The guard's own source and its jest fixture are excluded by construction.
+ * Files exempt from the code-tree scan, read from a sidecar JSON list so an
+ * exemption is a reviewed diff, not a code edit. EMPTY by design: the reset
+ * retired the names everywhere, and an allowlist is how a retired name outlives
+ * its model. The guard's own source and its jest fixture are excluded by
+ * construction, not by the list.
  */
-const ALLOWLIST: string[] = [];
+const ALLOWLIST_FILE = path.join("scripts", "ci", "terminology-allowlist.json");
+const ALLOWLIST: ReadonlySet<string> = new Set(
+  JSON.parse(
+    fs.readFileSync(path.join(ROOT, ALLOWLIST_FILE), "utf8"),
+  ) as string[],
+);
 
 const SELF = path.relative(ROOT, __filename);
 /** The jest pin writes a retired name into a throwaway fixture; not an offence. */
@@ -151,8 +158,7 @@ export function scanTrees(trees: string[], root: string): Offence[] {
   for (const tree of trees) {
     for (const file of walk(path.join(root, tree))) {
       const rel = path.relative(root, file);
-      if (rel === SELF || rel === SELF_TEST || ALLOWLIST.includes(rel))
-        continue;
+      if (rel === SELF || rel === SELF_TEST || ALLOWLIST.has(rel)) continue;
       offences.push(...scanFile(file, root));
     }
   }
