@@ -138,6 +138,12 @@ jobs:
         # boundary map; that half is enforced by the extension drift test.
         run: npx --yes tsx@4.23.1 scripts/ci/check-money-columns.ts
 
+      - name: Terminology guard
+        # #1554 — the scheduling vocabulary the reset retired (SlotOfAppointment,
+        # MeetingSession, TrialSession, /api/slots/ …) must not come back into
+        # code. Docs and prompts are reported, never fatal. Static only.
+        run: npx --yes tsx@4.23.1 scripts/ci/check-terminology.ts
+
       - name: Workflow hygiene guard
         # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
         # and the job still reports success — that is how #677 PM-1 came back
