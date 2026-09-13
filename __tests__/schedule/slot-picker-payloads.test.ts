@@ -58,7 +58,7 @@ function pollutedSlot(id: string, startsAt: string) {
     deletedAt: null,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     updatedAt: new Date("2026-01-01T00:00:00Z"),
-    meetingSession: {
+    meeting: {
       id: "session-1",
       endedAt: null,
       recordings: [

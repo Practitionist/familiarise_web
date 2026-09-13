@@ -66,7 +66,7 @@ export interface VolumeConfig {
   responsesPerTicket: { min: number; max: number };
   // Phase 11: Documents & Meetings
   appointmentDocuments: number;
-  meetingSessions: number;
+  meetings: number;
   recordingsPerSession: number;
   // Phase 12: Payment Extensions
   refunds: number;
@@ -127,7 +127,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     supportTickets: 20,
     responsesPerTicket: { min: 1, max: 3 },
     appointmentDocuments: 60,
-    meetingSessions: 75,
+    meetings: 75,
     recordingsPerSession: 0.5,
     refunds: 15,
     disputes: 8,
@@ -181,7 +181,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     supportTickets: 80,
     responsesPerTicket: { min: 1, max: 5 },
     appointmentDocuments: 250,
-    meetingSessions: 350,
+    meetings: 350,
     recordingsPerSession: 0.6,
     refunds: 60,
     disputes: 30,
@@ -235,7 +235,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     supportTickets: 200,
     responsesPerTicket: { min: 1, max: 7 },
     appointmentDocuments: 600,
-    meetingSessions: 800,
+    meetings: 800,
     recordingsPerSession: 0.7,
     refunds: 150,
     disputes: 80,

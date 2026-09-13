@@ -186,7 +186,7 @@ export function mapAppointmentDetail(
 
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
     a.occurrences.flatMap((slot) =>
-      (slot.meetingSession?.recordings ?? []).map((rec) => ({
+      (slot.meeting?.recordings ?? []).map((rec) => ({
         id: rec.id,
         title: rec.title,
         url: rec.storageUrl ?? rec.recordingUrl ?? null,

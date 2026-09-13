@@ -8,9 +8,9 @@
  *
  * The client sends the run's anchor because that is what `OccurrenceVM.slotId`
  * carries, so the video path was safe by accident: only the anchor holds a
- * MeetingSession, so `heldSlot`'s attendance arm rejects every other row of the
+ * Meeting, so `heldOccurrence`'s attendance arm rejects every other row of the
  * run on its own. The OFFLINE path had no such backstop. An in-person 90-minute
- * session is three UNVERIFIED rows, each of which satisfies `heldSlot`
+ * session is three UNVERIFIED rows, each of which satisfies `heldOccurrence`
  * independently, so three separate ratings could be stored for one conversation
  * and the org quality aggregate would count all three.
  *

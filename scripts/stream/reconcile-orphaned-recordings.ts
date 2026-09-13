@@ -5,7 +5,7 @@
  * delivers `call.recording_ready` and the webhook writes a `Recording` row.
  * When that delivery is lost — a narrowed subscription, a missing webhook
  * secret, a 5xx from our own route during a deploy — nothing notices. The
- * `MeetingSession` still carries `recordingStartedAt`, because the START of the
+ * `Meeting` still carries `recordingStartedAt`, because the START of the
  * recording was written by our own code rather than by a webhook, so the
  * database says a recording was made and simply has no row for it.
  *
@@ -203,7 +203,7 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
   // cleared when the call stops, so it is false for exactly the sessions this
   // job cares about; `recordingStartedAt` is the durable record that a
   // recording was started, and our own code wrote it rather than a webhook.
-  const orphaned = await prisma.meetingSession.findMany({
+  const orphaned = await prisma.meeting.findMany({
     where: {
       recordingStartedAt: { gte: notBefore, lt: notAfter },
       streamCallId: { not: "" },
@@ -220,7 +220,7 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
   // reported so the number is visible — it is the count of recordings this
   // platform has permanently lost, which is the figure that should drive
   // whether the webhook itself gets more attention.
-  result.unrecoverable = await prisma.meetingSession.count({
+  result.unrecoverable = await prisma.meeting.count({
     where: {
       recordingStartedAt: { lt: notBefore },
       streamCallId: { not: "" },
@@ -238,7 +238,7 @@ async function reconcileOrphanedRecordingsUnlocked(): Promise<OrphanedRecordingR
   const partialBudget = MAX_SESSIONS_PER_RUN - orphaned.length;
   const partial =
     partialBudget > 0
-      ? await prisma.meetingSession.findMany({
+      ? await prisma.meeting.findMany({
           where: {
             recordingStartedAt: { gte: notBefore, lt: notAfter },
             streamCallId: { not: "" },

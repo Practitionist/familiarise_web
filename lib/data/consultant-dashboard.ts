@@ -124,7 +124,7 @@ const appointmentInclude = {
   occurrences: {
     orderBy: { startsAt: "asc" as const },
     include: {
-      meetingSession: {
+      meeting: {
         select: { id: true, endedAt: true, endedReason: true },
       },
     },
@@ -624,7 +624,7 @@ export async function getConsultantDashboard(
         endsAt: slot.endsAt,
         isTentative: slot.isTentative,
         completionStatus: slot.completionStatus,
-        meetingSession: slot.meetingSession ?? null,
+        meeting: slot.meeting ?? null,
       })),
       consultation: appointment.consultation
         ? {

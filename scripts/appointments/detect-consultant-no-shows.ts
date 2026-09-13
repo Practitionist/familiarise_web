@@ -54,7 +54,7 @@ import {
   NO_SHOW_GRACE_MINUTES,
   attendedAnySession,
   classifyConsultantAttendance,
-  meetingSessionsOf,
+  meetingsOf,
 } from "@/lib/booking/attendance";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -94,7 +94,7 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
 
 // Candidate consultations: still active (not already cancelled/completed),
 // paid, whose slots have all ended past the grace window and where a
-// MeetingSession actually happened (the call took place — a precondition for
+// Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
 function findNoShowCandidates(graceCutoff: Date) {
   return prisma.consultation.findMany({
@@ -116,7 +116,7 @@ function findNoShowCandidates(graceCutoff: Date) {
           every: { endsAt: { lt: graceCutoff } },
           some: {
             endsAt: { lt: graceCutoff },
-            meetingSession: { isNot: null },
+            meeting: { isNot: null },
           },
         },
       },
@@ -145,7 +145,7 @@ function findNoShowCandidates(graceCutoff: Date) {
           },
           occurrences: {
             include: {
-              meetingSession: {
+              meeting: {
                 include: { attendances: { select: { userId: true } } },
               },
             },
@@ -220,7 +220,7 @@ export async function refusalFromStreamEvidence(
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
   const callIds = (consultation.appointment?.occurrences ?? [])
-    .map((slot) => slot.meetingSession?.streamCallId)
+    .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
   if (callIds.length === 0) return "no Stream call on any slot";
@@ -336,9 +336,7 @@ export async function detectBothAbsent(
       const consulteeUserId = consultation.requestedBy?.userId;
       if (!consultantUserId || !consulteeUserId) continue;
 
-      const sessions = meetingSessionsOf(
-        consultation.appointment?.occurrences ?? [],
-      );
+      const sessions = meetingsOf(consultation.appointment?.occurrences ?? []);
       if (sessions.length === 0) continue;
 
       const anyoneJoined =

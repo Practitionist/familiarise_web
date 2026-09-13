@@ -203,7 +203,7 @@ describe("ending the call ends the occurrence", () => {
 
   it("does not re-light Join later in the booked hour", () => {
     const slots = oneHour();
-    slots[0].meetingSession = ended;
+    slots[0].meeting = ended;
 
     for (const now of ["10:25", "10:45", "10:59"]) {
       expect(
@@ -222,7 +222,7 @@ describe("ending the call ends the occurrence", () => {
     // 10:00-11:00 booking produced this row. Treating it like a host closing
     // the room locked BOTH sides out of a session they had paid for.
     const slot = row("A", "10:00", "11:00", {
-      meetingSession: {
+      meeting: {
         id: "ms-1",
         endedAt: at("10:10"),
         endedReason: "session_timeout",
@@ -237,7 +237,7 @@ describe("ending the call ends the occurrence", () => {
     // "I could not tell", which is not the same as "the host closed it".
     for (const reason of ["reconciled_no_end", "stream_not_found"]) {
       const slot = row("A", "10:00", "11:00", {
-        meetingSession: {
+        meeting: {
           id: "ms-1",
           endedAt: at("10:10"),
           endedReason: reason,
@@ -255,7 +255,7 @@ describe("ending the call ends the occurrence", () => {
     // deliberate is the conservative direction; the REQUIRED field on the
     // occurrence shape is what stops a forgetful projection reaching this.
     const slot = row("A", "10:00", "11:00", {
-      meetingSession: { id: "ms-1", endedAt: at("10:10"), endedReason: null },
+      meeting: { id: "ms-1", endedAt: at("10:10"), endedReason: null },
     });
 
     expect(getOccurrenceJoinState(slot, { now: at("10:25") })).toBe("ended");

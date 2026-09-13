@@ -80,7 +80,7 @@ const candidate = (streamCallIds: string[], attendeeIds: string[][] = []) => ({
     id: "appt-1",
     organizationId: null,
     occurrences: streamCallIds.map((streamCallId, i) => ({
-      meetingSession: {
+      meeting: {
         streamCallId,
         attendances: (attendeeIds[i] ?? []).map((userId) => ({ userId })),
       },

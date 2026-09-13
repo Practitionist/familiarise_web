@@ -3985,7 +3985,7 @@ export class SchedulingService {
    *                        Appointments are only deleted if they have zero remaining slots
    *                        after tentative slot removal. This is used for partial reschedules.
    * @param preservePastSlots - If true (and onlyTentative is false), only delete future slots,
-   *                            preserving past confirmed slots and their MeetingSession records.
+   *                            preserving past confirmed slots and their Meeting records.
    *                            Used for in-progress reallocation of classes/subscriptions.
    * @returns preservedSlotCount - Number of past slots that were preserved.
    * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
@@ -4117,7 +4117,7 @@ export class SchedulingService {
           participants: { where: liveParticipant(), select: { userId: true } },
           occurrences: {
             include: {
-              meetingSession: { select: { id: true, endedAt: true } },
+              meeting: { select: { id: true, endedAt: true } },
             },
           },
           // The payment guard on the empty-appointment delete below rides in
@@ -4142,12 +4142,12 @@ export class SchedulingService {
         const protectedFutureSlots = futureSlots.filter(
           (slot) =>
             new Date(slot.startsAt) < imminentCutoff ||
-            (slot.meetingSession && !slot.meetingSession.endedAt),
+            (slot.meeting && !slot.meeting.endedAt),
         );
         const deletableFutureSlots = futureSlots.filter(
           (slot) =>
             new Date(slot.startsAt) >= imminentCutoff &&
-            (!slot.meetingSession || slot.meetingSession.endedAt !== null),
+            (!slot.meeting || slot.meeting.endedAt !== null),
         );
 
         preservedSlotCount += pastSlots.length + protectedFutureSlots.length;
@@ -4210,11 +4210,11 @@ export class SchedulingService {
           // #1554 — live seat holders, so enrolled learners on a group event
           // can be re-seated on the replacement appointments.
           participants: { where: liveParticipant(), select: { userId: true } },
-          // meetingSession rides along so held-session slots can be preserved
-          // (#1169 PR 1 — deleting them cascades MeetingSession → Recording).
+          // meeting rides along so held-session slots can be preserved
+          // (#1169 PR 1 — deleting them cascades Meeting → Recording).
           occurrences: {
             include: {
-              meetingSession: { select: { id: true } },
+              meeting: { select: { id: true } },
             },
           },
           _count: { select: { payment: true } },
@@ -4233,17 +4233,17 @@ export class SchedulingService {
       // Every sessionless row below is deleted whichever arm runs; a
       // held-session row survives and keeps its ordinal.
       const freed = existingAppointments.flatMap((appointment) =>
-        appointment.occurrences.filter((slot) => slot.meetingSession === null),
+        appointment.occurrences.filter((slot) => slot.meeting === null),
       );
 
       await Promise.all(
         existingAppointments.map(async (appointment) => {
-          // #1169 PR 1 — a slot whose MeetingSession already happened is
-          // history, not availability: deleting it cascades MeetingSession →
+          // #1169 PR 1 — a slot whose Meeting already happened is
+          // history, not availability: deleting it cascades Meeting →
           // Recording. Preserve the appointment and every held-session slot;
           // only sessionless slots are freed.
           const hasHeldSession = appointment.occurrences.some(
-            (slot) => slot.meetingSession !== null,
+            (slot) => slot.meeting !== null,
           );
           if ((appointment._count?.payment ?? 0) > 0 || hasHeldSession) {
             // Keep the Appointment (and its Payment + ConsultantEarnings audit
@@ -4258,7 +4258,7 @@ export class SchedulingService {
             return tx.appointmentOccurrence.deleteMany({
               where: {
                 appointmentId: appointment.id,
-                meetingSession: { is: null },
+                meeting: { is: null },
               },
             });
           }
@@ -4278,7 +4278,7 @@ export class SchedulingService {
             return tx.appointmentOccurrence.deleteMany({
               where: {
                 appointmentId: appointment.id,
-                meetingSession: { is: null },
+                meeting: { is: null },
               },
             });
           }

@@ -41,7 +41,7 @@ export interface OccurrenceLike {
   completionStatus?: string | null;
   /** A10 soft-delete tombstone (#676) — a set value means the row is gone. */
   deletedAt?: Date | string | null;
-  meetingSession?: {
+  meeting?: {
     id: string;
     endedAt: Date | string | null;
     /** #1270 — required; see the note in lib/appointments/occurrences.ts. */
@@ -167,8 +167,8 @@ export function toOccurrenceVM(row: OccurrenceLike): OccurrenceVM {
     endsAt: toDateOrNull(row.endsAt),
     isTentative: row.isTentative,
     completionStatus: row.completionStatus ?? null,
-    meetingEndedAt: toDateOrNull(row.meetingSession?.endedAt),
-    meetingEndedReason: row.meetingSession?.endedReason ?? null,
+    meetingEndedAt: toDateOrNull(row.meeting?.endedAt),
+    meetingEndedReason: row.meeting?.endedReason ?? null,
   };
 }
 

@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Check access permissions
-    const appointment = recording.meetingSession.occurrence.appointment;
+    const appointment = recording.meeting.occurrence.appointment;
 
     let hasAccess = false;
     // True when the ONLY thing letting this caller through is their platform
@@ -179,9 +179,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         surface: "GET /api/stream/recordings/[recordingId]",
         played: mayPlay,
         recordingId: recording.id,
-        meetingSessionId: recording.meetingSession?.id ?? null,
-        streamCallId: recording.meetingSession?.streamCallId ?? null,
-        organizationId: recording.meetingSession?.organizationId ?? null,
+        meetingId: recording.meeting?.id ?? null,
+        streamCallId: recording.meeting?.streamCallId ?? null,
+        organizationId: recording.meeting?.organizationId ?? null,
       });
     }
 

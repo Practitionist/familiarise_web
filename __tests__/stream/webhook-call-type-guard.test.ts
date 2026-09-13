@@ -16,7 +16,7 @@
  * So a user who knew one of their own anchor slot ids could `getOrCreate`
  * `development:slot-<id>`, record anything, and have Stream deliver a genuine,
  * correctly-signed `call.recording_ready` whose id half collided with a real
- * MeetingSession — binding their recording to someone else's appointment.
+ * Meeting — binding their recording to someone else's appointment.
  * Signature verification cannot help: the event really is from Stream.
  *
  * These tests fail without the guard.
@@ -103,7 +103,7 @@ describe("webhook call-type guard", () => {
         RECORDING_READY(`${foreignType}:slot-abc`),
         `evt-${foreignType}`,
       );
-      // The id half collides with a real MeetingSession; the type half is the
+      // The id half collides with a real Meeting; the type half is the
       // only thing that distinguishes this from a genuine event.
       expect(mockHandleRecordingReady).not.toHaveBeenCalled();
     },

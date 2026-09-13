@@ -65,7 +65,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
   // be held open by a backlog.
   const now = new Date();
   const liveSince = new Date(now.getTime() - LIVE_SESSION_WINDOW_MS);
-  const activeSessions = await prisma.meetingSession.findMany({
+  const activeSessions = await prisma.meeting.findMany({
     where: {
       endedAt: null,
       occurrence: {
@@ -178,7 +178,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     if (session.isRecording) {
       try {
         await RecordingService.stopRecording(session.streamCallId);
-        await prisma.meetingSession.update({
+        await prisma.meeting.update({
           where: { id: session.id },
           data: { isRecording: false },
         });
@@ -252,7 +252,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     const endedAt = new Date();
     try {
       await prisma.$transaction(async (tx) => {
-        await tx.meetingSession.update({
+        await tx.meeting.update({
           where: { id: session.id },
           data: { endedAt, endedReason: "maintenance" },
         });
@@ -657,7 +657,7 @@ async function ledgerMarkedIncomplete(): Promise<boolean> {
  * therefore never stamped. It is a floor, not the mechanism.
  */
 async function deriveChannelsToUnfreeze(): Promise<string[]> {
-  const drained = await prisma.meetingSession.findMany({
+  const drained = await prisma.meeting.findMany({
     where: {
       endedReason: "maintenance",
       endedAt: { gte: new Date(Date.now() - LIVE_SESSION_WINDOW_MS) },

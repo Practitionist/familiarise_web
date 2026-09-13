@@ -218,7 +218,7 @@ function bookingRows(opts: {
   completedSlotHours?: number[];
   /** Sessions terminalised BEFORE this cancellation — a session the plan held. */
   cancelledSlotHours?: number[];
-  /** Past sessions with no MeetingSession row (offline, most likely held). */
+  /** Past sessions with no Meeting row (offline, most likely held). */
   unverifiedSlotHours?: number[];
   paymentRefunds?: { amountPaise: number; status: string }[];
   noPayment?: boolean;
@@ -509,7 +509,7 @@ describe("subscriptions", () => {
   });
 
   it("counts an unverified past session as delivered, not as owed", async () => {
-    // UNVERIFIED is "past, no MeetingSession row" — an offline session that most
+    // UNVERIFIED is "past, no Meeting row" — an offline session that most
     // likely happened. It is neither COMPLETED nor live, so a completed+live
     // denominator made a 30%-consumed plan score 7/7 and refund the whole price.
     mockGetSession.mockResolvedValue(sessionAs("consultee"));

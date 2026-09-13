@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
-import { heldSlot } from "@/lib/reviews";
+import { heldOccurrence } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
@@ -84,7 +84,10 @@ export async function GET(
     const rateable = asProvider
       ? []
       : await prisma.appointmentOccurrence.findMany({
-          where: { appointmentId: { in: scopeIds }, ...heldSlot(auth.userId) },
+          where: {
+            appointmentId: { in: scopeIds },
+            ...heldOccurrence(auth.userId),
+          },
           select: { id: true },
         });
 
@@ -177,9 +180,9 @@ export async function POST(
         // You may rate a call you ATTENDED, or one nobody could have recorded
         // (an offline session). A COMPLETED slot the caller never joined does
         // not qualify: a no-show rating would otherwise feed the consultant's
-        // quality signal. `heldSlot` also excludes cancelled and rescheduled
+        // quality signal. `heldOccurrence` also excludes cancelled and rescheduled
         // calls, which never happened at all.
-        ...heldSlot(auth.userId),
+        ...heldOccurrence(auth.userId),
       },
       select: { id: true },
     });

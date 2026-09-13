@@ -8,7 +8,7 @@
  * was silently recorded as an UNVERIFIED completion. All of them go through here
  * now.
  *
- * `MeetingSession.streamCallId` stores the BARE id (e.g. `occurrence-<occurrenceId>`),
+ * `Meeting.streamCallId` stores the BARE id (e.g. `occurrence-<occurrenceId>`),
  * never the cid. Stream webhooks send the cid. Keep the two straight.
  */
 

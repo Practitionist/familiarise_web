@@ -269,7 +269,7 @@ async function completeConsultations(): Promise<{
           occurrences: {
             orderBy: { endsAt: "desc" },
             include: {
-              meetingSession: {
+              meeting: {
                 select: { attendances: { select: { userId: true } } },
               },
             },
@@ -604,8 +604,8 @@ async function completeTrials(): Promise<{
  * Mark individual AppointmentOccurrence records with per-slot completion status.
  * Runs BEFORE parent-level completion so that parent logic can rely on slot statuses.
  *
- * - Slots past buffer WITH MeetingSession.endedAt → COMPLETED
- * - Slots past buffer WITHOUT MeetingSession → UNVERIFIED (may be offline sessions)
+ * - Slots past buffer WITH Meeting.endedAt → COMPLETED
+ * - Slots past buffer WITHOUT Meeting → UNVERIFIED (may be offline sessions)
  */
 async function completeIndividualSlots(): Promise<{
   completed: number;
@@ -667,16 +667,16 @@ async function completeIndividualSlots(): Promise<{
       );
     };
     const completedCount = await runPass(
-      { meetingSession: { endedAt: { not: null } } },
+      { meeting: { endedAt: { not: null } } },
       OccurrenceCompletionStatus.COMPLETED,
       { completedAt: new Date() },
     );
     const unverifiedCount = await runPass(
-      { meetingSession: null },
+      { meeting: null },
       OccurrenceCompletionStatus.UNVERIFIED,
     );
     const orphanedCount = await runPass(
-      { meetingSession: { endedAt: null } },
+      { meeting: { endedAt: null } },
       OccurrenceCompletionStatus.UNVERIFIED,
     );
     if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {

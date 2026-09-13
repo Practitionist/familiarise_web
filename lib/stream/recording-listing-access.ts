@@ -1,7 +1,7 @@
 import type { Prisma, OrgPlanVisibility } from "@prisma/client";
 
 /**
- * Shared traversal for the #366 marketplace routes: Recording → MeetingSession
+ * Shared traversal for the #366 marketplace routes: Recording → Meeting
  * → AppointmentOccurrence → Appointment → (Webinar|Class)Plan. Every route used to
  * inline its own four-arm include + fallback chain — Sonar flagged the copy
  * drift as >3% new-code duplication, and duplicated authz selects are exactly
@@ -62,7 +62,7 @@ export function resolveListingPlan(
 // ---------------------------------------------------------------------------
 // Storage-policy resolution — used by the transfer route AND by
 // handleRecordingReady's premium kick. Covers ALL FOUR plan arms because any
-// appointment type can carry a MeetingSession.
+// appointment type can carry a Meeting.
 // ---------------------------------------------------------------------------
 
 const storagePolicyPlanSelect = {
@@ -208,7 +208,7 @@ export async function loadOwnedListingRecording(
       listPricePaise: true,
       previewClipUrl: true,
       previewTranscript: true,
-      meetingSession: {
+      meeting: {
         select: {
           occurrence: {
             select: {
@@ -221,9 +221,7 @@ export async function loadOwnedListingRecording(
   });
   if (!recording) return { status: "not_found" };
 
-  const plan = resolveListingPlan(
-    recording.meetingSession.occurrence.appointment,
-  );
+  const plan = resolveListingPlan(recording.meeting.occurrence.appointment);
   if (!plan) return { status: "not_found" };
 
   if (

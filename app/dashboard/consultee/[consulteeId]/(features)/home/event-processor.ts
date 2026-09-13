@@ -71,7 +71,7 @@ export interface ProcessedEvent {
  */
 export type ProcessedOccurrence = MeetingSlot & {
   completionStatus?: string | null;
-  meetingSession?: {
+  meeting?: {
     id: string;
     endedAt: Date | string | null;
     endedReason: string | null;
@@ -165,7 +165,7 @@ function toSlotContexts(
     isTentative: boolean;
     appointmentId: string | null;
     completionStatus?: string | null;
-    meetingSession?: {
+    meeting?: {
     id: string;
     endedAt: Date | string | null;
     endedReason: string | null;
@@ -184,9 +184,9 @@ function toSlotContexts(
       appointmentId: slot.appointmentId,
       // Both are already selected by the events read
       // (lib/data/consultee-events-read.ts): the slot include is unfiltered,
-      // and `meetingSession: { id, endedAt }` is explicit on all four types.
+      // and `meeting: { id, endedAt }` is explicit on all four types.
       completionStatus: slot.completionStatus ?? null,
-      meetingSession: slot.meetingSession ?? null,
+      meeting: slot.meeting ?? null,
     },
     appointmentId,
   }));

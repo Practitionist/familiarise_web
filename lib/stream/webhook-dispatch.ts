@@ -179,7 +179,7 @@ const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
  * That let a user who knew one of their own anchor slot ids call `getOrCreate`
  * on `development:occurrence-<id>`, record whatever they liked, and have Stream
  * deliver a genuine, correctly-signed `call.recording_ready` whose id half
- * collided with a real MeetingSession — binding their recording to someone
+ * collided with a real Meeting — binding their recording to someone
  * else's appointment. Signature checking is no defence: the event is authentic.
  * The same collision reached the session handlers, where injected participant
  * events feed attendance, which feeds no-show detection, which issues refunds.

@@ -1085,8 +1085,8 @@ model Organization {
   // so org dashboards manage handouts without polymorphic joins.
   planMaterialsByOrg      PlanMaterial[]           @relation("PlanMaterialByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
-  // `MeetingSession.organizationId` for the write-side rationale.
-  streamSessionsByOrg     MeetingSession[]         @relation("StreamSessionByOrg")
+  // `Meeting.organizationId` for the write-side rationale.
+  meetings                Meeting[]                @relation("MeetingByOrg")
 
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
@@ -1687,7 +1687,7 @@ model LicensedSeatConfig {
   /// `null` means unlimited — used for LICENSE-funded contracts where
   /// the flat fee already pays for unmetered usage.
   /// Term chosen to avoid collision with BetterAuth `Session` and Stream
-  /// `MeetingSession`.
+  /// `Meeting`.
   coveredEngagementsPerCycle Int?
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
@@ -4920,7 +4920,10 @@ model AppointmentOccurrence {
   /// partial-index guard excludes.
   consultantProfileId String?
 
-  meetingSession MeetingSession?
+  meeting     Meeting?
+  // #1554 — attendance is keyed to the call itself, so the "were you there"
+  // gate reads it without going through Meeting.
+  attendances MeetingAttendance[]
 
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4944,8 +4947,8 @@ model AppointmentOccurrence {
 
 enum OccurrenceCompletionStatus {
   SCHEDULED // Default — future, not yet happened
-  COMPLETED // Call held (MeetingSession.endedAt OR manual mark)
-  UNVERIFIED // Past + no MeetingSession record (may be an offline call)
+  COMPLETED // Call held (Meeting.endedAt OR manual mark)
+  UNVERIFIED // Past + no Meeting record (may be an offline call)
   CANCELLED // Explicitly cancelled before it occurred
   /// KEEP + WIRE decision (2026-06-10 audit): reschedule historically rode
   /// the isTentative boolean and never wrote this value; the reschedule flow
@@ -4955,7 +4958,7 @@ enum OccurrenceCompletionStatus {
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
 
-model MeetingSession {
+model Meeting {
   id           String   @id @default(cuid())
   streamCallId String   @unique
   platform     Platform @default(STREAM)
@@ -4973,7 +4976,7 @@ model MeetingSession {
 
   recordings        Recording[]
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
-  recordingConsents MeetingRecordingConsent[] // #1134 P1-7
+  recordingConsents RecordingConsent[] // #1134 P1-7
 
   occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentOccurrenceId String                @unique
@@ -4982,12 +4985,12 @@ model MeetingSession {
   /// the canonical tenant key (#674). Lets org-scoped Stream call audit
   /// queries (e.g. `/api/organizations/[orgId]/stream/calls`) index
   /// directly on (organizationId, createdAt) instead of joining
-  /// MeetingSession → AppointmentOccurrence → Appointment. Nullable because
+  /// Meeting → AppointmentOccurrence → Appointment. Nullable because
   /// platform calls (personal bookings) have no org context. Written at
-  /// MeetingSession.create time alongside appointmentOccurrenceId; never
+  /// Meeting.create time alongside appointmentOccurrenceId; never
   /// updated after.
   organizationId String?
-  organization   Organization? @relation("StreamSessionByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organization   Organization? @relation("MeetingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5001,7 +5004,7 @@ model MeetingSession {
 /// set on the first join, lastLeftAt advances on each leave, joinCount tracks
 /// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
 /// endedAt past the slot end). userId is the Stream user_id, which equals our
-/// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+/// User.id — stored plain like Meeting.recordingStartedBy, no FK.
 /// #1134 P1-7 — per-session recording consent.
 ///
 /// Before this, a consultee learned a session was being recorded from a passive
@@ -5018,13 +5021,13 @@ model MeetingSession {
 ///
 /// `noticeVersion` records which wording the person actually saw, so a later
 /// copy change cannot retroactively reinterpret an old decision.
-model MeetingRecordingConsent {
-  id               String         @id @default(uuid())
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
+model RecordingConsent {
+  id        String  @id @default(uuid())
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId String
   /// Stream user id, which equals User.id. Stored plain, matching
-  /// MeetingAttendance.userId and MeetingSession.recordingStartedBy.
-  userId           String
+  /// MeetingAttendance.userId and Meeting.recordingStartedBy.
+  userId    String
 
   decision      RecordingConsentDecision
   decidedAt     DateTime                 @db.Timestamptz
@@ -5035,11 +5038,11 @@ model MeetingRecordingConsent {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  /// One standing decision per person per session; changing your mind updates it.
-  @@unique([meetingSessionId, userId])
+  /// One standing decision per person per meeting; changing your mind updates it.
+  @@unique([meetingId, userId])
   @@index([userId])
-  /// Serves the recording gate: "has anyone on this session declined?"
-  @@index([meetingSessionId, decision])
+  /// Serves the recording gate: "has anyone on this meeting declined?"
+  @@index([meetingId, decision])
 }
 
 /// Declared below the model that uses it, per the schema convention.
@@ -5049,20 +5052,25 @@ enum RecordingConsentDecision {
 }
 
 model MeetingAttendance {
-  id               String         @id @default(cuid())
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
-  userId           String
-  firstJoinedAt    DateTime       @db.Timestamptz
-  lastLeftAt       DateTime?      @db.Timestamptz
-  joinCount        Int            @default(1)
+  id                      String                @id @default(cuid())
+  meeting                 Meeting               @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId               String
+  // #1554 — the call this attendance belongs to, stamped by the participant
+  // webhook so the rating gate reads "you were at THIS call" without a join.
+  occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String
+  userId                  String
+  firstJoinedAt           DateTime              @db.Timestamptz
+  lastLeftAt              DateTime?             @db.Timestamptz
+  joinCount               Int                   @default(1)
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([meetingSessionId, userId])
-  @@index([meetingSessionId])
+  @@unique([meetingId, userId])
+  @@index([meetingId])
   @@index([userId])
+  @@index([appointmentOccurrenceId, userId])
 }
 
 // Recording storage types
@@ -5219,18 +5227,18 @@ model Recording {
   // #366 — standalone replay purchases (see RecordingPurchase).
   purchases RecordingPurchase[]
 
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId String
 
   // #674 personal-vs-org scope split — denormalized via parent appointment
-  // (Recording → MeetingSession → AppointmentOccurrence → Appointment.organizationId).
+  // (Recording → Meeting → AppointmentOccurrence → Appointment.organizationId).
   organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([meetingSessionId])
+  @@index([meetingId])
   @@index([organizationId, createdAt])
   @@index([streamRecordingId])
   @@index([status])

@@ -18,7 +18,7 @@ function occurrence(startISO: string, completionStatus = "SCHEDULED") {
     endsAt: new Date(startsAt.getTime() + HOUR),
     isTentative: false,
     completionStatus,
-    meetingSession: null,
+    meeting: null,
   };
 }
 

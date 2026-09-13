@@ -271,7 +271,7 @@ export async function fetchExpertsMetadata() {
         }),
         // #1485 — the real "sessions completed" figure, replacing a hardcoded
         // "50K+". The unit is the SLOT, not the appointment: a slot is one
-        // meeting, and COMPLETED means it was actually held (a MeetingSession
+        // meeting, and COMPLETED means it was actually held (a Meeting
         // ended, or a consultant marked it). `Appointment` carries no status
         // of its own, and a subscription appointment spans many meetings.
         // UNVERIFIED (past, no meeting record) is deliberately excluded — it

@@ -45,14 +45,14 @@ export const NO_SHOW_GRACE_MINUTES = 120;
  */
 export const NO_SHOW_HANDOFF_MINUTES = NO_SHOW_GRACE_MINUTES + 120;
 
-/** The subset of a `MeetingSession` this module needs: who joined it. */
+/** The subset of a `Meeting` this module needs: who joined it. */
 export interface AttendedSession {
   attendances: { userId: string }[];
 }
 
 /** The subset of a `AppointmentOccurrence` this module needs: its session, if any. */
 export interface SlotWithSession<S extends AttendedSession = AttendedSession> {
-  meetingSession: S | null;
+  meeting: S | null;
 }
 
 /** The two parties whose presence decides a consultation's outcome. */
@@ -79,11 +79,11 @@ export type AttendanceVerdict =
   | "inconclusive";
 
 /** Every session that actually happened on a booking's slots. */
-export function meetingSessionsOf<S extends AttendedSession>(
+export function meetingsOf<S extends AttendedSession>(
   slots: readonly SlotWithSession<S>[],
 ): S[] {
   return slots
-    .map((slot) => slot.meetingSession)
+    .map((slot) => slot.meeting)
     .filter((session): session is S => !!session);
 }
 
@@ -106,7 +106,7 @@ export function classifyConsultantAttendance(
   slots: readonly SlotWithSession[],
   parties: SessionParties,
 ): AttendanceVerdict {
-  const sessions = meetingSessionsOf(slots);
+  const sessions = meetingsOf(slots);
   if (sessions.length === 0) return "inconclusive";
   if (attendedAnySession(sessions, parties.consultantUserId)) {
     return "consultant-attended";

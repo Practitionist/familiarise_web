@@ -343,7 +343,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
       slot.completionStatus === "RESCHEDULED"
     )
       return false;
-    if (slot.meetingSession?.endedAt) return false;
+    if (slot.meeting?.endedAt) return false;
     const start = new Date(slot.startsAt).getTime();
     const end = slot.endsAt
       ? new Date(slot.endsAt).getTime()

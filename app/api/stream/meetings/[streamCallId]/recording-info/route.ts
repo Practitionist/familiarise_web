@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { streamCallId } = await params;
 
     // Find meeting session by streamCallId
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
       include: {
         occurrence: {
@@ -110,14 +110,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       return NextResponse.json(
         { error: "Meeting session not found" },
         { status: 404 },
       );
     }
 
-    const appointment = meetingSession.occurrence?.appointment;
+    const appointment = meeting.occurrence?.appointment;
 
     // Authorization check - verify user has access to this meeting
     const consultantProfileId =
@@ -224,9 +224,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         surface: "GET /api/stream/meetings/[streamCallId]/recording-info",
         // No URL is ever returned by this endpoint.
         played: false,
-        meetingSessionId: meetingSession.id,
-        streamCallId: meetingSession.streamCallId,
-        organizationId: meetingSession.organizationId ?? null,
+        meetingId: meeting.id,
+        streamCallId: meeting.streamCallId,
+        organizationId: meeting.organizationId ?? null,
       });
     }
 
@@ -239,11 +239,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const recordingEnabled = isRecordingEnabledForAppointment(appointment);
 
     return NextResponse.json({
-      meetingSessionId: meetingSession.id,
+      meetingId: meeting.id,
       recordingEnabled,
-      isRecording: meetingSession.isRecording,
-      recordingStartedAt: meetingSession.recordingStartedAt,
-      recordingStartedBy: meetingSession.recordingStartedBy,
+      isRecording: meeting.isRecording,
+      recordingStartedAt: meeting.recordingStartedAt,
+      recordingStartedBy: meeting.recordingStartedBy,
     });
   } catch (error) {
     Sentry.captureException(

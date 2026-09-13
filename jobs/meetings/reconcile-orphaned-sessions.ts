@@ -1,7 +1,7 @@
 /**
  * Orphaned Meeting Session Reconciliation Job
  *
- * Finds MeetingSession records where endedAt IS NULL and the linked
+ * Finds Meeting records where endedAt IS NULL and the linked
  * slot's endsAt is >1 hour ago. For each, queries Stream API to check
  * actual call status and reconciles accordingly.
  *
@@ -56,7 +56,7 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
   // Find orphaned sessions: endedAt is null and slot ended >1 hour ago
-  const orphanedSessions = await prisma.meetingSession.findMany({
+  const orphanedSessions = await prisma.meeting.findMany({
     where: {
       endedAt: null,
       occurrence: {
@@ -136,7 +136,7 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
         endedReason === "reconciled" ? "COMPLETED" : "UNVERIFIED";
 
       const moved = await prisma.$transaction(async (tx) => {
-        await tx.meetingSession.update({
+        await tx.meeting.update({
           where: { id: session.id },
           data: { endedAt, endedReason },
         });

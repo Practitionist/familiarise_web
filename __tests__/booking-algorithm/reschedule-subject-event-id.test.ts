@@ -32,7 +32,7 @@ function consultationDetail(
           completionStatus: "SCHEDULED",
           appointmentId: "appt-uuid-1",
           user: [],
-          meetingSession: null,
+          meeting: null,
         },
       ],
       consultation: {
@@ -75,7 +75,7 @@ function subscriptionDetail(): TAppointmentDetail {
           completionStatus: "SCHEDULED",
           appointmentId: "appt-sub-1",
           user: [],
-          meetingSession: null,
+          meeting: null,
         },
       ],
       consultation: null,

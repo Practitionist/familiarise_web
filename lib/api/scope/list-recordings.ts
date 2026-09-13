@@ -2,7 +2,7 @@
  * Shared list-recordings query for the #674 / B1-hybrid scope split.
  * `Recording.organizationId` is denormalized from the parent appointment
  * (kept in sync by checkout + the backfill script). Listing by org is
- * a single-hop lookup instead of joining through MeetingSession →
+ * a single-hop lookup instead of joining through Meeting →
  * AppointmentOccurrence → Appointment.
  */
 
@@ -43,7 +43,7 @@ const recordingMetadataSelect = {
   recordedAt: true,
   createdAt: true,
   organizationId: true,
-  meetingSession: {
+  meeting: {
     select: {
       id: true,
       occurrence: {
@@ -109,7 +109,7 @@ function buildWhere(
     return {
       ...base,
       organizationId: null,
-      meetingSession: {
+      meeting: {
         occurrence: {
           appointment: {
             OR: [
@@ -134,7 +134,7 @@ function buildWhere(
     return {
       ...base,
       organizationId: params.scope.orgId,
-      meetingSession: {
+      meeting: {
         occurrence: {
           appointment: {
             OR: [

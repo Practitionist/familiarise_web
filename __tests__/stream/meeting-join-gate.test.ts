@@ -9,12 +9,12 @@
  * because it raced the access check: any signed-in visitor to `/meetings/<x>`
  * minted a billable Stream call and became its `created_by` before being shown
  * "Access Denied". Removing it was right. What it also removed was the only
- * thing repairing a `MeetingSession` row whose Stream call does not exist — and
+ * thing repairing a `Meeting` row whose Stream call does not exist — and
  * rows like that are not hypothetical:
  *
  *   - the seeds write them with `faker.string.uuid()` ids and no Stream object
  *     at all (75–800 rows depending on size, no production guard)
- *   - `createDbMeetingSession` is a `"use server"` action whose id validator is
+ *   - `createDbMeeting` is a `"use server"` action whose id validator is
  *     `z.string().min(1)`, so any entitled caller can persist any string
  *   - maintenance drain ends the Stream call and keeps the row
  *
@@ -103,7 +103,7 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingSession: { findUnique: jest.fn() },
+    meeting: { findUnique: jest.fn() },
     user: { findUnique: jest.fn() },
     appointmentOccurrence: { findMany: jest.fn(), findFirst: jest.fn() },
     appointmentParticipant: { findFirst: jest.fn() },
@@ -298,7 +298,7 @@ const { resolveMeetingAccess } = jest.requireActual<
 import prismaClient from "../../lib/prisma";
 
 const db = prismaClient as unknown as {
-  meetingSession: { findUnique: jest.Mock };
+  meeting: { findUnique: jest.Mock };
   user: { findUnique: jest.Mock };
   appointmentOccurrence: { findMany: jest.Mock; findFirst: jest.Mock };
   appointmentParticipant: { findFirst: jest.Mock };
@@ -315,7 +315,7 @@ function seedAccess(
   const startsAt = new Date(Date.now() - 5 * MINUTE);
   const endsAt = new Date(Date.now() + (opts.slotEndsInMs ?? 25 * MINUTE));
 
-  db.meetingSession.findUnique.mockResolvedValue({
+  db.meeting.findUnique.mockResolvedValue({
     id: "ms-1",
     streamCallId: "slot-abc",
     occurrence: {
@@ -335,7 +335,7 @@ function seedAccess(
       isTentative: false,
       completionStatus: "SCHEDULED",
       appointmentId: "appt-1",
-      meetingSession: { id: "ms-1", endedAt: null },
+      meeting: { id: "ms-1", endedAt: null },
     },
   ]);
   db.appointmentOccurrence.findFirst.mockResolvedValue(null);

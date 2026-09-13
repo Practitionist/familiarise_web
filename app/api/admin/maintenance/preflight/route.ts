@@ -23,7 +23,7 @@ export async function GET() {
     pendingPayouts,
     openDisputes,
   ] = await Promise.all([
-    prisma.meetingSession.count({ where: { endedAt: null } }),
+    prisma.meeting.count({ where: { endedAt: null } }),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
     prisma.appointmentOccurrence.count({
       where: {

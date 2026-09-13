@@ -72,7 +72,7 @@ interface MeetingResolved {
   /** Machine-readable verdict. Branch on this, never on `message`. */
   reason: "granted" | "unauthorized";
   streamCallId: string;
-  meetingSessionId: string;
+  meetingId: string;
   /**
    * The appointment this meeting belongs to, with each plan's owner and
    * `recordingEnabled` — the shape `lib/stream/recording-utils` consumes.
@@ -88,11 +88,8 @@ interface MeetingResolved {
 export type MeetingAccess = MeetingNotFound | MeetingResolved;
 
 /** Inferred from the resolver's own query — never hand-maintained. */
-type ResolvedMeetingSession = NonNullable<
-  Awaited<ReturnType<typeof loadMeetingSession>>
->;
-export type MeetingAppointment =
-  ResolvedMeetingSession["occurrence"]["appointment"];
+type ResolvedMeeting = NonNullable<Awaited<ReturnType<typeof loadMeeting>>>;
+export type MeetingAppointment = ResolvedMeeting["occurrence"]["appointment"];
 
 /** Hoisted so `MeetingAppointment` can be inferred from the real query. */
 const MEETING_SESSION_INCLUDE = {
@@ -149,11 +146,11 @@ const MEETING_SESSION_INCLUDE = {
       },
     },
   },
-} satisfies Prisma.MeetingSessionInclude;
+} satisfies Prisma.MeetingInclude;
 
-function loadMeetingSession(meetingId: string) {
-  return prisma.meetingSession.findUnique({
-    where: { streamCallId: meetingId },
+function loadMeeting(callId: string) {
+  return prisma.meeting.findUnique({
+    where: { streamCallId: callId },
     include: MEETING_SESSION_INCLUDE,
   });
 }
@@ -203,7 +200,7 @@ function bookingStatusRefusal(status: string | null): string | null {
  * How long after the scheduled run end a disconnected participant may still
  * re-enter. Calls overrun; without grace a reconnect at endsAt+1s would hit
  * a locked door mid-consultation. Past this — or once the host has ended the
- * call (meetingSession.endedAt) — the room is closed for good.
+ * call (meeting.endedAt) — the room is closed for good.
  */
 const REJOIN_GRACE_MS = 30 * 60 * 1000;
 
@@ -235,7 +232,7 @@ async function meetingPolicyRefusal(args: {
       isTentative: true,
       completionStatus: true,
       appointmentId: true,
-      meetingSession: {
+      meeting: {
         select: { id: true, endedAt: true, endedReason: true },
       },
     },
@@ -267,7 +264,7 @@ async function meetingPolicyRefusal(args: {
       // A DELIBERATE end — the host closing the room, or a maintenance drain —
       // closes it for everyone, immediately. An inactivity timeout does not:
       // see isDeliberateEnd. #1270.
-      if (isDeliberateEnd(occurrence.meetingSession)) {
+      if (isDeliberateEnd(occurrence.meeting)) {
         return "This session has ended.";
       }
 
@@ -329,12 +326,13 @@ async function callHasLiveParticipants(streamCallId: string): Promise<boolean> {
 }
 
 export async function resolveMeetingAccess(
-  meetingId: string,
+  // The `/meetings/[id]` segment: the Stream call id, not the Meeting row id.
+  callId: string,
   userId: string,
 ): Promise<MeetingAccess> {
-  const meetingSession = await loadMeetingSession(meetingId);
+  const meeting = await loadMeeting(callId);
 
-  if (!meetingSession) {
+  if (!meeting) {
     return {
       hasAccess: false,
       role: null,
@@ -343,9 +341,9 @@ export async function resolveMeetingAccess(
     };
   }
 
-  const streamCallId = meetingSession.streamCallId;
-  const meetingSessionId = meetingSession.id;
-  const appointment = meetingSession.occurrence.appointment;
+  const streamCallId = meeting.streamCallId;
+  const meetingId = meeting.id;
+  const appointment = meeting.occurrence.appointment;
 
   const userProfile = await prisma.user.findUnique({
     where: { id: userId },
@@ -398,7 +396,7 @@ export async function resolveMeetingAccess(
         message: statusRefusal ?? "This booking is no longer active.",
         reason: "unauthorized",
         streamCallId,
-        meetingSessionId,
+        meetingId,
         appointment,
       };
     }
@@ -414,7 +412,7 @@ export async function resolveMeetingAccess(
         message: refusal,
         reason: "unauthorized",
         streamCallId,
-        meetingSessionId,
+        meetingId,
         appointment,
       };
     }
@@ -424,7 +422,7 @@ export async function resolveMeetingAccess(
       message,
       reason: "granted",
       streamCallId,
-      meetingSessionId,
+      meetingId,
       appointment,
     };
   };
@@ -471,7 +469,7 @@ export async function resolveMeetingAccess(
     message: "You are not authorized to join this meeting",
     reason: "unauthorized",
     streamCallId,
-    meetingSessionId,
+    meetingId,
     appointment,
   };
 }

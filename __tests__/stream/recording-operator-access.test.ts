@@ -103,7 +103,7 @@ const recordingFixture = {
   previewClipDuration: 30,
   streamUrlExpiresAt: null,
   createdAt: new Date("2026-08-12T11:00:00Z"),
-  meetingSession: {
+  meeting: {
     id: "ms-1",
     streamCallId: "slot-abc",
     organizationId: "org-1",

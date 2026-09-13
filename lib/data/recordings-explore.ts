@@ -6,7 +6,7 @@
  * surface only. Select allowlists expose ONLY listing metadata: playback URLs
  * (recordingUrl, storagePath) must never reach an anonymous response.
  *
- * Consultant identity travels Recording → MeetingSession → AppointmentOccurrence
+ * Consultant identity travels Recording → Meeting → AppointmentOccurrence
  * → Appointment → (Webinar|Class)Plan → ConsultantProfile — there is no
  * direct FK, so both list and detail queries flatten that path server-side.
  */
@@ -32,7 +32,7 @@ const recordingListingSelect = {
   durationInMinutes: true,
   recordedAt: true,
   publishedAt: true,
-  meetingSession: {
+  meeting: {
     select: {
       occurrence: {
         select: {
@@ -113,7 +113,7 @@ export interface RecordingListing {
 }
 
 function flattenListing(row: ListingRow): RecordingListing | null {
-  const apt = row.meetingSession.occurrence.appointment;
+  const apt = row.meeting.occurrence.appointment;
   const webinarArm = apt.webinar?.webinarPlan;
   const classArm = apt.class?.classPlan;
   const plan = webinarArm ?? classArm;
@@ -158,7 +158,7 @@ export function publicRecordingWhere(): Prisma.RecordingWhereInput {
   return {
     listingStatus: "PUBLISHED",
     ...durablyOursWhere(),
-    meetingSession: {
+    meeting: {
       occurrence: {
         appointment: {
           OR: [

@@ -65,7 +65,7 @@ export interface JoinableOccurrence {
   isTentative?: boolean | null;
   completionStatus?: string | null;
   deletedAt?: Date | string | null;
-  meetingSession?: {
+  meeting?: {
     id: string;
     endedAt: Date | string | null;
     /**
@@ -207,7 +207,7 @@ export async function nextOrdinal(
  * Move the appointment's live occurrence to `startsAt` + duration (planner
  * Manage Timings and duration edits).
  *
- * In place, never delete + recreate: `MeetingSession` / `Recording` cascade on
+ * In place, never delete + recreate: `Meeting` / `Recording` cascade on
  * occurrence delete, so a host who opened the room once would lose recordings
  * to a duration-only edit. The live row keeps its id (Stream room key), a
  * surplus live row (a legacy atom) is soft-retired RESCHEDULED, and a booking
@@ -462,7 +462,7 @@ export function getOccurrenceJoinState(
   if (occurrence.isTentative) return "disabled";
   if (isDeadOccurrence(occurrence)) return "disabled";
   // The host closed the room (or maintenance drained it).
-  if (isDeliberateEnd(occurrence.meetingSession)) return "ended";
+  if (isDeliberateEnd(occurrence.meeting)) return "ended";
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const now = (opts?.now ?? new Date()).getTime();
@@ -529,7 +529,7 @@ export function getOccurrenceVMJoinState(
       endsAt: occurrence.endsAt,
       isTentative: occurrence.isTentative,
       completionStatus: occurrence.completionStatus,
-      meetingSession: occurrence.meetingEndedAt
+      meeting: occurrence.meetingEndedAt
         ? {
             id: occurrence.occurrenceId,
             endedAt: occurrence.meetingEndedAt,

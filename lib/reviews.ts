@@ -70,12 +70,12 @@ export function trackForAppointment(row: {
 export class ModeratedReviewError extends Error {}
 
 /**
- * A slot counts as held when it completed, or when it is UNVERIFIED — that
- * status means "past, with no MeetingSession recorded", which is what an
+ * An occurrence counts as held when it completed, or when it is UNVERIFIED —
+ * that status means "past, with no Meeting recorded", which is what an
  * offline session looks like. Excluding it would silently deny a review to
  * everyone whose session did not run through the video stack.
  */
-export function heldSlot(userId: string) {
+export function heldOccurrence(userId: string) {
   return {
     deletedAt: null,
     // A call that was called off never happened, whoever joined the room
@@ -103,19 +103,22 @@ export function heldSlot(userId: string) {
       //    Testing `endedAt` rather than the clock keeps the property above:
       //    the host closing the room releases everyone, including whoever left
       //    first. The booked window is the fallback when nothing closed it.
+      //
+      //    #1554 — attendance is keyed to the call itself
+      //    (MeetingAttendance.appointmentOccurrenceId), so no Meeting join.
       {
         AND: [
-          { meetingSession: { attendances: { some: { userId } } } },
+          { attendances: { some: { userId } } },
           {
             OR: [
-              { meetingSession: { endedAt: { not: null } } },
+              { meeting: { endedAt: { not: null } } },
               { endsAt: { lt: new Date() } },
             ],
           },
         ],
       },
       // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
-      //    MeetingSession", which is what an offline session looks like —
+      //    Meeting", which is what an offline session looks like —
       //    excluding it would deny feedback to everyone who met in person.
       {
         completionStatus: "UNVERIFIED" as OccurrenceCompletionStatus,
@@ -338,7 +341,7 @@ function loadReviewableAppointments(
               ? { consultationPlan: { consultantProfileId } }
               : {}),
           },
-          occurrences: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
         {
           subscription: {
@@ -347,7 +350,7 @@ function loadReviewableAppointments(
               ? { subscriptionPlan: { consultantProfileId } }
               : {}),
           },
-          occurrences: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
         {
           trialSession: {
@@ -355,7 +358,7 @@ function loadReviewableAppointments(
             status: { in: ["COMPLETED", "CONVERTED"] },
             ...(consultantProfileId ? { consultantProfileId } : {}),
           },
-          occurrences: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
         // Group arms — registration is a live AppointmentParticipant row on
         // the event's one wrapper (#1554). A paid seat is required as well, so
@@ -376,7 +379,7 @@ function loadReviewableAppointments(
               },
             },
           },
-          occurrences: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
           participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
@@ -394,7 +397,7 @@ function loadReviewableAppointments(
               },
             },
           },
-          occurrences: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
           participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
@@ -465,7 +468,7 @@ function loadReviewableAppointments(
         },
       },
       occurrences: {
-        where: heldSlot(userId),
+        where: heldOccurrence(userId),
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
         take: 1,

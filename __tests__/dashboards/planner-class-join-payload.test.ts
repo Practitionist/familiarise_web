@@ -71,7 +71,7 @@ interface StoredSlot {
   isTentative: boolean;
   completionStatus: string;
   deletedAt: Date | null;
-  meetingSession: {
+  meeting: {
     id: string;
     endedAt: Date | null;
     endedReason: string | null;
@@ -98,7 +98,7 @@ function storedSlot(
     isTentative: false,
     completionStatus: "SCHEDULED",
     deletedAt: null,
-    meetingSession: null,
+    meeting: null,
     ...extra,
   };
 }
@@ -281,7 +281,7 @@ interface PayloadSlot {
   endsAt: string | null;
   isTentative: boolean;
   completionStatus: string;
-  meetingSession: {
+  meeting: {
     id: string;
     endedAt: string | null;
     endedReason: string | null;
@@ -332,7 +332,7 @@ describe("the planner payload carries what a class join reads", () => {
       "endsAt",
       "id",
       "isTentative",
-      "meetingSession",
+      "meeting",
       "startsAt",
     ]);
   });
@@ -353,11 +353,11 @@ describe("the planner payload carries what a class join reads", () => {
   });
 
   it("sees a host-ended call rather than only the clock", async () => {
-    // The `meetingSession` select is what makes the ended guard reachable:
+    // The `meeting` select is what makes the ended guard reachable:
     // the row is still inside its window, so the clock alone says "joinable".
     seedClass(
       liveSitting({
-        meetingSession: {
+        meeting: {
           id: "ms-1",
           endedAt: hoursFromNow(-0.1),
           endedReason: null,

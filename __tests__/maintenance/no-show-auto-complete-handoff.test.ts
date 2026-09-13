@@ -133,7 +133,7 @@ function consultation(endedMinutesAgo: number, attendees: string[]) {
       occurrences: [
         {
           endsAt: minutesAgo(endedMinutesAgo),
-          meetingSession: {
+          meeting: {
             streamCallId: "call-1",
             attendances: attendees.map((userId) => ({ userId })),
           },
@@ -238,7 +238,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     };
     const slots = (attendees: string[]) => [
       {
-        meetingSession: {
+        meeting: {
           attendances: attendees.map((userId) => ({ userId })),
         },
       },
@@ -255,8 +255,8 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     expect(classifyConsultantAttendance(slots([]), parties)).toBe(
       "inconclusive",
     );
-    expect(
-      classifyConsultantAttendance([{ meetingSession: null }], parties),
-    ).toBe("inconclusive");
+    expect(classifyConsultantAttendance([{ meeting: null }], parties)).toBe(
+      "inconclusive",
+    );
   });
 });

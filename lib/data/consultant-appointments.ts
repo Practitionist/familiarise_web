@@ -268,7 +268,7 @@ export async function getConsultantAppointments(
       occurrences: {
         orderBy: { startsAt: "asc" },
         include: {
-          meetingSession: {
+          meeting: {
             select: { id: true, endedAt: true, endedReason: true },
           },
         },

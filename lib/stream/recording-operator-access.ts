@@ -63,7 +63,7 @@ export type OperatorRecordingAuditParams = {
   /** Whether the response carried a URL that plays the session. */
   played: boolean;
   recordingId?: string | null;
-  meetingSessionId?: string | null;
+  meetingId?: string | null;
   streamCallId?: string | null;
   /** Set when the session belongs to a tenant, so the tenant sees the read. */
   organizationId?: string | null;
@@ -95,7 +95,7 @@ export async function auditOperatorRecordingAccess(
     surface: params.surface,
     played: params.played,
     recordingId: params.recordingId ?? null,
-    meetingSessionId: params.meetingSessionId ?? null,
+    meetingId: params.meetingId ?? null,
     streamCallId: params.streamCallId ?? null,
   };
 
@@ -124,7 +124,7 @@ export async function auditOperatorRecordingAccess(
     severity: "WARN",
     message: summary,
     context: details,
-    correlationId: params.recordingId ?? params.meetingSessionId ?? null,
+    correlationId: params.recordingId ?? params.meetingId ?? null,
     // For a B2C recording this row is the ONLY audit trail — there is no
     // organization to carry an OrgAuditLog entry. Serving the read anyway when
     // the insert failed would mean an unaudited operator access, which is the

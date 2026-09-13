@@ -49,7 +49,7 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       // #1270 review — the arguments are the assertion. This used to discard
       // them, so the route could have ended `slot-abc` instead of the id the
-      // MeetingSession actually points at and every test still passed.
+      // Meeting actually points at and every test still passed.
       call: (...a: unknown[]) => {
         mockVideoCall(...a);
         return { end: (...b: unknown[]) => mockEnd(...b) };
@@ -84,7 +84,7 @@ const granted = (role: "host" | "participant") => ({
   message: `Access granted as ${role}`,
   reason: "granted",
   streamCallId: "slot-abc",
-  meetingSessionId: "ms-1",
+  meetingId: "ms-1",
 });
 
 beforeEach(() => {
@@ -163,7 +163,7 @@ describe("POST /api/meetings/[meetingId]/end", () => {
 
   it("ends the call Stream knows about, not the id in the URL", async () => {
     // The route param is the id the browser had; `streamCallId` is what the
-    // MeetingSession row actually points at, and legacy rows carry opaque ids
+    // Meeting row actually points at, and legacy rows carry opaque ids
     // that are not `occurrence-<occurrenceId>` at all.
     mockResolveMeetingAccess.mockResolvedValue({
       ...granted("host"),

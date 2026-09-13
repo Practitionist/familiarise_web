@@ -35,7 +35,7 @@ const webinarInclude = {
           // #1061 — without this the planner cannot tell that the host has
           // already ended the call, so its Join gate could only ever expire on
           // the clock. Two columns per row.
-          meetingSession: {
+          meeting: {
             select: { id: true, endedAt: true, endedReason: true },
           },
         },
@@ -83,7 +83,7 @@ const classInclude = (now: Date) =>
         // Only the fields the join path reads: this route trims deliberately,
         // and the attendee `user` rows the webinar side carries are not read
         // here (the class participant count has its own batched query).
-        // `meetingSession` is not optional — without it `getSessionJoinState`
+        // `meeting` is not optional — without it `getSessionJoinState`
         // can only expire on the clock and never sees a host-ended call, the
         // same reason `webinarInclude` selects it.
         occurrences: {
@@ -99,7 +99,7 @@ const classInclude = (now: Date) =>
             endsAt: true,
             isTentative: true,
             completionStatus: true,
-            meetingSession: {
+            meeting: {
               select: { id: true, endedAt: true, endedReason: true },
             },
           },

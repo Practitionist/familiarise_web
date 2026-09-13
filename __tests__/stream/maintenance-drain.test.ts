@@ -35,7 +35,7 @@ const mockRedisDel = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingSession: {
+    meeting: {
       findMany: (...a: unknown[]) => mockFindMany(...a),
       // The drain builds the transaction array by CALLING these, so they have
       // to exist before `$transaction` is even reached.

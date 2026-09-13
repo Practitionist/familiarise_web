@@ -32,7 +32,7 @@ const consultantUserSelect = {
 const slotsWithRecordings = {
   occurrences: {
     include: {
-      meetingSession: {
+      meeting: {
         include: {
           recordings: {
             where: {
@@ -161,7 +161,7 @@ type TrialWithResources = Prisma.Result<
   "findFirstOrThrow"
 >;
 
-// Appointment type that has occurrences with meetingSession recordings
+// Appointment type that has occurrences with meeting recordings
 type AppointmentWithSlots = Prisma.Result<
   typeof prisma.appointment,
   { include: typeof slotsWithRecordings },
@@ -257,7 +257,7 @@ export async function GET(
                       appointment: {
                         occurrences: {
                           some: {
-                            meetingSession: {
+                            meeting: {
                               recordings: {
                                 some: {
                                   status: {
@@ -299,7 +299,7 @@ export async function GET(
                       appointment: {
                         occurrences: {
                           some: {
-                            meetingSession: {
+                            meeting: {
                               recordings: {
                                 some: {
                                   status: {
@@ -446,7 +446,7 @@ export async function GET(
 
 async function extractRecordings(appointments: AppointmentWithSlots[]) {
   const recordings = appointments.flatMap((apt) =>
-    apt.occurrences.flatMap((slot) => slot.meetingSession?.recordings ?? []),
+    apt.occurrences.flatMap((slot) => slot.meeting?.recordings ?? []),
   );
 
   return Promise.all(

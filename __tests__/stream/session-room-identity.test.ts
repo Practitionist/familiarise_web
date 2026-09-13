@@ -69,7 +69,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findUnique: jest.fn(), findMany: jest.fn() },
     appointmentParticipant: { findMany: jest.fn() },
     appointment: { findUnique: jest.fn() },
-    meetingSession: {
+    meeting: {
       findUnique: jest.fn(),
       create: jest.fn(),
       updateMany: jest.fn(),
@@ -81,13 +81,13 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import { createDbMeetingSession } from "@/actions/stream/meetings/meeting.action";
+import { createDbMeeting } from "@/actions/stream/meetings/meeting.action";
 
 const db = prisma as unknown as {
   appointmentOccurrence: { findUnique: jest.Mock; findMany: jest.Mock };
   appointmentParticipant: { findMany: jest.Mock };
   appointment: { findUnique: jest.Mock };
-  meetingSession: {
+  meeting: {
     findUnique: jest.Mock;
     create: jest.Mock;
     updateMany: jest.Mock;
@@ -180,7 +180,7 @@ const webinarAppointment = {
   },
 };
 
-/** Rows the fake DB serves, plus the MeetingSession table the test writes to. */
+/** Rows the fake DB serves, plus the Meeting table the test writes to. */
 let appointmentRow: Record<string, unknown> | null = consultationAppointment;
 let rows: SlotRow[] = [];
 let sessions: Array<{
@@ -252,12 +252,12 @@ function seed(
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
   );
   db.appointment.findUnique.mockResolvedValue({ organizationId: null });
-  db.meetingSession.findUnique.mockImplementation(
+  db.meeting.findUnique.mockImplementation(
     async ({ where }: { where: { appointmentOccurrenceId: string } }) =>
       sessions.find((s) => s.slotId === where.appointmentOccurrenceId) ?? null,
   );
-  db.meetingSession.updateMany.mockReset();
-  db.meetingSession.updateMany.mockImplementation(
+  db.meeting.updateMany.mockReset();
+  db.meeting.updateMany.mockImplementation(
     async ({
       where,
       data,
@@ -273,7 +273,7 @@ function seed(
       return { count: 1 };
     },
   );
-  db.meetingSession.create.mockImplementation(
+  db.meeting.create.mockImplementation(
     async ({
       data,
     }: {
@@ -412,7 +412,7 @@ describe("a room closed before the start is rebuilt on the next join", () => {
 
     expect(room).toMatch(/^occurrence-A-r[0-9a-z]+$/);
     expect(mockStreamCallsCreated).toEqual([room]);
-    expect(db.meetingSession.updateMany).toHaveBeenCalledWith({
+    expect(db.meeting.updateMany).toHaveBeenCalledWith({
       where: { id: "ms-1", endedReason: "ended_early" },
       data: {
         streamCallId: room,
@@ -437,7 +437,7 @@ describe("a room closed before the start is rebuilt on the next join", () => {
 
     expect(await join(rowA())).toBe("occurrence-A");
     expect(mockStreamCallsCreated).toEqual([]);
-    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -616,7 +616,7 @@ describe("the call describes the session it belongs to", () => {
     // data, not a path any real booking takes.
     //
     // #1270 — the browser used to mint the call FIRST and only then call
-    // `createDbMeetingSession`, where the entitlement check lived. So a refused
+    // `createDbMeeting`, where the entitlement check lived. So a refused
     // join still left a real, billable Stream room behind that our database
     // would never point at. The check now runs before the mint.
     await expect(join(a)).rejects.toThrow(
@@ -744,9 +744,9 @@ describe("every occurrence is keyed to its own row", () => {
 });
 
 /**
- * #1077 — the maintenance gate lived at the top of `createDbMeetingSession`,
+ * #1077 — the maintenance gate lived at the top of `createDbMeeting`,
  * which runs AFTER `call.getOrCreate`. A blocked join therefore left a live
- * Stream call that no `MeetingSession` row points at, stamped with the bounds
+ * Stream call that no `Meeting` row points at, stamped with the bounds
  * and members computed at the blocked moment and never corrected, because only
  * the mint branch writes them.
  *
@@ -769,7 +769,7 @@ describe("a refused join creates nothing on Stream", () => {
 
     expect(mockStreamCallsCreated).toEqual([]);
     expect(mockCallPayloads).toEqual([]);
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("still lets both sides back into a room that already exists", async () => {
@@ -836,7 +836,7 @@ describe("a refused join creates nothing on Stream", () => {
  * `readSlotForCaller` was added to gate the two RESOLVERS, and the exported
  * writer in the same `"use server"` module was left open. Any client can call
  * a server action with arguments of its choosing, so an unrelated caller could
- * write the `MeetingSession` row for someone else's slot with a
+ * write the `Meeting` row for someone else's slot with a
  * `streamCallId` of their choosing — and because that row is unique per slot,
  * never updated, and reused by every later join, both legitimate parties would
  * then be routed into a Stream call the attacker controls.
@@ -848,11 +848,11 @@ describe("only a participant may create a session", () => {
     seed([slotRow("A", "10:00", "11:00")], consultationAppointment, stranger);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "slot-attacker-controlled"),
+      createDbMeeting(meetingSlot(rows[0]), "slot-attacker-controlled"),
     ).rejects.toThrow("You are not a participant in this session.");
 
     // The assertion that matters: no row exists to be reused by anyone.
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
     expect(sessions).toEqual([]);
   });
 
@@ -860,16 +860,16 @@ describe("only a participant may create a session", () => {
     seed([slotRow("A", "10:00", "11:00")], consultationAppointment, null);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "occurrence-A"),
+      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
     ).rejects.toThrow("You are not a participant in this session.");
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("still lets a participant create their own session", async () => {
     seed([slotRow("A", "10:00", "11:00")]);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "occurrence-A"),
+      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
     ).resolves.toMatchObject({ streamCallId: "occurrence-A" });
   });
 });

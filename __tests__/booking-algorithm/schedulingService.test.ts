@@ -658,7 +658,7 @@ describe("Manual allocation", () => {
       endsAt: new Date(`${day}T11:00:00Z`),
       isTentative: tentative,
       completionStatus: tentative ? "RESCHEDULED" : "SCHEDULED",
-      meetingSession: null,
+      meeting: null,
     });
     const wrapper = {
       id: "sub-wrapper",
@@ -2068,7 +2068,7 @@ describe("deleteExistingAppointments", () => {
             isTentative: false,
             startsAt: new Date("2025-01-06T10:00:00Z"),
             endsAt: new Date("2025-01-06T10:30:00Z"),
-            meetingSession: null,
+            meeting: null,
           },
         ],
         participants: [{ userId: "consultant-1" }],
@@ -2102,7 +2102,7 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // Its sessionless slots were stripped so they no longer block availability.
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "old-2", meetingSession: { is: null } },
+      where: { appointmentId: "old-2", meeting: { is: null } },
     });
   });
 
@@ -2328,7 +2328,7 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: {
         appointmentId: "placeholder-apt",
-        meetingSession: { is: null },
+        meeting: { is: null },
       },
     });
     // 1:N event → a fresh appointment row is created (no REUSE).
@@ -2385,7 +2385,7 @@ describe("deleteExistingAppointments", () => {
             startsAt: new Date("2024-12-30T10:00:00Z"),
             endsAt: new Date("2024-12-30T11:00:00Z"),
             isTentative: false,
-            meetingSession: null,
+            meeting: null,
           },
         ],
         participants: [],
@@ -2424,11 +2424,11 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // The appointment is preserved (slots stripped), never hard-deleted.
     // #1169 PR 1 — held-session slots are excluded from the strip so a
-    // MeetingSession (and its Recording) can never be cascade-deleted.
+    // Meeting (and its Recording) can never be cascade-deleted.
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: {
         appointmentId: "paid-consult-apt",
-        meetingSession: { is: null },
+        meeting: { is: null },
       },
     });
     expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({

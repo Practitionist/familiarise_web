@@ -23,7 +23,7 @@ export type RecordingRow = Omit<Recording, "fileSize" | "listPricePaise"> & {
 
 export const consultantRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
         occurrence: {
           include: {
@@ -75,7 +75,7 @@ export type ConsultantRecordingWithDetails = Prisma.Result<
 
 export const recordingWithAccessControlInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
         occurrence: {
           include: {
@@ -112,7 +112,7 @@ export type RecordingWithAccessControl = Prisma.Result<
 
 export const webinarPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
         occurrence: {
           include: {
@@ -144,7 +144,7 @@ export type WebinarPlanRecordingWithDetails = Prisma.Result<
 
 export const classPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
         occurrence: {
           include: {
@@ -176,7 +176,7 @@ export type ClassPlanRecordingWithDetails = Prisma.Result<
 
 export const consulteeRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
         occurrence: {
           include: {

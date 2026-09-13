@@ -36,7 +36,7 @@ const recordingsSelect = {
 const slotsInclude = {
   orderBy: { startsAt: "asc" },
   include: {
-    meetingSession: {
+    meeting: {
       select: {
         id: true,
         endedAt: true,
@@ -312,7 +312,7 @@ function participantUserIds(detail: TAppointmentDetail) {
 export type TDetailAppointment = TAppointmentDetail["appointment"];
 export type TDetailRecording =
   TDetailAppointment["occurrences"][number] extends {
-    meetingSession: infer M;
+    meeting: infer M;
   }
     ? M extends { recordings: Array<infer R> } | null
       ? R

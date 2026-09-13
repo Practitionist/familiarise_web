@@ -21,7 +21,7 @@ export type TConsultation = Prisma.ConsultationGetPayload<{
       include: {
         occurrences: {
           include: {
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -53,7 +53,7 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
       include: {
         occurrences: {
           include: {
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -81,7 +81,7 @@ export type TWebinar = Prisma.WebinarGetPayload<{
       include: {
         occurrences: {
           include: {
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -115,7 +115,7 @@ export type TClass = Prisma.ClassGetPayload<{
       include: {
         occurrences: {
           include: {
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -199,7 +199,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
     payment: true;
     occurrences: {
       include: {
-        meetingSession: {
+        meeting: {
           select: { id: true; endedAt: true; endedReason: true };
         };
       };

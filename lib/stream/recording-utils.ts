@@ -87,13 +87,13 @@ export function isRecordingEnabledForAppointment(
 /**
  * Get ownership info from a recording with nested relations
  *
- * @param recording - Recording with meetingSession -> occurrence -> appointment relations
+ * @param recording - Recording with meeting -> occurrence -> appointment relations
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
 export function getRecordingOwnershipInfo(
   recording: {
-    meetingSession?: {
+    meeting?: {
       occurrence?: {
         appointment?: AppointmentWithOwnership | null;
       } | null;
@@ -101,7 +101,7 @@ export function getRecordingOwnershipInfo(
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = recording?.meetingSession?.occurrence?.appointment;
+  const appointment = recording?.meeting?.occurrence?.appointment;
 
   return {
     isOwner: isAppointmentOwner(appointment, consultantProfileId),
@@ -112,7 +112,7 @@ export function getRecordingOwnershipInfo(
 /**
  * Get ownership info from a meeting session with nested relations
  *
- * @param meetingSession - MeetingSession with occurrence -> appointment relations
+ * @param meeting - Meeting with occurrence -> appointment relations
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
@@ -185,15 +185,15 @@ export async function getEventAttendeeIds(
   return Array.from(new Set(seats.map((seat) => seat.userId)));
 }
 
-export function getMeetingSessionOwnershipInfo(
-  meetingSession: {
+export function getMeetingOwnershipInfo(
+  meeting: {
     occurrence?: {
       appointment?: AppointmentWithOwnership | null;
     } | null;
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = meetingSession?.occurrence?.appointment;
+  const appointment = meeting?.occurrence?.appointment;
 
   return {
     isOwner: isAppointmentOwner(appointment, consultantProfileId),

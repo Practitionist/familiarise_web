@@ -65,7 +65,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Map recordings to response format with best URLs (async — presigned URLs)
     const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
-      const slot = recording.meetingSession.occurrence;
+      const slot = recording.meeting.occurrence;
       const appointment = slot.appointment;
 
       let planType: "webinar" | "class" | null = null;

@@ -67,7 +67,7 @@ export async function buildSupportContext(
         // `lastEndedRun` was always null, a no-show report fell back to the
         // upcoming session, and with nothing upcoming `endsAt` was null — so the
         // server-side 48-hour recording-window check could not run at all. Same
-        // exclusion as `heldSlot` (lib/reviews.ts) and `isDeadOccurrence`
+        // exclusion as `heldOccurrence` (lib/reviews.ts) and `isDeadOccurrence`
         // (lib/appointments/occurrences.ts), which the read below re-applies.
         where: {
           deletedAt: null,
@@ -202,9 +202,9 @@ export async function buildSupportContext(
     : "COMPLETED";
 
   // Recordings hang off the slot's meeting session, not the appointment directly
-  // (Recording → MeetingSession → AppointmentOccurrence → Appointment).
+  // (Recording → Meeting → AppointmentOccurrence → Appointment).
   const recording = await prisma.recording.findFirst({
-    where: { meetingSession: { occurrence: { appointmentId } } },
+    where: { meeting: { occurrence: { appointmentId } } },
     select: { id: true },
   });
 

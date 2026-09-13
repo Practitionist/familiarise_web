@@ -43,7 +43,7 @@ import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
 
 // Phase 11: Documents & Meetings
 import { createAppointmentDocuments } from "./seedFiles/11a-create-appointment-documents";
-import { createMeetingSessions } from "./seedFiles/11b-create-meeting-sessions";
+import { createMeetings } from "./seedFiles/11b-create-meetings";
 
 // Phase 12: Payment Extensions
 import { createRefunds } from "./seedFiles/12a-create-refunds";
@@ -172,7 +172,7 @@ async function seed() {
     await createAppointmentDocuments();
 
     console.log("Creating meeting sessions...");
-    await createMeetingSessions();
+    await createMeetings();
 
     // Phase 12: Payment Extensions
     console.log("\n[Phase 12] Creating payment extensions...");

@@ -119,7 +119,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           include: {
             occurrences: {
               include: {
-                meetingSession: true,
+                meeting: true,
               },
             },
           },
@@ -607,7 +607,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   include: {
                     occurrences: {
                       include: {
-                        meetingSession: true,
+                        meeting: true,
                       },
                     },
                   },
@@ -931,7 +931,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             include: {
               occurrences: {
                 include: {
-                  meetingSession: true,
+                  meeting: true,
                 },
               },
             },

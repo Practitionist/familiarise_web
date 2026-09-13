@@ -70,12 +70,12 @@ function generateHostKeys(): string[] {
 import { config } from "./config";
 
 // Meeting session volume - configurable via SEED_MODE environment variable
-const NUM_MEETING_SESSIONS = config.volumes.meetingSessions;
+const NUM_MEETING_SESSIONS = config.volumes.meetings;
 const NUM_RECORDINGS = Math.floor(
-  config.volumes.meetingSessions * config.volumes.recordingsPerSession,
+  config.volumes.meetings * config.volumes.recordingsPerSession,
 );
 
-export async function createMeetingSessions(): Promise<void> {
+export async function createMeetings(): Promise<void> {
   console.log(
     `Creating ${NUM_MEETING_SESSIONS} meeting sessions and ${NUM_RECORDINGS} recordings...`,
   );
@@ -83,7 +83,7 @@ export async function createMeetingSessions(): Promise<void> {
   // Get slots of appointments that can have meeting sessions
   const occurrences = await prisma.appointmentOccurrence.findMany({
     where: {
-      meetingSession: null, // Only slots without existing meeting sessions
+      meeting: null, // Only slots without existing meeting sessions
     },
     include: {
       appointment: {
@@ -132,7 +132,7 @@ export async function createMeetingSessions(): Promise<void> {
       // Generate host keys
       const hostKeys = generateHostKeys();
 
-      const meetingSession = await prisma.meetingSession.create({
+      const meeting = await prisma.meeting.create({
         data: {
           streamCallId,
           platform,
@@ -163,7 +163,7 @@ export async function createMeetingSessions(): Promise<void> {
           const durationInMinutes = faker.number.int({ min: 30, max: 120 });
 
           // Recording URL (placeholder)
-          const recordingUrl = `https://placeholder.com/recordings/${meetingSession.id}/${faker.string.alphanumeric(16)}.mp4`;
+          const recordingUrl = `https://placeholder.com/recordings/${meeting.id}/${faker.string.alphanumeric(16)}.mp4`;
 
           // Recording date is around the slot time
           const recordedAt = faker.date.between({
@@ -177,7 +177,7 @@ export async function createMeetingSessions(): Promise<void> {
               recordingUrl,
               durationInMinutes,
               recordedAt,
-              meetingSessionId: meetingSession.id,
+              meetingId: meeting.id,
             },
           });
 

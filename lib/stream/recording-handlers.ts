@@ -61,7 +61,7 @@ export interface StreamRecordingFailedEvent {
 
 /**
  * Handle call.recording_started event
- * Updates MeetingSession to mark recording as active
+ * Updates Meeting to mark recording as active
  */
 export async function handleRecordingStarted(
   event: StreamRecordingStartedEvent,
@@ -79,11 +79,11 @@ export async function handleRecordingStarted(
 
   try {
     // Find meeting session by streamCallId
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn(
         "Meeting session not found for recording started event",
         {
@@ -95,21 +95,21 @@ export async function handleRecordingStarted(
 
     // #1615 — the route's claim is the source of truth for the actor and the
     // claim time; the webhook only confirms, so both fields are first-write-wins.
-    await prisma.meetingSession.update({
-      where: { id: meetingSession.id },
+    await prisma.meeting.update({
+      where: { id: meeting.id },
       data: {
         isRecording: true,
-        ...(meetingSession.recordingStartedAt
+        ...(meeting.recordingStartedAt
           ? {}
           : { recordingStartedAt: new Date(created_at) }),
-        ...(!meetingSession.recordingStartedBy && user?.id
+        ...(!meeting.recordingStartedBy && user?.id
           ? { recordingStartedBy: user.id }
           : {}),
       },
     });
 
     streamLogger.info("Meeting session updated - recording started", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       streamCallId,
     });
   } catch (error) {
@@ -122,7 +122,7 @@ export async function handleRecordingStarted(
 
 /**
  * Handle call.recording_stopped event
- * Updates MeetingSession to mark recording as stopped
+ * Updates Meeting to mark recording as stopped
  */
 export async function handleRecordingStopped(
   event: StreamRecordingStoppedEvent,
@@ -134,11 +134,11 @@ export async function handleRecordingStopped(
   streamLogger.info("Recording stopped", { streamCallId });
 
   try {
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn(
         "Meeting session not found for recording stopped event",
         {
@@ -149,15 +149,15 @@ export async function handleRecordingStopped(
     }
 
     // Update meeting session to mark recording as stopped
-    await prisma.meetingSession.update({
-      where: { id: meetingSession.id },
+    await prisma.meeting.update({
+      where: { id: meeting.id },
       data: {
         isRecording: false,
       },
     });
 
     streamLogger.info("Meeting session updated - recording stopped", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       streamCallId,
     });
   } catch (error) {
@@ -188,7 +188,7 @@ export async function handleRecordingReady(
 
   try {
     // Find meeting session by streamCallId
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
       include: {
         occurrence: {
@@ -246,7 +246,7 @@ export async function handleRecordingReady(
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn("Meeting session not found for recording ready event", {
         streamCallId,
       });
@@ -260,7 +260,7 @@ export async function handleRecordingReady(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );
 
-    const appointment = meetingSession.occurrence.appointment;
+    const appointment = meeting.occurrence.appointment;
     const title = generateRecordingTitle(appointment, startDate);
 
     // Calculate Stream URL expiration (2 weeks from now)
@@ -270,7 +270,7 @@ export async function handleRecordingReady(
     // Check if recording already exists (idempotency)
     const existingRecording = await prisma.recording.findFirst({
       where: {
-        meetingSessionId: meetingSession.id,
+        meetingId: meeting.id,
         streamRecordingId: filename,
       },
     });
@@ -297,22 +297,22 @@ export async function handleRecordingReady(
         storageType: "STREAM_S3",
         status: "READY",
         streamUrlExpiresAt,
-        meetingSessionId: meetingSession.id,
+        meetingId: meeting.id,
         organizationId: appointment?.organizationId ?? null,
       },
     });
 
     // Also update the meeting session to stop recording state if still active
-    if (meetingSession.isRecording) {
-      await prisma.meetingSession.update({
-        where: { id: meetingSession.id },
+    if (meeting.isRecording) {
+      await prisma.meeting.update({
+        where: { id: meeting.id },
         data: { isRecording: false },
       });
     }
 
     streamLogger.info("Recording created successfully", {
       recordingId: recording.id,
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       title,
       durationInMinutes,
     });
@@ -421,7 +421,7 @@ export async function handleRecordingFailed(
   );
 
   try {
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
       include: {
         occurrence: {
@@ -437,7 +437,7 @@ export async function handleRecordingFailed(
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn(
         "Meeting session not found for recording failed event",
         {
@@ -448,8 +448,8 @@ export async function handleRecordingFailed(
     }
 
     // Update meeting session to stop recording state
-    await prisma.meetingSession.update({
-      where: { id: meetingSession.id },
+    await prisma.meeting.update({
+      where: { id: meeting.id },
       data: {
         isRecording: false,
       },
@@ -466,14 +466,13 @@ export async function handleRecordingFailed(
         recordedAt: new Date(),
         streamCallId,
         status: RecordingStatus.FAILED,
-        meetingSessionId: meetingSession.id,
-        organizationId:
-          meetingSession.occurrence.appointment?.organizationId ?? null,
+        meetingId: meeting.id,
+        organizationId: meeting.occurrence.appointment?.organizationId ?? null,
       },
     });
 
     // Build recipient list — every live seat holder of the booking (#1554)
-    const appointment = meetingSession.occurrence.appointment;
+    const appointment = meeting.occurrence.appointment;
     const userIds = await getEventAttendeeIds(appointment);
 
     const notificationResults = await Promise.allSettled(
@@ -495,7 +494,7 @@ export async function handleRecordingFailed(
     }
 
     streamLogger.info("Meeting session updated - recording failed", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       streamCallId,
       notifiedUsers: userIds.length,
     });

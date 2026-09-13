@@ -146,10 +146,10 @@ type SlotData =
       slot: AvailabilityWindowCustom;
     };
 
-// --- Helper function to create MeetingSession data ---
-const createMeetingSessionData = (
+// --- Helper function to create Meeting data ---
+const createMeetingData = (
   isPastAppointment: boolean,
-): Prisma.MeetingSessionCreateNestedOneWithoutOccurrenceInput => {
+): Prisma.MeetingCreateNestedOneWithoutOccurrenceInput => {
   return {
     create: {
       streamCallId: faker.string.uuid(),
@@ -212,7 +212,7 @@ const createConsultationAppointment = (
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: defaultStatus === AppointmentStatus.PENDING,
-        meetingSession: createMeetingSessionData(isPastAppointment),
+        meeting: createMeetingData(isPastAppointment),
       },
     },
     consultation: {
@@ -324,7 +324,7 @@ const createSubscriptionAppointment = (
             startsAt: slotStart,
             endsAt: slotEnd,
             isTentative: defaultStatus === AppointmentStatus.PENDING,
-            meetingSession: createMeetingSessionData(
+            meeting: createMeetingData(
               isPastAppointment && slotStart < new Date(),
             ),
           });
@@ -360,7 +360,7 @@ const createSubscriptionAppointment = (
       startsAt: slotStart,
       endsAt: slotEnd,
       isTentative: defaultStatus === AppointmentStatus.PENDING,
-      meetingSession: createMeetingSessionData(isPastAppointment),
+      meeting: createMeetingData(isPastAppointment),
     });
   }
 
@@ -457,7 +457,7 @@ const createWebinarAppointment = async (
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: false,
-        meetingSession: createMeetingSessionData(isPastAppointment),
+        meeting: createMeetingData(isPastAppointment),
       },
     },
     webinar: {
@@ -536,7 +536,7 @@ const createClassAppointment = async (
           startsAt: slotStart,
           endsAt: slotEnd,
           isTentative: false,
-          meetingSession: createMeetingSessionData(
+          meeting: createMeetingData(
             isPastAppointment && index === limitedSlots - 1,
           ),
         };

@@ -3,15 +3,15 @@
  */
 
 /**
- * #1607 — three rules for `MeetingSession.endedAt`:
+ * #1607 — three rules for `Meeting.endedAt`:
  *  - a `call.ended` before the booked start is `ended_early`, and the slot stays SCHEDULED
  *  - the last end wins; an older or replayed event never moves `endedAt` backwards
  *  - a participant joining clears a non-deliberate end, never a deliberate one
  */
 jest.mock("../../lib/prisma", () => {
-  const tx = { meetingSession: { update: jest.fn().mockResolvedValue({}) } };
+  const tx = { meeting: { update: jest.fn().mockResolvedValue({}) } };
   const client = {
-    meetingSession: {
+    meeting: {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -42,9 +42,9 @@ import {
 } from "../../lib/stream/session-handlers";
 
 const db = prisma as unknown as {
-  meetingSession: { findUnique: jest.Mock; updateMany: jest.Mock };
+  meeting: { findUnique: jest.Mock; updateMany: jest.Mock };
   meetingAttendance: { upsert: jest.Mock };
-  __tx: { meetingSession: { update: jest.Mock } };
+  __tx: { meeting: { update: jest.Mock } };
 };
 const mockTransition = transitionOccurrenceCompletion as jest.Mock;
 
@@ -65,7 +65,7 @@ beforeEach(() => jest.clearAllMocks());
 
 describe("call.ended before the booked start (#1607)", () => {
   it("stamps ended_early and leaves the slot SCHEDULED", async () => {
-    db.meetingSession.findUnique.mockResolvedValue(session(null));
+    db.meeting.findUnique.mockResolvedValue(session(null));
 
     await handleCallEnded({
       call_cid: "default:slot_1",
@@ -73,7 +73,7 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T09:48:00.000Z",
     });
 
-    expect(db.__tx.meetingSession.update).toHaveBeenCalledWith(
+    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "ended_early" }),
       }),
@@ -82,7 +82,7 @@ describe("call.ended before the booked start (#1607)", () => {
   });
 
   it("still completes the slot for a deliberate end inside the window", async () => {
-    db.meetingSession.findUnique.mockResolvedValue(session(null));
+    db.meeting.findUnique.mockResolvedValue(session(null));
 
     await handleCallEnded({
       call_cid: "default:slot_1",
@@ -90,7 +90,7 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T10:30:00.000Z",
     });
 
-    expect(db.__tx.meetingSession.update).toHaveBeenCalledWith(
+    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "call_ended" }),
       }),
@@ -104,7 +104,7 @@ describe("call.ended before the booked start (#1607)", () => {
 
 describe("the last end wins (#1607)", () => {
   it("lets a later session_ended overwrite an earlier timeout", async () => {
-    db.meetingSession.findUnique.mockResolvedValue(
+    db.meeting.findUnique.mockResolvedValue(
       session(new Date("2026-09-13T10:00:30.000Z"), "session_timeout"),
     );
 
@@ -114,7 +114,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T11:02:00.000Z",
     });
 
-    expect(db.__tx.meetingSession.update).toHaveBeenCalledWith(
+    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
@@ -124,7 +124,7 @@ describe("the last end wins (#1607)", () => {
   });
 
   it("never downgrades a deliberate end to a timeout", async () => {
-    db.meetingSession.findUnique.mockResolvedValue(
+    db.meeting.findUnique.mockResolvedValue(
       session(new Date("2026-09-13T10:30:00.000Z"), "call_ended"),
     );
 
@@ -134,11 +134,11 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:30:00.400Z",
     });
 
-    expect(db.__tx.meetingSession.update).not.toHaveBeenCalled();
+    expect(db.__tx.meeting.update).not.toHaveBeenCalled();
   });
 
   it("ignores an older end once a later one is recorded", async () => {
-    db.meetingSession.findUnique.mockResolvedValue(
+    db.meeting.findUnique.mockResolvedValue(
       session(new Date("2026-09-13T11:02:00.000Z"), "call_ended"),
     );
 
@@ -148,7 +148,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:00:30.000Z",
     });
 
-    expect(db.__tx.meetingSession.update).not.toHaveBeenCalled();
+    expect(db.__tx.meeting.update).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
   });
 });
@@ -164,7 +164,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
 
   it("clears a timeout end, compare-and-set on the end it read", async () => {
     const stale = new Date("2026-09-13T10:00:30.000Z");
-    db.meetingSession.findUnique.mockResolvedValue({
+    db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
       endedAt: stale,
       endedReason: "session_timeout",
@@ -172,7 +172,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
 
     await handleSessionParticipantJoined(joined);
 
-    expect(db.meetingSession.updateMany).toHaveBeenCalledWith({
+    expect(db.meeting.updateMany).toHaveBeenCalledWith({
       where: { id: "ms_1", endedAt: stale },
       data: { endedAt: null, endedReason: null },
     });
@@ -180,7 +180,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
   });
 
   it("ignores a late-delivered join that predates the end", async () => {
-    db.meetingSession.findUnique.mockResolvedValue({
+    db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
       endedAt: new Date("2026-09-13T10:15:00.000Z"),
       endedReason: "session_timeout",
@@ -188,12 +188,12 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
 
     await handleSessionParticipantJoined(joined);
 
-    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
     expect(db.meetingAttendance.upsert).toHaveBeenCalled();
   });
 
   it("leaves a deliberate end alone", async () => {
-    db.meetingSession.findUnique.mockResolvedValue({
+    db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
       endedAt: new Date("2026-09-13T10:30:00.000Z"),
       endedReason: "call_ended",
@@ -201,7 +201,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
 
     await handleSessionParticipantJoined(joined);
 
-    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
     expect(db.meetingAttendance.upsert).toHaveBeenCalled();
   });
 });
