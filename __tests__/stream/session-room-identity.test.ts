@@ -68,7 +68,11 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     slotOfAppointment: { findUnique: jest.fn(), findMany: jest.fn() },
     appointment: { findUnique: jest.fn() },
-    meetingSession: { findUnique: jest.fn(), create: jest.fn() },
+    meetingSession: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      updateMany: jest.fn(),
+    },
   },
 }));
 
@@ -81,7 +85,11 @@ import { createDbMeetingSession } from "@/actions/stream/meetings/meeting.action
 const db = prisma as unknown as {
   slotOfAppointment: { findUnique: jest.Mock; findMany: jest.Mock };
   appointment: { findUnique: jest.Mock };
-  meetingSession: { findUnique: jest.Mock; create: jest.Mock };
+  meetingSession: {
+    findUnique: jest.Mock;
+    create: jest.Mock;
+    updateMany: jest.Mock;
+  };
 };
 const mockedGetSession = getSession as unknown as jest.Mock;
 const mockedMaintenance = getMaintenanceState as unknown as jest.Mock;
@@ -172,7 +180,13 @@ const webinarAppointment = {
 /** Rows the fake DB serves, plus the MeetingSession table the test writes to. */
 let appointmentRow: Record<string, unknown> | null = consultationAppointment;
 let rows: SlotRow[] = [];
-let sessions: Array<{ id: string; streamCallId: string; slotId: string }> = [];
+let sessions: Array<{
+  id: string;
+  streamCallId: string;
+  slotId: string;
+  endedAt?: Date | null;
+  endedReason?: string | null;
+}> = [];
 let mockStreamCallsCreated: string[] = [];
 let mockCallPayloads: CallData[] = [];
 
@@ -228,6 +242,23 @@ function seed(
   db.meetingSession.findUnique.mockImplementation(
     async ({ where }: { where: { slotOfAppointmentId: string } }) =>
       sessions.find((s) => s.slotId === where.slotOfAppointmentId) ?? null,
+  );
+  db.meetingSession.updateMany.mockReset();
+  db.meetingSession.updateMany.mockImplementation(
+    async ({
+      where,
+      data,
+    }: {
+      where: { id: string; endedReason: string };
+      data: { streamCallId: string };
+    }) => {
+      const row = sessions.find(
+        (s) => s.id === where.id && s.endedReason === where.endedReason,
+      );
+      if (!row) return { count: 0 };
+      Object.assign(row, data);
+      return { count: 1 };
+    },
   );
   db.meetingSession.create.mockImplementation(
     async ({
@@ -353,6 +384,57 @@ describe("room identity for a session longer than 30 minutes", () => {
 
     expect(await join(b)).toBe("legacy-uuid");
     expect(mockStreamCallsCreated).toEqual([]);
+  });
+});
+
+/**
+ * #1607 — a room the host closed before the booked start is dead on Stream, so
+ * the next join rebuilds it under a fresh id; any other recorded end is not a
+ * reason to mint.
+ */
+describe("a room closed before the start is rebuilt on the next join", () => {
+  const rowA = () => slotRow("A", "10:00", "10:30");
+
+  it("mints a suffixed call and rebinds the row for an ended_early room", async () => {
+    seed([rowA()]);
+    sessions.push({
+      id: "ms-1",
+      streamCallId: "slot-A",
+      slotId: "A",
+      endedAt: at("09:48"),
+      endedReason: "ended_early",
+    });
+
+    const room = await join(rowA());
+
+    expect(room).toMatch(/^slot-A-r[0-9a-z]+$/);
+    expect(mockStreamCallsCreated).toEqual([room]);
+    expect(db.meetingSession.updateMany).toHaveBeenCalledWith({
+      where: { id: "ms-1", endedReason: "ended_early" },
+      data: {
+        streamCallId: room,
+        endedAt: null,
+        endedReason: null,
+        isRecording: false,
+      },
+    });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].streamCallId).toBe(room);
+  });
+
+  it("hands back the same room after an inactivity timeout", async () => {
+    seed([rowA()]);
+    sessions.push({
+      id: "ms-1",
+      streamCallId: "slot-A",
+      slotId: "A",
+      endedAt: at("10:05"),
+      endedReason: "session_timeout",
+    });
+
+    expect(await join(rowA())).toBe("slot-A");
+    expect(mockStreamCallsCreated).toEqual([]);
+    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
   });
 });
 
