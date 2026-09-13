@@ -11,6 +11,7 @@ import {
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import {
+  paymentDisplayStatus,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
@@ -227,34 +228,89 @@ describe("seat payments", () => {
       paid: 1,
       pending: 1,
       lapsed: 0,
+      refunded: 0,
       collectedPaise: 2,
       currency: "INR",
+      otherCurrency: 0,
     });
   });
 
-  it("names the currency from the first seat and counts a zero-amount seat as paid", () => {
-    const byUser = seatPaymentsByUser([
-      {
-        userId: A,
-        paymentStatus: "SUCCEEDED",
-        amount: 0,
-        currency: "INR",
-        createdAt: "2026-09-01T00:00:00Z",
-      },
-      {
-        userId: B,
-        paymentStatus: "SUCCEEDED",
-        amount: 500,
-        currency: "USD",
-        createdAt: "2026-09-01T00:00:00Z",
-      },
-    ]);
-    expect(summarizeSeatPayments(byUser)).toEqual({
+  it("counts a zero-amount seat as paid and never adds paise of two currencies", () => {
+    const inr = {
+      userId: A,
+      paymentStatus: "SUCCEEDED",
+      amount: 0,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    const usd = {
+      userId: B,
+      paymentStatus: "SUCCEEDED",
+      amount: 500,
+      currency: "USD",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    // An appointment settles in the plan's currency (ADR 15); a row that
+    // breaks that is counted, not summed — whichever row comes first.
+    const expected = {
       paid: 2,
       pending: 0,
       lapsed: 0,
-      collectedPaise: 500,
+      refunded: 0,
+      collectedPaise: 0,
       currency: "INR",
+      otherCurrency: 1,
+    };
+    expect(
+      summarizeSeatPayments(seatPaymentsByUser([inr, usd]), "INR"),
+    ).toEqual(expected);
+    expect(
+      summarizeSeatPayments(seatPaymentsByUser([usd, inr]), "INR"),
+    ).toEqual(expected);
+  });
+
+  it("derives the refund state and nets it out of what was collected", () => {
+    const full = {
+      userId: A,
+      paymentStatus: "SUCCEEDED",
+      amount: 1000,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+      refunds: [{ amountPaise: 1000 }],
+    };
+    const partial = {
+      userId: B,
+      paymentStatus: "SUCCEEDED",
+      amount: 1000,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+      refunds: [{ amountPaise: 250 }, { amountPaise: 100, status: "FAILED" }],
+    };
+    expect(paymentDisplayStatus(full)).toBe("REFUNDED");
+    expect(paymentDisplayStatus(partial)).toBe("PARTIALLY_REFUNDED");
+    // A refund on a PENDING row is not a refund of a capture.
+    expect(paymentDisplayStatus({ ...full, paymentStatus: "PENDING" })).toBe(
+      "PENDING",
+    );
+    // A newer PENDING row (a rebooking) speaks for the seat over the refund;
+    // an OLDER abandoned hold does not outrank a newer refund.
+    const rebooked = {
+      ...full,
+      paymentStatus: "PENDING",
+      refunds: [],
+      createdAt: "2026-09-02T00:00:00Z",
+    };
+    expect(seatPaymentsByUser([full, rebooked]).get(A)).toBe(rebooked);
+    const abandoned = { ...rebooked, createdAt: "2026-08-01T00:00:00Z" };
+    expect(seatPaymentsByUser([abandoned, full]).get(A)).toBe(full);
+    expect(summarizeSeatPayments(seatPaymentsByUser([full, partial]))).toEqual({
+      paid: 1,
+      pending: 0,
+      lapsed: 0,
+      refunded: 1,
+      collectedPaise: 750,
+      currency: "INR",
+      otherCurrency: 0,
     });
   });
 });

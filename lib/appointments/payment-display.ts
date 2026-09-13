@@ -19,6 +19,7 @@ export type PaymentDisplayLike = {
   receiptUrl: string | null;
   consumerInvoice: { id: string } | null;
   legs?: ReadonlyArray<{ source: string }>;
+  refunds?: ReadonlyArray<{ amountPaise: bigint | number | string }>;
 };
 
 const ORG_LEG_SOURCES = new Set([
@@ -72,7 +73,8 @@ export function paymentRailLabel(p: PaymentDisplayLike): string | null {
 /**
  * The buyer's receipt: the statutory tax invoice when one was issued (#1365),
  * else the gateway receipt the row carries (#1527 CE-32: fetched, never
- * rendered). Only a captured payment has one to show.
+ * rendered). Only a captured payment has one to show — a refund does not
+ * unissue the invoice, it adds a credit note beside it.
  */
 export function receiptHref(p: PaymentDisplayLike): string | null {
   if (p.paymentStatus !== "SUCCEEDED") return null;

@@ -34,7 +34,6 @@ import {
   paymentStatusDot,
   recordingStatusBadge,
   resolveSponsoringOrgName,
-  type PaymentDisplayStatus,
 } from "@/lib/labels/session-labels";
 import { useSession } from "@/lib/auth-client";
 import { useHoldCountdown } from "@/hooks/useHoldCountdown";
@@ -51,6 +50,7 @@ import {
   type PaymentDisplayLike,
 } from "@/lib/appointments/payment-display";
 import {
+  paymentDisplayStatus,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
@@ -160,7 +160,7 @@ function MoneyLine({ payment }: { payment: MoneyRow }) {
         )}
       </span>
       <StatusBadge
-        {...paymentStatusBadge(payment.paymentStatus as PaymentDisplayStatus)}
+        {...paymentStatusBadge(paymentDisplayStatus(payment))}
         size="sm"
       />
       <span className="text-xs text-muted-foreground">
@@ -369,9 +369,13 @@ export function AppointmentDetailClient({
   // just their own (scopeAppointmentDetail).
   const isGroup = isGroupKind(vm.kind);
   const seatPayments = seatPaymentsByUser(payments);
+  // The plan's settlement currency names the total, not whichever row came
+  // first.
   const seatSummary = summarizeSeatPayments(
     seatPayments,
-    payments[0]?.currency?.toString() ?? "INR",
+    detail.appointment.webinar?.webinarPlan?.priceCurrency ??
+      detail.appointment.class?.classPlan?.priceCurrency ??
+      "INR",
   );
   // #1163 — the read narrows to open statuses and takes one, so [0] is THE
   // live proposal; the card is the answer surface "Awaiting schedule
@@ -706,10 +710,11 @@ export function AppointmentDetailClient({
                   <div className="mb-3 flex flex-wrap gap-2">
                     {previewParticipants.map((u) => {
                       const seat = isGroup ? seatPayments.get(u.id) : undefined;
-                      const seatBadge = seat
-                        ? paymentStatusBadge(
-                            seat.paymentStatus as PaymentDisplayStatus,
-                          )
+                      const seatStatus = seat
+                        ? paymentDisplayStatus(seat)
+                        : null;
+                      const seatBadge = seatStatus
+                        ? paymentStatusBadge(seatStatus)
                         : null;
                       return (
                         <span
@@ -731,7 +736,7 @@ export function AppointmentDetailClient({
                             <>
                               <span
                                 aria-hidden
-                                className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seat.paymentStatus)}`}
+                                className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seatStatus)}`}
                               />
                               <span className="sr-only">{seatBadge.label}</span>
                             </>
@@ -792,6 +797,22 @@ export function AppointmentDetailClient({
                           <span className="text-muted-foreground">·</span>
                           <span className="text-muted-foreground">
                             {seatSummary.lapsed} lapsed
+                          </span>
+                        </>
+                      )}
+                      {seatSummary.refunded > 0 && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">
+                            {seatSummary.refunded} refunded
+                          </span>
+                        </>
+                      )}
+                      {seatSummary.otherCurrency > 0 && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">
+                            {seatSummary.otherCurrency} in another currency
                           </span>
                         </>
                       )}
