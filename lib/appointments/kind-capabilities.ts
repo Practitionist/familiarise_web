@@ -18,3 +18,8 @@ export function isGroupKind(kind: AppointmentKind): boolean {
 export function supportsDocuments(kind: AppointmentKind): boolean {
   return kind === "CONSULTATION" || kind === "SUBSCRIPTION" || kind === "TRIAL";
 }
+
+/** One sitting, ever: the header already says when, so a Sessions card repeats it. */
+export function isSingleSessionKind(kind: AppointmentKind): boolean {
+  return kind === "CONSULTATION" || kind === "TRIAL";
+}
