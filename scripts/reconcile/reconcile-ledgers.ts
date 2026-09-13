@@ -1717,6 +1717,20 @@ export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
   return readSummary(row.summary).status === "RUNNING";
 }
 
+/** The newest full-scope run still RUNNING and younger than the stale window, if any (#1633 backstop). */
+export async function findInFlightReconcileRun(): Promise<string | null> {
+  const recent = await prisma.ledgerReconciliationReport.findMany({
+    where: {
+      scope: "full",
+      runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
+    },
+    orderBy: { runAt: "desc" },
+    take: 5,
+    select: { id: true, summary: true },
+  });
+  return recent.find(isReconcileRunInProgress)?.id ?? null;
+}
+
 function scopeToOpts(scope: string): ReconcileScope {
   return scope.startsWith("org:")
     ? { scope, organizationId: scope.slice("org:".length) }
