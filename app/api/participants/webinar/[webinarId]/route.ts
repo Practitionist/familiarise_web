@@ -47,7 +47,7 @@ export async function GET(
   try {
     const { webinarId } = await params;
     // Non-privileged users can view the roster if they own the plan OR are an
-    // accepted collaborator granted canSeeAttendees (#768). Everyone else 404s.
+    // accepted PRESENTER collaborator (#1580). Everyone else 404s.
     const webinarEvent = await prisma.webinar.findFirst({
       where: {
         id: webinarId,
@@ -66,7 +66,7 @@ export async function GET(
                         consultantProfileId:
                           session.user.consultantProfileId ?? "__none__",
                         status: "ACCEPTED",
-                        canSeeAttendees: true,
+                        tier: "PRESENTER",
                       },
                     },
                   },

@@ -2957,34 +2957,14 @@ model ConsultantProfile {
   deletedAt   DateTime?
   description String?   @db.Text
   experience  Float?
-  rating      Float     @default(0)
 
-  // #705 — `rating` above stays the RAW mean over rating units and remains the
-  // internal/staff number. It is NOT the public one, because a 5.0 from a
-  // single session must not outrank a 4.8 from two hundred in explore's
-  // `{ rating: "desc" }` sort.
-  //
-  // NULL = suppressed: fewer than MIN_RATED_UNITS_FOR_PUBLIC_SCORE
-  // (lib/reviews.ts) distinct sessions have been rated, so one review cannot
-  // define a new consultant and there is nothing to gain by gaming the first.
-  // Public reads, the minRating filter and the rating sort read THIS column
-  // with `nulls: "last"`. NULL is also the safe default, which is why the
-  // column needs no backfill to be CORRECT on day one — only to stop being
-  // conservative.
-  publishedRating    Float?
-  // Denominator behind `rating`: rating UNITS, not review rows. This is what
-  // the minimum-N gate tests, so one 200-seat webinar cannot buy a published
-  // score off a single data point.
-  ratingUnitCount    Int       @default(0)
-  // Display only ("based on N reviews"). Also retires the trending sort's
-  // `{ reviews: { _count: "desc" } }`, which counts soft-deleted rows because
-  // Prisma cannot filter a relation _count inside orderBy.
-  reviewCount        Int       @default(0)
   // #1300 — stamped by every recompute; a drift audit, since a score only moves on a review mutation (#1566).
   ratingAggregatedAt DateTime? @db.Timestamptz
 
-  // #1300 — TWO published scores, never blended. NULL = suppressed, exactly as
-  // `publishedRating` above. See docs/reviews/02-two-track-scoring.md.
+  // #1300 — TWO published scores, never blended. NULL = suppressed: fewer rated
+  // clients/events than the floor in lib/reviews.ts, so one review cannot define a
+  // new consultant. Public reads sort on these with `nulls: "last"`.
+  // See docs/reviews/02-two-track-scoring.md.
   publishedRatingOneToOne Float?
   publishedRatingGroup    Float?
 
@@ -3100,7 +3080,6 @@ model ConsultantProfile {
   @@index([isVerified])
   @@index([verificationStatus])
   // #705 — explore sorts and filters on the published score, not the raw mean.
-  @@index([publishedRating])
   // #1300 — for a per-track sort with nulls last; a composite cannot serve a sort on
   // its trailing column, so two single-column indexes.
   @@index([publishedRatingOneToOne])
@@ -3647,19 +3626,13 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById          String
-  requestedAt            DateTime          @default(now()) @db.Timestamptz
-  requestNotes           String?
-  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
-  /// FROZEN #1300 — write-only, never read; the rail is AppointmentFeedback (private,
-  /// per call) and ConsultantReview (public, per relationship). Dropped at the pre-MVP reset.
-  feedbackFromConsultee  String?
-  feedbackFromConsultant String?
-  rating                 Float?
-
+  status             AppointmentStatus   @default(PENDING) @map("requestStatus")
+  requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById      String
+  requestedAt        DateTime            @default(now()) @db.Timestamptz
+  requestNotes       String?
+  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
@@ -3782,19 +3755,13 @@ model Subscription {
   // boundaries. The default only applies where the consultant has no zone.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
-  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById          String
-  requestedAt            DateTime          @default(now()) @db.Timestamptz
-  requestNotes           String?
-  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
-  /// FROZEN #1300 — write-only, never read; the rail is AppointmentFeedback (private,
-  /// per call) and ConsultantReview (public, per relationship). Dropped at the pre-MVP reset.
-  feedbackFromConsultee  String?
-  feedbackFromConsultant String?
-  rating                 Float?
-
+  status             AppointmentStatus   @default(PENDING) @map("requestStatus")
+  requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById      String
+  requestedAt        DateTime            @default(now()) @db.Timestamptz
+  requestNotes       String?
+  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
@@ -4333,13 +4300,6 @@ enum WaitlistSource {
 // Generic Appointment Model
 
 model Appointment {
-  /// FROZEN as of #1499 (2026-09-05): never written and never read. The refund terms
-  /// that govern a booking now live in typed versioned rows behind
-  /// `cancellationPolicyId`. The column stays because production code read it until
-  /// this release and a column a running deploy still reads must never be dropped
-  /// under it; it is removed at the pre-MVP reset (doctrine section 6, no backfill).
-  cancellationPolicySnapshot Json?
-
   /// #1499 — the exact CancellationPolicy version that governed this sale. NULL means
   /// the platform ladder applies, which is also what a pre-feature row reads as, so the
   /// two are deliberately indistinguishable. SetNull rather than Cascade: a booking must
@@ -5658,9 +5618,15 @@ model ConsultantEarnings {
   // Float percentage. Derived display field; the authoritative cut is the paise.
   shareBps Int         @default(10000)
 
+  // #1569 — the paid call, for a per-call fee (consultation, webinar, trial);
+  // NULL for a whole-purchase fee (subscription, class) until it is split.
+  appointmentOccurrenceId String?
+
   // Status tracking
   status           EarningStatus  @default(PENDING)
-  holdUntil        DateTime       @db.Timestamptz // Release after hold period
+  // #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
+  // recomputed when a reschedule moves the call.
+  holdUntil        DateTime       @db.Timestamptz
   paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
@@ -5680,7 +5646,9 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  @@unique([paymentId, consultantProfileId, role])
+  // One row per (payment, consultant, role, occurrence): the NULLS NOT DISTINCT
+  // sidecar unique consultant_earnings_occurrence_key in prisma/sql; no
+  // @@unique/@@index on that set here (#1268).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])
@@ -6348,32 +6316,39 @@ model Collaborator {
   webinarPlanId       String?
   classPlanId         String?
   role                CollaboratorRole
-  // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment   Boolean            @default(false)
-  canViewAnalytics    Boolean            @default(false)
-  canEditEvent        Boolean            @default(false)
-  canSeeAttendees     Boolean            @default(false)
+  // #1580 — what the role grants: PRESENTER (CO_HOST / CO_INSTRUCTOR) sees the
+  // roster and holds host controls; CREW does not. Derived from `role` on write.
+  tier                CollaboratorTier
   // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
   revenueShareBps     Int
   status              CollaboratorStatus @default(PENDING)
-  invitedById         String
+  // #1580 — SetNull: the inviting profile's departure must not delete the seat.
+  invitedById         String?
   respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarPlan       WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan         ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  invitedBy         ConsultantProfile @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile  @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan       WebinarPlan?       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan         ClassPlan?         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  invitedBy         ConsultantProfile? @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // Postgres treats NULLs as distinct, so each unique only bites for its own plan type.
   @@unique([consultantProfileId, webinarPlanId])
   @@unique([consultantProfileId, classPlanId])
+  // One live PRESENTER per plan: the partial uniques collaborator_one_presenter_
+  // {webinar,class} in prisma/sql (#1580).
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([status])
   @@index([invitedById])
+}
+
+// #1580 — declared after the model that uses it.
+enum CollaboratorTier {
+  PRESENTER
+  CREW
 }
 
 enum CollaboratorType {
@@ -6385,7 +6360,8 @@ enum CollaboratorStatus {
   PENDING
   ACCEPTED
   DECLINED
-  REMOVED
+  REMOVED // the host took the seat away
+  WITHDRAWN // #1580 — the collaborator left of their own accord
 }
 
 // #784 — union of the old WebinarCollaboratorRole + ClassCollaboratorRole values.
@@ -6988,21 +6964,24 @@ model ScimGroupMapping {
 /// migration — Prisma 7's `partialIndexes` is still preview and the DB
 /// is the authoritative gate for "at most one open request per user".
 model ErasureRequest {
-  id                 String        @id @default(cuid())
-  userId             String
-  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  requestedAt        DateTime      @default(now())
-  completedAt        DateTime?
-  status             ErasureStatus @default(PENDING)
-  reason             String?       @db.Text
+  id                       String        @id @default(cuid())
+  userId                   String
+  user                     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt              DateTime      @default(now())
+  completedAt              DateTime?
+  status                   ErasureStatus @default(PENDING)
+  reason                   String?       @db.Text
   /// FK to the admin (User row with role=ADMIN) who processed or
   /// rejected the request. SetNull on admin deletion so the audit row
   /// survives — the regulatory evidence-of-erasure trail must outlive
   /// staff turnover. The processor's role is verified at the route
   /// layer; no DB-side enum constraint.
-  processedByAdminId String?
-  processedByAdmin   User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
-  notes              String?       @db.Text
+  processedByAdminId       String?
+  processedByAdmin         User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
+  notes                    String?       @db.Text
+  /// #1593 — `(planType, planId)` pairs whose Stream revocation failed during the
+  /// scrub; the retry sweep re-drives them and clears this. NULL = nothing owed.
+  pendingStreamRevocations Json?
 
   @@index([status, requestedAt])
   @@index([processedByAdminId])

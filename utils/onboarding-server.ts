@@ -106,7 +106,6 @@ async function upsertConsultantProfile(
     where: { userId },
     create: {
       userId,
-      rating: 0,
       domainId,
       subDomains: profileData.subDomains?.connect
         ? { connect: profileData.subDomains.connect }

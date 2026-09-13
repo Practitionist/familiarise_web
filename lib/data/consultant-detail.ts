@@ -31,11 +31,9 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       id: true,
       description: true,
       experience: true,
-      // The raw `rating` mean is INTERNAL (CONSULTANT_INTERNAL_SCORE_FIELDS)
-      // and is not selected into public client props; the profile shows the
-      // two published scores below.
-      publishedRating: true,
-      reviewCount: true,
+      // #1554 — the visible review count, live rows only; the blended
+      // `reviewCount` column is gone with the reset.
+      _count: { select: { reviews: { where: { deletedAt: null } } } },
       // #1300 (ADR 29) — the two tracks the profile shows side by side. A
       // twelve-session 1:1 engagement and a 200-seat webinar are different
       // products, and one blended number tells a buyer of either one nothing.

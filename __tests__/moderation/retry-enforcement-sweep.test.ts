@@ -31,6 +31,11 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => ({ banned: true, banExpires: null })),
     },
+    // #1593 — the sweep also drains erasure revocations; none owed here.
+    erasureRequest: {
+      findMany: jest.fn(async () => []),
+      update: jest.fn(async () => ({})),
+    },
     $disconnect: jest.fn(async () => undefined),
   },
 }));

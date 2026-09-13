@@ -305,7 +305,7 @@ export function ExpertProfileClient({
               <ProfileHeader
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
-                reviewCount={consultantDetails.reviewCount}
+                reviewCount={consultantDetails._count.reviews}
               />
 
               <AboutSection
@@ -386,7 +386,7 @@ export function ExpertProfileClient({
             <ReviewsSection
               reviews={reviews}
               reviewTracks={reviewTracks}
-              reviewCount={consultantDetails.reviewCount}
+              reviewCount={consultantDetails._count.reviews}
               publishedRatingOneToOne={
                 consultantDetails.publishedRatingOneToOne
               }

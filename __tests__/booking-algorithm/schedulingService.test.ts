@@ -124,6 +124,9 @@ function makeMockTx() {
       // inherit the policy version the booking was sold under. Null here:
       // these fixtures predate the FK, so the created rows carry no policy.
       findFirst: jest.fn().mockResolvedValue(null),
+      // #1569 — the earnings-hold recompute after a reschedule reads the
+      // wrapper's payments; none here, so nothing to re-anchor.
+      findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({
         id: "apt-1",
         occurrences: [],

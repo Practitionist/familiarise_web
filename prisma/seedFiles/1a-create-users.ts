@@ -407,7 +407,6 @@ async function createConsultantProfileData() {
   );
 
   return {
-    rating: faker.number.float({ min: 3.5, max: 5, multipleOf: 0.1 }),
     experience,
     description: sanitizeString(faker.lorem.paragraph()),
     domain: { connect: { id: domain.id } },

@@ -16,6 +16,7 @@
  */
 
 import type { PrismaLike } from "@/lib/prisma";
+import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   sortOccurrences,
@@ -254,6 +255,8 @@ export async function replaceOccurrence(
           replaced?.ordinal ?? (await nextOrdinal(tx, args.appointmentId)),
       },
     });
+    // #1569 — the earnings hold anchors on the call's end, which just moved.
+    await recomputeEarningsHold(tx, args.appointmentId);
     return { occurrenceId: created.id };
   }
 
@@ -283,6 +286,7 @@ export async function replaceOccurrence(
       data: { isTentative: true, completionStatus: "RESCHEDULED" },
     });
   }
+  await recomputeEarningsHold(tx, args.appointmentId);
   return { occurrenceId: kept.id };
 }
 

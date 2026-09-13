@@ -189,11 +189,11 @@ export function orderByForSort(
       // orders on it — the order and the number shown agree.
       return { ratedClientsOneToOne: "desc" };
     case "trending":
-      // #705 — the denormalized count, which excludes soft-deleted reviews.
-      // `{ reviews: { _count: "desc" } }` counted them: Prisma cannot filter a
-      // relation _count inside orderBy, so a moderated-away review kept
-      // pushing its consultant up the trending list.
-      return { reviewCount: "desc" };
+      // #705 / #1554 — a denormalized count, which excludes soft-deleted
+      // reviews (Prisma cannot filter a relation _count inside orderBy, so a
+      // moderated-away review kept pushing its consultant up); the 1:1 client
+      // count is the one the card prints.
+      return { ratedClientsOneToOne: "desc" };
     case "rating":
       // The same two-track policy as the card's star, so the order and the
       // number shown agree. Sorting on the raw mean let a 5.0 from a single

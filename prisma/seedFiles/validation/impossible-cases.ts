@@ -84,7 +84,6 @@ export const impossibleCases: ValidationTestCase[] = [
         data: {
           userId: user.id,
           domainId: "non-existent-domain-id-12345", // Invalid FK
-          rating: 4.5,
           experience: 5,
           scheduleType: "WEEKLY",
         },
@@ -223,11 +222,13 @@ export const impossibleCases: ValidationTestCase[] = [
         },
       });
 
+      // #1554 — the profile's blended `rating` column is gone; the invalid
+      // value now targets the published 1:1 score the recompute writes.
       await prisma.consultantProfile.create({
         data: {
           userId: user.id,
           domainId: domain.id,
-          rating: 10.0, // Invalid rating > 5
+          publishedRatingOneToOne: 10.0, // Invalid rating > 5
           experience: 5,
           scheduleType: "WEEKLY",
         },

@@ -205,6 +205,28 @@ export async function POST(
     // meeting: one row per held call; NULL is the whole-booking level.
     const ratedOccurrenceId = body.data.occurrenceId ? slot.id : null;
 
+    // #1580 — the one live PRESENTER on the rated call's plan, if the booking
+    // is a group event: one read through the wrapper's event.
+    const presenter = await prisma.collaborator.findFirst({
+      where: {
+        tier: "PRESENTER",
+        status: "ACCEPTED",
+        OR: [
+          {
+            webinarPlan: {
+              webinars: { some: { appointment: { id: appointmentId } } },
+            },
+          },
+          {
+            classPlan: {
+              classes: { some: { appointment: { id: appointmentId } } },
+            },
+          },
+        ],
+      },
+      select: { consultantProfileId: true },
+    });
+
     // `updatedAt` is stamped HERE, not by `@updatedAt`. Prisma populates that
     // attribute on create as well as on update, so the column could never be NULL
     // — and NULL is the meaning the schema documents: never edited since it was
@@ -252,9 +274,8 @@ export async function POST(
               // #1550 — the consultant on the rated call (or on the booking's
               // held call, for a whole-booking rating).
               consultantProfileId: slot.consultantProfileId,
-              // #1580 — set once Collaborator carries `tier`; a PRESENTER on
-              // the rated call's plan is what belongs here.
-              coPresenterProfileId: null,
+              // #1580 — the co-presenter the rating also speaks to.
+              coPresenterProfileId: presenter?.consultantProfileId ?? null,
               rating: body.data.rating,
               comment: body.data.comment,
               raterRole,

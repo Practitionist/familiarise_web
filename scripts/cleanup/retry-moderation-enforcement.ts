@@ -29,6 +29,7 @@ import type {
   ModerationReportType,
 } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -52,6 +53,8 @@ export interface ModerationRetryResult {
   skipped: number;
   /** #1580 — collaborator Stream revocations that landed on this attempt. */
   collaboratorRecovered: number;
+  /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
+  erasureRevocationsRecovered: number;
   errors: string[];
 }
 
@@ -203,6 +206,7 @@ async function retryModerationEnforcementUnlocked(
     gaveUp: 0,
     skipped: 0,
     collaboratorRecovered: 0,
+    erasureRevocationsRecovered: 0,
     errors: [],
   };
 
@@ -216,11 +220,67 @@ async function retryModerationEnforcementUnlocked(
     }
   }
 
+  // #1593 — the erasure scrub records the Stream revocations it could not
+  // land; there is no erasure sweep of its own, so this one drains them.
+  await drainErasureRevocations(result, limit);
+
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
   result.success = result.errors.length === 0 && result.gaveUp === 0;
 
   return result;
+}
+
+/** A `(planType, planId)` pair as `scrubUser` wrote it. */
+type PendingRevocation = { planType: "webinar" | "class"; planId: string };
+
+async function drainErasureRevocations(
+  result: ModerationRetryResult,
+  limit: number,
+): Promise<void> {
+  const requests = await prisma.erasureRequest.findMany({
+    where: { pendingStreamRevocations: { not: Prisma.DbNull } },
+    select: { id: true, userId: true, pendingStreamRevocations: true },
+    orderBy: { requestedAt: "asc" },
+    take: limit,
+  });
+  if (requests.length === 0) return;
+
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  for (const request of requests) {
+    const owed = (request.pendingStreamRevocations ??
+      []) as PendingRevocation[];
+    const stillFailing: PendingRevocation[] = [];
+    for (const { planType, planId } of owed) {
+      try {
+        const { success } = await revokeCollaboratorAccess(
+          planType,
+          planId,
+          request.userId,
+          { notify: false },
+        );
+        if (!success) stillFailing.push({ planType, planId });
+      } catch {
+        stillFailing.push({ planType, planId });
+      }
+    }
+    await prisma.erasureRequest.update({
+      where: { id: request.id },
+      data: {
+        pendingStreamRevocations:
+          stillFailing.length > 0 ? stillFailing : Prisma.DbNull,
+      },
+    });
+    if (stillFailing.length === 0) {
+      result.erasureRevocationsRecovered++;
+    } else {
+      result.stillFailing++;
+      result.errors.push(
+        `erasure ${request.id}: ${stillFailing.map((p) => `${p.planType}:${p.planId}`).join(", ")}`,
+      );
+    }
+  }
 }
 
 type Budget = { maxAttempts: number; giveUpOlderThan: Date };

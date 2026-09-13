@@ -36,6 +36,8 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentOccurrence: { findFirst: jest.fn(), findMany: jest.fn() },
+    // #1580 — the co-presenter lookup; no collaborator on these fixtures.
+    collaborator: { findFirst: jest.fn(async () => null) },
     appointmentFeedback: {
       create: jest.fn(async () => ({ id: "fb1" })),
       update: jest.fn(async () => ({ id: "fb1" })),

@@ -231,6 +231,9 @@ export async function scrubUser(
 
   // Stream revocation is best-effort after commit, as in the moderation
   // side-effects; the rows are REMOVED either way and a miss is reported.
+  // #1593 — and RECORDED: a pair that failed is written onto the erasure
+  // request so the retry sweep re-drives it instead of a human noticing.
+  const pending: CollaborationRef[] = [];
   for (const { planType, planId } of collaborationsRemoved) {
     try {
       // Lazy: the service pulls Stream and Novu, which the scrub does not need
@@ -244,6 +247,7 @@ export async function scrubUser(
         { notify: false },
       );
       if (!success) {
+        pending.push({ planType, planId });
         reportSentryError(
           new Error("Collaborator Stream access not fully revoked on erasure"),
           {
@@ -254,12 +258,27 @@ export async function scrubUser(
         );
       }
     } catch (error) {
+      pending.push({ planType, planId });
       reportSentryError(error, {
         subsystem: "compliance",
         op: "scrubUser.revokeCollaboratorAccess",
         extra: { planType, planId },
       });
     }
+  }
+  if (pending.length > 0) {
+    await prisma.erasureRequest
+      .updateMany({
+        where: { userId, status: { not: "REJECTED" } },
+        data: { pendingStreamRevocations: pending },
+      })
+      .catch((error) =>
+        reportSentryError(error, {
+          subsystem: "compliance",
+          op: "scrubUser.recordPendingRevocations",
+          extra: { userId, pending },
+        }),
+      );
   }
 
   return { scrubbed: true, pseudonymousId, affectedOrganizationIds };

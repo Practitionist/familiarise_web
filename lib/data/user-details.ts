@@ -37,7 +37,6 @@ export function getUserDetails(id: string) {
           id: true,
           description: true,
           experience: true,
-          rating: true,
           domainId: true,
           // New fields
           headline: true,

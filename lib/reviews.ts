@@ -7,26 +7,21 @@ import type {
 } from "@prisma/client";
 
 /**
- * #705 — how many distinct RATED SESSIONS a consultant needs before their score
- * is published.
- *
- * A code constant, not a column and not an env var: this is one platform-wide
- * trust policy that has to be byte-identical in the explore sort, the profile
- * page and any structured-data `aggregateRating`. A per-consultant column would
- * invite tuning, which is exactly the gaming vector the threshold exists to
- * close, and an env var makes preview and production disagree about a number
- * users can see. Same call as MIN_COHORT in the org feedback summary.
+ * #705 / #1300 — the publication gates are code constants, not columns and not
+ * env vars: one platform-wide trust policy that has to be byte-identical in the
+ * explore sort, the profile page and any structured-data `aggregateRating`. A
+ * per-consultant column would invite tuning, which is exactly the gaming vector
+ * the threshold exists to close, and an env var makes preview and production
+ * disagree about a number users can see. Same call as MIN_COHORT in the org
+ * feedback summary.
  *
  * Five rather than Practo's ten: at launch a threshold of ten would leave
  * almost every consultant with no visible score at all, and an honest "not
  * enough yet" only helps if some consultants clear it.
  */
-export const MIN_RATED_UNITS_FOR_PUBLIC_SCORE = 5;
 
 /**
- * #1300 — the publication gate, per track.
- *
- * 1:1 counts distinct CLIENTS: a 1:1 review row is one per (consultant, client)
+ * The 1:1 gate. 1:1 counts distinct CLIENTS: a 1:1 review row is one per (consultant, client)
  * pair, so "five" means five different people — under a per-purchase model it
  * could have meant five bookings from two people.
  */
@@ -210,13 +205,6 @@ export type ScoringTx = {
  * tells a buyer of either one nothing. Airbnb shows a listing rating beside a
  * host rating for the same reason.
  *
- * The legacy `rating` / `publishedRating` / `ratingUnitCount` / `reviewCount`
- * columns are still written, from the same rows, so every existing reader keeps
- * working while the surfaces move over. They are computed here rather than by a
- * second query: `ratingUnitId` is now NULL on 1:1 reviews, so each of those is
- * its own unit, which is what the old legacy-fold branch already did for
- * pre-#705 rows. Same numbers, one read instead of two.
- *
  * Every create/update/delete must call this inside a Serializable transaction
  * with retry — it is a read-then-write over rows two concurrent reviewers both
  * touch, so at READ COMMITTED the second write overwrites an average computed
@@ -245,32 +233,8 @@ export async function recomputeConsultantRating(
   const one = scoreTrack(oneToOnePoints(rows), MIN_RATED_CLIENTS_ONE_TO_ONE);
   const group = scoreTrack(groupPoints(rows), MIN_RATED_EVENTS_GROUP);
 
-  // The legacy blended columns, kept in step for readers that have not moved.
-  // One unit per NULL-`ratingUnitId` row, one per distinct event key.
-  const legacyUnits = new Map<string, number[]>();
-  let legacySoloSum = 0;
-  let legacySoloCount = 0;
-  for (const r of rows) {
-    if (r.ratingUnitId) {
-      const acc = legacyUnits.get(r.ratingUnitId);
-      if (acc) acc.push(r.rating);
-      else legacyUnits.set(r.ratingUnitId, [r.rating]);
-    } else {
-      legacySoloSum += r.rating;
-      legacySoloCount += 1;
-    }
-  }
-  const legacyUnitMeans = [...legacyUnits.values()].map(
-    (rs) => rs.reduce((a, b) => a + b, 0) / rs.length,
-  );
-  const legacyUnitCount = legacyUnitMeans.length + legacySoloCount;
-  const legacyMean = legacyUnitCount
-    ? round2(
-        (legacyUnitMeans.reduce((a, b) => a + b, 0) + legacySoloSum) /
-          legacyUnitCount,
-      )
-    : 0;
-
+  // #1554 — the blended `rating` / `publishedRating` / `ratingUnitCount` /
+  // `reviewCount` columns are gone with the reset; the two tracks are the score.
   await tx.consultantProfile.update({
     where: { id: consultantProfileId },
     data: {
@@ -278,11 +242,6 @@ export async function recomputeConsultantRating(
       publishedRatingGroup: group.published,
       ratedClientsOneToOne: one.count,
       ratedEventsGroup: group.count,
-      rating: legacyMean,
-      ratingUnitCount: legacyUnitCount,
-      reviewCount: liveRows.length,
-      publishedRating:
-        legacyUnitCount >= MIN_RATED_UNITS_FOR_PUBLIC_SCORE ? legacyMean : null,
       ratingAggregatedAt: now,
     },
   });

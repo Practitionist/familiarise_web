@@ -19,7 +19,7 @@
  * because an administrator who can lower the bar after seeing the shape of the
  * responses can lower it until the aggregate identifies somebody. A constant
  * cannot be tuned by the party it protects — the same argument
- * `MIN_RATED_UNITS_FOR_PUBLIC_SCORE` makes for the public score.
+ * `MIN_RATED_CLIENTS_ONE_TO_ONE` makes for the public score.
  */
 
 /** Respondents needed before any average is reported to an organisation. */

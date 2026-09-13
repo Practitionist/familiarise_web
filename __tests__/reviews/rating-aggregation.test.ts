@@ -81,10 +81,6 @@ type Written = {
   publishedRatingGroup: number | null;
   ratedClientsOneToOne: number;
   ratedEventsGroup: number;
-  rating: number;
-  publishedRating: number | null;
-  ratingUnitCount: number;
-  reviewCount: number;
 };
 
 async function score(rows: Row[]): Promise<Written> {
@@ -121,7 +117,6 @@ describe("the two tracks are separate numbers", () => {
   it("folds every attendee of one event into a single data point", async () => {
     const w = await score(event("webinar:w1", 4, 200));
     expect(w.ratedEventsGroup).toBe(1);
-    expect(w.reviewCount).toBe(200);
     expect(w.publishedRatingGroup).toBeNull(); // one event, below the gate
   });
 
@@ -144,8 +139,6 @@ describe("the two tracks are separate numbers", () => {
     );
     expect(thin.ratedEventsGroup).toBe(0);
     expect(thin.publishedRatingGroup).toBeNull();
-    // The reviews still exist and still render.
-    expect(thin.reviewCount).toBe(MIN_GROUP_RESPONSES_PER_EVENT - 1);
   });
 });
 
@@ -208,14 +201,13 @@ describe("the plain mean (#1566)", () => {
 });
 
 describe("ratings protection", () => {
-  it("keeps an excluded review in the count and out of the score", async () => {
-    // The row still renders on the profile, so "Reviews (N)" must count it; it
-    // only leaves the arithmetic. Five clients plus one excluded 1-star: the
-    // score is the five, the count is six.
+  it("keeps an excluded review out of the score", async () => {
+    // The row still renders on the profile ("Reviews (N)" counts live rows
+    // directly, #1554); it only leaves the arithmetic. Five clients plus one
+    // excluded 1-star: the score is the five.
     const five = [5, 5, 5, 5, 5].map(solo);
     const excluded = { ...solo(1), excludedFromAggregateAt: NOW };
     const written = await score([...five, excluded]);
-    expect(written.reviewCount).toBe(6);
     expect(written.ratedClientsOneToOne).toBe(5);
     expect(written.publishedRatingOneToOne).toBe(5);
   });
@@ -233,18 +225,14 @@ describe("rows written before the track existed", () => {
     expect(s.ratedEventsGroup).toBe(0);
   });
 
-  it("still feed the legacy blended columns, so existing readers do not break", async () => {
-    // The surfaces move over in their own change. Until then `publishedRating`
-    // has to keep meaning what it meant.
+  it("writes only the two-track columns (#1554 dropped the blended ones)", async () => {
     const s = await score(Array.from({ length: 5 }, () => legacy(4)));
-    expect(s.rating).toBe(4);
-    expect(s.ratingUnitCount).toBe(5);
-    expect(s.publishedRating).toBe(4);
-    expect(s.reviewCount).toBe(5);
-  });
-
-  it("keeps two decimals rather than a repeating fraction", async () => {
-    const s = await score([legacy(5), legacy(4), legacy(4)]);
-    expect(s.rating).toBe(4.33);
+    expect(Object.keys(s).sort()).toEqual([
+      "publishedRatingGroup",
+      "publishedRatingOneToOne",
+      "ratedClientsOneToOne",
+      "ratedEventsGroup",
+      "ratingAggregatedAt",
+    ]);
   });
 });

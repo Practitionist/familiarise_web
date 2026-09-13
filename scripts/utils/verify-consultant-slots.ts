@@ -59,7 +59,6 @@ async function verifyConsultantSlots() {
     console.log("Name:", consultant.user.name);
     console.log("Email:", consultant.user.email);
     console.log("Schedule Type:", consultant.scheduleType);
-    console.log("Rating:", consultant.rating);
     console.log("\n");
 
     // 2. Get subscription plans
