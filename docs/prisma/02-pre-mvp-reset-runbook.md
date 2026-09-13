@@ -116,19 +116,19 @@ This is the ordered sequence for the vocabulary-reset cutover itself, distinct f
 
 ### Measured on the 2026-09-14 rehearsal
 
-The table below records how long each step of the reset took on the rehearsal database, to be filled in from the live cutover once it runs.
+The table below records how long each step of the reset took on the rehearsal database (a scratch Supabase project on Postgres 17 in ap-south-1, run three times on 2026-09-14; these are the third, clean run's numbers). The seed dominates, so the offline window should be planned around ten minutes plus the two deploys.
 
-| Step        | Duration          |
-| ----------- | ----------------- |
-| push        | (to be filled)    |
-| generate    | (to be filled)    |
-| sidecars    | (to be filled)    |
-| assert      | (to be filled)    |
-| seed        | (to be filled)    |
-| guards      | (to be filled)    |
+| Step     | Duration                                                 |
+| -------- | -------------------------------------------------------- |
+| push     | 46 s                                                     |
+| generate | 2 s                                                      |
+| sidecars | 27 s (138 statements)                                    |
+| assert   | 1 s                                                      |
+| seed     | 499 s (374 appointments, 1,076 occurrences, 122 reviews) |
+| guards   | 3 s                                                      |
 
 ### Rehearsal findings
 
-Two findings from the 2026-09-14 rehearsal changed the schema ahead of the real cutover rather than being left for it. First, `ProgramAssignment.periodStart` and `periodEnd` had to become `timestamptz` columns for the staged `program_assignment_no_active_overlap` exclusion constraint to apply at all: the constraint's `tstzrange("periodStart", "periodEnd")` expression requires timezone-aware timestamps, and applying it against the prior plain-timestamp columns failed with Postgres error 42P17 ("exclusion constraint" data-type mismatch). Both columns carry `@db.Timestamptz` in the current schema, so this is no longer an open step, only a record of why the type is what it is.
+Four findings from the 2026-09-14 rehearsal changed the branch ahead of the real cutover rather than being left for it. Prisma 7's `db push` no longer regenerates the client, so the sequence above runs `npx prisma generate` before the seed (the first rehearsal failed with `Unknown argument offeringFormats` without it). The review seed only produced rows on the live database because the auto-complete cron had run after the 2026-09-11 seed; seed 6a now stamps past confirmed occurrences `UNVERIFIED` itself, so a fresh reset ends with published scores. First, `ProgramAssignment.periodStart` and `periodEnd` had to become `timestamptz` columns for the staged `program_assignment_no_active_overlap` exclusion constraint to apply at all: the constraint's `tstzrange("periodStart", "periodEnd")` expression requires timezone-aware timestamps, and applying it against the prior plain-timestamp columns failed with Postgres error 42P17 ("exclusion constraint" data-type mismatch). Both columns carry `@db.Timestamptz` in the current schema, so this is no longer an open step, only a record of why the type is what it is.
 
 Second, the two idempotency-key `NOT NULL` constraints (`Payment.clientIdempotencyKey` and `OrganizationPayout.idempotencyKey`) were deferred again rather than applied at this rehearsal. The reasoning recorded in `prisma/sql/check-constraints.sql`, at the comment beginning "DEFERRED again at the #1554 reset rehearsal (2026-09-14)", is that the premise behind the original staging note — "writers mint since #1169 PR 9" — is false: the seed (8b), the overage side charge (`lib/payments/billing/overage-settlement.ts`) and the approval payment (`lib/payments/operations/approval-payment.ts`) never write `Payment.clientIdempotencyKey`, checkout writes `?? null`, and the Zod key is optional. The note also observes that a sidecar `NOT NULL` disagrees with the nullable Prisma column, so the next `db push` would drop it, and that the fix is to do it as schema (`String @unique`) once every writer mints a key, as its own money pull request.
