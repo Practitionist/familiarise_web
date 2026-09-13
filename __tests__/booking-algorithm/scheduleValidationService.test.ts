@@ -132,8 +132,8 @@ describe("checkSlotAvailability", () => {
     expect(result.errors[0]).toContain("already booked");
   });
 
-  // AE-5/RV-6 — slot duration is no longer a parameter; it is the inlined
-  // 30-minute SLOT_DURATION_MS const. checkSlotAvailability takes (slots, userId).
+  // AE-5/RV-6 — the interval is no longer a parameter; it is the shared
+  // SCHEDULING_INTERVAL_MS const. checkSlotAvailability takes (slots, userId).
   it("uses the fixed 30-minute slot window for the conflict envelope", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;

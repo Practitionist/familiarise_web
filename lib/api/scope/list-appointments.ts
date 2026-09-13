@@ -176,7 +176,7 @@ export async function listAppointmentsScoped(
         // #org-appts — slot fields drive the in-context Join (getOrCreate needs
         // slot id + startsAt); consultantProfile.user.id lets the caller stamp
         // per-appointment identity into the Stream call (host/guest derivation).
-        // deletedAt + meetingSession ride along so isDeadSlot/getSlotJoinState
+        // deletedAt + meetingSession ride along so isDeadOccurrence/getOccurrenceJoinState
         // see what they need: without deletedAt a tombstoned row counted as
         // live, and without meetingSession a host-ended call still offered
         // Join (booking-journey audit B7).

@@ -29,10 +29,10 @@ import {
   WEBINAR_TIME_LOCKED_MESSAGE,
 } from "@/lib/events/schedule-lock";
 import {
-  buildContiguousSlotAtoms,
-  replaceContiguousSlotRun,
-} from "@/lib/appointments/contiguous-slot-run";
-import { isDeadSlot } from "@/lib/appointments/slots";
+  buildOccurrence,
+  replaceOccurrence,
+} from "@/lib/appointments/occurrences";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 
 /**
  * Nested include for "what is the current live run?".
@@ -40,7 +40,7 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  * Ordering by `startsAt` alone is not enough: the consultee reschedule route
  * leaves replaced atoms in place as `RESCHEDULED`, so `[0]` becomes the *old*
  * earlier dead row. Duration-only planner edits then rewrote the live run back
- * onto the cancelled time. Filter at the query (and again with `isDeadSlot`
+ * onto the cancelled time. Filter at the query (and again with `isDeadOccurrence`
  * when reading already-loaded arrays) so runStart/runEnd are always live.
  *
  * `completionStatus` is `OccurrenceCompletionStatus @default(SCHEDULED)` — never
@@ -313,12 +313,12 @@ export async function POST(request: NextRequest) {
               appointment:
                 startTime && endTime
                   ? {
-                      // #1071 — N×30min atoms (same shape as SchedulingService),
-                      // never one long row spanning the full duration.
+                      // #1554 — one occurrence with the real end (same shape
+                      // as SchedulingService).
                       create: {
                         appointmentType: "WEBINAR",
                         occurrences: {
-                          create: buildContiguousSlotAtoms({
+                          create: buildOccurrence({
                             startsAt: startTime,
                             durationInHours,
                             consultantProfileId,
@@ -595,7 +595,7 @@ export async function PATCH(request: NextRequest) {
     ) {
       // Duration-only change: keep the live run's earliest start.
       const existingSlot = webinarToUpdate.appointment.occurrences.find(
-        (s) => !isDeadSlot(s),
+        (s) => !isDeadOccurrence(s),
       );
       if (existingSlot) {
         startTime = existingSlot.startsAt;
@@ -820,7 +820,7 @@ export async function PATCH(request: NextRequest) {
                       where: { appointmentId: appointment.id },
                       orderBy: { startsAt: "asc" },
                     })
-                  ).filter((slot) => !isDeadSlot(slot));
+                  ).filter((slot) => !isDeadOccurrence(slot));
                   const runStart = liveSlots[0]?.startsAt;
                   const runEnd = liveSlots[liveSlots.length - 1]?.endsAt;
                   // Only a REAL move is blocked — the planner client re-sends
@@ -848,7 +848,7 @@ export async function PATCH(request: NextRequest) {
               });
 
               // Validate here (→ 400 in catch) instead of letting
-              // buildContiguousSlotAtoms throw a generic Error (→ 500). TypeError
+              // buildOccurrence throw a generic Error (→ 500). TypeError
               // also satisfies Sonar's "use TypeError for type checks" hint.
               if (
                 typeof effectiveDurationForSlots !== "number" ||
@@ -856,7 +856,7 @@ export async function PATCH(request: NextRequest) {
                 effectiveDurationForSlots <= 0
               ) {
                 throw new TypeError(
-                  "Invalid duration for rewriting contiguous slot run.",
+                  "Invalid duration for rewriting the occurrence.",
                 );
               }
               // Prefer the PATCH-requested owner when transferring the plan so
@@ -871,14 +871,14 @@ export async function PATCH(request: NextRequest) {
               }
 
               if (appointment) {
-                console.log("Replacing contiguous slot run (#1071):", {
+                console.log("Replacing occurrence (#1554):", {
                   appointmentId: appointment.id,
                   startTime: startTime.toISOString(),
                   endTime: endTime.toISOString(),
                   durationInHours: effectiveDurationForSlots,
                 });
 
-                await replaceContiguousSlotRun(tx, {
+                await replaceOccurrence(tx, {
                   appointmentId: appointment.id,
                   startsAt: startTime,
                   durationInHours: effectiveDurationForSlots,
@@ -886,14 +886,14 @@ export async function PATCH(request: NextRequest) {
                   isTentative: false,
                 });
               } else {
-                console.log("Creating new appointment + contiguous slot run");
+                console.log("Creating new appointment + occurrence");
 
                 await tx.appointment.create({
                   data: {
                     webinar: { connect: { id: updatedWebinar.id } },
                     appointmentType: "WEBINAR",
                     occurrences: {
-                      create: buildContiguousSlotAtoms({
+                      create: buildOccurrence({
                         startsAt: startTime,
                         durationInHours: effectiveDurationForSlots,
                         consultantProfileId: ownerProfileId,

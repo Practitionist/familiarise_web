@@ -26,7 +26,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { buildContiguousSlotAtoms } from "@/lib/appointments/contiguous-slot-run";
+import { buildOccurrence } from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
   CollaboratorUnavailableError,
@@ -310,10 +310,10 @@ export async function POST(request: NextRequest) {
               appointments: {
                 // Only create appointments if startDate is defined
                 create: sessionStarts.map((slotStart) => ({
-                  // #1071 — N×30min atoms per session (allocator parity).
+                  // #1554 — one occurrence per session (allocator parity).
                   appointmentType: "CLASS" as const,
                   occurrences: {
-                    create: buildContiguousSlotAtoms({
+                    create: buildOccurrence({
                       startsAt: slotStart,
                       durationInHours: sessionDurationInHours,
                       consultantProfileId,

@@ -8,7 +8,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { isDeliberateEnd } from "@/lib/appointments/slots";
+import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { streamLogger } from "@/lib/stream-logger";
 

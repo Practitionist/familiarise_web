@@ -4622,7 +4622,7 @@ model RescheduleRequest {
   /// EVERY open row must claim this, including a preference-only one that names
   /// no times (#1065). It is the only guard there is — the route has no
   /// pre-check and the 409 is a bare P2002 catch — and list-selects, the
-  /// withdraw route and slotsAllowReschedule all read "at most one" as given.
+  /// withdraw route and occurrencesAllowReschedule all read "at most one" as given.
   openForAppointmentId String? @unique
 
   resolvedAt     DateTime? @db.Timestamptz
@@ -4896,6 +4896,9 @@ model AppointmentOccurrence {
   // #705 — the per-call private rating.
   feedback AppointmentFeedback[]
 
+  // #1554 — 1-based position inside the appointment; a replacement written after
+  // a reschedule takes the next number, so the unique holds across dead rows.
+  ordinal     Int
   startsAt    DateTime @db.Timestamptz
   endsAt      DateTime @db.Timestamptz
   isTentative Boolean  @default(false)
@@ -4923,6 +4926,7 @@ model AppointmentOccurrence {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  @@unique([appointmentId, ordinal])
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
   // #440 — serves the overlap recheck + the future exclusion constraint.

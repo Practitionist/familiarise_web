@@ -12,10 +12,10 @@ import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
-  getCurrentOrNextSession,
-  getSessionJoinState,
+  getCurrentOrNextOccurrence,
+  getOccurrenceJoinState,
   isDeliberateEnd,
-} from "@/lib/appointments/slots";
+} from "@/lib/appointments/occurrences";
 import {
   isCancelledLikeStatus,
   isCompletedLikeStatus,
@@ -213,8 +213,8 @@ const REJOIN_GRACE_MS = 30 * 60 * 1000;
  * participant days early, hours after the host ended the call, after
  * cancellation, or on an unpaid tentative booking — every one of those rules
  * lived only in React. This answers "is this session live/open yet?" from the
- * same run/window helpers the dashboards use, so the gate and the affordance
- * cannot drift.
+ * same occurrence/window helpers the dashboards use, so the gate and the
+ * affordance cannot drift.
  *
  * Returns null when joining is permitted; otherwise a user-facing refusal.
  */
@@ -241,10 +241,10 @@ async function meetingPolicyRefusal(args: {
     },
   });
 
-  const run = getCurrentOrNextSession(slots, now);
-  if (!run) return "This session has no active time slot.";
+  const occurrence = getCurrentOrNextOccurrence(slots, now);
+  if (!occurrence) return "This session has no active time slot.";
 
-  const state = getSessionJoinState(run, {
+  const state = getOccurrenceJoinState(occurrence, {
     joinWindowMs:
       args.role === "host"
         ? CONSULTANT_JOIN_WINDOW_MS
@@ -254,7 +254,7 @@ async function meetingPolicyRefusal(args: {
 
   switch (state) {
     case "disabled":
-      return run.anchor.isTentative
+      return occurrence.isTentative
         ? "This session is not confirmed yet."
         : "This session is no longer available.";
     case "countdown":
@@ -267,12 +267,16 @@ async function meetingPolicyRefusal(args: {
       // A DELIBERATE end — the host closing the room, or a maintenance drain —
       // closes it for everyone, immediately. An inactivity timeout does not:
       // see isDeliberateEnd. #1270.
-      if (run.slots.some((slot) => isDeliberateEnd(slot.meetingSession))) {
+      if (isDeliberateEnd(occurrence.meetingSession)) {
         return "This session has ended.";
       }
 
       // Inside the clock grace, a reconnect is fine.
-      if (now.getTime() <= run.endsAt.getTime() + REJOIN_GRACE_MS) return null;
+      if (
+        now.getTime() <=
+        new Date(occurrence.endsAt).getTime() + REJOIN_GRACE_MS
+      )
+        return null;
 
       // #1270 — past the clock grace, ask the room rather than the calendar.
       // Sessions overrun, and a fixed window locked a dropped participant out

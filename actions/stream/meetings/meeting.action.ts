@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { findSessionRun } from "@/lib/appointments/slots";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
@@ -42,25 +42,18 @@ const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 /** #1607 — stamped by the call.ended webhook when the host ends before the booked start. */
 const ENDED_EARLY_REASON = "ended_early";
 
-/**
- * Only what `findSessionRun` and `MeetingSlot` need — see #1061.
- * `completionStatus` is selected because the grouping helper, not this file,
- * decides which rows are dead.
- */
-const anchorSlotSelect = {
+/** Only what `MeetingSlot` and the call profile need. */
+const occurrenceSelect = {
   id: true,
   startsAt: true,
   endsAt: true,
   isTentative: true,
   appointmentId: true,
   completionStatus: true,
-  // E2E-audit P1 fix — lets anchor selection prefer the consultant-owned row
-  // of a run (group events carry parallel per-buyer rows spanning only the
-  // first atom, and whichever row sorted first used to decide the room id).
   consultantProfileId: true,
 } as const;
 
-export type AnchorSlot = {
+export type OccurrenceRow = {
   id: string;
   startsAt: Date;
   endsAt: Date;
@@ -171,7 +164,7 @@ async function readSlotForCaller(slotId: string) {
   const row = await prisma.appointmentOccurrence.findUnique({
     where: { id: slotId },
     select: {
-      ...anchorSlotSelect,
+      ...occurrenceSelect,
       appointment: { select: appointmentAccessSelect(userId) },
     },
   });
@@ -237,81 +230,6 @@ const slotSchema = z.object({
 });
 
 /**
- * Resolves the slot row a session's video room is keyed to (#1061).
- *
- * A booking longer than 30 minutes is stored as N consecutive rows, and the
- * three dashboard surfaces each hand us a different one — so the room has to
- * be anchored to the run's FIRST row or the two sides of the same call end up
- * in different Stream rooms. This must be resolved server-side: the planner
- * builds a `MeetingAppointment` carrying a single slot, so the client cannot
- * see the run it belongs to.
- *
- * What counts as one session is defined in exactly one place —
- * `groupSlotsIntoRuns` in lib/appointments/slots — and this reads it rather
- * than restating it. The clients compute their join window from the same
- * helper over the same rows, and two drifting definitions of "one session"
- * would put the server's room key and the client's window back out of step,
- * which is the defect this whole change removes.
- *
- * Gated by `readSlotForCaller`: it takes a raw slot id, and even though it
- * discloses less than the profile below, it still confirms that a slot exists
- * and which appointment owns it.
- *
- * @param slotId Any row of the session.
- * @returns The anchor row, or null when it cannot be resolved (caller falls
- *   back to the row it was given, preserving today's behaviour).
- */
-export async function resolveSessionAnchorSlot(
-  slotId: string,
-): Promise<AnchorSlot | null> {
-  const validatedSlotId = slotIdSchema.parse(slotId);
-
-  try {
-    const slot = (await readSlotForCaller(validatedSlotId))?.slot;
-    // An appointment-less row has no siblings to walk, and querying for them
-    // would ask Prisma for `appointmentId IS NULL` — every orphan in the
-    // table. The column is required today, so this is a guard, not a fix.
-    if (!slot?.appointmentId) return slot ?? null;
-
-    // Served by @@index([appointmentId]). Only the soft-delete tombstone is
-    // filtered here — it is a storage concern the grouping helper has no
-    // business knowing about; every session rule is left to the helper.
-    // The `id` tiebreak makes equal-start rows order deterministically in
-    // every query that fetches them, so two surfaces can't disagree about
-    // which row leads a run merely by fetching in a different order.
-    const siblings = await prisma.appointmentOccurrence.findMany({
-      where: { appointmentId: slot.appointmentId, deletedAt: null },
-      orderBy: [{ startsAt: "asc" }, { id: "asc" }],
-      select: anchorSlotSelect,
-    });
-
-    // No run means the row we were handed is itself cancelled, rescheduled or
-    // soft-deleted, so it anchors only itself — which keeps a stale Join click
-    // on the room it already has.
-    const run = findSessionRun(siblings, slot.id);
-    if (!run) return slot;
-
-    // Prefer a consultant-owned anchor when one exists in this run. Webinar
-    // and class buyers get their own parallel slot row spanning only the
-    // first atom; if such a row sorts ahead of the consultant's contiguous
-    // N-atom run, the buyer's Join minted a SECOND room on a different key
-    // and split the audience (#1061 class). The consultant's rows are the
-    // canonical spine every attendee is grouped around.
-    const consultantAnchor = run.slots.find((s) => s.consultantProfileId);
-    return consultantAnchor ?? run.anchor ?? slot;
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to resolve session anchor slot", error, {
-      slotId: validatedSlotId,
-    });
-    return null;
-  }
-}
-
-/**
  * The one role every member of an appointment call is named with (#1270).
  *
  * It used to be `host` for the consultant and `user` for everyone else, which
@@ -360,7 +278,7 @@ export type SessionCallProfile = {
 
 /**
  * Everything about a session a Stream call should describe itself with — the
- * run's real bounds, the offering it belongs to, and who is hosting it (#1070).
+ * occurrence's bounds, the offering it belongs to, and who is hosting it (#1070).
  *
  * Resolved server-side and once, at call-creation time, rather than left to
  * each dashboard surface to infer. Only read on the branch that actually mints
@@ -394,13 +312,10 @@ export async function resolveSessionCallProfile(
     const isGroupEvent =
       appointment.appointmentType === "WEBINAR" ||
       appointment.appointmentType === "CLASS";
-    const siblings = await prisma.appointmentOccurrence.findMany({
-      where: { appointmentId: anchor.appointmentId, deletedAt: null },
-      orderBy: { startsAt: "asc" },
-      select: anchorSlotSelect,
-    });
-    const run = findSessionRun(siblings, validatedSlotId);
-    if (!run) return null;
+    // #1554 — the occurrence IS the session: a cancelled, rescheduled or
+    // soft-deleted row describes no call.
+    if (isDeadOccurrence(anchor)) return null;
+    const run = { startsAt: anchor.startsAt, endsAt: anchor.endsAt };
 
     // Ownership stays defined by resolvePlanOwnerIds — the same predicate the
     // reschedule and timings routes authorize with. It answers in consultant
@@ -560,7 +475,7 @@ export async function resolveSessionCallProfile(
  * Deliberately NOT entitlement-gated, unlike the writer below.
  *
  * The only thing it returns that an attacker would want is `streamCallId`, and
- * that is `slot-<anchorSlotId>` — derivable from the slot id the caller had to
+ * that is `occurrence-<occurrenceId>` — derivable from the id the caller had to
  * supply to ask the question. A gate here would therefore buy no
  * confidentiality, while putting a hard refusal on the read that EVERY join
  * makes: `readSlotForCaller` returns null for a transient database failure as
@@ -964,7 +879,7 @@ function describeCall(
  * cognitive-complexity limit the pipeline enforces.
  */
 function buildCallCustom(args: {
-  anchorSlotId: string;
+  occurrenceId: string;
   appointmentId: string | null | undefined;
   appointmentType: AppointmentsType;
   organizationId: string | null;
@@ -991,11 +906,10 @@ function buildCallCustom(args: {
     title,
     description,
     appointmentId: args.appointmentId ?? null,
-    slotId: args.anchorSlotId,
-    // Named explicitly so a Stream dashboard or recording entry says which row
-    // keys the room without anyone having to know `slotId` means the anchor
-    // (#1061).
-    anchorSlotId: args.anchorSlotId,
+    // #1554 — the occurrence keys the room; `slotId` stays for the screens
+    // that read it.
+    slotId: args.occurrenceId,
+    occurrenceId: args.occurrenceId,
     appointmentType: args.appointmentType,
     ...(args.organizationId ? { organizationId: args.organizationId } : {}),
     ...(consultantUserId ? { consultantUserId } : {}),
@@ -1054,10 +968,10 @@ export type ProvisionedMeeting =
  *      release them afterwards; a room minted server-side cannot open them at
  *      all.
  *
- * The room id is unchanged — `slot-<anchorSlotId>`, derived from the run's
- * first row (#1061) — because both sides and every existing MeetingSession row
- * depend on it. The one exception is a room rebuilt after a pre-start end,
- * which carries an `-r<suffix>` (#1607); the row's `streamCallId` is the truth.
+ * The room id is `occurrence-<occurrenceId>` (#1554): both sides resolve the
+ * same row, so they resolve the same call. The one exception is a room rebuilt
+ * after a pre-start end, which carries an `-r<suffix>` (#1607); the row's
+ * `streamCallId` is the truth.
  *
  * Deliberately NOT sent (still deferred to #1070): `backstage`,
  * `join_ahead_time_seconds`, and `settings_override.limits.max_duration_seconds`.
@@ -1071,18 +985,10 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
-  // #1061 — a session longer than 30 minutes is N consecutive slot rows, and
-  // each dashboard surface hands us a different one. Key the room to the run's
-  // first row so both sides, at any point in the hour, resolve the same call.
-  //
-  // The `?? slot` fallback is NOT safe, and is chosen anyway: if the anchor
-  // lookup fails for one of two people clicking Join at the same moment, that
-  // person mints `slot-<their row>` and leaves a stray MeetingSession on a
-  // non-anchor row. It is still better than refusing, which would take the
-  // whole meeting down for both sides rather than degrading for one.
+  // #1554 — one occurrence row per held call, so the row every surface hands
+  // us IS the room key; there is no run to anchor to any more (#1061).
   // Pinned by __tests__/stream/session-room-identity.test.ts.
-  const anchorSlot: MeetingSlot =
-    (await resolveSessionAnchorSlot(slot.id)) ?? slot;
+  const anchorSlot: MeetingSlot = slot;
 
   // An existing session is the common case and short-circuits everything else:
   // the room already exists, and nothing below may rewrite it — with one
@@ -1138,12 +1044,11 @@ export async function provisionAppointmentMeeting(
 
   // A rebuilt room carries a suffix so it never collides with the dead call.
   const streamCallId = rebuildEndedEarly
-    ? `slot-${anchorSlot.id}-r${Date.now().toString(36)}`
-    : `slot-${anchorSlot.id}`;
+    ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
+    : `occurrence-${anchorSlot.id}`;
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
-  // The RUN's start, not the clicked row's: joining a 10:00–11:00 session from
-  // its 10:30 row must not tell Stream the meeting starts at 10:30.
+  // The occurrence's own bounds, resolved server-side.
   const startsAt =
     callProfile?.startsAt ??
     (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date());
@@ -1221,7 +1126,7 @@ export async function provisionAppointmentMeeting(
               }
             : {}),
           custom: buildCallCustom({
-            anchorSlotId: anchorSlot.id,
+            occurrenceId: anchorSlot.id,
             appointmentId: anchorSlot.appointmentId,
             appointmentType: authorized.appointment.appointmentType,
             organizationId: authorized.appointment.organizationId ?? null,

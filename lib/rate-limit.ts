@@ -107,8 +107,8 @@ export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
  * Two shapes, two budgets:
  *
  * `streamJoinLimiter` guards the meeting join gate. It is the enumeration
- * surface: call ids are deterministic (`slot-<anchorSlotId>`), so an attacker
- * who has one slot id can walk neighbours. Generous enough that a flaky network
+ * surface: call ids are deterministic (`occurrence-<occurrenceId>`), so an attacker
+ * who has one occurrence id can walk neighbours. Generous enough that a flaky network
  * retrying a join never trips it, tight enough that scanning is useless.
  *
  * `streamApiLimiter` guards the search / channel-create / block routes, which

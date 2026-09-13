@@ -79,10 +79,9 @@ const mockPrisma = prisma as unknown as {
 
 const notifyBooked = notifyAppointmentBooked as jest.Mock;
 
-/** One 1-hour session = two 30-minute atoms, both already confirmed. */
+/** One 1-hour session = one confirmed occurrence row (#1554). */
 function confirmedSession(id: string, startISO: string) {
   const startsAt = new Date(startISO);
-  const midpoint = new Date(startsAt.getTime() + 30 * 60 * 1000);
   return {
     id,
     organizationId: null,
@@ -91,14 +90,9 @@ function confirmedSession(id: string, startISO: string) {
     participants: [{ userId: "consultee-1" }],
     occurrences: [
       {
-        id: `${id}-slot-1`,
+        id: `${id}-occurrence`,
+        ordinal: 1,
         startsAt,
-        endsAt: midpoint,
-        isTentative: false,
-      },
-      {
-        id: `${id}-slot-2`,
-        startsAt: midpoint,
         endsAt: new Date(startsAt.getTime() + 60 * 60 * 1000),
         isTentative: false,
       },
@@ -242,13 +236,11 @@ describe("#1206 top-up allocation", () => {
     // Two new Appointment rows = the two sessions the plan was short.
     expect(result.appointments).toHaveLength(2);
     // Weeks 1 and 2 are untouched: they are already at the weekly cap and
-    // their atoms are in the booked set, so the search skipped straight to
-    // weeks 3 and 4.
+    // their intervals are in the booked set, so the search skipped straight
+    // to weeks 3 and 4 — one occurrence row per call (#1554).
     expect(createdSlotStarts()).toEqual([
       "2025-01-20T09:00:00.000Z",
-      "2025-01-20T09:30:00.000Z",
       "2025-01-27T09:00:00.000Z",
-      "2025-01-27T09:30:00.000Z",
     ]);
     // The plan is whole again, so no partial notice is owed.
     expect(result.partial).toBeUndefined();

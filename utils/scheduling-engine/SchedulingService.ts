@@ -39,9 +39,11 @@ import {
 } from "./types";
 import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import {
-  countHalfHourAtoms,
-  halfHourAtomStarts,
-} from "@/lib/appointments/contiguous-slot-run";
+  intervalCountOf,
+  intervalStartsOf,
+  nextOrdinal,
+  SCHEDULING_INTERVAL_MS,
+} from "@/lib/appointments/occurrences";
 import {
   matchesPreferredDays,
   maxPreferenceScore,
@@ -111,8 +113,6 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 type AppointmentWithSlots = Appointment & {
   occurrences: AppointmentOccurrence[];
 };
-
-const SLOT_DURATION_MS = 30 * 60 * 1000;
 
 /**
  * Ceiling on the 30-minute starts walked from one availability row.
@@ -589,7 +589,7 @@ export class SchedulingService {
       planId,
       windows: slotStarts.map((startsAt) => ({
         startsAt,
-        endsAt: new Date(startsAt.getTime() + SLOT_DURATION_MS),
+        endsAt: new Date(startsAt.getTime() + SCHEDULING_INTERVAL_MS),
       })),
       excludeAppointmentIds,
     });
@@ -2337,7 +2337,7 @@ export class SchedulingService {
             (sum, appointment) =>
               sum +
               appointment.occurrences.reduce(
-                (atoms, slot) => atoms + countHalfHourAtoms(slot),
+                (atoms, slot) => atoms + intervalCountOf(slot),
                 0,
               ),
             0,
@@ -2526,10 +2526,12 @@ export class SchedulingService {
     let boundedByRow = false;
 
     for (let step = 0; step < MAX_CANDIDATE_STARTS_PER_ROW; step++) {
-      const candidate = new Date(rowStart.getTime() + step * SLOT_DURATION_MS);
+      const candidate = new Date(
+        rowStart.getTime() + step * SCHEDULING_INTERVAL_MS,
+      );
       // Stop at the row's own end before checking availability — adjacent
       // rows would otherwise let the walk escape past its owner.
-      if (candidate.getTime() + SLOT_DURATION_MS > rowEndMs) {
+      if (candidate.getTime() + SCHEDULING_INTERVAL_MS > rowEndMs) {
         boundedByRow = true;
         break;
       }
@@ -2547,10 +2549,11 @@ export class SchedulingService {
     // simply ends at the 48th start from reporting a truncation it never had.
     if (!boundedByRow) {
       const next = new Date(
-        rowStart.getTime() + MAX_CANDIDATE_STARTS_PER_ROW * SLOT_DURATION_MS,
+        rowStart.getTime() +
+          MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
       );
       if (
-        next.getTime() + SLOT_DURATION_MS <= rowEndMs &&
+        next.getTime() + SCHEDULING_INTERVAL_MS <= rowEndMs &&
         this.isWithinAvailability(next, consultant)
       ) {
         this.reportRowWalkTruncated(rowStart, rowEndMs, consultant, walk);
@@ -2627,7 +2630,7 @@ export class SchedulingService {
         return null;
       }
       block.push(new Date(currentTime));
-      currentTime = new Date(currentTime.getTime() + SLOT_DURATION_MS);
+      currentTime = new Date(currentTime.getTime() + SCHEDULING_INTERVAL_MS);
     }
 
     return block;
@@ -2683,7 +2686,7 @@ export class SchedulingService {
       // rejects any slot whose end passes endDate, so testing the start alone
       // would emit a block the validator then throws out.
       const candidateEnd = new Date(
-        candidateStart.getTime() + slotsPerCall * SLOT_DURATION_MS,
+        candidateStart.getTime() + slotsPerCall * SCHEDULING_INTERVAL_MS,
       );
 
       if (
@@ -3568,6 +3571,11 @@ export class SchedulingService {
     // not narrow to AppointmentWithSlots through Promise.all+map here (tsc rejects).
     let appointments: any[];
     try {
+      // #1554 — a replacement on a reused appointment sits beside the
+      // RESCHEDULED row it replaces, so it takes the next ordinal.
+      const reuseOrdinal = reuseAppointmentId
+        ? await nextOrdinal(tx, reuseAppointmentId)
+        : 1;
       appointments = await Promise.all(
         calls.map((sessionSlots, callIndex) => {
           // #837 — key belongs on the first appointment of the batch only.
@@ -3575,20 +3583,25 @@ export class SchedulingService {
             idempotencyKey && callIndex === 0
               ? { allocationIdempotencyKey: idempotencyKey }
               : {};
-          const slotsToCreate = sessionSlots.map((slotStart) => {
-            const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
-            return {
-              startsAt: slotStart,
-              endsAt: endTime,
+          // #1554 — one occurrence per call with the real end; the 30-minute
+          // intervals stay the unit of arithmetic, not the persisted shape.
+          const slotsToCreate = [
+            {
+              ordinal: reuseAppointmentId ? reuseOrdinal + callIndex : 1,
+              startsAt: sessionSlots[0],
+              endsAt: new Date(
+                sessionSlots[sessionSlots.length - 1].getTime() +
+                  SCHEDULING_INTERVAL_MS,
+              ),
               isTentative: false,
               consultantProfileId: consultantProfileRow.id,
-            };
-          });
+            },
+          ];
 
-          // #898 — REUSE the preserved 1:1 appointment: attach the new slots to
-          // it rather than creating a second row on the @unique event FK. Its
-          // event link and booking-time cancellationPolicyId are already set, so
-          // leave them untouched.
+          // #898 — REUSE the preserved 1:1 appointment: attach the new
+          // occurrence to it rather than creating a second row on the @unique
+          // event FK. Its event link and booking-time cancellationPolicyId are
+          // already set, so leave them untouched.
           if (reuseAppointmentId) {
             return tx.appointment.update({
               where: { id: reuseAppointmentId },
@@ -4408,7 +4421,7 @@ export class SchedulingService {
         // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
         // slot answered "1" to both questions and could never be approved.
         requestedSlots = event.appointment?.occurrences?.flatMap((s) =>
-          halfHourAtomStarts(s),
+          intervalStartsOf(s),
         );
         // #768 — preserve org tag across reschedule (delete+recreate).
         organizationId = event.appointment?.organizationId ?? null;
@@ -4446,7 +4459,7 @@ export class SchedulingService {
         consulteeUserId = event.requestedBy?.user?.id;
         // #1319 — same coverage rule as the consultation arm above.
         requestedSlots = event.appointments?.flatMap((app) =>
-          app.occurrences.flatMap((s) => halfHourAtomStarts(s)),
+          app.occurrences.flatMap((s) => intervalStartsOf(s)),
         );
         // #768 — placeholder Appointment from checkout carries the org
         // tag. New lazy-allocated slots inherit it.

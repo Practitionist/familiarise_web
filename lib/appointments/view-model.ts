@@ -28,61 +28,60 @@ export type NeedsActionReason =
   | "TENTATIVE";
 
 /**
- * Minimal structural slot shape. Both Prisma's bare AppointmentOccurrence and
- * the relation-carrying TAppointmentOccurrence satisfy it, and API payloads may
- * deliver dates as ISO strings — consumers must go through `new Date(...)`.
+ * Minimal structural occurrence shape. Both Prisma's bare AppointmentOccurrence
+ * and the relation-carrying TAppointmentOccurrence satisfy it, and API payloads
+ * may deliver dates as ISO strings — consumers must go through `new Date(...)`.
  */
-export interface SlotLike {
+export interface OccurrenceLike {
   id: string;
   appointmentId?: string | null;
   startsAt: Date | string;
   endsAt?: Date | string | null;
   isTentative: boolean;
   completionStatus?: string | null;
-  /** A10 soft-delete tombstone (#676) — a set value means the slot is gone. */
+  /** A10 soft-delete tombstone (#676) — a set value means the row is gone. */
   deletedAt?: Date | string | null;
   meetingSession?: {
     id: string;
     endedAt: Date | string | null;
-    /** #1270 — required; see the note in lib/appointments/slots.ts. */
+    /** #1270 — required; see the note in lib/appointments/occurrences.ts. */
     endedReason: string | null;
   } | null;
 }
 
 /**
- * The five scheduling fields, and nothing else.
+ * The scheduling fields, and nothing else.
  *
- * `readAppointmentDetail`'s slots are built with `include`, so each row also
- * drags along every attendee (`user[]`, name and image) and the session's
- * recording URLs. Those rows are fine to READ on the server, but handing one
- * to a client component serializes all of it into the RSC payload — and on a
- * class or webinar the attendee list is shared by every slot, so a term's
- * worth of sessions multiplies it by the whole roster. Same class of leak as
- * the consultant-PII one #946 fixed with a select-allowlist; this is that
- * allowlist, applied on the way out.
+ * `readAppointmentDetail`'s occurrences are built with `include`, so each row
+ * also drags along the session's recording URLs. Those rows are fine to READ
+ * on the server, but handing one to a client component serializes all of it
+ * into the RSC payload. Same class of leak as the consultant-PII one #946
+ * fixed with a select-allowlist; this is that allowlist, applied on the way
+ * out.
  */
-export function toSlotLike(slot: SlotLike): SlotLike {
+export function toOccurrenceLike(row: OccurrenceLike): OccurrenceLike {
   return {
-    id: slot.id,
-    appointmentId: slot.appointmentId ?? null,
-    startsAt: slot.startsAt,
-    endsAt: slot.endsAt ?? null,
-    isTentative: slot.isTentative,
-    completionStatus: slot.completionStatus ?? null,
-    deletedAt: slot.deletedAt ?? null,
+    id: row.id,
+    appointmentId: row.appointmentId ?? null,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt ?? null,
+    isTentative: row.isTentative,
+    completionStatus: row.completionStatus ?? null,
+    deletedAt: row.deletedAt ?? null,
   };
 }
 
-export interface SessionVM {
-  slotId: string;
-  /** Owning appointment — differs per session inside subscription/class groups. */
+/** One held call as the list, hero, sheet and timeline render it (#1554). */
+export interface OccurrenceVM {
+  occurrenceId: string;
+  /** Owning appointment — differs per call inside subscription/class groups. */
   appointmentId: string | null;
   startsAt: Date;
   endsAt: Date | null;
   isTentative: boolean;
-  /** Raw OccurrenceCompletionStatus (CANCELLED/RESCHEDULED mark a dead session). */
+  /** Raw OccurrenceCompletionStatus (CANCELLED/RESCHEDULED mark a dead call). */
   completionStatus: string | null;
-  /** Meeting ended early by the host — session is over regardless of endsAt. */
+  /** Meeting ended early by the host — the call is over regardless of endsAt. */
   meetingEndedAt: Date | null;
   /**
    * #1270 — carried alongside `meetingEndedAt` because the two are only
@@ -101,8 +100,8 @@ export interface PersonVM {
 export interface AppointmentVMRaw {
   /** What the existing action hooks (join/cancel/reschedule/timings) consume. */
   appointment?: TAppointment;
-  /** Future/ongoing slots in action-hook shape (consultee useEventActions input). */
-  rawSlots?: SlotLike[];
+  /** Future/ongoing occurrences in action-hook shape (consultee useEventActions input). */
+  rawOccurrences?: OccurrenceLike[];
   /** All child appointments of a subscription/class group, sorted. */
   groupAppointments?: TAppointment[];
   /** The original role-specific list item (trial, unscheduled event, …). */
@@ -134,11 +133,11 @@ export interface AppointmentVM {
   status: string;
   bucket: AppointmentBucket;
   needsActionReason: NeedsActionReason | null;
-  /** Sort/day-group anchor: next upcoming session, else the most recent one. */
+  /** Sort/day-group anchor: next upcoming call, else the most recent one. */
   nextAt: Date | null;
-  /** Full session timeline (all slots, past + future), chronological. */
-  sessions: SessionVM[];
-  /** Multi-session (subscription/class) progress; null for one-off events. */
+  /** Full timeline (every occurrence, past + future), chronological. */
+  occurrences: OccurrenceVM[];
+  /** Multi-call (subscription/class) progress; null for one-off events. */
   group: { total: number; completed: number } | null;
   /** Secondary descriptor line (plan cadence, duration, …). */
   meta: string | null;
@@ -160,21 +159,21 @@ export function toDateOrNull(
   return value === null || value === undefined ? null : toDate(value);
 }
 
-export function toSessionVM(slot: SlotLike): SessionVM {
+export function toOccurrenceVM(row: OccurrenceLike): OccurrenceVM {
   return {
-    slotId: slot.id,
-    appointmentId: slot.appointmentId ?? null,
-    startsAt: toDate(slot.startsAt),
-    endsAt: toDateOrNull(slot.endsAt),
-    isTentative: slot.isTentative,
-    completionStatus: slot.completionStatus ?? null,
-    meetingEndedAt: toDateOrNull(slot.meetingSession?.endedAt),
-    meetingEndedReason: slot.meetingSession?.endedReason ?? null,
+    occurrenceId: row.id,
+    appointmentId: row.appointmentId ?? null,
+    startsAt: toDate(row.startsAt),
+    endsAt: toDateOrNull(row.endsAt),
+    isTentative: row.isTentative,
+    completionStatus: row.completionStatus ?? null,
+    meetingEndedAt: toDateOrNull(row.meetingSession?.endedAt),
+    meetingEndedReason: row.meetingSession?.endedReason ?? null,
   };
 }
 
-export function sortSessions(sessions: SessionVM[]): SessionVM[] {
-  return [...sessions].sort(
+export function sortOccurrences(occurrences: OccurrenceVM[]): OccurrenceVM[] {
+  return [...occurrences].sort(
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 }

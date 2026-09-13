@@ -55,10 +55,10 @@ import {
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
 import {
-  getSessionVMJoinState,
-  isDeadSlot,
-  isSessionOver,
-} from "@/lib/appointments/slots";
+  getOccurrenceVMJoinState,
+  isDeadOccurrence,
+  isOccurrenceOver,
+} from "@/lib/appointments/occurrences";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
@@ -208,12 +208,12 @@ function SoleSessionRating({
   feedback,
 }: {
   appointmentId: string;
-  session: AppointmentVM["sessions"][number];
+  session: AppointmentVM["occurrences"][number];
   role: "consultee" | "consultant";
   feedback: ReturnType<typeof useSessionFeedback>;
 }) {
-  const rating = feedback.ratings[session.slotId] ?? null;
-  const canRate = feedback.rateable.has(session.slotId);
+  const rating = feedback.ratings[session.occurrenceId] ?? null;
+  const canRate = feedback.rateable.has(session.occurrenceId);
   const readOnly = role !== "consultee" || !canRate;
   if (rating === null && readOnly) return null;
   return (
@@ -228,7 +228,7 @@ function SoleSessionRating({
       <SessionRatingRow
         appointmentId={session.appointmentId ?? appointmentId}
         bookingAppointmentId={appointmentId}
-        slotId={session.slotId}
+        slotId={session.occurrenceId}
         existingRating={rating}
         readOnly={readOnly}
       />
@@ -407,21 +407,21 @@ export function AppointmentDetailClient({
   // header cannot — a held row awaiting payment, or an open proposal.
   const soleSession =
     isSingleSessionKind(vm.kind) &&
-    vm.sessions.length === 1 &&
-    !vm.sessions[0].isTentative &&
+    vm.occurrences.length === 1 &&
+    !vm.occurrences[0].isTentative &&
     !openProposal
-      ? vm.sessions[0]
+      ? vm.occurrences[0]
       : null;
   const soleSessionOver =
     !!soleSession &&
-    !isDeadSlot(soleSession) &&
-    getSessionVMJoinState(soleSession, { joinWindowMs }) !== "joinable" &&
-    isSessionOver(soleSession);
+    !isDeadOccurrence(soleSession) &&
+    getOccurrenceVMJoinState(soleSession, { joinWindowMs }) !== "joinable" &&
+    isOccurrenceOver(soleSession);
   const anchorSession = vm.nextAt
-    ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
-  const hasConfirmedSessions = vm.sessions.some((s) => !s.isTentative);
-  const hasTentativeSessions = vm.sessions.some((s) => s.isTentative);
+  const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
+  const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
   // #1429 F2 — a trial's Pay Now lands on our branded trial checkout, which
   // names the amount and the hold deadline; only a non-trial booking falls
   // through to the raw gateway link. #1428 added a second Pay Now here without
@@ -644,13 +644,13 @@ export function AppointmentDetailClient({
                     // org quality average.
                     renderSessionExtra={(session) => {
                       const rating =
-                        sessionFeedback.ratings[session.slotId] ?? null;
+                        sessionFeedback.ratings[session.occurrenceId] ?? null;
                       // Offer stars only where a rating would be ACCEPTED —
                       // you attended, or nobody could have recorded it. Showing
                       // them on a call the viewer never joined invited a click
                       // that the route then refused.
                       const canRate = sessionFeedback.rateable.has(
-                        session.slotId,
+                        session.occurrenceId,
                       );
                       // While the read is failing, `rateable` is empty and
                       // `rating` is null for every row — indistinguishable from
@@ -664,7 +664,7 @@ export function AppointmentDetailClient({
                         <SessionRatingRow
                           appointmentId={session.appointmentId ?? appointmentId}
                           bookingAppointmentId={appointmentId}
-                          slotId={session.slotId}
+                          slotId={session.occurrenceId}
                           existingRating={rating}
                           // The consultant sees what a call scored; only the
                           // attendee can set it.
@@ -672,7 +672,7 @@ export function AppointmentDetailClient({
                         />
                       );
                     }}
-                    sessions={vm.sessions}
+                    occurrences={vm.occurrences}
                     joinWindowMs={joinWindowMs}
                     defaultExpanded
                     isJoining={action.kind === "join" && !!action.busy}

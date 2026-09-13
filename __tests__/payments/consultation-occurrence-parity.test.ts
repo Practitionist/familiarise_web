@@ -6,15 +6,15 @@
  * #1319 / #1071 — the two writers that can create a paid consultation must
  * produce the same rows.
  *
- * `handleConsultationCheckout` chunks the session into 30-minute atoms and
- * connects both the consultant and the consultee to each one. The webhook
- * capture fallback (`createConsultation`, reached when a capture arrives with
- * no `appointmentId` on the payment) used to mint ONE row spanning the whole
- * session with only the buyer attached — not an atom run, and invisible to the
- * consultant-scoped conflict filter, so the allocator would double-book on it.
+ * `handleConsultationCheckout` and the webhook capture fallback
+ * (`createConsultation`, reached when a capture arrives with no
+ * `appointmentId` on the payment) both write ONE occurrence row with the real
+ * end (#1554) and seat both parties on AppointmentParticipant. The fallback
+ * used to seat only the buyer, which the consultant-scoped conflict filter
+ * could not see, so the allocator would double-book on it.
  *
- * Both now call `buildContiguousSlotAtomsForWindow`. This pins that they still
- * agree, for a two-hour booking, on every field a reader depends on.
+ * Both call `buildOccurrenceForWindow`. This pins that they still agree, for
+ * a two-hour booking, on every field a reader depends on.
  */
 
 const withSerializableRetry = jest.fn(async (fn: () => unknown) => fn());
@@ -36,6 +36,7 @@ const START = new Date("2026-10-01T09:00:00.000Z");
 const END = new Date("2026-10-01T11:00:00.000Z"); // exactly two hours
 
 type SlotAtom = {
+  ordinal: number;
   startsAt: Date;
   endsAt: Date;
   isTentative: boolean;
@@ -224,7 +225,11 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
       .data;
     return {
       id: "appt-1",
-      occurrences: materialise(data.occurrences.create),
+      occurrences: materialise(
+        Array.isArray(data.occurrences.create)
+          ? data.occurrences.create
+          : [data.occurrences.create],
+      ),
     };
   });
   webhookTx.appointment.findUnique.mockResolvedValue({
@@ -316,26 +321,21 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
 
 /** Field-by-field shape assertions shared by both writers. */
 function assertTwoHourAtomRun(atoms: SlotAtom[]) {
-  atoms.forEach((atom, i) => {
-    expect(atom.startsAt.getTime()).toBe(START.getTime() + i * 30 * 60 * 1000);
-    expect(atom.endsAt.getTime() - atom.startsAt.getTime()).toBe(
-      30 * 60 * 1000,
-    );
-    expect(atom.consultantProfileId).toBe(CONSULTANT_PROFILE);
-    // #1554 — who attends is never on the atom; the roster is the
-    // AppointmentParticipant rows both creators write (asserted below).
-    expect("user" in atom).toBe(false);
-  });
-  // Contiguous: every atom starts where the previous one ended.
-  for (let i = 1; i < atoms.length; i++) {
-    expect(atoms[i].startsAt.getTime()).toBe(atoms[i - 1].endsAt.getTime());
-  }
+  // #1554 — one row per held call, carrying the real end.
+  expect(atoms).toHaveLength(1);
+  const [occurrence] = atoms;
+  expect(occurrence.ordinal).toBe(1);
+  expect(occurrence.startsAt.getTime()).toBe(START.getTime());
+  expect(occurrence.endsAt.getTime()).toBe(END.getTime());
+  expect(occurrence.consultantProfileId).toBe(CONSULTANT_PROFILE);
+  // Who attends is never on the row; the roster is the AppointmentParticipant
+  // rows both creators write (asserted below).
+  expect("user" in occurrence).toBe(false);
 }
 
 describe("#1319 — webhook and checkout consultation writers agree", () => {
-  it("the webhook capture fallback writes a four-atom run and seats both parties", async () => {
+  it("the webhook capture fallback writes one occurrence and seats both parties", async () => {
     const atoms = await runWebhookCreator();
-    expect(atoms).toHaveLength(4);
     assertTwoHourAtomRun(atoms);
     const created = webhookAppointmentCreate.mock.calls[0][0] as {
       data: { participants: { create: Array<{ userId: string }> } };
@@ -345,9 +345,8 @@ describe("#1319 — webhook and checkout consultation writers agree", () => {
     ).toEqual([CONSULTANT_USER, CONSULTEE_USER].sort());
   });
 
-  it("checkout writes the same four-atom run and seats both parties", async () => {
+  it("checkout writes the same occurrence and seats both parties", async () => {
     const atoms = await runCheckoutCreator();
-    expect(atoms).toHaveLength(4);
     assertTwoHourAtomRun(atoms);
     const seated = checkoutParticipantCreateMany.mock.calls[0][0] as {
       data: Array<{ userId: string }>;
@@ -357,25 +356,15 @@ describe("#1319 — webhook and checkout consultation writers agree", () => {
     );
   });
 
-  it("the two atom sets are identical apart from the tentative flag", async () => {
+  it("the two rows are identical apart from the tentative flag", async () => {
     const fromWebhook = await runWebhookCreator();
     const fromCheckout = await runCheckoutCreator();
 
     // Checkout births tentative and the capture webhook flips it; the fallback
     // only ever runs post-capture, so it births confirmed. Everything else has
     // to match exactly.
-    expect(fromWebhook.map((a) => a.isTentative)).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ]);
-    expect(fromCheckout.map((a) => a.isTentative)).toEqual([
-      true,
-      true,
-      true,
-      true,
-    ]);
+    expect(fromWebhook.map((a) => a.isTentative)).toEqual([false]);
+    expect(fromCheckout.map((a) => a.isTentative)).toEqual([true]);
 
     const strip = (atoms: SlotAtom[]) =>
       atoms.map(({ isTentative: _isTentative, ...rest }) => rest);

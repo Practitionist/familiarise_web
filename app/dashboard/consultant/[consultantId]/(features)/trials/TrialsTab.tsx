@@ -52,8 +52,8 @@ import type { MeetingSlot } from "@/lib/meeting";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
-  getJoinableSession,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+} from "@/lib/appointments/occurrences";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
@@ -426,16 +426,9 @@ export function TrialsTab() {
     const appointment = trial.appointment;
     if (!appointment) return false;
     return (
-      getJoinableSession(
-        // `groupSlotsIntoRuns` buckets rows by appointment and the trials
-        // payload omits the FK, so without stamping it every 30-minute row
-        // would be its own session (#1061).
-        appointment.occurrences.map((slot) => ({
-          ...slot,
-          appointmentId: appointment.id,
-        })),
-        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
-      ) !== null
+      getJoinableOccurrence(appointment.occurrences, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) !== null
     );
   };
 

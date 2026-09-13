@@ -40,7 +40,7 @@ export function RescheduleClient({
   const actions = useConsultantEventActions({
     consultantId,
     appointmentId,
-    rawSlots: [],
+    rawOccurrences: [],
     title,
     type: typeLabel,
   });

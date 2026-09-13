@@ -1,6 +1,6 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
-import { isDeadSlot } from "@/lib/appointments/slots";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 
 /**
  * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
@@ -15,7 +15,7 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  */
 function liveSlotsOf(appointment: TAppointment): TAppointment["occurrences"] {
   return (appointment.occurrences ?? []).filter(
-    (slot) => !isDeadSlot(slot) && !slot.isTentative,
+    (slot) => !isDeadOccurrence(slot) && !slot.isTentative,
   );
 }
 

@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
-import { toSlotLike } from "@/lib/appointments/view-model";
+import { toOccurrenceLike } from "@/lib/appointments/view-model";
 import type { ManageTimingsAppointmentLike } from "@/lib/scheduling/manage-timings-subject";
 
 /**
@@ -159,13 +159,13 @@ export async function readManageTimingsTarget(
       // session still awaiting a time, and falls back to the last one that
       // ran when everything is over (#1073).
       //
-      // Through `toSlotLike`, never spread: these rows arrive from an
+      // Through `toOccurrenceLike`, never spread: these rows arrive from an
       // `include` and carry the attendee list and recording URLs with them,
       // which this route has no business shipping to the client.
       slots: [
         ...appointment.occurrences,
         ...siblings.flatMap((sibling) => sibling.occurrences),
-      ].map(toSlotLike),
+      ].map(toOccurrenceLike),
       consultation: appointment.consultation,
       subscription: appointment.subscription,
       webinar: appointment.webinar,

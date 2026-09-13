@@ -1,5 +1,5 @@
 import type { AppointmentsType } from "@prisma/client";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { supportsProposals } from "@/lib/booking/reschedule-proposals";
 
 /**
@@ -142,7 +142,7 @@ export interface SlotPickerSubject {
   allowedStart?: Date;
   allowedEnd?: Date;
   /** Existing sessions, for the release step. */
-  slots?: SlotLike[];
+  slots?: OccurrenceLike[];
   /** A session is already released and awaiting a new time. */
   hasReleasedSlots?: boolean;
 }

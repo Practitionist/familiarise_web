@@ -8,6 +8,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import {
   AppointmentStatus,
   ScheduleType,
@@ -32,7 +33,6 @@ import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 // AE-5/RV-6 — every slot is uniformly 30 minutes. The old slotDurationMinutes
 // param invited callers to pass arbitrary values that silently mismatch the
 // rest of the booking math; inline the one true duration instead.
-const SLOT_DURATION_MS = 30 * 60 * 1000;
 
 /**
  * RV-2 — minimal shape needed to decide whether an overlapping appointment is a
@@ -335,11 +335,11 @@ export class ScheduleValidationService {
     // Slots may not be sorted (checkSlotAvailability doesn't sort),
     // so compute min/max explicitly.
     let earliestStart = slots[0].getTime();
-    let latestEnd = slots[0].getTime() + SLOT_DURATION_MS;
+    let latestEnd = slots[0].getTime() + SCHEDULING_INTERVAL_MS;
 
     for (const slot of slots) {
       const startMs = slot.getTime();
-      const endMs = startMs + SLOT_DURATION_MS;
+      const endMs = startMs + SCHEDULING_INTERVAL_MS;
       if (startMs < earliestStart) earliestStart = startMs;
       if (endMs > latestEnd) latestEnd = endMs;
     }
@@ -425,7 +425,7 @@ export class ScheduleValidationService {
     // Step 3: Match conflicts back to specific proposed slots in JS
     const now = new Date();
     for (const slot of slots) {
-      const slotEnd = new Date(slot.getTime() + SLOT_DURATION_MS);
+      const slotEnd = new Date(slot.getTime() + SCHEDULING_INTERVAL_MS);
 
       const existingAppointment = conflictingAppointments.find((appt) =>
         appt.occurrences.some(
@@ -1095,7 +1095,7 @@ export class ScheduleValidationService {
     const slotsByWeek = ScheduleCalculationService.groupSlotsByWeek(
       slots.map((s) => ({
         startTime: s,
-        endTime: new Date(s.getTime() + SLOT_DURATION_MS),
+        endTime: new Date(s.getTime() + SCHEDULING_INTERVAL_MS),
         isAvailable: true,
         isBooked: false,
       })),

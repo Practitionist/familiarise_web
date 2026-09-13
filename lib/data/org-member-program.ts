@@ -14,7 +14,7 @@ import { toPlain } from "@/lib/data/serialize";
 // #1270 — the shared learner window, not a local copy of its value. Real join
 // (Stream client) lives on the consultee dashboard; the page links there, so
 // the two must agree on when the affordance appears.
-import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
 interface UpcomingSession {
   id: string;

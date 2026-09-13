@@ -16,6 +16,10 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { recordParticipants } from "@/lib/booking/participants";
+import {
+  buildOccurrenceForWindow,
+  intervalStartsOf,
+} from "@/lib/appointments/occurrences";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -199,22 +203,24 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        // Generate 30-minute slot chunks from startTime to endTime.
-        // AppointmentOccurrence records are always 30 minutes each — consistent with
-        // manual and auto allocation paths in SchedulingService.
-        const SLOT_DURATION_MS = 30 * 60 * 1000;
-        const slotChunkStarts: Date[] = [];
-        let current = new Date(startTime);
-        while (current < endTime) {
-          slotChunkStarts.push(new Date(current));
-          current = new Date(current.getTime() + SLOT_DURATION_MS);
-        }
-        if (slotChunkStarts.length === 0) {
+        // The 30-minute interval starts the window covers — the validator's
+        // unit of arithmetic (#1554: the persisted shape is one row below).
+        if (!(startTime < endTime)) {
           return NextResponse.json(
             { error: "Invalid slot: start time must be before end time" },
             { status: 400 },
           );
         }
+        const occurrenceToCreate = buildOccurrenceForWindow({
+          startsAt: startTime,
+          endsAt: endTime,
+          // #440 — the overlap-guard column must be set at CREATE time even on
+          // tentative rows: approval/webhook confirm flips isTentative via
+          // updateMany, so whatever is on the row rides into confirmed state.
+          consultantProfileId,
+          isTentative: true, // pending approval
+        });
+        const slotChunkStarts = intervalStartsOf(occurrenceToCreate);
 
         // RE-VALIDATE inside lock: Ensure ALL 30-min chunks are still available
         // This is the critical missing piece - prevents double-booking even after lock
@@ -256,18 +262,6 @@ export async function POST(req: NextRequest) {
         );
 
         // CRITICAL SECTION: Create consultation (protected by lock AND validated)
-        // Create one AppointmentOccurrence per 30-min chunk — consistent with
-        // SchedulingService which also uses 30-min granularity.
-        const slotChunksToCreate = slotChunkStarts.map((chunkStart) => ({
-          startsAt: chunkStart,
-          endsAt: new Date(chunkStart.getTime() + SLOT_DURATION_MS),
-          isTentative: true, // Mark as tentative since it's pending approval
-          // #440 — the overlap-guard column must be set at CREATE time even on
-          // tentative rows: approval/webhook confirm flips isTentative via
-          // updateMany, so whatever is on the row rides into confirmed state.
-          consultantProfileId,
-        }));
-
         // #1333 — the request and its opening timeline row commit together, so
         // a booking that exists is never one the staff timeline has nothing to
         // say about. The nested create was already atomic on its own; the
@@ -288,7 +282,7 @@ export async function POST(req: NextRequest) {
                     // the moment the request exists.
                     organizationId: organizationId ?? null,
                     occurrences: {
-                      create: slotChunksToCreate,
+                      create: occurrenceToCreate,
                     },
                   },
                 },

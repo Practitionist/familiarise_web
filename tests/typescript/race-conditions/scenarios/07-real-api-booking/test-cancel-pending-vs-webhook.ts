@@ -127,6 +127,7 @@ async function run() {
       completedAt: true,
       deletedAt: true,
       consultantProfileId: true,
+      ordinal: true,
     },
   });
 
@@ -306,6 +307,7 @@ async function run() {
         create: {
           id: slot.id,
           appointmentId: appointment.id,
+          ordinal: slot.ordinal,
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,
           isTentative: true,
@@ -380,6 +382,7 @@ async function run() {
         create: {
           id: slot.id,
           appointmentId: appointment.id,
+          ordinal: slot.ordinal,
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,
           isTentative: slot.isTentative,

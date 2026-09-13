@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 
 /**
@@ -43,7 +43,7 @@ export interface AllocationRequest {
    * rows `hasReleasedSlots` is derived from; the picker opens on the earliest
    * of them (#1073).
    */
-  slots: SlotLike[];
+  slots: OccurrenceLike[];
 }
 
 const requestedBySelect = {

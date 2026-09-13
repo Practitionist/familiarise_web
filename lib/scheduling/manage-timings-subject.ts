@@ -1,5 +1,5 @@
 import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 
 /**
@@ -25,7 +25,7 @@ export interface ManageTimingsAppointmentLike {
    * focused on (#1073). A bare Class/Webinar row has none, which is itself
    * the answer there.
    */
-  slots?: SlotLike[];
+  slots?: OccurrenceLike[];
   consultation?: {
     id?: string | null;
     consultationPlan?: {

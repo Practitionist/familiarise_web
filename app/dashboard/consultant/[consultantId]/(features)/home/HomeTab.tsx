@@ -57,10 +57,10 @@ import {
   eventUnionStatusBadge,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/slots";
+import { getProximityLabel } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
-import { getJoinableSlot } from "../../utils/joinState";
+import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
 import { RequestSlotAllocationTabMini } from "@/components/dashboard/shared/requests/RequestSlotAllocationTabMini";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
@@ -225,7 +225,7 @@ export function HomeTab({
                     {todayAppointments.map((appointment) => {
                       const userName = getConsumeeName(appointment);
                       const startTime = getStartTime(appointment);
-                      const joinableSlot = getJoinableSlot(
+                      const joinableSlot = getJoinableOccurrence(
                         appointment.occurrences ?? [],
                       );
                       // #1270 — this row had NO status check at all: any

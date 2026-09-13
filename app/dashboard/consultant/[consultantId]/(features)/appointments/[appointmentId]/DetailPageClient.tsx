@@ -8,7 +8,7 @@ import { AppointmentDocumentsList } from "@/components/appointments/detail/Appoi
 import { Button } from "@/components/ui/button";
 import { isConfirmedStatus } from "@/lib/appointments/status";
 import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import type { TAppointment } from "@/types/appointment";
 import { ConsultantResponseUpload } from "../../documents/ConsultantResponseUpload";
 import { useConsultantAppointmentsAdapter } from "../ConsultantAppointmentsAdapter";

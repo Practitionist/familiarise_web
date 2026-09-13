@@ -6,7 +6,7 @@ export interface SlotWithMeetingSession extends AppointmentOccurrence {
   meetingSession?: {
     id: string;
     endedAt: Date | string | null;
-    /** #1270 — required; see the note in lib/appointments/slots.ts. */
+    /** #1270 — required; see the note in lib/appointments/occurrences.ts. */
     endedReason: string | null;
   } | null;
 }

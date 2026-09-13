@@ -51,7 +51,7 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
-import { buildContiguousSlotAtomsForWindow } from "@/lib/appointments/contiguous-slot-run";
+import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   buildDeadHoldFilter,
@@ -2314,12 +2314,11 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // N x 30-minute atoms (#1071 / ADR B1). Half-hour rows are what conflict
-  // detection compares against; both parties are seated on the appointment's
-  // participant rows below (#1554), which the user-scoped filter in
+  // One occurrence with the real end (#1554); both parties are seated on the
+  // appointment's participant rows below, which the user-scoped filter in
   // validateNoConflicts reads. #1319 — shared with the webhook capture
-  // fallback, which had drifted to one oversized row.
-  const slotAtoms = buildContiguousSlotAtomsForWindow({
+  // fallback so the two creators cannot drift.
+  const occurrence = buildOccurrenceForWindow({
     startsAt: new Date(data.startsAt!),
     endsAt: new Date(data.endsAt!),
     // #440 — denormalized for the DB-level overlap guard.
@@ -2335,7 +2334,7 @@ export async function handleConsultationCheckout(
       // B1/#1499 — freeze the refund terms at booking by pointing at the immutable
       // policy version; the cancel flow reads it back through this FK.
       cancellationPolicyId,
-      occurrences: { create: slotAtoms },
+      occurrences: { create: occurrence },
     },
   });
   // #1319 A9 / #1554 — the roster, same tx as the occurrence create.

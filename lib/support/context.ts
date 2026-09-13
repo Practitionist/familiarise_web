@@ -11,7 +11,7 @@ import {
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
+import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
 import type { SupportContext, SupportStage } from "./types";
 
 /**
@@ -57,12 +57,9 @@ export async function buildSupportContext(
       organizationId: true,
       cancellationPolicy: POLICY_TERMS_INCLUDE,
       occurrences: {
-        // Every live row, not the next one. A session is the contiguous RUN of
-        // 30-minute rows (#1061), so taking a single row gave a 90-minute
-        // meeting a 30-minute window: `endsAt` fell an hour early and the
-        // stage flipped to COMPLETED while the call was still running, which
-        // is what gates the intents on offer. Grouping below restores the
-        // real session bounds.
+        // Every live row, not the next one: the retrospective intents need
+        // the last finished call as well as the next one (#1554: one row per
+        // held call, with its real bounds).
         //
         // Live means "not called off", NOT "still SCHEDULED". A session that has
         // happened is COMPLETED or UNVERIFIED, so the old status equality
@@ -70,8 +67,8 @@ export async function buildSupportContext(
         // `lastEndedRun` was always null, a no-show report fell back to the
         // upcoming session, and with nothing upcoming `endsAt` was null — so the
         // server-side 48-hour recording-window check could not run at all. Same
-        // exclusion as `heldSlot` (lib/reviews.ts) and `isDeadSlot`
-        // (lib/appointments/slots.ts), which the grouping below re-applies.
+        // exclusion as `heldSlot` (lib/reviews.ts) and `isDeadOccurrence`
+        // (lib/appointments/occurrences.ts), which the read below re-applies.
         where: {
           deletedAt: null,
           completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
@@ -171,12 +168,13 @@ export async function buildSupportContext(
     providerProfileIds.includes(me.consultantProfileId);
 
   const nowMs = Date.now();
-  const runs = groupSlotsIntoRuns(
-    appt.occurrences.map((slot) => ({ ...slot, appointmentId })),
-  );
-  /** The session in progress or still to come — the forward-looking subject. */
+  const runs = liveOccurrencesOf(appt.occurrences).map((row) => ({
+    startsAt: new Date(row.startsAt),
+    endsAt: new Date(row.endsAt),
+  }));
+  /** The call in progress or still to come — the forward-looking subject. */
   const activeRun = runs.find((run) => run.endsAt.getTime() > nowMs) ?? null;
-  /** The most recent session that has finished. */
+  /** The most recent call that has finished. */
   const lastEndedRun =
     [...runs].reverse().find((run) => run.endsAt.getTime() <= nowMs) ?? null;
 

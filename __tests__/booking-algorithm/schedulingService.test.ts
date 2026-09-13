@@ -153,6 +153,9 @@ function makeMockTx() {
       // event has no confirmed slots" rather than from a client flag that was
       // never true, so it runs on the ordinary allocation paths too.
       count: jest.fn().mockResolvedValue(0),
+      // #1554 — nextOrdinal on a reused appointment: one RESCHEDULED row
+      // already sits at ordinal 1, so the replacement takes 2.
+      aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 1 } }),
     },
     // pg_advisory_xact_lock inside guardInitialAllocationInTx.
     $executeRaw: jest.fn().mockResolvedValue(1),
@@ -445,7 +448,7 @@ describe("Manual allocation", () => {
     expect(mockTx.appointment.create).toHaveBeenCalled();
   });
 
-  it("should create slot records with 30-minute duration", async () => {
+  it("should create ONE occurrence row spanning the whole call (#1554)", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
     await SchedulingService.allocate({
@@ -458,11 +461,12 @@ describe("Manual allocation", () => {
     const createCall = mockTx.appointment.create.mock.calls[0][0];
     const slotsToCreate = createCall.data.occurrences.create;
 
-    expect(slotsToCreate).toHaveLength(2);
-    // Each slot should have 30-minute offset between startsAt and endsAt
-    const slot1Start = new Date(slotsToCreate[0].startsAt).getTime();
-    const slot1End = new Date(slotsToCreate[0].endsAt).getTime();
-    expect(slot1End - slot1Start).toBe(30 * 60 * 1000);
+    // Two 30-minute intervals of arithmetic, one persisted row with the real end.
+    expect(slotsToCreate).toHaveLength(1);
+    expect(slotsToCreate[0].ordinal).toBe(1);
+    const start = new Date(slotsToCreate[0].startsAt).getTime();
+    const end = new Date(slotsToCreate[0].endsAt).getTime();
+    expect(end - start).toBe(60 * 60 * 1000);
   });
 
   it("should connect both consultant and consultee to appointment", async () => {
@@ -963,9 +967,9 @@ describe("Auto allocation", () => {
     expect(result.success).toBe(true);
     // Should create exactly 1 appointment for consultation
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
-    // Appointment should have 2 slots (1hr ÷ 30min = 2)
+    // One occurrence per call (#1554): 1hr = two intervals, one row.
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.occurrences.create).toHaveLength(2);
+    expect(createCall.data.occurrences.create).toHaveLength(1);
   });
 
   it("should find consecutive slots for webinar", async () => {
@@ -1814,13 +1818,16 @@ describe("createAppointments - grouping and validation", () => {
 
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
 
-    // First appointment: first 2 slots
+    // First appointment: one occurrence covering the first 2 intervals
     const call1 = mockTx.appointment.create.mock.calls[0][0];
-    expect(call1.data.occurrences.create).toHaveLength(2);
+    expect(call1.data.occurrences.create).toHaveLength(1);
+    expect(call1.data.occurrences.create[0].endsAt).toEqual(
+      new Date("2025-01-06T11:00:00Z"),
+    );
 
-    // Second appointment: next 2 slots
+    // Second appointment: one occurrence covering the next 2 intervals
     const call2 = mockTx.appointment.create.mock.calls[1][0];
-    expect(call2.data.occurrences.create).toHaveLength(2);
+    expect(call2.data.occurrences.create).toHaveLength(1);
   });
 
   it("should group 6 slots into 2 appointments for 1.5-hour sessions", async () => {
@@ -1852,13 +1859,15 @@ describe("createAppointments - grouping and validation", () => {
     });
 
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
-    // Each appointment has 3 slots
-    expect(
-      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create,
-    ).toHaveLength(3);
-    expect(
-      mockTx.appointment.create.mock.calls[1][0].data.occurrences.create,
-    ).toHaveLength(3);
+    // Each appointment has one 90-minute occurrence (#1554)
+    for (const call of mockTx.appointment.create.mock.calls) {
+      const [occurrence] = call[0].data.occurrences.create;
+      expect(call[0].data.occurrences.create).toHaveLength(1);
+      expect(
+        new Date(occurrence.endsAt).getTime() -
+          new Date(occurrence.startsAt).getTime(),
+      ).toBe(90 * 60 * 1000);
+    }
   });
 
   it("should set isTentative to false on all created slots", async () => {
@@ -2310,7 +2319,18 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(result.success).toBe(true);
-    // New slots attach to the SAME appointment (REUSE)...
+    // New occurrence attaches to the SAME appointment (REUSE), at the next
+    // ordinal so the unique holds beside the replaced row (#1554)...
+    expect(mockTx.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "paid-consult-apt" },
+        data: expect.objectContaining({
+          occurrences: {
+            create: [expect.objectContaining({ ordinal: 2 })],
+          },
+        }),
+      }),
+    );
     expect(mockTx.appointment.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "paid-consult-apt" } }),
     );
@@ -2606,9 +2626,13 @@ describe("Edge cases", () => {
 
     expect(result.success).toBe(true);
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
+    // Four intervals, one two-hour occurrence (#1554)
+    const [occurrence] =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
     expect(
       mockTx.appointment.create.mock.calls[0][0].data.occurrences.create,
-    ).toHaveLength(4);
+    ).toHaveLength(1);
+    expect(occurrence.endsAt).toEqual(new Date("2025-01-06T12:00:00Z"));
   });
 
   it("should handle class with sessionsPerWeek mapping to sessionsPerWeek", async () => {

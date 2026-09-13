@@ -20,10 +20,10 @@ import { GET } from "../../app/api/dashboard/consultant/[consultantId]/planner/r
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
-  getCurrentOrNextSession,
-  getJoinableSession,
-  getSessionJoinState,
-} from "@/lib/appointments/slots";
+  getCurrentOrNextOccurrence,
+  getJoinableOccurrence,
+  getOccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
@@ -94,7 +94,7 @@ function storedSlot(
   return {
     id,
     startsAt,
-    endsAt: new Date(startsAt.getTime() + 30 * 60_000),
+    endsAt: new Date(startsAt.getTime() + 60 * 60_000),
     isTentative: false,
     completionStatus: "SCHEDULED",
     deletedAt: null,
@@ -298,14 +298,11 @@ async function plannerClasses() {
   }>;
 }
 
-/** A one-hour sitting, live right now: two contiguous 30-minute rows. */
+/** A one-hour sitting, live right now: one occurrence row (#1554). */
 const liveSitting = (extra: Partial<StoredSlot> = {}): StoredAppointment => ({
   id: "appt-live",
   organizationId: null,
-  occurrences: [
-    storedSlot("slot-a1", hoursFromNow(-0.5), extra),
-    storedSlot("slot-a2", hoursFromNow(0), extra),
-  ],
+  occurrences: [storedSlot("slot-a1", hoursFromNow(-0.5), extra)],
 });
 
 describe("the planner payload carries what a class join reads", () => {
@@ -315,7 +312,7 @@ describe("the planner payload carries what a class join reads", () => {
     const [cls] = await plannerClasses();
     const slots = cls.appointments[0].occurrences;
 
-    expect(slots).toHaveLength(2);
+    expect(slots).toHaveLength(1);
     // An exact key set, both ways: the join path's fields are all present, and
     // nothing the route trimmed on purpose has crept back in.
     expect(Object.keys(slots![0]).sort()).toEqual([
@@ -328,25 +325,24 @@ describe("the planner payload carries what a class join reads", () => {
     ]);
   });
 
-  it("resolves to the run's anchor, not whichever row came first", async () => {
+  it("resolves to the live occurrence", async () => {
     seedClass([liveSitting()]);
 
     const [cls] = await plannerClasses();
-    const run = getJoinableSession(cls.appointments[0].occurrences!, {
+    const run = getJoinableOccurrence(cls.appointments[0].occurrences!, {
       joinWindowMs: 10 * 60 * 1000,
       now: NOW,
     });
 
     expect(run).not.toBeNull();
-    // The room is keyed to this id (#1061); before #1080 there was no run at
-    // all, so the class Join could never even get here.
-    expect(run!.anchor.id).toBe("slot-a1");
+    // The room is keyed to this id (#1554); before #1080 there were no rows
+    // at all, so the class Join could never even get here.
+    expect(run!.id).toBe("slot-a1");
   });
 
   it("sees a host-ended call rather than only the clock", async () => {
     // The `meetingSession` select is what makes the ended guard reachable:
-    // both rows are still inside their window, so the clock alone says
-    // "joinable".
+    // the row is still inside its window, so the clock alone says "joinable".
     seedClass([
       liveSitting({
         meetingSession: {
@@ -359,15 +355,15 @@ describe("the planner payload carries what a class join reads", () => {
 
     const [cls] = await plannerClasses();
     const slots = cls.appointments[0].occurrences!;
-    const run = getCurrentOrNextSession(slots, NOW);
+    const run = getCurrentOrNextOccurrence(slots, NOW);
 
     expect(run).not.toBeNull();
     expect(
-      getSessionJoinState(run!, { joinWindowMs: 10 * 60 * 1000, now: NOW }),
+      getOccurrenceJoinState(run!, { joinWindowMs: 10 * 60 * 1000, now: NOW }),
     ).toBe("ended");
   });
 
-  it("drops rows a day out while keeping the live run whole", async () => {
+  it("drops rows a day out while keeping the live occurrence", async () => {
     seedClass([
       liveSitting(),
       {
@@ -382,9 +378,8 @@ describe("the planner payload carries what a class join reads", () => {
       (appt.occurrences ?? []).map((slot) => slot.id as string),
     );
 
-    // Truncating a run mid-way would re-split the room #1061 closed, so the
-    // bound has to keep every row of anything currently joinable.
-    expect(ids).toEqual(["slot-a1", "slot-a2"]);
+    // The bound has to keep anything currently joinable.
+    expect(ids).toEqual(["slot-a1"]);
   });
 
   it("names the class's first session even when every slot is outside the join window", async () => {

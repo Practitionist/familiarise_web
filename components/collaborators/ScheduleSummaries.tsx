@@ -145,8 +145,10 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
     plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
   const allSlots = activeClass.appointments.flatMap((a) => a.occurrences);
   const now = new Date();
-  const upcomingSlots = allSlots.filter((s) => new Date(s.startsAt) > now);
-  const nextSlot = upcomingSlots[0];
+  const upcomingOccurrences = allSlots.filter(
+    (s) => new Date(s.startsAt) > now,
+  );
+  const nextSlot = upcomingOccurrences[0];
   const totalEnrolled = activeClass.appointments[0]?._count.participants ?? 0;
 
   return (

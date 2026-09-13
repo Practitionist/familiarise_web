@@ -20,10 +20,10 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import type { MeetingSlot } from "@/lib/meeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
-  getCurrentOrNextSession,
-  getJoinableSession,
-  getSessionJoinState,
-} from "@/lib/appointments/slots";
+  getCurrentOrNextOccurrence,
+  getJoinableOccurrence,
+  getOccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 import {
   PlannerWebinarEvent,
   PlannerClassEvent,
@@ -118,24 +118,26 @@ export function EventManagementDashboard({
   // Compute which webinar/class events are currently joinable (inside the
   // shared host window before start, through to end). #1270 — the planner
   // used to declare its own 10-minute constant, so the SAME host got in five
-  // minutes later here than from the appointments list. #1061 — measured over the run of slot rows the
-  // session is stored as; the old `occurrences[0]` read closed the
-  // window 30 minutes into anything longer than half an hour.
+  // minutes later here than from the appointments list. #1554 — measured over
+  // the occurrence's own bounds.
   const joinableEventIds = useMemo(() => {
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
-      const run = getJoinableSession(webinar.appointment?.occurrences ?? [], {
-        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-        now,
-      });
+      const run = getJoinableOccurrence(
+        webinar.appointment?.occurrences ?? [],
+        {
+          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+          now,
+        },
+      );
       if (run && webinar.id) ids.add(webinar.id);
     }
 
     for (const cls of classes) {
       // For classes, check the nearest upcoming appointment
       for (const appt of cls.appointments ?? []) {
-        const run = getJoinableSession(appt.occurrences ?? [], {
+        const run = getJoinableOccurrence(appt.occurrences ?? [], {
           joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
           now,
         });
@@ -173,16 +175,15 @@ export function EventManagementDashboard({
       return;
     }
 
-    // #1061 — the session's anchor row, not whichever row happens to be first
-    // in the payload, so a late Join lands in the room already in progress.
-    // Both fallbacks are run-derived: `occurrences` arrives unsorted,
-    // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
+    // The live occurrence, not whichever row happens to be first in the
+    // payload: `occurrences` arrives unsorted, so `[0]` could hand an
+    // arbitrary row's startsAt to the Stream call.
     const slots = webinar.appointment?.occurrences ?? [];
-    const run =
-      getJoinableSession(slots, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ??
-      getCurrentOrNextSession(slots);
-    const slot = run?.anchor;
-    if (!run || !slot || !webinar.appointment) {
+    const slot =
+      getJoinableOccurrence(slots, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) ?? getCurrentOrNextOccurrence(slots);
+    if (!slot || !webinar.appointment) {
       toast({
         title: "Error",
         description: "Meeting slot information is not available.",
@@ -191,15 +192,16 @@ export function EventManagementDashboard({
       return;
     }
 
-    // `getJoinableSession` returns null for three different reasons —
+    // `getJoinableOccurrence` returns null for three different reasons —
     // countdown, disabled and ended — and the fallback fires for all of them.
     // Only `ended` must actually refuse: opening a room for a session the host
     // has already closed, or whose time has passed, walks straight through the
     // guard this change exists to build. Countdown still gets in, because
     // hosts have always been able to open the room a little early.
     if (
-      getSessionJoinState(run, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ===
-      "ended"
+      getOccurrenceJoinState(slot, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) === "ended"
     ) {
       toast({
         title: "Session has ended",
@@ -273,13 +275,13 @@ export function EventManagementDashboard({
     let targetSlot = null;
 
     for (const appt of classEvent.appointments ?? []) {
-      const run = getJoinableSession(appt.occurrences ?? [], {
+      const run = getJoinableOccurrence(appt.occurrences ?? [], {
         joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,
       });
       if (run) {
         targetAppt = appt;
-        targetSlot = run.anchor;
+        targetSlot = run;
         break;
       }
     }

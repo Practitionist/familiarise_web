@@ -164,7 +164,7 @@ describe("POST /api/meetings/[meetingId]/end", () => {
   it("ends the call Stream knows about, not the id in the URL", async () => {
     // The route param is the id the browser had; `streamCallId` is what the
     // MeetingSession row actually points at, and legacy rows carry opaque ids
-    // that are not `slot-<anchorSlotId>` at all.
+    // that are not `occurrence-<occurrenceId>` at all.
     mockResolveMeetingAccess.mockResolvedValue({
       ...granted("host"),
       streamCallId: "legacy-uuid",

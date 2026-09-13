@@ -34,10 +34,7 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import {
-  assertSingleContiguousLiveRun,
-  buildContiguousSlotAtomsForWindow,
-} from "@/lib/appointments/contiguous-slot-run";
+import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
@@ -1435,10 +1432,9 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
     );
   }
 
-  // #1071 / ADR B1 — the identical call handleConsultationCheckout makes.
-  // This path used to mint ONE row spanning the whole session with only the
-  // buyer attached: not an atom run, and unseen by conflict detection.
-  const slotAtoms = buildContiguousSlotAtomsForWindow({
+  // #1554 — the identical call handleConsultationCheckout makes, so the
+  // capture fallback and checkout write one shape.
+  const occurrence = buildOccurrenceForWindow({
     startsAt: new Date(data.startsAt),
     endsAt: new Date(data.endsAt),
     consultantProfileId: consultation.consultationPlan.consultantProfileId,
@@ -1452,7 +1448,7 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
-      occurrences: { create: slotAtoms },
+      occurrences: { create: occurrence },
       // #1319 A9 — legacy-shape capture creates the appointment itself, so the
       // participant rows are born here rather than flipped by the confirm path.
       // One row per party: the consultant attends too.
@@ -1467,10 +1463,6 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       occurrences: true,
     },
   });
-
-  // #1071 — assert before the transaction commits, not after a reader trips
-  // over it. Free: the rows are already in hand from the create's include.
-  assertSingleContiguousLiveRun(appointment.occurrences);
 
   return appointment;
 }

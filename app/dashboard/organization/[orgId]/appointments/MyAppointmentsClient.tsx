@@ -25,8 +25,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  getJoinableSlot,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+} from "@/lib/appointments/occurrences";
 import type { MeetingAppointment } from "@/lib/meeting";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 
@@ -243,7 +243,7 @@ export function MyAppointmentsClient({
       <ul className="space-y-3">
         {items.map((item) => {
           const identity = resolveIdentity(item, viewerId);
-          const joinable = getJoinableSlot(item.occurrences, {
+          const joinable = getJoinableOccurrence(item.occurrences, {
             joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
           });
           const shown = displaySlot(item.occurrences);

@@ -11,7 +11,7 @@
  *
  *  1. It claims `openForAppointmentId`. That nullable-unique is the ONLY thing
  *     enforcing "at most one live reschedule per appointment", and the
- *     consultant's request card, the withdraw route and slotsAllowReschedule
+ *     consultant's request card, the withdraw route and occurrencesAllowReschedule
  *     all read that as given. A row that opted out could shadow a real proposal.
  *  2. It reports `rescheduleRequestId: null`. The caller reads that id as "your
  *     times were sent"; a preference names no times, and the auto-confirm pass

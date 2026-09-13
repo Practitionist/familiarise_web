@@ -1,6 +1,6 @@
 import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { toSlotLike, type SlotLike } from "@/lib/appointments/view-model";
+import { toOccurrenceLike, type OccurrenceLike } from "@/lib/appointments/view-model";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -36,7 +36,7 @@ export interface RescheduleSubject {
 }
 
 /** Slots that a reschedule could still act on: ahead of now, and not already dead. */
-function liveFutureSlots(detail: TAppointmentDetail): SlotLike[] {
+function liveFutureSlots(detail: TAppointmentDetail): OccurrenceLike[] {
   const { appointment, siblings } = detail;
   // Program-wide. A subscription or class session is one Appointment among
   // many, and "every session" has to mean all of them — the reschedule API
@@ -55,7 +55,7 @@ function liveFutureSlots(detail: TAppointmentDetail): SlotLike[] {
     )
     // The shared allowlist, not a hand-rolled one: these rows come from an
     // `include` and carry attendees and recording URLs (#1073).
-    .map(toSlotLike);
+    .map(toOccurrenceLike);
 }
 
 /**

@@ -4,14 +4,14 @@ import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
 
 interface UseConsultantEventActionsOptions {
   consultantId: string;
   appointmentId?: string;
   /** Kept for call-site parity with consultee actions / reschedule modal. */
-  rawSlots: SlotLike[];
+  rawOccurrences: OccurrenceLike[];
   title: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
 }

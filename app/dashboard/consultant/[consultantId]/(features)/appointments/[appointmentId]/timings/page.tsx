@@ -5,7 +5,10 @@ import { notFound } from "next/navigation";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
-import { allowsManageTimings, upcomingSlots } from "@/lib/appointments/slots";
+import {
+  allowsManageTimings,
+  upcomingOccurrences,
+} from "@/lib/appointments/occurrences";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   readManageTimingsTarget,
@@ -65,7 +68,7 @@ async function manageTimingsAllowed(
     ...detail.appointment.occurrences,
     ...detail.siblings.flatMap((sibling) => sibling.occurrences),
   ];
-  return allowsManageTimings(kind, upcomingSlots(slots));
+  return allowsManageTimings(kind, upcomingOccurrences(slots));
 }
 
 /**

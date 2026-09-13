@@ -15,7 +15,7 @@ import type { PayoutRecipient } from "@prisma/client";
 // is the expert's own per-org view and used to hold a local 10-minute copy, so
 // the consultant saw Join appear five minutes later here than on the dashboard
 // the page links them to.
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
 export async function getMyArrangementData(params: {
   orgId: string;

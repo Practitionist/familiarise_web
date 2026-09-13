@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
@@ -84,17 +83,18 @@ export async function GET(request: NextRequest) {
               appointments: {
                 select: {
                   id: true,
-                  occurrences: {
-                    where: { createdAt: { gte: thirtyDaysAgo } },
-                    // #1071 — what groupSlotsIntoRuns needs to fold the
-                    // half-hour atoms of one session back into one session.
+                  // #1554 — one row per held call, so the count is the rows.
+                  _count: {
                     select: {
-                      id: true,
-                      startsAt: true,
-                      endsAt: true,
-                      isTentative: true,
-                      completionStatus: true,
-                      deletedAt: true,
+                      occurrences: {
+                        where: {
+                          createdAt: { gte: thirtyDaysAgo },
+                          deletedAt: null,
+                          completionStatus: {
+                            notIn: ["CANCELLED", "RESCHEDULED"],
+                          },
+                        },
+                      },
                     },
                   },
                 },
@@ -104,10 +104,8 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      // #1319 — this counted slot ROWS, so a class stored as canonical 30-minute
-      // atoms outranked an identical one stored as legacy 60-minute rows two to
-      // one: the ranking measured how a plan's sessions happen to be chunked,
-      // not how much of it is running. Count contiguous runs (= sessions).
+      // The ranking measures how much of a plan is running: one occurrence
+      // row is one held call (#1554), so the live rows are the count.
       const ranked = plansForRanking
         .map((p) => ({
           id: p.id,
@@ -115,14 +113,7 @@ export async function GET(request: NextRequest) {
             (sum, cls) =>
               sum +
               cls.appointments.reduce(
-                (s, apt) =>
-                  s +
-                  groupSlotsIntoRuns(
-                    apt.occurrences.map((slot) => ({
-                      ...slot,
-                      appointmentId: apt.id,
-                    })),
-                  ).length,
+                (s, apt) => s + apt._count.occurrences,
                 0,
               ),
             0,

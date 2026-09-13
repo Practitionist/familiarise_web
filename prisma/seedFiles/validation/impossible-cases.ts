@@ -106,6 +106,7 @@ export const impossibleCases: ValidationTestCase[] = [
       await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: "non-existent-appointment-id",
+          ordinal: 1,
           startsAt: new Date(),
           endsAt: new Date(Date.now() + 3600000),
           isTentative: false,
@@ -259,6 +260,7 @@ export const impossibleCases: ValidationTestCase[] = [
       await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: appointment.id,
+          ordinal: 99,
           startsAt: new Date("2025-01-15T14:00:00Z"),
           endsAt: new Date("2025-01-15T10:00:00Z"), // Before start - should fail
           isTentative: false,

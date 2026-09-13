@@ -506,6 +506,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 appointmentType: AppointmentsType.TRIAL,
                 occurrences: {
                   create: {
+                    ordinal: 1,
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,

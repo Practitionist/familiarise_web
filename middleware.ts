@@ -253,8 +253,8 @@ const RATE_LIMIT_RULES: RateRule[] = [
   },
   {
     // #1134 P1-11 — the meeting join gate. Call ids are deterministic
-    // (`slot-<anchorSlotId>`), so this is the enumeration surface: without a
-    // limit, someone holding one slot id can walk neighbours and probe which
+    // (`occurrence-<occurrenceId>`), so this is the enumeration surface: without a
+    // limit, someone holding one occurrence id can walk neighbours and probe which
     // meetings they can reach.
     //
     // Keyed by IP, NOT by user — an earlier version of this comment claimed the

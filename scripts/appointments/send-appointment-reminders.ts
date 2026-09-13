@@ -56,7 +56,7 @@ async function sendRemindersForWindow(window: {
   let sent = 0;
 
   // Find slots starting within the reminder window
-  const upcomingSlots = await prisma.appointmentOccurrence.findMany({
+  const upcomingOccurrences = await prisma.appointmentOccurrence.findMany({
     where: {
       startsAt: {
         gte: windowStart,
@@ -133,7 +133,7 @@ async function sendRemindersForWindow(window: {
   });
 
   console.log(
-    `Found ${upcomingSlots.length} slots in ${window.label} reminder window`,
+    `Found ${upcomingOccurrences.length} slots in ${window.label} reminder window`,
   );
 
   // Deduplicate by appointmentId (multiple slots per appointment)
@@ -153,7 +153,7 @@ async function sendRemindersForWindow(window: {
     return ids;
   };
 
-  for (const slot of upcomingSlots) {
+  for (const slot of upcomingOccurrences) {
     const apt = slot.appointment;
     if (!apt || seenAppointments.has(apt.id)) continue;
     seenAppointments.add(apt.id);

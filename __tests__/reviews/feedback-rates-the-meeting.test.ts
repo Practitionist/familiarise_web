@@ -6,7 +6,7 @@
  * #705 — a rating belongs to the MEETING, and a meeting is a contiguous RUN of
  * 30-minute rows (#1061), not any single row.
  *
- * The client sends the run's anchor because that is what `SessionVM.slotId`
+ * The client sends the run's anchor because that is what `OccurrenceVM.slotId`
  * carries, so the video path was safe by accident: only the anchor holds a
  * MeetingSession, so `heldSlot`'s attendance arm rejects every other row of the
  * run on its own. The OFFLINE path had no such backstop. An in-person 90-minute
@@ -73,28 +73,12 @@ const mockedFeedbackFindUnique = prisma.appointmentFeedback
 
 const APPT = "appt-offline-90";
 
-/** An in-person 90-minute session: three back-to-back UNVERIFIED rows. */
+/** An in-person 90-minute session: ONE UNVERIFIED occurrence row (#1554). */
 const RUN = [
   {
     id: "slot-a",
     appointmentId: APPT,
     startsAt: new Date("2026-08-01T10:00:00.000Z"),
-    endsAt: new Date("2026-08-01T10:30:00.000Z"),
-    isTentative: false,
-    completionStatus: "UNVERIFIED",
-  },
-  {
-    id: "slot-b",
-    appointmentId: APPT,
-    startsAt: new Date("2026-08-01T10:30:00.000Z"),
-    endsAt: new Date("2026-08-01T11:00:00.000Z"),
-    isTentative: false,
-    completionStatus: "UNVERIFIED",
-  },
-  {
-    id: "slot-c",
-    appointmentId: APPT,
-    startsAt: new Date("2026-08-01T11:00:00.000Z"),
     endsAt: new Date("2026-08-01T11:30:00.000Z"),
     isTentative: false,
     completionStatus: "UNVERIFIED",
@@ -184,34 +168,28 @@ describe("#1540 — one read for the whole booking", () => {
   });
 });
 
-describe("a rating identifies the meeting, not the row it was clicked on", () => {
-  it.each(["slot-a", "slot-b", "slot-c"])(
-    "keys on the run's anchor when %s is submitted",
-    async (submitted) => {
-      // The submitted row passes the ownership/held gate on its own — which is
-      // exactly the offline case that made three ratings reachable.
-      mockedFindFirst.mockResolvedValue({ id: submitted });
+describe("a rating identifies the meeting — the occurrence row (#1554)", () => {
+  it("keys the rating on the submitted occurrence", async () => {
+    mockedFindFirst.mockResolvedValue({ id: "slot-a" });
 
-      const res = await POST(post(submitted), {
-        params: Promise.resolve({ appointmentId: APPT }),
-      });
-      expect(res.status).toBe(200);
-
-      const args = mockedUpsert.mock.calls[0][0];
-      expect(
-        args.where.appointmentOccurrenceId_userId.appointmentOccurrenceId,
-      ).toBe("slot-a");
-      expect(args.create.appointmentOccurrenceId).toBe("slot-a");
-    },
-  );
-
-  it("a second row of the same run UPDATES rather than adding a rating", async () => {
-    mockedFindFirst.mockResolvedValue({ id: "slot-c" });
-    await POST(post("slot-c"), {
+    const res = await POST(post("slot-a"), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    mockedFindFirst.mockResolvedValue({ id: "slot-b" });
-    await POST(post("slot-b"), {
+    expect(res.status).toBe(200);
+
+    const args = mockedUpsert.mock.calls[0][0];
+    expect(
+      args.where.appointmentOccurrenceId_userId.appointmentOccurrenceId,
+    ).toBe("slot-a");
+    expect(args.create.appointmentOccurrenceId).toBe("slot-a");
+  });
+
+  it("a re-submission for the same occurrence UPDATES rather than adding a rating", async () => {
+    mockedFindFirst.mockResolvedValue({ id: "slot-a" });
+    await POST(post("slot-a"), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    await POST(post("slot-a"), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
 
@@ -223,13 +201,13 @@ describe("a rating identifies the meeting, not the row it was clicked on", () =>
   });
 
   it("leaves a genuinely separate meeting on its own key", async () => {
-    // A second, non-contiguous session in the same booking is a DIFFERENT
-    // meeting and must not be folded into the first one's rating.
+    // A second occurrence in the same booking is a DIFFERENT meeting and must
+    // not be folded into the first one's rating.
     const later = {
       id: "slot-z",
       appointmentId: APPT,
       startsAt: new Date("2026-08-08T10:00:00.000Z"),
-      endsAt: new Date("2026-08-08T10:30:00.000Z"),
+      endsAt: new Date("2026-08-08T11:30:00.000Z"),
       isTentative: false,
       completionStatus: "UNVERIFIED",
     };

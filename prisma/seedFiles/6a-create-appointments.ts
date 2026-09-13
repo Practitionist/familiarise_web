@@ -208,6 +208,7 @@ const createConsultationAppointment = (
     },
     occurrences: {
       create: {
+        ordinal: 1,
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -319,6 +320,7 @@ const createSubscriptionAppointment = (
         // Ensure slot is within subscription period
         if (slotStart >= startDate && slotEnd <= endDate) {
           slots.push({
+            ordinal: slots.length + 1,
             startsAt: slotStart,
             endsAt: slotEnd,
             isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -354,6 +356,7 @@ const createSubscriptionAppointment = (
     );
 
     slots.push({
+      ordinal: slots.length + 1,
       startsAt: slotStart,
       endsAt: slotEnd,
       isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -450,6 +453,7 @@ const createWebinarAppointment = async (
     },
     occurrences: {
       create: {
+        ordinal: 1,
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: false,
@@ -528,6 +532,7 @@ const createClassAppointment = async (
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
         return {
+          ordinal: index + 1,
           startsAt: slotStart,
           endsAt: slotEnd,
           isTentative: false,

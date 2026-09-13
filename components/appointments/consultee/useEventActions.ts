@@ -9,13 +9,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { AppointmentOccurrence } from "@prisma/client";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  getJoinableSlot as getJoinableSlotShared,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence as getJoinableOccurrenceShared,
+} from "@/lib/appointments/occurrences";
 import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
-  rawSlots: AppointmentOccurrence[];
+  rawOccurrences: AppointmentOccurrence[];
   title: string;
   consultant: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
@@ -138,7 +138,7 @@ function describeRefund(refund: CancelRefund): string {
 
 export function useEventActions({
   appointmentId,
-  rawSlots,
+  rawOccurrences,
   title,
   consultant: _consultant,
   type,
@@ -180,8 +180,8 @@ export function useEventActions({
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
-  const getJoinableSlot = (): AppointmentOccurrence | null =>
-    getJoinableSlotShared(rawSlots ?? [], {
+  const getJoinableOccurrence = (): AppointmentOccurrence | null =>
+    getJoinableOccurrenceShared(rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
     });
 
@@ -345,7 +345,7 @@ export function useEventActions({
 
   return {
     isLoading,
-    joinableSlot: getJoinableSlot(),
+    joinableSlot: getJoinableOccurrence(),
     showRescheduleDialog,
     setShowRescheduleDialog,
     showConfirmReschedule,

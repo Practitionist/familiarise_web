@@ -12,16 +12,16 @@ import type {
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { getAnchorTime, isSessionOver } from "./slots";
-import { sessionsOfAppointment } from "./sessions-of";
+import { getAnchorTime, isOccurrenceOver } from "./occurrences";
+import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
-  sortSessions,
+  sortOccurrences,
   toDate,
   type AppointmentVM,
   type PersonVM,
-  type SlotLike,
+  type OccurrenceLike,
 } from "./view-model";
 
 type Role = "consultee" | "consultant";
@@ -130,14 +130,16 @@ export function mapAppointmentDetail(
   const all = [appointment, ...siblings];
   // Grouped PER APPOINTMENT before the flatten, or two sittings on different
   // days would merge into one session.
-  const sessions = sortSessions(all.flatMap((a) => sessionsOfAppointment(a)));
+  const occurrences = sortOccurrences(
+    all.flatMap((a) => occurrencesOfAppointment(a)),
+  );
 
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
   const withSlots = all.filter((a) => a.occurrences.length > 0);
   const completed = withSlots.filter((a) =>
-    sessionsOfAppointment(a).every((s) => isSessionOver(s, now)),
+    occurrencesOfAppointment(a).every((s) => isOccurrenceOver(s, now)),
   ).length;
 
   const counterpart =
@@ -145,8 +147,10 @@ export function mapAppointmentDetail(
       ? facts.consultant
       : (facts.consultee ?? facts.consultant);
 
-  const rawSlots: SlotLike[] = all
-    .flatMap((a) => a.occurrences.map((slot) => ({ ...slot }) as SlotLike))
+  const rawOccurrences: OccurrenceLike[] = all
+    .flatMap((a) =>
+      a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
+    )
     .filter((slot) => {
       const end = toDate(slot.endsAt ?? slot.startsAt);
       return end.getTime() >= now.getTime();
@@ -163,9 +167,9 @@ export function mapAppointmentDetail(
     counterpart,
     consultantProfileId: facts.consultantProfileId,
     status: facts.status,
-    ...deriveBucket({ status: facts.status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status: facts.status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: isGroup ? { total: withSlots.length, completed } : null,
     meta: appointment.trialSession
       ? trialMeta(
@@ -180,7 +184,7 @@ export function mapAppointmentDetail(
     collaboratorRole: null,
     raw: {
       appointment: appointment as unknown as TAppointment,
-      rawSlots,
+      rawOccurrences,
       groupAppointments: all as unknown as TAppointment[],
       source: detail,
     },
