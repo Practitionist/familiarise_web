@@ -742,7 +742,7 @@ export default function OrgDashboardShell({
           <OrgStatusBanner status={org.organization.status} />
         )}
 
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <main className="relative min-h-0 flex-1 overflow-y-auto">
           <div className="p-6">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>

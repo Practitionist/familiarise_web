@@ -120,7 +120,10 @@ export function PersonalDashboardShell({
 
         {banner}
 
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        {/* `relative` makes <main> the containing block for every absolutely
+            positioned descendant (Radix bubble inputs), so none can escape the
+            scrollport and grow the document — the dead white over-scroll. */}
+        <main className="relative min-h-0 flex-1 overflow-y-auto">
           {/* Flex column with a viewport floor: pages that want a bottom-
               pinned bar (the offering editor's save bar) declare flex-1 down
               the chain; ordinary pages are unaffected — block children of a
