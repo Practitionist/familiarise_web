@@ -1126,6 +1126,56 @@ describe("Auto allocation", () => {
     expect(starts.every((t: string) => t.startsWith("2025-01-07"))).toBe(true);
   });
 
+  // #1554 — a consultee's booked call is ONE row spanning its whole hour. The
+  // rehearsal defect (D1): the consultee held 09:00–10:00 with the same
+  // consultant on another subscription, the generator folded only 09:00 into
+  // bookedSlots, proposed 09:30, and the validator refused it every time.
+  it("treats every interval of a consultee's booked call as taken, not just its start", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        consultationPlan: {
+          consultantProfileId: "consultant-profile-1",
+          durationInHours: 1,
+          consultantProfile: makeConsultantProfile({
+            availabilityWindowsWeekly: [
+              // 09:00–11:00: candidate blocks start at 09:00, 09:30 and 10:00.
+              makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11),
+            ],
+          }),
+        },
+        requestedBy: { user: { id: "consultee-1" } },
+      }),
+    );
+    const consulteeBusy: { startsAt: Date; endsAt: Date }[] = [];
+    for (let week = 0; week < 8; week++) {
+      const start = new Date("2025-01-06T09:00:00Z");
+      start.setUTCDate(start.getUTCDate() + week * 7);
+      consulteeBusy.push({
+        startsAt: new Date(start),
+        endsAt: new Date(start.getTime() + 60 * 60 * 1000),
+      });
+    }
+    mockTx.appointment.findMany
+      .mockResolvedValueOnce([]) // reschedule check
+      .mockResolvedValueOnce([]) // consultant booked slots — none
+      .mockResolvedValueOnce([{ occurrences: consulteeBusy }]) // consultee-busy
+      .mockResolvedValue([]);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    expect(result.error).toBeUndefined();
+    const created =
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create[0];
+    // 10:00, the first block clear of the whole 09:00–10:00 call — never 09:30.
+    expect(new Date(created.startsAt).toISOString()).toBe(
+      "2025-01-06T10:00:00.000Z",
+    );
+  });
+
   it("should fail auto-allocation when all slots are booked", async () => {
     // Consultant has only 1-hour availability (2 blocks: 9:00, 9:30)
     mockTx.consultation.findUnique.mockResolvedValue(

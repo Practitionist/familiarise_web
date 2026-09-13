@@ -2970,14 +2970,17 @@ export class SchedulingService {
     // RV-2 — an expired pending-payment hold is not a live blocker, so its slots
     // must not enter bookedSlots; otherwise the allocator avoids a slot the
     // validator would happily accept and the two disagree.
+    // #1554 — a row is a whole call, so every 30-minute interval it covers is
+    // booked, not just its start; a 09:30 candidate must see a 09:00–10:00
+    // call, or selection proposes what the validator then rejects.
     const bookedSlots = new Set(
       existingAppointments
         .filter((appointment) =>
           isOccupiedByLiveAppointment(appointment, occupancyClock),
         )
         .flatMap((appointment) =>
-          appointment.occurrences.map((slot) =>
-            new Date(slot.startsAt).toISOString(),
+          appointment.occurrences.flatMap((slot) =>
+            intervalStartsOf(slot).map((start) => start.toISOString()),
           ),
         ),
     );
@@ -3024,8 +3027,8 @@ export class SchedulingService {
           isOccupiedByLiveAppointment(appointment, occupancyClock),
         )
         .flatMap((appointment) =>
-          appointment.occurrences.map((slot) =>
-            new Date(slot.startsAt).toISOString(),
+          appointment.occurrences.flatMap((slot) =>
+            intervalStartsOf(slot).map((start) => start.toISOString()),
           ),
         )
         .forEach((iso) => bookedSlots.add(iso));
