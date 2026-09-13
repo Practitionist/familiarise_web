@@ -192,7 +192,7 @@
  */
 
 /*
- * Radix Select bubble-input containment — app-wide sweep.
+ * Radix bubble-input containment — app-wide sweep.
  *
  * Radix Select renders a visually-hidden native <select> (BubbleSelect)
  * beside its trigger for form autofill. Its VISUALLY_HIDDEN_STYLES use
@@ -204,18 +204,32 @@
  * viewport-sized shell: the dead white over-scroll, live-measured at 1282px
  * document vs a 662px viewport.
  *
- * Two layers of defense:
+ * Checkbox, Switch and RadioGroup carry the same escape hatch and a worse
+ * one: inside a <form> their hidden bubble <input aria-hidden> is
+ * position:absolute at the control's REAL size with no clip (checkbox 1.3.3,
+ * switch 1.2.6, radio-group 1.3.8; still unpinned in checkbox 1.3.11, switch
+ * 1.3.7, radio-group 1.4.7, select 2.3.7 — upstream fix #3876 was closed
+ * unmerged). The consultant settings form (Session Types checkboxes,
+ * notification switches, availability radios) and the org SSO switch all
+ * grew the document this way.
+ *
+ * Three layers of defense:
+ *   - Every role shell's <main> scroller is `relative`, so it is the
+ *     containing block for any abspos descendant: the bubble scrolls and
+ *     clips with the content instead of anchoring to the document. This is
+ *     the structural fix; the two rules below are belt-and-braces.
  *   - `components/ui/form.tsx` FormItem carries `relative`, pinning the
- *     bubble select inside its own field for every form-bound Select.
- *   - This rule is the sweep for every other Select (explore filters,
- *     toolbars, admin tables): top/left 0 is exactly the upstream fix
- *     (primitives#3876). On a static (visible) select, top/left are no-ops —
- *     they only apply to positioned elements — so this cannot misplace
- *     anything; on the absolute bubble select it collapses it to a clipped
- *     1px pixel at its containing block's origin instead of miles down the
- *     page. Deliberately UNLAYERED so content-scan emission can never drop it.
+ *     bubble inside its own field for every form-bound control.
+ *   - This rule is the sweep for every other Select/Checkbox/Switch/Radio
+ *     (explore filters, toolbars, admin tables): top/left 0 is exactly the
+ *     upstream fix (primitives#3876). On a static (visible) control,
+ *     top/left are no-ops — they only apply to positioned elements — so this
+ *     cannot misplace anything; on the absolute bubble it collapses it to
+ *     its containing block's origin instead of miles down the page.
+ *     Deliberately UNLAYERED so content-scan emission can never drop it.
  */
-select[aria-hidden="true"] {
+select[aria-hidden="true"],
+input[aria-hidden="true"] {
   top: 0;
   left: 0;
 }
