@@ -30,7 +30,14 @@ jest.mock("../../lib/stream-client", () => ({
   // assertions exercise the real Stream client mock unchanged.
   withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
+  // Mirrors the real predicate: Stream's "no such user" shape (code 16 / 404).
+  isExpectedStreamError: (error: unknown) =>
+    error instanceof Error &&
+    ((error as { code?: number }).code === 16 ||
+      (error as { status?: number }).status === 404),
 }));
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: mockLogger,
@@ -124,6 +131,40 @@ describe("User Actions", () => {
       await expect(upsertUserToStream("nonexistent")).rejects.toThrow(
         "User not found: nonexistent",
       );
+    });
+
+    it("returns a refusal for a deactivated account instead of throwing — an account state, not an outage", async () => {
+      mockUserCache.isUserSynced.mockReturnValue(false);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: "user-deact",
+        name: "Deactivated",
+        email: "d@example.com",
+        image: null,
+        role: "CONSULTANT",
+      });
+      const deactivated = Object.assign(
+        new Error(
+          'StreamChat error code 16: UpdateUsers failed with error: "user user-deact was deactivated"',
+        ),
+        { code: 16, status: 404 },
+      );
+      mockStreamClient.upsertUser.mockRejectedValue(deactivated);
+      const Sentry = await import("@sentry/nextjs");
+
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
+
+      // Returned, not thrown: a thrown server-action error is auto-captured.
+      await expect(upsertUserToStream("user-deact")).resolves.toEqual({
+        refused: "account-disabled",
+      });
+      expect(Sentry.captureException).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("deactivated or missing"),
+        expect.objectContaining({ userId: "user-deact" }),
+      );
+      expect(mockUserCache.markUserSynced).not.toHaveBeenCalled();
     });
 
     it("should use user ID as name fallback", async () => {
