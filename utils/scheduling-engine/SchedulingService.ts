@@ -7,7 +7,10 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
-import { recordParticipants } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import prisma, {
   type Tx,
   type PrismaLike,
@@ -21,8 +24,8 @@ import {
   Prisma,
   AppointmentStatus,
   ScheduleType,
-  SlotCompletionStatus,
-  SlotOfAppointment,
+  OccurrenceCompletionStatus,
+  AppointmentOccurrence,
 } from "@prisma/client";
 import { addMonths } from "date-fns";
 import {
@@ -106,7 +109,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 
 type AppointmentWithSlots = Appointment & {
-  slotsOfAppointment: SlotOfAppointment[];
+  occurrences: AppointmentOccurrence[];
 };
 
 const SLOT_DURATION_MS = 30 * 60 * 1000;
@@ -319,7 +322,7 @@ export class SchedulingService {
             select: {
               id: true,
               organizationId: true,
-              slotsOfAppointment: {
+              occurrences: {
                 where: { isTentative: false, deletedAt: null },
                 orderBy: { startsAt: "asc" },
                 take: 1,
@@ -340,7 +343,7 @@ export class SchedulingService {
           row.consultationPlan.consultantProfile.user.name || "Consultant",
         consulteeName: row.requestedBy.user.name || "Consultee",
         planTitle: row.consultationPlan.title,
-        firstStart: row.appointment.slotsOfAppointment[0]?.startsAt ?? null,
+        firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
         organizationId: row.appointment.organizationId,
         appointmentId: row.appointment.id,
       };
@@ -363,7 +366,7 @@ export class SchedulingService {
             select: {
               id: true,
               organizationId: true,
-              slotsOfAppointment: {
+              occurrences: {
                 where: { isTentative: false, deletedAt: null },
                 orderBy: { startsAt: "asc" },
                 take: 1,
@@ -384,7 +387,7 @@ export class SchedulingService {
           row.subscriptionPlan.consultantProfile.user.name || "Consultant",
         consulteeName: row.requestedBy.user.name || "Consultee",
         planTitle: row.subscriptionPlan.title,
-        firstStart: row.appointments[0].slotsOfAppointment[0]?.startsAt ?? null,
+        firstStart: row.appointments[0].occurrences[0]?.startsAt ?? null,
         organizationId: row.appointments[0].organizationId,
         appointmentId: row.appointments[0].id,
       };
@@ -404,11 +407,14 @@ export class SchedulingService {
             select: {
               id: true,
               organizationId: true,
-              slotsOfAppointment: {
+              participants: {
+                where: liveParticipant(),
+                select: { user: { select: { id: true, name: true } } },
+              },
+              occurrences: {
                 where: { isTentative: false, deletedAt: null },
                 select: {
                   startsAt: true,
-                  user: { select: { id: true, name: true } },
                 },
               },
             },
@@ -421,12 +427,12 @@ export class SchedulingService {
       if (!hostUser) return;
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
-      for (const slot of row.appointment.slotsOfAppointment) {
+      for (const slot of row.appointment.occurrences) {
         if (!firstStart || slot.startsAt < firstStart)
           firstStart = slot.startsAt;
-        for (const u of slot.user ?? [])
-          userMap.set(u.id, u.name ?? "Attendee");
       }
+      for (const { user: u } of row.appointment.participants)
+        userMap.set(u.id, u.name ?? "Attendee");
       userMap.delete(hostUser.id);
       context = {
         userIds: [hostUser.id, ...userMap.keys()],
@@ -457,11 +463,14 @@ export class SchedulingService {
             select: {
               id: true,
               organizationId: true,
-              slotsOfAppointment: {
+              participants: {
+                where: liveParticipant(),
+                select: { user: { select: { id: true, name: true } } },
+              },
+              occurrences: {
                 where: { isTentative: false, deletedAt: null },
                 select: {
                   startsAt: true,
-                  user: { select: { id: true, name: true } },
                 },
               },
             },
@@ -478,12 +487,12 @@ export class SchedulingService {
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
       for (const a of appts) {
-        for (const slot of a.slotsOfAppointment) {
+        for (const slot of a.occurrences) {
           if (!firstStart || slot.startsAt < firstStart)
             firstStart = slot.startsAt;
-          for (const u of slot.user ?? [])
-            userMap.set(u.id, u.name ?? "Attendee");
         }
+        for (const { user: u } of a.participants)
+          userMap.set(u.id, u.name ?? "Attendee");
       }
       userMap.delete(host.id);
       context = {
@@ -558,7 +567,7 @@ export class SchedulingService {
   /**
    * AE-2 (#784) — refuse to commit these times when an ACCEPTED co-host on a
    * webinar/class plan is already busy. Co-hosts are not slot participants, so
-   * neither `slot_no_confirmed_overlap` nor the owner-scoped validators see
+   * neither `occurrence_no_confirmed_overlap` nor the owner-scoped validators see
    * them; only this guard does. No-op for consultations/subscriptions (no
    * collaborators) and for plans with no accepted co-hosts.
    *
@@ -783,7 +792,7 @@ export class SchedulingService {
     eventId: string,
   ): Promise<void> {
     const relationField = this.getEventRelationField(eventType);
-    const confirmed = await db.slotOfAppointment.count({
+    const confirmed = await db.appointmentOccurrence.count({
       where: {
         isTentative: false,
         deletedAt: null,
@@ -844,13 +853,12 @@ export class SchedulingService {
         where: {
           [`${relationField}Id`]: eventId,
         } as Prisma.AppointmentWhereInput,
-        include: { slotsOfAppointment: true },
+        include: { occurrences: true },
       });
     const tentativeSlotCount = existingAppointments.reduce(
       (count, appointment) =>
         count +
-        appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-          .length,
+        appointment.occurrences.filter((slot) => slot.isTentative).length,
       0,
     );
     this.assertExpectedTentativeSlotCount(tentativeSlotCount, expected);
@@ -907,7 +915,7 @@ export class SchedulingService {
       where: {
         [`${relationField}Id`]: eventId,
       } as Prisma.AppointmentWhereInput,
-      include: { slotsOfAppointment: true },
+      include: { occurrences: true },
     });
     return {
       success: true,
@@ -980,15 +988,15 @@ export class SchedulingService {
    * tentative slots (request-for-approval and unpaid checkout both create them
    * that way), and those were never released by anybody.
    */
-  private static releasedSlotIdsOf(
+  private static releasedOccurrenceIdsOf(
     appointments: AppointmentWithSlots[],
   ): string[] {
     return appointments.flatMap((appointment) =>
-      appointment.slotsOfAppointment
+      appointment.occurrences
         .filter(
           (slot) =>
             slot.isTentative &&
-            slot.completionStatus === SlotCompletionStatus.RESCHEDULED,
+            slot.completionStatus === OccurrenceCompletionStatus.RESCHEDULED,
         )
         .map((slot) => slot.id),
     );
@@ -996,10 +1004,10 @@ export class SchedulingService {
 
   /** Open, preference-bearing reschedules that released any of these slots. */
   private static openPreferenceRequestWhere(
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
   ): Prisma.RescheduleRequestWhereInput {
     return {
-      releasedSlotIds: { hasSome: releasedSlotIds },
+      releasedOccurrenceIds: { hasSome: releasedOccurrenceIds },
       status: { in: RESCHEDULE_OPEN_STATUSES },
       OR: [
         { preferredTimeOfDay: { not: null } },
@@ -1023,12 +1031,12 @@ export class SchedulingService {
    * cannot overlap this one and cannot leak its preference into it.
    */
   private static async findAllocationPreference(
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
   ): Promise<AllocationPreference | undefined> {
-    if (releasedSlotIds.length === 0) return undefined;
+    if (releasedOccurrenceIds.length === 0) return undefined;
 
     const stated = await prisma.rescheduleRequest.findFirst({
-      where: this.openPreferenceRequestWhere(releasedSlotIds),
+      where: this.openPreferenceRequestWhere(releasedOccurrenceIds),
       // Newest wins; an older ask must not outrank the current one.
       orderBy: { createdAt: "desc" },
       select: { preferredTimeOfDay: true, preferredDays: true },
@@ -1062,15 +1070,15 @@ export class SchedulingService {
    */
   private static async resolveConsumedPreferenceRequests(
     tx: Tx,
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
     excludeRescheduleRequestId?: string,
   ): Promise<void> {
-    if (releasedSlotIds.length === 0) return;
+    if (releasedOccurrenceIds.length === 0) return;
 
     const consumed = await tx.rescheduleRequest.findMany({
       where: {
-        ...this.openPreferenceRequestWhere(releasedSlotIds),
-        proposedSlots: { none: {} },
+        ...this.openPreferenceRequestWhere(releasedOccurrenceIds),
+        proposedTimes: { none: {} },
       },
       select: { id: true },
     });
@@ -1111,7 +1119,7 @@ export class SchedulingService {
     // refused.
     const superseded = await tx.rescheduleRequest.findMany({
       where: {
-        releasedSlotIds: { hasSome: releasedSlotIds },
+        releasedOccurrenceIds: { hasSome: releasedOccurrenceIds },
         status: { in: [...RESCHEDULE_OPEN_STATUSES] },
         ...(excludeRescheduleRequestId
           ? { id: { not: excludeRescheduleRequestId } }
@@ -1233,22 +1241,20 @@ export class SchedulingService {
           where: {
             [`${relationField}Id`]: eventId,
           } as Prisma.AppointmentWhereInput,
-          include: { slotsOfAppointment: true },
+          include: { occurrences: true },
         });
 
       // Count existing slots by tentative status
       const existingNonTentativeSlotCount = existingAppointments.reduce(
         (count, appointment) =>
           count +
-          appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
-            .length,
+          appointment.occurrences.filter((slot) => !slot.isTentative).length,
         0,
       );
       const tentativeSlotCount = existingAppointments.reduce(
         (count, appointment) =>
           count +
-          appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-            .length,
+          appointment.occurrences.filter((slot) => slot.isTentative).length,
         0,
       );
       // #1012 — before any delete+recreate, confirm the page's view of the
@@ -1278,7 +1284,7 @@ export class SchedulingService {
         : existingAppointments.reduce(
             (count, appt) =>
               count +
-              appt.slotsOfAppointment.filter(
+              appt.occurrences.filter(
                 (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
               ).length,
             0,
@@ -1323,7 +1329,7 @@ export class SchedulingService {
       // slot count, so a plan whose session duration changed mid-flight cannot
       // turn the shortfall into a fraction.
       const existingConfirmedSessionCount = existingAppointments.filter((a) =>
-        a.slotsOfAppointment.some((s) => !s.isTentative),
+        a.occurrences.some((s) => !s.isTentative),
       ).length;
       const topUpPlanSessions = isTopUp
         ? Math.ceil(
@@ -1405,7 +1411,7 @@ export class SchedulingService {
       // must keep counting toward the caps the validator re-checks.
       const appointmentIdsToExclude = isReschedule
         ? existingAppointments
-            .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+            .filter((a) => a.occurrences.some((s) => s.isTentative))
             .map((a) => a.id)
         : isTopUp
           ? []
@@ -1421,7 +1427,7 @@ export class SchedulingService {
         // session) — but correctly smaller for a PARTIAL reschedule (e.g. 2 of 10),
         // which calculateRequiredSlots (the full total) would over-allocate.
         const rescheduleSessions = existingAppointments.filter((a) =>
-          a.slotsOfAppointment.some((s) => s.isTentative),
+          a.occurrences.some((s) => s.isTentative),
         ).length;
         requiredSlots = rescheduleSessions * slotsPerCall;
       } else {
@@ -1455,8 +1461,11 @@ export class SchedulingService {
 
       // #1065 — captured BEFORE the write txn deletes these rows. Empty for a
       // fresh allocation, which is exactly when a preference must not apply.
-      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
-      const preference = await this.findAllocationPreference(releasedSlotIds);
+      const releasedOccurrenceIds =
+        this.releasedOccurrenceIdsOf(existingAppointments);
+      const preference = await this.findAllocationPreference(
+        releasedOccurrenceIds,
+      );
 
       // Find available slots (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
@@ -1664,7 +1673,7 @@ export class SchedulingService {
           // here rather than leaving it open for the expiry sweep to mislabel.
           await this.resolveConsumedPreferenceRequests(
             tx,
-            releasedSlotIds,
+            releasedOccurrenceIds,
             excludeRescheduleRequestId,
           );
 
@@ -1761,7 +1770,7 @@ export class SchedulingService {
     // different days don't serialize; same-day (the actual duplicate risk)
     // still shares the key.
     //
-    // #440's `slot_no_confirmed_overlap` GiST constraint backstops only what it
+    // #440's `occurrence_no_confirmed_overlap` GiST constraint backstops only what it
     // is keyed on: two confirmed slots of one consultant covering the same
     // instant. It cannot see a COUNT, so it is no backstop for a weekly cap —
     // and the sessions that race that cap sit on different days, so they never
@@ -1878,14 +1887,13 @@ export class SchedulingService {
           where: {
             [`${relationField}Id`]: eventId,
           } as Prisma.AppointmentWhereInput,
-          include: { slotsOfAppointment: true },
+          include: { occurrences: true },
         });
 
       const tentativeSlotCount = existingAppointments.reduce(
         (count, appointment) =>
           count +
-          appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-            .length,
+          appointment.occurrences.filter((slot) => slot.isTentative).length,
         0,
       );
       // #1012 — before any delete+recreate, confirm the page's view of the
@@ -1899,8 +1907,7 @@ export class SchedulingService {
       const existingNonTentativeSlotCount = existingAppointments.reduce(
         (count, appointment) =>
           count +
-          appointment.slotsOfAppointment.filter((slot) => !slot.isTentative)
-            .length,
+          appointment.occurrences.filter((slot) => !slot.isTentative).length,
         0,
       );
 
@@ -1923,7 +1930,7 @@ export class SchedulingService {
         : existingAppointments.reduce(
             (count, appt) =>
               count +
-              appt.slotsOfAppointment.filter(
+              appt.occurrences.filter(
                 (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
               ).length,
             0,
@@ -1938,7 +1945,7 @@ export class SchedulingService {
       // For initial/in-progress allocation: exclude ALL existing appointments
       const appointmentIdsToExclude = isReschedule
         ? existingAppointments
-            .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+            .filter((a) => a.occurrences.some((s) => s.isTentative))
             .map((a) => a.id)
         : existingAppointments.map((a) => a.id);
 
@@ -1946,7 +1953,8 @@ export class SchedulingService {
       // auto one does (it does not READ the preference — the consultant chose
       // the times — but it consumes the request all the same). Captured before
       // the write txn deletes these rows.
-      const releasedSlotIds = this.releasedSlotIdsOf(existingAppointments);
+      const releasedOccurrenceIds =
+        this.releasedOccurrenceIdsOf(existingAppointments);
 
       // Validate total slot count for recurring event types
       if (isRecurringEventType(eventType)) {
@@ -1959,7 +1967,7 @@ export class SchedulingService {
           // row) — but is correctly smaller for a PARTIAL reschedule (e.g. 2 of
           // 10). calculateRequiredSlots (the full total) wrongly rejected partials.
           const rescheduleSessions = existingAppointments.filter((a) =>
-            a.slotsOfAppointment.some((s) => s.isTentative),
+            a.occurrences.some((s) => s.isTentative),
           ).length;
           const rescheduleRequired = rescheduleSessions * slotsPerCall;
           if (slots.length !== rescheduleRequired) {
@@ -2125,7 +2133,7 @@ export class SchedulingService {
           // #1065 — see autoAllocate: placing the replacement answers the ask.
           await this.resolveConsumedPreferenceRequests(
             tx,
-            releasedSlotIds,
+            releasedOccurrenceIds,
             excludeRescheduleRequestId,
           );
 
@@ -2268,14 +2276,13 @@ export class SchedulingService {
               where: {
                 [`${relationField}Id`]: eventId,
               } as Prisma.AppointmentWhereInput,
-              include: { slotsOfAppointment: true },
+              include: { occurrences: true },
             });
 
           const tentativeSlotCount = existingAppointments.reduce(
             (count, appointment) =>
               count +
-              appointment.slotsOfAppointment.filter((slot) => slot.isTentative)
-                .length,
+              appointment.occurrences.filter((slot) => slot.isTentative).length,
             0,
           );
           // #1012 — stale-tab reschedule / approval precondition.
@@ -2299,9 +2306,10 @@ export class SchedulingService {
           // exactly the times the consultee asked to move. Refuse; the consultant
           // must allocate (auto or manual) instead.
           const rescheduledSlots = existingAppointments.flatMap((appointment) =>
-            appointment.slotsOfAppointment.filter(
+            appointment.occurrences.filter(
               (slot) =>
-                slot.completionStatus === SlotCompletionStatus.RESCHEDULED,
+                slot.completionStatus ===
+                OccurrenceCompletionStatus.RESCHEDULED,
             ),
           );
 
@@ -2328,7 +2336,7 @@ export class SchedulingService {
           const existingAtomCount = existingAppointments.reduce(
             (sum, appointment) =>
               sum +
-              appointment.slotsOfAppointment.reduce(
+              appointment.occurrences.reduce(
                 (atoms, slot) => atoms + countHalfHourAtoms(slot),
                 0,
               ),
@@ -2390,7 +2398,7 @@ export class SchedulingService {
           const appointmentIds = existingAppointments.map(
             (appointment) => appointment.id,
           );
-          await tx.slotOfAppointment.updateMany({
+          await tx.appointmentOccurrence.updateMany({
             where: {
               appointmentId: { in: appointmentIds },
             },
@@ -2872,7 +2880,7 @@ export class SchedulingService {
       // tombstoned slot from blocking (defense-in-depth; RESCHEDULED rows
       // stay occupied — a pending reschedule is a live hold).
       {
-        slotsOfAppointment: {
+        occurrences: {
           some: { endsAt: { gt: occupancyClock }, deletedAt: null },
         },
       },
@@ -2898,7 +2906,7 @@ export class SchedulingService {
         // match a candidate (buildConsecutiveBlock rejects < now), so
         // materializing them only re-creates pool pressure on long-lived
         // appointments (CodeRabbit triage).
-        slotsOfAppointment: {
+        occurrences: {
           where: { deletedAt: null, endsAt: { gt: occupancyClock } },
         },
         // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
@@ -2918,7 +2926,7 @@ export class SchedulingService {
           isOccupiedByLiveAppointment(appointment, occupancyClock),
         )
         .flatMap((appointment) =>
-          appointment.slotsOfAppointment.map((slot) =>
+          appointment.occurrences.map((slot) =>
             new Date(slot.startsAt).toISOString(),
           ),
         ),
@@ -2929,20 +2937,17 @@ export class SchedulingService {
     // busy with ANOTHER consultant. Without this, selection picks
     // consultant-free slots that then fail validateNoConflicts' consultee check
     // (a graceful 400, but no placement and no retry). Mirrors the consultant
-    // query above, scoped to the consultee on the slot↔user M2M — bounded to
+    // query above, scoped to the consultee's seats (#1554) — bounded to
     // live intervals for the same reason.
     if (consulteeUserId) {
       const consulteeAppointments = await db.appointment.findMany({
         where: {
           AND: [
             { OR: buildOccupiedAppointmentFilter() },
+            { participants: { some: liveParticipant(consulteeUserId) } },
             {
-              slotsOfAppointment: {
-                some: {
-                  user: { some: { id: consulteeUserId } },
-                  endsAt: { gt: occupancyClock },
-                  deletedAt: null,
-                },
+              occurrences: {
+                some: { endsAt: { gt: occupancyClock }, deletedAt: null },
               },
             },
             ...(excludeAppointmentIds.length > 0
@@ -2956,7 +2961,7 @@ export class SchedulingService {
           // match a candidate (buildConsecutiveBlock rejects < now), so
           // materializing them only re-creates pool pressure on long-lived
           // appointments (CodeRabbit triage).
-          slotsOfAppointment: {
+          occurrences: {
             where: { deletedAt: null, endsAt: { gt: occupancyClock } },
           },
           consultation: { select: { status: true, bookingSource: true } },
@@ -2969,7 +2974,7 @@ export class SchedulingService {
           isOccupiedByLiveAppointment(appointment, occupancyClock),
         )
         .flatMap((appointment) =>
-          appointment.slotsOfAppointment.map((slot) =>
+          appointment.occurrences.map((slot) =>
             new Date(slot.startsAt).toISOString(),
           ),
         )
@@ -3072,8 +3077,8 @@ export class SchedulingService {
     const existingSessionsPerDay = new Map<string, number>();
     for (const apt of eventOwnAppointments) {
       if (excludeSet.has(apt.id)) continue; // skip tentative (being replaced)
-      if (apt.slotsOfAppointment.length === 0) continue;
-      const firstSlot = apt.slotsOfAppointment.reduce((earliest, s) =>
+      if (apt.occurrences.length === 0) continue;
+      const firstSlot = apt.occurrences.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
       // ADR B9 — weekly buckets in the event's scheduling timezone
@@ -3455,12 +3460,12 @@ export class SchedulingService {
    *
    * ARCHITECTURE:
    * - One Appointment = One call/session
-   * - Each Appointment contains multiple SlotOfAppointment records
+   * - Each Appointment contains multiple AppointmentOccurrence records
    * - Number of slots per appointment = session duration / 30 minutes
    *
    * EXAMPLE: 2.5-hour subscription call
    * - Creates 1 Appointment record
-   * - With 5 SlotOfAppointment records (2.5h ÷ 0.5h = 5 slots)
+   * - With 5 AppointmentOccurrence records (2.5h ÷ 0.5h = 5 slots)
    * - Each slot: [startTime, startTime + 30min]
    *
    * DEFENSIVE VALIDATION:
@@ -3577,11 +3582,6 @@ export class SchedulingService {
               endsAt: endTime,
               isTentative: false,
               consultantProfileId: consultantProfileRow.id,
-              user: {
-                connect: consulteeUserId
-                  ? [{ id: consultantUserId }, { id: consulteeUserId }]
-                  : [{ id: consultantUserId }],
-              },
             };
           });
 
@@ -3594,12 +3594,12 @@ export class SchedulingService {
               where: { id: reuseAppointmentId },
               data: {
                 ...idempotencyData,
-                slotsOfAppointment: {
+                occurrences: {
                   create: slotsToCreate,
                 },
               },
               include: {
-                slotsOfAppointment: true,
+                occurrences: true,
               },
             });
           }
@@ -3614,12 +3614,12 @@ export class SchedulingService {
               ...(organizationId ? { organizationId } : {}),
               // B1/#1499 — inherit the terms the booking was sold under.
               cancellationPolicyId: inheritedPolicyId,
-              slotsOfAppointment: {
+              occurrences: {
                 create: slotsToCreate,
               },
             },
             include: {
-              slotsOfAppointment: true,
+              occurrences: true,
             },
           });
         }),
@@ -3848,10 +3848,10 @@ export class SchedulingService {
   }
 
   /**
-   * Reconnect enrolled users to newly created slots.
-   * Used during in-progress reallocation of group events (classes):
-   * when future slots are deleted and recreated, the enrolled users'
-   * M2M links are lost. This restores them on the new slots.
+   * Re-seat enrolled users on newly created appointments.
+   * Used during in-progress reallocation of group events (classes): when
+   * future sessions are deleted and recreated, the learners' participant rows
+   * go with the deleted appointments (#1554). This restores them.
    */
   private static async reconnectEnrolledUsers(
     tx: Tx,
@@ -3860,20 +3860,13 @@ export class SchedulingService {
     consultantUserId: string,
     organizationId: string | null | undefined,
   ): Promise<void> {
-    // Filter out the consultant (already connected via createAppointments)
+    // Filter out the consultant (already seated via createAppointments)
     const userIdsToConnect = enrolledUserIds.filter(
       (id) => id !== consultantUserId,
     );
     if (userIdsToConnect.length === 0) return;
 
-    const connectData = userIdsToConnect.map((id) => ({ id }));
     for (const appointment of appointments) {
-      for (const slot of appointment.slotsOfAppointment) {
-        await tx.slotOfAppointment.update({
-          where: { id: slot.id },
-          data: { user: { connect: connectData } },
-        });
-      }
       // #1319 A9 — re-linked learners keep their seat; idempotent on retry.
       await recordParticipants(
         tx,
@@ -3893,10 +3886,10 @@ export class SchedulingService {
    * #1206 — the people already seated on an event's confirmed sessions.
    *
    * Every delete branch harvests these ids from the rows it frees, so that
-   * `reconnectEnrolledUsers` can re-link them to the replacements. A top-up
-   * frees nothing, so it reads them off the surviving slots instead. Without
-   * this a class topped up with two more sessions would create them empty:
-   * enrolment for a group event lives ONLY on the slot↔user join.
+   * `reconnectEnrolledUsers` can re-seat them on the replacements. A top-up
+   * frees nothing, so it reads them off the surviving appointments instead.
+   * Without this a class topped up with two more sessions would create them
+   * empty: enrolment for a group event lives ONLY on AppointmentParticipant.
    */
   private static async collectEventParticipantIds(
     tx: Tx,
@@ -3904,33 +3897,25 @@ export class SchedulingService {
     eventId: string,
   ): Promise<string[]> {
     const relationField = this.getEventRelationField(eventType);
-    const slots = await tx.slotOfAppointment.findMany({
+    const seats = await tx.appointmentParticipant.findMany({
       where: {
-        isTentative: false,
-        deletedAt: null,
-        // A cancelled or replaced slot keeps its user relation as history; only
-        // live seats should be carried onto the new sessions.
-        completionStatus: {
-          notIn: [
-            SlotCompletionStatus.CANCELLED,
-            SlotCompletionStatus.RESCHEDULED,
-          ],
-        },
+        // A released seat stays as history; only live seats are carried
+        // onto the new sessions.
+        ...liveParticipant(),
         appointment: {
           [`${relationField}Id`]: eventId,
+          occurrences: { some: { isTentative: false, deletedAt: null } },
         } as Prisma.AppointmentWhereInput,
       },
-      select: { user: { select: { id: true } } },
+      select: { userId: true },
     });
-    return Array.from(
-      new Set(slots.flatMap((slot) => slot.user.map((user) => user.id))),
-    );
+    return Array.from(new Set(seats.map((seat) => seat.userId)));
   }
 
   /**
    * Delete existing appointments for an event
    *
-   * @param onlyTentative - If true, only delete tentative SlotOfAppointment records,
+   * @param onlyTentative - If true, only delete tentative AppointmentOccurrence records,
    *                        preserving confirmed slots and their parent appointments.
    *                        Appointments are only deleted if they have zero remaining slots
    *                        after tentative slot removal. This is used for partial reschedules.
@@ -3970,9 +3955,10 @@ export class SchedulingService {
       const appointments = await tx.appointment.findMany({
         where: whereClause,
         include: {
-          // Include slot participants so enrolled learners on the tentative
-          // slots can be re-linked to the new slots after they're deleted.
-          slotsOfAppointment: { include: { user: { select: { id: true } } } },
+          // #1554 — live seat holders, so enrolled learners on a group event
+          // can be re-seated on the replacement appointments.
+          participants: { where: liveParticipant(), select: { userId: true } },
+          occurrences: true,
           // B8 — Payment has onDelete: Cascade on Appointment; deleting an
           // appointment with payment rows destroys the payment/refund audit
           // trail. The refusal now rides in the delete's own WHERE clause
@@ -3983,33 +3969,30 @@ export class SchedulingService {
       // AE-4 — record which appointments had tentative slots freed here (ids
       // captured from the pre-fetched rows, before the deleteMany runs).
       const deletedAppointmentIds: string[] = [];
-      // Capture users connected to the tentative slots being deleted. For a
-      // group event (class) the enrolled learners live ONLY on the slot↔user
-      // M2M — createAppointments reconnects just the consultant, so without
-      // this they'd be orphaned when the class is scheduled (tentative
-      // crud-with-plan slots → onlyTentative path). reconnectEnrolledUsers
-      // re-links them to the new slots; it filters the consultant itself.
+      // Capture the seat holders of the appointments being emptied. For a
+      // group event (class) the enrolled learners live ONLY on
+      // AppointmentParticipant — createAppointments seats just the
+      // consultant, so without this they'd be orphaned when the class is
+      // scheduled (tentative crud-with-plan slots → onlyTentative path).
+      // reconnectEnrolledUsers re-seats them; it filters the consultant itself.
       const enrolledUserIdSet = new Set<string>();
       for (const appointment of appointments) {
-        const hasConfirmed = appointment.slotsOfAppointment.some(
+        const hasConfirmed = appointment.occurrences.some(
           (slot) => !slot.isTentative,
         );
-        const hasTentative = appointment.slotsOfAppointment.some(
+        const hasTentative = appointment.occurrences.some(
           (slot) => slot.isTentative,
         );
 
         if (hasTentative) {
           deletedAppointmentIds.push(appointment.id);
-          // Collect enrolled participants from the tentative slots before they
-          // are deleted (their M2M links vanish with the slots).
-          for (const slot of appointment.slotsOfAppointment) {
-            if (!slot.isTentative) continue;
-            for (const user of slot.user ?? []) {
-              enrolledUserIdSet.add(user.id);
-            }
+          // Collect the seat holders before the appointment may be deleted
+          // (their participant rows cascade with it).
+          for (const seat of appointment.participants) {
+            enrolledUserIdSet.add(seat.userId);
           }
           // Delete only tentative slots using a direct query (not stale IDs)
-          await tx.slotOfAppointment.deleteMany({
+          await tx.appointmentOccurrence.deleteMany({
             where: {
               appointmentId: appointment.id,
               isTentative: true,
@@ -4056,9 +4039,11 @@ export class SchedulingService {
       const appointments = await tx.appointment.findMany({
         where: whereClause,
         include: {
-          slotsOfAppointment: {
+          // #1554 — live seat holders, so enrolled learners on a group event
+          // can be re-seated on the replacement appointments.
+          participants: { where: liveParticipant(), select: { userId: true } },
+          occurrences: {
             include: {
-              user: { select: { id: true } },
               meetingSession: { select: { id: true, endedAt: true } },
             },
           },
@@ -4072,10 +4057,10 @@ export class SchedulingService {
       const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
 
       for (const appointment of appointments) {
-        const pastSlots = appointment.slotsOfAppointment.filter(
+        const pastSlots = appointment.occurrences.filter(
           (slot) => new Date(slot.endsAt) <= now,
         );
-        const futureSlots = appointment.slotsOfAppointment.filter(
+        const futureSlots = appointment.occurrences.filter(
           (slot) => new Date(slot.endsAt) > now,
         );
 
@@ -4093,15 +4078,15 @@ export class SchedulingService {
 
         preservedSlotCount += pastSlots.length + protectedFutureSlots.length;
 
-        // Capture enrolled user IDs from deletable future slots before deletion
-        for (const slot of deletableFutureSlots) {
-          for (const user of slot.user) {
-            enrolledUserIdSet.add(user.id);
+        // Capture the seat holders before the appointment may be deleted
+        if (deletableFutureSlots.length > 0) {
+          for (const seat of appointment.participants) {
+            enrolledUserIdSet.add(seat.userId);
           }
         }
 
         if (deletableFutureSlots.length > 0) {
-          await tx.slotOfAppointment.deleteMany({
+          await tx.appointmentOccurrence.deleteMany({
             where: {
               appointmentId: appointment.id,
               id: { in: deletableFutureSlots.map((s) => s.id) },
@@ -4146,15 +4131,13 @@ export class SchedulingService {
       const existingAppointments = await tx.appointment.findMany({
         where: whereClause,
         include: {
-          // Slot participants, so enrolled learners (group events) can be
-          // re-linked to the new slots — same reason as the onlyTentative
-          // branch. Without this, re-scheduling a confirmed, not-yet-started
-          // class orphans its enrolled learners (all slots here are removed).
+          // #1554 — live seat holders, so enrolled learners on a group event
+          // can be re-seated on the replacement appointments.
+          participants: { where: liveParticipant(), select: { userId: true } },
           // meetingSession rides along so held-session slots can be preserved
           // (#1169 PR 1 — deleting them cascades MeetingSession → Recording).
-          slotsOfAppointment: {
+          occurrences: {
             include: {
-              user: { select: { id: true } },
               meetingSession: { select: { id: true } },
             },
           },
@@ -4162,15 +4145,13 @@ export class SchedulingService {
         },
       });
 
-      // Capture enrolled participants from every slot before it's deleted or
+      // Capture every seat holder before the appointment is deleted or
       // stripped; reconnectEnrolledUsers (called by the allocator on a non-empty
-      // result) re-links them to the new slots and filters the consultant.
+      // result) re-seats them on the new appointments and filters the consultant.
       const enrolledUserIdSet = new Set<string>();
       for (const appointment of existingAppointments) {
-        for (const slot of appointment.slotsOfAppointment) {
-          for (const user of slot.user ?? []) {
-            enrolledUserIdSet.add(user.id);
-          }
+        for (const seat of appointment.participants) {
+          enrolledUserIdSet.add(seat.userId);
         }
       }
 
@@ -4180,7 +4161,7 @@ export class SchedulingService {
           // history, not availability: deleting it cascades MeetingSession →
           // Recording. Preserve the appointment and every held-session slot;
           // only sessionless slots are freed.
-          const hasHeldSession = appointment.slotsOfAppointment.some(
+          const hasHeldSession = appointment.occurrences.some(
             (slot) => slot.meetingSession !== null,
           );
           if ((appointment._count?.payment ?? 0) > 0 || hasHeldSession) {
@@ -4193,7 +4174,7 @@ export class SchedulingService {
               // At most one such appointment exists per 1:1 event.
               reusableAppointmentId = appointment.id;
             }
-            return tx.slotOfAppointment.deleteMany({
+            return tx.appointmentOccurrence.deleteMany({
               where: {
                 appointmentId: appointment.id,
                 meetingSession: { is: null },
@@ -4213,7 +4194,7 @@ export class SchedulingService {
             if (eventType === "consultation" || eventType === "webinar") {
               reusableAppointmentId = appointment.id;
             }
-            return tx.slotOfAppointment.deleteMany({
+            return tx.appointmentOccurrence.deleteMany({
               where: {
                 appointmentId: appointment.id,
                 meetingSession: { is: null },
@@ -4413,7 +4394,7 @@ export class SchedulingService {
               include: { consultantProfile: consultantProfileSelect },
             },
             requestedBy: { include: { user: true } },
-            appointment: { include: { slotsOfAppointment: true } },
+            appointment: { include: { occurrences: true } },
           },
         });
         if (!event) return null;
@@ -4426,7 +4407,7 @@ export class SchedulingService {
         // covered half-hour atoms and `validateConsultation` compares against
         // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
         // slot answered "1" to both questions and could never be approved.
-        requestedSlots = event.appointment?.slotsOfAppointment?.flatMap((s) =>
+        requestedSlots = event.appointment?.occurrences?.flatMap((s) =>
           halfHourAtomStarts(s),
         );
         // #768 — preserve org tag across reschedule (delete+recreate).
@@ -4444,7 +4425,7 @@ export class SchedulingService {
             requestedBy: { include: { user: true } },
             appointments: {
               include: {
-                slotsOfAppointment: true,
+                occurrences: true,
                 payment: { select: { organizationId: true } },
               },
             },
@@ -4465,7 +4446,7 @@ export class SchedulingService {
         consulteeUserId = event.requestedBy?.user?.id;
         // #1319 — same coverage rule as the consultation arm above.
         requestedSlots = event.appointments?.flatMap((app) =>
-          app.slotsOfAppointment.flatMap((s) => halfHourAtomStarts(s)),
+          app.occurrences.flatMap((s) => halfHourAtomStarts(s)),
         );
         // #768 — placeholder Appointment from checkout carries the org
         // tag. New lazy-allocated slots inherit it.
@@ -4508,7 +4489,7 @@ export class SchedulingService {
                 consultantProfile: consultantProfileSelect,
               },
             },
-            appointments: { include: { slotsOfAppointment: true } },
+            appointments: { include: { occurrences: true } },
           },
         });
         if (!event) return null;

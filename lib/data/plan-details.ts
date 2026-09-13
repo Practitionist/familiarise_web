@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -56,12 +57,12 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
         include: {
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: { id: true },
-                  },
-                },
+              occurrences: true,
+              // #1554 — seat ids only; the explore/checkout capacity gates
+              // count these and never a User row per attendee.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -141,12 +142,10 @@ export async function fetchClassPlanDetail(classPlanId: string) {
         include: {
           appointments: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: { id: true },
-                  },
-                },
+              occurrences: true,
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },

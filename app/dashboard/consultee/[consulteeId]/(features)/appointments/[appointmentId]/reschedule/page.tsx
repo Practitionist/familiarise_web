@@ -57,9 +57,7 @@ function consulteeOwns(
     appointment.consultation?.requestedBy?.id === consulteeId ||
     appointment.subscription?.requestedBy?.id === consulteeId ||
     appointment.trialSession?.consulteeProfile?.id === consulteeId ||
-    appointment.slotsOfAppointment.some((slot) =>
-      slot.user.some((user) => user.id === userId),
-    )
+    appointment.participants.some((seat) => seat.userId === userId)
   );
 }
 

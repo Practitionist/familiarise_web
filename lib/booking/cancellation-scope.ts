@@ -142,16 +142,11 @@ export async function resolveBookingRefundContext(
         },
         orderBy: { createdAt: "asc" },
       },
-      slotsOfAppointment: {
-        // Scoped to the payer for the same reason the payment lookup is: on a
-        // class every attendee's seat hangs off the same appointment, so an
-        // unscoped count would tier ONE buyer's refund off OTHER attendees'
-        // sessions. A 1:1 booking has no `user` rows to filter on beyond its
-        // own, so the constraint is inert there.
-        where: {
-          deletedAt: null,
-          ...(payerUserId ? { user: { some: { id: payerUserId } } } : {}),
-        },
+      occurrences: {
+        // #1554 — every attendee of a class shares the appointment's
+        // occurrences, so there is no per-payer subset to scope to; the payer
+        // filter lives on the payment lookup above.
+        where: { deletedAt: null },
         select: { startsAt: true, completionStatus: true },
       },
     },
@@ -200,7 +195,7 @@ export async function resolveBookingRefundContext(
       null,
   );
 
-  const slots = rows.flatMap((r) => r.slotsOfAppointment);
+  const slots = rows.flatMap((r) => r.occurrences);
   const liveStarts = slots
     .filter((s) =>
       (LIVE_SLOT_STATUSES as readonly string[]).includes(s.completionStatus),

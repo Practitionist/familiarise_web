@@ -48,7 +48,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       include: {
         meetingSession: {
           include: {
-            slotOfAppointment: {
+            occurrence: {
               include: {
                 appointment: { select: appointmentStoragePolicySelect },
               },
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // Policy enforcement — manual transfer is a PREMIUM capability. The plan
     // that produced this session decides; a STREAM_ONLY plan must not be able
     // to mint permanent storage (and its costs) by hitting this endpoint.
-    const apt = recording.meetingSession.slotOfAppointment.appointment;
+    const apt = recording.meetingSession.occurrence.appointment;
     const { policy: storagePolicy } = resolveAppointmentStoragePolicy(apt);
 
     if (storagePolicy !== "PERMANENT") {

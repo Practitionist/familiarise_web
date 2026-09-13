@@ -15,6 +15,7 @@ import { CheckCircle } from "lucide-react";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
 import { getWebinarCapacity } from "@/lib/events/capacity";
+import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import type { TSessionStatus } from "../types";
 
 type ClientWebinarRegistrationProps = {
@@ -24,9 +25,7 @@ type ClientWebinarRegistrationProps = {
   currency?: string | null;
   nextSessionDate?: Date;
   sessionStatus: TSessionStatus;
-  appointment?: {
-    slotsOfAppointment?: Array<{ user?: Array<{ id: string }> }>;
-  } | null;
+  appointment?: { participants?: Array<{ userId: string }> } | null;
   /** Plan default; the instance may override it. */
   maxParticipants?: number;
   /** Per-instance capacity override; null inherits the plan's value. */
@@ -62,10 +61,7 @@ export function ClientWebinarRegistration({
 
   // Check if user is already registered for this webinar
   const isAlreadyRegistered =
-    userId &&
-    appointment?.slotsOfAppointment?.some((slot) =>
-      slot.user?.some((u) => u.id === userId),
-    );
+    !!userId && isUserRegisteredForWebinar([{ appointment }], userId);
 
   const capacity = getWebinarCapacity({
     webinar: { maxParticipants: instanceMaxParticipants ?? null, appointment },

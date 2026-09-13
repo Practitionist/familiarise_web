@@ -944,7 +944,7 @@ export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
 
 // ============================================================================
 // Public API - Consultee Booking Locks
-// #898 follow-up — the GiST exclusion constraint `slot_no_confirmed_overlap`
+// #898 follow-up — the GiST exclusion constraint `occurrence_no_confirmed_overlap`
 // is keyed on consultantProfileId, so it CANNOT stop the SAME consultee being
 // booked across two DIFFERENT consultants at overlapping times. The AE-1
 // consultee-calendar conflict check (ScheduleValidationService.validateNoConflicts)

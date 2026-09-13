@@ -44,7 +44,7 @@ import {
   transitionClassEvent,
   transitionConsultationRequest,
   transitionRescheduleRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
@@ -204,7 +204,7 @@ export async function POST(
         // Notification copy only. The refund tier reads the whole booking's
         // next undelivered session instead (#1006, cancellation-scope.ts) —
         // this row's earliest slot is the wrong answer for a subscription.
-        slotsOfAppointment: {
+        occurrences: {
           take: 1,
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },
@@ -276,8 +276,7 @@ export async function POST(
     let consulteeName: string | undefined;
     let planTitle: string | undefined;
     const appointmentType: string = appointment.appointmentType;
-    const dateTime =
-      appointment.slotsOfAppointment?.[0]?.startsAt?.toISOString();
+    const dateTime = appointment.occurrences?.[0]?.startsAt?.toISOString();
 
     if (appointment.consultation) {
       consultantUserId =
@@ -454,7 +453,7 @@ export async function POST(
           // The from-set rides in `fromIn`, never in `where`: the helper
           // overwrites `completionStatus` in the caller's WHERE with its own
           // from-set, so a status left there is silently discarded.
-          await transitionSlotCompletion(tx, {
+          await transitionOccurrenceCompletion(tx, {
             ...auditMeta,
             where: sweepScope,
             to: "CANCELLED",

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   AppointmentSlot,
   CustomSlot,
@@ -299,7 +300,7 @@ export async function GET(
     // paints cells green that every allocation mode then rejects. Both now
     // share buildConsultantOccupancyWhere.
     const slotsInWindow = {
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           // A tombstoned slot is not a booking — never paint it busy.
           // (No completionStatus filter: RESCHEDULED rows are a pending
@@ -366,11 +367,7 @@ export async function GET(
           where: {
             AND: [
               { OR: buildOccupiedAppointmentFilter() },
-              {
-                slotsOfAppointment: {
-                  some: { user: { some: { id: consulteeUserId } } },
-                },
-              },
+              { participants: { some: liveParticipant(consulteeUserId) } },
               slotsInWindow,
             ],
           },
@@ -379,7 +376,7 @@ export async function GET(
             // below flatMaps these children into the painted grid, so an
             // unfiltered include would reintroduce deleted rows through the
             // one arm the first pass missed (CodeRabbit triage).
-            slotsOfAppointment: { where: { deletedAt: null } },
+            occurrences: { where: { deletedAt: null } },
             ...LIVE_OCCUPANCY_SELECT,
           },
         })
@@ -395,7 +392,7 @@ export async function GET(
             // paint busy. Deliberately NOT window-bounded — a booking that
             // started last week overlapping an in-window cell must still
             // paint that cell, so out-of-window children are load-bearing.
-            slotsOfAppointment: { where: { deletedAt: null } },
+            occurrences: { where: { deletedAt: null } },
             consultation: {
               select: {
                 status: true,
@@ -423,7 +420,7 @@ export async function GET(
         isOccupiedByLiveAppointment(appt, occupancyNow),
       );
       rawSlotsOfAppointment = detailAppointments.flatMap(
-        (appt) => appt.slotsOfAppointment,
+        (appt) => appt.occurrences,
       );
       overlapMetaIndex = buildOverlapMetaIndex(detailAppointments);
     } else {
@@ -432,7 +429,7 @@ export async function GET(
           where: occupiedAppointmentWhere,
           // Same tombstone exclusion as the detail branch above.
           include: {
-            slotsOfAppointment: { where: { deletedAt: null } },
+            occurrences: { where: { deletedAt: null } },
             ...LIVE_OCCUPANCY_SELECT,
           },
         }),
@@ -440,7 +437,7 @@ export async function GET(
       ]);
       rawSlotsOfAppointment = appointments
         .filter((appt) => isOccupiedByLiveAppointment(appt, occupancyNow))
-        .flatMap((appt) => appt.slotsOfAppointment);
+        .flatMap((appt) => appt.occurrences);
     }
 
     // No overlap metadata is attached to these: the consultant may see that the
@@ -452,7 +449,7 @@ export async function GET(
       const seen = new Set(rawSlotsOfAppointment.map((s) => s.id));
       for (const appt of consulteeAppointments) {
         if (!isOccupiedByLiveAppointment(appt, occupancyNow)) continue;
-        for (const slot of appt.slotsOfAppointment) {
+        for (const slot of appt.occurrences) {
           if (!seen.has(slot.id)) {
             seen.add(slot.id);
             rawSlotsOfAppointment.push(slot);
@@ -723,7 +720,7 @@ export async function GET(
           startsAt: start.toISOString(),
           endsAt: end.toISOString(),
           availabilityWindowId: "",
-          slotOfAppointmentId: "",
+          appointmentOccurrenceId: "",
           localStartTime: loc.timeP(start),
           localEndTime: loc.timeP(end),
           type: "CUSTOM",

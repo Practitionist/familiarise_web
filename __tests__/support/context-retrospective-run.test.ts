@@ -53,7 +53,7 @@ interface SlotRow {
 function appointmentRow(slots: SlotRow[]) {
   return (args: {
     select: {
-      slotsOfAppointment: {
+      occurrences: {
         where: {
           deletedAt?: null;
           completionStatus?: string | { notIn: string[] };
@@ -61,7 +61,7 @@ function appointmentRow(slots: SlotRow[]) {
       };
     };
   }) => {
-    const where = args.select.slotsOfAppointment.where;
+    const where = args.select.occurrences.where;
     const status = where.completionStatus;
     const visible = slots.filter((slot) => {
       if (where.deletedAt === null && slot.deletedAt) return false;
@@ -74,7 +74,7 @@ function appointmentRow(slots: SlotRow[]) {
       appointmentType: "CONSULTATION",
       organizationId: null,
       cancellationPolicy: null,
-      slotsOfAppointment: visible,
+      occurrences: visible,
       payment: [],
       consultation: null,
       subscription: null,
@@ -160,7 +160,7 @@ describe("buildSupportContext — retrospective subject on a finished session", 
     await buildSupportContext("thread1", "appt1", "user1", "NO_SHOW");
 
     const select = mockPrisma.appointment.findUnique.mock.calls[0][0].select;
-    expect(select.slotsOfAppointment.where).toEqual({
+    expect(select.occurrences.where).toEqual({
       deletedAt: null,
       completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
     });

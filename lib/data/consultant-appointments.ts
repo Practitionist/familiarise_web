@@ -23,8 +23,8 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
-import type { User } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import type { TAppointment } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -66,21 +66,11 @@ export interface GetConsultantAppointmentsArgs {
  * request query string.
  */
 /**
- * Slot users on this surface are projected down to `listUserSelect`. TAppointment
- * still declares the full User relation, so name the narrower shape here instead
- * of letting the `as unknown as` at the bottom imply fields that were never
- * queried — reading e.g. `.role` off one of these is `undefined` at runtime.
+ * Plan-side users on this surface are projected down to `listUserSelect`;
+ * the roster itself is not fetched here (#1554 — it lives on
+ * AppointmentParticipant and no list consumer reads it).
  */
-type ListSlotUser = Pick<User, "id" | "name" | "email" | "image">;
-export type ConsultantListAppointment = Omit<
-  TAppointment,
-  "slotsOfAppointment"
-> & {
-  slotsOfAppointment: (Omit<
-    TAppointment["slotsOfAppointment"][number],
-    "user"
-  > & { user: ListSlotUser[] })[];
-};
+export type ConsultantListAppointment = TAppointment;
 
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,
@@ -108,7 +98,7 @@ export async function getConsultantAppointments(
     whereClause.OR = [
       // Appointments with slots overlapping the date range
       {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             AND: [
               { startsAt: { lt: new Date(endDate) } },
@@ -119,7 +109,7 @@ export async function getConsultantAppointments(
       },
       // OR appointments with no slots at all
       {
-        slotsOfAppointment: {
+        occurrences: {
           none: {},
         },
       },
@@ -194,10 +184,8 @@ export async function getConsultantAppointments(
           },
         },
         {
-          slotsOfAppointment: {
-            some: {
-              user: { some: { consulteeProfileId: consulteeProfileId } },
-            },
+          participants: {
+            some: { ...liveParticipant(), user: { consulteeProfileId } },
           },
         },
       ],
@@ -206,15 +194,7 @@ export async function getConsultantAppointments(
 
   if (userId) {
     userFilterClauses.push({
-      slotsOfAppointment: {
-        some: {
-          user: {
-            some: {
-              id: userId,
-            },
-          },
-        },
-      },
+      participants: { some: liveParticipant(userId) },
     });
   }
 
@@ -285,10 +265,9 @@ export async function getConsultantAppointments(
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
-      slotsOfAppointment: {
+      occurrences: {
         orderBy: { startsAt: "asc" },
         include: {
-          user: { select: listUserSelect },
           meetingSession: {
             select: { id: true, endedAt: true, endedReason: true },
           },
@@ -401,8 +380,8 @@ export async function getConsultantAppointments(
   // Sort appointments by slot start time
   // Include appointments with 0 slots (push them to the end)
   const sorted = appointments.sort((a, b) => {
-    const aTime = a.slotsOfAppointment?.[0]?.startsAt;
-    const bTime = b.slotsOfAppointment?.[0]?.startsAt;
+    const aTime = a.occurrences?.[0]?.startsAt;
+    const bTime = b.occurrences?.[0]?.startsAt;
 
     // Appointments without slots go to the end
     if (!aTime && !bTime) return 0;

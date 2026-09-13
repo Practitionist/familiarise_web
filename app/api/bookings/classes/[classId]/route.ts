@@ -43,9 +43,8 @@ export async function GET(
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -161,9 +160,8 @@ export async function PUT(
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -245,7 +243,7 @@ export async function DELETE(
       where: {
         id: classId,
         appointments: {
-          some: { slotsOfAppointment: { some: { endsAt: { gt: now } } } },
+          some: { occurrences: { some: { endsAt: { gt: now } } } },
         },
       },
       select: { id: true },
@@ -288,9 +286,8 @@ export async function DELETE(
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },

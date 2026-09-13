@@ -12,6 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { AppointmentFeedbackRole } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 
@@ -35,7 +36,6 @@ const recordingsSelect = {
 const slotsInclude = {
   orderBy: { startsAt: "asc" },
   include: {
-    user: userSelect,
     meetingSession: {
       select: {
         id: true,
@@ -173,7 +173,7 @@ export async function readAppointmentDetail(appointmentId: string) {
           expiresAt: true,
           initiatorRole: true,
           initiatedById: true,
-          proposedSlots: {
+          proposedTimes: {
             orderBy: { startsAt: "asc" },
             // round: a COUNTERED request carries both rounds; the card must
             // show only the current offer.
@@ -181,7 +181,12 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      slotsOfAppointment: slotsInclude,
+      occurrences: slotsInclude,
+      // #1554 — the roster: every live seat holder, with display fields.
+      participants: {
+        where: liveParticipant(),
+        select: { userId: true, role: true, user: userSelect },
+      },
     },
   });
 
@@ -196,7 +201,7 @@ export async function readAppointmentDetail(appointmentId: string) {
   const siblings = siblingWhere
     ? await prisma.appointment.findMany({
         where: { ...siblingWhere, id: { not: appointment.id } },
-        include: { slotsOfAppointment: slotsInclude },
+        include: { occurrences: slotsInclude },
       })
     : [];
 
@@ -298,9 +303,7 @@ function participantUserIds(detail: TAppointmentDetail) {
     appointment.consultation?.requestedBy?.userId,
     appointment.subscription?.requestedBy?.userId,
     appointment.trialSession?.consulteeProfile?.userId,
-    ...appointment.slotsOfAppointment.flatMap((slot) =>
-      slot.user.map((u) => u.id),
-    ),
+    ...appointment.participants.map((seat) => seat.userId),
   ];
   const consultantUserIds = [
     appointment.consultation?.consultationPlan?.consultantProfile?.userId,
@@ -319,7 +322,7 @@ function participantUserIds(detail: TAppointmentDetail) {
 }
 export type TDetailAppointment = TAppointmentDetail["appointment"];
 export type TDetailRecording =
-  TDetailAppointment["slotsOfAppointment"][number] extends {
+  TDetailAppointment["occurrences"][number] extends {
     meetingSession: infer M;
   }
     ? M extends { recordings: Array<infer R> } | null

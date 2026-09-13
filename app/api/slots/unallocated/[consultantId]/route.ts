@@ -40,7 +40,7 @@ export async function GET(
     const appointments = await prisma.appointment.findMany({
       where: {
         OR: buildOccupiedAppointmentFilter(consultantId),
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: { lt: new Date(endDateInUtc) },
             endsAt: { gt: new Date(startDateInUtc) },
@@ -48,7 +48,7 @@ export async function GET(
         },
       },
       include: {
-        slotsOfAppointment: true,
+        occurrences: true,
       },
     });
 
@@ -56,7 +56,7 @@ export async function GET(
     // instead of exact key matching which misses partial overlaps
     const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
-      appointment.slotsOfAppointment.forEach((slot) => {
+      appointment.occurrences.forEach((slot) => {
         allocatedSlots.push({
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,
@@ -152,7 +152,7 @@ export async function GET(
               startsAt: slotStart.toISOString(),
               endsAt: slotEnd.toISOString(),
               availabilityWindowId: weeklySlot.id,
-              slotOfAppointmentId: "",
+              appointmentOccurrenceId: "",
               localStartTime: slotStart.toLocaleTimeString(),
               localEndTime: slotEnd.toLocaleTimeString(),
               type: "WEEKLY" as const,
@@ -174,7 +174,7 @@ export async function GET(
         startsAt: slot.startsAt.toISOString(),
         endsAt: slot.endsAt.toISOString(),
         availabilityWindowId: slot.id,
-        slotOfAppointmentId: "",
+        appointmentOccurrenceId: "",
         localStartTime: new Date(slot.startsAt).toLocaleTimeString(),
         localEndTime: new Date(slot.endsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,

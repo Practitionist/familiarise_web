@@ -4,7 +4,7 @@
  * `assertCollaboratorsAvailable` used to be called from exactly one place (the
  * webinar crud-with-plan PATCH), so a class scheduled through the allocator
  * could be committed onto a time an ACCEPTED co-host was already busy for.
- * Co-hosts are not slot participants, so neither slot_no_confirmed_overlap nor
+ * Co-hosts are not slot participants, so neither occurrence_no_confirmed_overlap nor
  * the owner-scoped validators can see the clash.
  */
 
@@ -113,15 +113,11 @@ function makeMockTx() {
       // inherit the policy version the booking was sold under. Null here:
       // these fixtures predate the FK, so the created rows carry no policy.
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest
-        .fn()
-        .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
-      update: jest
-        .fn()
-        .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
+      create: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
+      update: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -183,7 +179,9 @@ function busyCoHost(mockTx: ReturnType<typeof makeMockTx>) {
       consultantProfile: { user: { name: "Priya" } },
     },
   ]);
-  mockTx.slotOfAppointment.findFirst.mockResolvedValue({ id: "busy-slot-1" });
+  mockTx.appointmentOccurrence.findFirst.mockResolvedValue({
+    id: "busy-slot-1",
+  });
 }
 
 let mockTx: ReturnType<typeof makeMockTx>;
@@ -266,7 +264,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-req-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(MON_0900),
@@ -287,7 +285,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("No requested slots found");
     // Nothing was confirmed, so no co-host could be double-booked either way.
-    expect(mockTx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
 
     // The guard IS wired into the requested transaction, between validation
     // and the isTentative flip that confirms the stored times.
@@ -324,7 +322,8 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     });
 
     expect(result.success).toBe(true);
-    const where = mockTx.slotOfAppointment.findFirst.mock.calls[0][0].where as {
+    const where = mockTx.appointmentOccurrence.findFirst.mock.calls[0][0]
+      .where as {
       OR: { startsAt: { lt: Date }; endsAt: { gt: Date } }[];
       isTentative?: boolean;
     };
@@ -350,7 +349,7 @@ describe("AE-2 — the webinar path is unchanged", () => {
     expect(result.success).toBe(true);
     // No accepted collaborators → the guard short-circuits before any probe.
     expect(mockTx.collaborator.findMany).toHaveBeenCalledTimes(1);
-    expect(mockTx.slotOfAppointment.findFirst).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.findFirst).not.toHaveBeenCalled();
   });
 
   it("still blocks a webinar whose co-host is busy", async () => {

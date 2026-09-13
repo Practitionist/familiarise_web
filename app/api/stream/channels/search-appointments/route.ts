@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { getSession } from "@/lib/auth-server";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
@@ -296,12 +297,10 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on an appointment slot
+              // User holds a seat on the appointment (#1554)
               {
                 appointment: {
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
+                  participants: { some: liveParticipant(userId) },
                 },
               },
               // User is the consultant
@@ -354,13 +353,11 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on an appointment slot
+              // User holds a seat on the appointment (#1554)
               {
                 appointments: {
                   some: {
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
+                    participants: { some: liveParticipant(userId) },
                   },
                 },
               },

@@ -19,10 +19,11 @@
  */
 
 import prisma from "../../lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   AppointmentStatus,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import {
@@ -86,10 +87,10 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
   // APPROVED, so the parent-status guard below does not see it. Stamping such a
   // slot confirmed blocks the consultant's calendar for a session nobody will
   // deliver. CANCELLED is excluded for the same reason.
-  const CLEARABLE_COMPLETION_STATUSES: SlotCompletionStatus[] = [
-    SlotCompletionStatus.SCHEDULED,
-    SlotCompletionStatus.COMPLETED,
-    SlotCompletionStatus.UNVERIFIED,
+  const CLEARABLE_COMPLETION_STATUSES: OccurrenceCompletionStatus[] = [
+    OccurrenceCompletionStatus.SCHEDULED,
+    OccurrenceCompletionStatus.COMPLETED,
+    OccurrenceCompletionStatus.UNVERIFIED,
   ];
   const LIVE_TENTATIVE_SLOT = {
     isTentative: true,
@@ -102,7 +103,7 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
     // slots that are tentative due to an in-progress reschedule.
     // The reschedule workflow sets consultation/subscription status back to PENDING
     // while new slots are being selected. We must not clear those prematurely.
-    const slotsToFix = await prisma.slotOfAppointment.findMany({
+    const slotsToFix = await prisma.appointmentOccurrence.findMany({
       where: {
         ...LIVE_TENTATIVE_SLOT,
         appointment: {
@@ -160,7 +161,7 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
       // cohort's own predicate so we never touch a slot that LEFT the cohort
       // between the read and this write (#1424).
       const ids = slotsToFix.map((s) => s.id);
-      const result = await prisma.slotOfAppointment.updateMany({
+      const result = await prisma.appointmentOccurrence.updateMany({
         where: { id: { in: ids }, ...LIVE_TENTATIVE_SLOT },
         data: { isTentative: false },
       });
@@ -220,7 +221,7 @@ async function detectDoubleBookings(): Promise<{
     const windowEnd = new Date(
       Date.now() + RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
-    const confirmedSlots = await prisma.slotOfAppointment.findMany({
+    const confirmedSlots = await prisma.appointmentOccurrence.findMany({
       where: {
         endsAt: { gt: new Date() }, // Only future slots
         startsAt: { lt: windowEnd },
@@ -527,7 +528,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         appointments: {
           some: {
             deletedAt: null,
-            slotsOfAppointment: {
+            occurrences: {
               some: { isTentative: false, deletedAt: null },
             },
           },
@@ -536,7 +537,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
           appointments: {
             some: {
               deletedAt: null,
-              slotsOfAppointment: {
+              occurrences: {
                 some: { isTentative: true, deletedAt: null },
               },
             },
@@ -563,7 +564,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         appointments: {
           where: {
             deletedAt: null,
-            slotsOfAppointment: {
+            occurrences: {
               some: { isTentative: false, deletedAt: null },
             },
           },
@@ -612,7 +613,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         appointments: {
           some: {
             deletedAt: null,
-            slotsOfAppointment: {
+            occurrences: {
               some: { isTentative: false, deletedAt: null },
             },
           },
@@ -621,7 +622,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
           appointments: {
             some: {
               deletedAt: null,
-              slotsOfAppointment: {
+              occurrences: {
                 some: { isTentative: true, deletedAt: null },
               },
             },
@@ -648,7 +649,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         appointments: {
           where: {
             deletedAt: null,
-            slotsOfAppointment: {
+            occurrences: {
               some: { isTentative: false, deletedAt: null },
             },
           },
@@ -920,62 +921,44 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
 }
 
 /**
- * #1319 A9 — compare AppointmentParticipant against the slot↔user join for
- * upcoming appointments. Log-only: the participant table is written by every
- * slot writer in the same transaction, so drift here means a writer was
- * missed, which is a bug to fix at the source rather than a row to patch.
+ * #1319 A9 / #1554 — AppointmentParticipant is the only roster, so the drift
+ * signal is an upcoming appointment with live occurrences and NO live seat:
+ * every creation path writes the participant rows in the same transaction, so
+ * an empty roster means a writer was missed, which is a bug to fix at the
+ * source rather than a row to patch. Log-only.
  */
 async function logParticipantDrift(): Promise<void> {
   const windowEnd = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
   const appointments = await prisma.appointment.findMany({
     where: {
       deletedAt: null,
-      slotsOfAppointment: {
-        some: { endsAt: { gt: new Date() }, startsAt: { lt: windowEnd } },
-      },
-    },
-    select: {
-      id: true,
-      participants: { select: { userId: true, status: true } },
-      // A cancelled or replaced slot keeps its user relation as history; only
-      // live rows are the join-side truth the participant rows must match.
-      slotsOfAppointment: {
-        where: {
+      occurrences: {
+        some: {
+          endsAt: { gt: new Date() },
+          startsAt: { lt: windowEnd },
           deletedAt: null,
           completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
         },
-        select: { user: { select: { id: true } } },
       },
+      participants: { none: liveParticipant() },
     },
+    select: { id: true, appointmentType: true },
     take: 2000,
   });
 
-  let drifted = 0;
   for (const appointment of appointments) {
-    const joined = new Set(
-      appointment.slotsOfAppointment.flatMap((s) => s.user.map((u) => u.id)),
-    );
-    const live = new Set(
-      appointment.participants
-        .filter((p) => p.status === "HELD" || p.status === "CONFIRMED")
-        .map((p) => p.userId),
-    );
-    const onlyInJoin = [...joined].filter((id) => !live.has(id));
-    const onlyInParticipants = [...live].filter((id) => !joined.has(id));
-    if (onlyInJoin.length === 0 && onlyInParticipants.length === 0) continue;
-    drifted++;
     console.log(
       JSON.stringify({
         event: "participant_drift",
         appointmentId: appointment.id,
-        onlyInJoin,
-        onlyInParticipants,
+        appointmentType: appointment.appointmentType,
+        reason: "no live participant row on an upcoming appointment",
         timestamp: new Date().toISOString(),
       }),
     );
   }
   console.log(
-    `   Participant drift: ${drifted} of ${appointments.length} upcoming appointments`,
+    `   Participant drift: ${appointments.length} upcoming appointment(s) without a live seat`,
   );
 }
 

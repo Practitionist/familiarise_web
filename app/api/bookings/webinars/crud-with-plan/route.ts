@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -42,7 +43,7 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  * onto the cancelled time. Filter at the query (and again with `isDeadSlot`
  * when reading already-loaded arrays) so runStart/runEnd are always live.
  *
- * `completionStatus` is `SlotCompletionStatus @default(SCHEDULED)` — never
+ * `completionStatus` is `OccurrenceCompletionStatus @default(SCHEDULED)` — never
  * NULL — so a plain `notIn` is enough (SQL's NULL/`NOT IN` caveat does not
  * apply). `satisfies` keeps the hoisted literal contextually typed as
  * Prisma's nested-args shape; without it `notIn: string[]` widens and poisons
@@ -54,7 +55,7 @@ const LIVE_SLOTS_INCLUDE = {
     deletedAt: null,
     completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
   },
-} satisfies Prisma.Appointment$slotsOfAppointmentArgs;
+} satisfies Prisma.Appointment$occurrencesArgs;
 
 import { getSession } from "@/lib/auth-server";
 // Schema for POST request body based on WebinarPlanSchema
@@ -316,7 +317,7 @@ export async function POST(request: NextRequest) {
                       // never one long row spanning the full duration.
                       create: {
                         appointmentType: "WEBINAR",
-                        slotsOfAppointment: {
+                        occurrences: {
                           create: buildContiguousSlotAtoms({
                             startsAt: startTime,
                             durationInHours,
@@ -337,11 +338,7 @@ export async function POST(request: NextRequest) {
               },
               appointment: {
                 include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
+                  occurrences: true,
                 },
               },
             },
@@ -351,8 +348,7 @@ export async function POST(request: NextRequest) {
             id: webinar.id,
             planId: webinar.webinarPlanId,
             appointmentId: webinar.appointment?.id,
-            hasSlots:
-              (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0,
+            hasSlots: (webinar.appointment?.occurrences?.length ?? 0) > 0,
           });
 
           return { webinarPlan, webinar };
@@ -384,7 +380,7 @@ export async function POST(request: NextRequest) {
     // --- End Zod Error Handling ---
 
     // #784 — owner now denormalized onto group-event slots, so a scheduling
-    // overlap trips slot_no_confirmed_overlap (23P01): that's a conflict, not 500.
+    // overlap trips occurrence_no_confirmed_overlap (23P01): that's a conflict, not 500.
     if (isExclusionViolation(error)) {
       return NextResponse.json(
         {
@@ -506,7 +502,7 @@ export async function PATCH(request: NextRequest) {
             appointment: {
               include: {
                 // #1071 — live rows only; dead RESCHEDULED must not own [0].
-                slotsOfAppointment: LIVE_SLOTS_INCLUDE,
+                occurrences: LIVE_SLOTS_INCLUDE,
               },
             },
           },
@@ -539,7 +535,7 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: LIVE_SLOTS_INCLUDE,
+                occurrences: LIVE_SLOTS_INCLUDE,
               },
             },
           },
@@ -595,10 +591,10 @@ export async function PATCH(request: NextRequest) {
       });
     } else if (
       durationInHours !== undefined &&
-      webinarToUpdate?.appointment?.slotsOfAppointment?.length
+      webinarToUpdate?.appointment?.occurrences?.length
     ) {
       // Duration-only change: keep the live run's earliest start.
-      const existingSlot = webinarToUpdate.appointment.slotsOfAppointment.find(
+      const existingSlot = webinarToUpdate.appointment.occurrences.find(
         (s) => !isDeadSlot(s),
       );
       if (existingSlot) {
@@ -703,7 +699,7 @@ export async function PATCH(request: NextRequest) {
                       // Include the appointment
                       include: {
                         // And the slots within the appointment
-                        slotsOfAppointment: true,
+                        occurrences: true,
                       },
                     },
                   },
@@ -741,8 +737,9 @@ export async function PATCH(request: NextRequest) {
                 ? await tx.appointment.findUnique({
                     where: { id: updatedWebinar.appointment.id },
                     include: {
-                      slotsOfAppointment: {
-                        include: { user: { select: { id: true } } },
+                      participants: {
+                        where: liveParticipant(),
+                        select: { userId: true },
                       },
                     },
                   })
@@ -776,11 +773,7 @@ export async function PATCH(request: NextRequest) {
                   },
                   appointment: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },
@@ -798,11 +791,7 @@ export async function PATCH(request: NextRequest) {
                   },
                   appointment: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },
@@ -827,7 +816,7 @@ export async function PATCH(request: NextRequest) {
                 });
                 if (activePayments > 0) {
                   const liveSlots = (
-                    await tx.slotOfAppointment.findMany({
+                    await tx.appointmentOccurrence.findMany({
                       where: { appointmentId: appointment.id },
                       orderBy: { startsAt: "asc" },
                     })
@@ -872,7 +861,7 @@ export async function PATCH(request: NextRequest) {
               }
               // Prefer the PATCH-requested owner when transferring the plan so
               // rewritten atoms land on the new consultant's calendar (and
-              // slot_no_confirmed_overlap protects the right profile).
+              // occurrence_no_confirmed_overlap protects the right profile).
               const ownerProfileId =
                 consultantProfileId ?? existingPlan.consultantProfileId;
               if (!ownerProfileId) {
@@ -903,7 +892,7 @@ export async function PATCH(request: NextRequest) {
                   data: {
                     webinar: { connect: { id: updatedWebinar.id } },
                     appointmentType: "WEBINAR",
-                    slotsOfAppointment: {
+                    occurrences: {
                       create: buildContiguousSlotAtoms({
                         startsAt: startTime,
                         durationInHours: effectiveDurationForSlots,
@@ -928,11 +917,7 @@ export async function PATCH(request: NextRequest) {
                 },
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },

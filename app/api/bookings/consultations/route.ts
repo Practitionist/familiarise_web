@@ -336,20 +336,7 @@ export async function PATCH(request: NextRequest) {
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    role: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
             payment: {
               select: {
                 id: true,

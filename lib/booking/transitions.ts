@@ -19,7 +19,7 @@ import type {
   Prisma,
   AppointmentStatus,
   RescheduleRequestStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   TrialSessionStatus,
   WebinarStatus,
 } from "@prisma/client";
@@ -329,13 +329,13 @@ export async function transitionClassEvent(
   });
 }
 
-//////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
+//////////////////////////////////////////////// AppointmentOccurrence ////////////////////////////////////////////////
 
 // A reschedule may re-mark a SCHEDULED or already-RESCHEDULED slot tentative,
 // but must never resurrect COMPLETED/CANCELLED history or touch UNVERIFIED
 // past sessions (#837 — a COMPLETED past session inside a still-active
 // subscription stayed COMPLETED on cancel but was resurrected on reschedule).
-export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
+export const SLOT_RESCHEDULABLE_FROM: OccurrenceCompletionStatus[] = [
   "SCHEDULED",
   "RESCHEDULED",
 ];
@@ -345,9 +345,9 @@ export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
 // `where: { id }`, so a webhook landing after a cancel resurrected a CANCELLED
 // slot as COMPLETED (the #837 shape, on the column that gates earnings).
 // Keyed by TARGET like REQUEST_ALLOWED_FROM.
-export const SLOT_COMPLETION_ALLOWED_FROM: Record<
-  SlotCompletionStatus,
-  SlotCompletionStatus[]
+export const OCCURRENCE_COMPLETION_ALLOWED_FROM: Record<
+  OccurrenceCompletionStatus,
+  OccurrenceCompletionStatus[]
 > = {
   SCHEDULED: ["RESCHEDULED"],
   COMPLETED: ["SCHEDULED", "UNVERIFIED"],
@@ -363,41 +363,41 @@ export const SLOT_COMPLETION_ALLOWED_FROM: Record<
 /**
  * Two deliberate departures from the five request/event helpers above, both
  * load-bearing: `where` is a full WhereInput because every caller sweeps by
- * appointmentId or a user relation rather than by slot id, and `allowZero`
+ * appointmentId or a user relation rather than by occurrence id, and `allowZero`
  * exists because cancel/reschedule sweeps legitimately match zero live rows
  * and must not 409. Returns the matched count so sweeps can report honestly.
  *
- * The history guarantee is exact in both directions: a SLOT row exists only
- * for a slot THIS call moved, because the ids come from the UPDATE's own
+ * The history guarantee is exact in both directions: an OCCURRENCE row exists only
+ * for an occurrence THIS call moved, because the ids come from the UPDATE's own
  * RETURNING rather than from the pre-read. The pre-read supplies from-status
  * only, so the documented A12 limitation stays what it is — a stale
  * `fromStatus` on a row that did move, never a row that did not.
  */
-export async function transitionSlotCompletion(
-  tx: Pick<Tx, "slotOfAppointment" | "bookingStatusHistory">,
+export async function transitionOccurrenceCompletion(
+  tx: Pick<Tx, "appointmentOccurrence" | "bookingStatusHistory">,
   args: HistoryMeta & {
-    where: Prisma.SlotOfAppointmentWhereInput;
-    to: SlotCompletionStatus;
+    where: Prisma.AppointmentOccurrenceWhereInput;
+    to: OccurrenceCompletionStatus;
     data?: Omit<
-      Prisma.SlotOfAppointmentUncheckedUpdateManyInput,
+      Prisma.AppointmentOccurrenceUncheckedUpdateManyInput,
       "completionStatus"
     >;
-    fromIn?: SlotCompletionStatus[];
+    fromIn?: OccurrenceCompletionStatus[];
     allowZero?: boolean;
   },
 ): Promise<number> {
-  const fromIn = args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to];
+  const fromIn = args.fromIn ?? OCCURRENCE_COMPLETION_ALLOWED_FROM[args.to];
   const casWhere = { ...args.where, completionStatus: { in: fromIn } };
   // The pre-read carries the CAS's own from-set, not just the caller's where,
   // so it is a from-status lookup for the cohort the UPDATE may move. It does
   // NOT decide who gets a history row: a concurrent writer can pull a row out
   // of the from-set between the two statements, and logging the pre-read would
-  // fabricate an audit row for a slot this call never touched.
-  const before = await tx.slotOfAppointment.findMany({
+  // fabricate an audit row for an occurrence this call never touched.
+  const before = await tx.appointmentOccurrence.findMany({
     where: casWhere,
     select: { id: true, completionStatus: true },
   });
-  const moved = await tx.slotOfAppointment.updateManyAndReturn({
+  const moved = await tx.appointmentOccurrence.updateManyAndReturn({
     where: casWhere,
     data: { completionStatus: args.to, ...args.data },
     // #1333 — the owning appointment comes from the moved row itself, which is
@@ -405,16 +405,23 @@ export async function transitionSlotCompletion(
     select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
-    throw new IllegalTransitionError("SlotOfAppointment", args.to);
+    throw new IllegalTransitionError("AppointmentOccurrence", args.to);
   }
   const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
   for (const row of moved) {
     // A row that entered the from-set after the pre-read has no entry here and
     // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
-    await appendHistory(tx, "SLOT", row.id, fromById.get(row.id), args.to, {
-      ...args,
-      appointmentId: args.appointmentId ?? row.appointmentId ?? null,
-    });
+    await appendHistory(
+      tx,
+      "OCCURRENCE",
+      row.id,
+      fromById.get(row.id),
+      args.to,
+      {
+        ...args,
+        appointmentId: args.appointmentId ?? row.appointmentId ?? null,
+      },
+    );
   }
   return moved.length;
 }

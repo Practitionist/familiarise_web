@@ -42,8 +42,8 @@ function liveFutureSlots(detail: TAppointmentDetail): SlotLike[] {
   // many, and "every session" has to mean all of them — the reschedule API
   // reads the whole program off a single appointment id for the same reason.
   const all = [
-    ...appointment.slotsOfAppointment,
-    ...siblings.flatMap((sibling) => sibling.slotsOfAppointment),
+    ...appointment.occurrences,
+    ...siblings.flatMap((sibling) => sibling.occurrences),
   ];
   const now = Date.now();
   return all

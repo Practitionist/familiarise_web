@@ -13,7 +13,7 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
-    slotOfAppointment: { count: jest.fn() },
+    appointmentOccurrence: { count: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
@@ -51,7 +51,7 @@ const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
   subscription: { findUnique: jest.Mock };
   appointment: { findMany: jest.Mock; findFirst: jest.Mock };
-  slotOfAppointment: { count: jest.Mock };
+  appointmentOccurrence: { count: jest.Mock };
 };
 
 const FUTURE_SLOTS = [
@@ -84,7 +84,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.subscription.findUnique.mockResolvedValue(richSubscription);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
-  mockPrisma.slotOfAppointment.count.mockResolvedValue(0);
+  mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
 });
 
 describe("#1012 expectedTentativeSlotCount", () => {
@@ -93,7 +93,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
@@ -129,7 +129,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
@@ -170,7 +170,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
@@ -202,7 +202,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
     const matchingTentative = [
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
@@ -221,7 +221,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
     const confirmedAfterRace = [
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
@@ -256,7 +256,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
           findMany: jest.fn().mockResolvedValue(confirmedAfterRace),
           findFirst: jest.fn().mockResolvedValue(null),
         },
-        slotOfAppointment: {
+        appointmentOccurrence: {
           count: jest.fn().mockResolvedValue(0),
         },
       };

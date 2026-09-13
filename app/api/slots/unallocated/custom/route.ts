@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
         OR: buildOccupiedAppointmentFilter(consultantProfileId),
         ...(startDateInUtc && endDateInUtc
           ? {
-              slotsOfAppointment: {
+              occurrences: {
                 some: {
                   startsAt: { lt: new Date(endDateInUtc) },
                   endsAt: { gt: new Date(startDateInUtc) },
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
           : {}),
       },
       include: {
-        slotsOfAppointment: true,
+        occurrences: true,
       },
     });
 
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     // instead of exact key matching which misses partial overlaps
     const allocatedSlots: { startsAt: Date; endsAt: Date }[] = [];
     appointments.forEach((appointment) => {
-      appointment.slotsOfAppointment.forEach((slot) => {
+      appointment.occurrences.forEach((slot) => {
         allocatedSlots.push({
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,

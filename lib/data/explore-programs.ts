@@ -145,7 +145,7 @@ const getTrendingClassPlanIds = unstable_cache(
         where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
         select: { id: true, createdAt: true },
       }),
-      prisma.slotOfAppointment.findMany({
+      prisma.appointmentOccurrence.findMany({
         where: {
           ...recentSlotWindow(),
           appointment: { deletedAt: null, classId: { not: null } },
@@ -171,7 +171,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
         where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
         select: { id: true, createdAt: true },
       }),
-      prisma.slotOfAppointment.findMany({
+      prisma.appointmentOccurrence.findMany({
         where: {
           ...recentSlotWindow(),
           appointment: { deletedAt: null, webinarId: { not: null } },

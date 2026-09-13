@@ -25,7 +25,7 @@ export async function GET() {
   ] = await Promise.all([
     prisma.meetingSession.count({ where: { endedAt: null } }),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
-    prisma.slotOfAppointment.count({
+    prisma.appointmentOccurrence.count({
       where: {
         startsAt: { gte: now, lte: fourHoursFromNow },
         isTentative: false,

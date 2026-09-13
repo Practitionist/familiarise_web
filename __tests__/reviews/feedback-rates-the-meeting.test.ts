@@ -42,7 +42,7 @@ jest.mock("../../lib/data/appointment-detail", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findFirst: jest.fn(), findMany: jest.fn() },
+    appointmentOccurrence: { findFirst: jest.fn(), findMany: jest.fn() },
     appointmentFeedback: {
       upsert: jest.fn(),
       findMany: jest.fn(),
@@ -64,8 +64,8 @@ import {
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
 const mockedRaterRole = appointmentRaterRole as jest.Mock;
-const mockedFindFirst = prisma.slotOfAppointment.findFirst as jest.Mock;
-const mockedFindMany = prisma.slotOfAppointment.findMany as jest.Mock;
+const mockedFindFirst = prisma.appointmentOccurrence.findFirst as jest.Mock;
+const mockedFindMany = prisma.appointmentOccurrence.findMany as jest.Mock;
 const mockedUpsert = prisma.appointmentFeedback.upsert as jest.Mock;
 const mockedFeedbackFindMany = prisma.appointmentFeedback.findMany as jest.Mock;
 const mockedFeedbackFindUnique = prisma.appointmentFeedback
@@ -198,10 +198,10 @@ describe("a rating identifies the meeting, not the row it was clicked on", () =>
       expect(res.status).toBe(200);
 
       const args = mockedUpsert.mock.calls[0][0];
-      expect(args.where.slotOfAppointmentId_userId.slotOfAppointmentId).toBe(
-        "slot-a",
-      );
-      expect(args.create.slotOfAppointmentId).toBe("slot-a");
+      expect(
+        args.where.appointmentOccurrenceId_userId.appointmentOccurrenceId,
+      ).toBe("slot-a");
+      expect(args.create.appointmentOccurrenceId).toBe("slot-a");
     },
   );
 
@@ -217,7 +217,7 @@ describe("a rating identifies the meeting, not the row it was clicked on", () =>
 
     // Same unique key both times, so the upsert collapses them into one row.
     const keys = mockedUpsert.mock.calls.map(
-      (c) => c[0].where.slotOfAppointmentId_userId.slotOfAppointmentId,
+      (c) => c[0].where.appointmentOccurrenceId_userId.appointmentOccurrenceId,
     );
     expect(keys).toEqual(["slot-a", "slot-a"]);
   });
@@ -241,9 +241,9 @@ describe("a rating identifies the meeting, not the row it was clicked on", () =>
     });
 
     const args = mockedUpsert.mock.calls[0][0];
-    expect(args.where.slotOfAppointmentId_userId.slotOfAppointmentId).toBe(
-      "slot-z",
-    );
+    expect(
+      args.where.appointmentOccurrenceId_userId.appointmentOccurrenceId,
+    ).toBe("slot-z");
   });
 });
 

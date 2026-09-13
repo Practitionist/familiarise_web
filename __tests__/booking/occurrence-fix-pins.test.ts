@@ -3,7 +3,7 @@
  */
 
 /**
- * Regression pins for the slot/session fixes that landed via PRs #825/#838
+ * Regression pins for the occurrence fixes that landed via PRs #825/#838
  * but whose issues stayed open (#788, #827, #828) plus the #829 cleanup
  * guard. These tests exist so a future refactor that reintroduces any of the
  * four bugs fails CI instead of resurfacing in production:
@@ -13,8 +13,11 @@
  *         against that one row. #1320 moved checkout to a union-of-rows rule,
  *         so the cross-row merge is now REQUIRED and the pin below asserts the
  *         new invariant: every covering row id rides the merged slot.
- *  #827 — confirmExistingAppointment flipped slots confirmed without checking
- *         for an already-confirmed overlapping slot (cross-user double-book).
+ *  #827 — confirmExistingAppointment flipped occurrences confirmed without
+ *         checking for an already-confirmed overlapping occurrence (cross-user
+ *         double-book). #1554: the roster is AppointmentParticipant, whose
+ *         (appointmentId, userId) unique is the re-declared guard, and the
+ *         range exclusion on the occurrence rows is the cross-user backstop.
  *  #828 — checkout had no request-level idempotency; the replay helper must
  *         return the original attempt instead of minting a duplicate.
  *  #829 — cleanup-tentative-slots deleted by id only, destroying slots whose
@@ -119,12 +122,25 @@ describe("#788 → #1320 — mergeConsecutiveSlots merges across rows and keeps 
 describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
   function mockTx(opts: { conflict: boolean }) {
     const slotUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const conflictFindFirst = jest
+      .fn()
+      .mockResolvedValue(
+        opts.conflict ? { id: "slot-other", appointmentId: "appt-2" } : null,
+      );
     return {
       slotUpdateMany,
+      conflictFindFirst,
       tx: {
         appointmentParticipant: {
           createMany: jest.fn().mockResolvedValue({ count: 1 }),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          // #1554 — the roster read: both parties hold a live seat.
+          findMany: jest
+            .fn()
+            .mockResolvedValue([
+              { userId: "booker" },
+              { userId: "consultant" },
+            ]),
         },
         appointment: {
           findUnique: jest.fn().mockResolvedValue({
@@ -135,22 +151,15 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
             class: null,
           }),
         },
-        slotOfAppointment: {
+        appointmentOccurrence: {
           findMany: jest.fn().mockResolvedValue([
             {
               id: "slot-1",
               startsAt: new Date("2026-06-26T15:00:00Z"),
               endsAt: new Date("2026-06-26T16:00:00Z"),
-              user: [{ id: "booker" }, { id: "consultant" }],
             },
           ]),
-          findFirst: jest
-            .fn()
-            .mockResolvedValue(
-              opts.conflict
-                ? { id: "slot-other", appointmentId: "appt-2" }
-                : null,
-            ),
+          findFirst: conflictFindFirst,
           updateMany: slotUpdateMany,
         },
         consultation: {
@@ -165,10 +174,28 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     };
   }
 
-  it("blocks confirmation (slots stay tentative) when an overlapping confirmed slot exists", async () => {
+  it("blocks confirmation (occurrences stay tentative) when an overlapping confirmed occurrence exists", async () => {
     const m = mockTx({ conflict: true });
     await confirmExistingAppointment(m.tx, "appt-1", "booker");
     expect(m.slotUpdateMany).not.toHaveBeenCalled();
+    // The guard keys on the OTHER party's seat (the consultant), read from
+    // AppointmentParticipant and never from a per-occurrence join; the booker
+    // is excluded so a user's own hold is not their own conflict.
+    expect(m.conflictFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isTentative: false,
+          appointment: expect.objectContaining({
+            participants: {
+              some: expect.objectContaining({
+                userId: { in: ["consultant"] },
+                status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+              }),
+            },
+          }),
+        }),
+      }),
+    );
     expect(mockSystemError).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "PAYMENT",
@@ -198,6 +225,9 @@ describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
       appointmentParticipant: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ userId: "booker" }, { userId: "consultant" }]),
       },
       appointment: {
         findUnique: jest.fn().mockResolvedValue({
@@ -208,13 +238,12 @@ describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
           class: null,
         }),
       },
-      slotOfAppointment: {
+      appointmentOccurrence: {
         findMany: jest.fn().mockResolvedValue([
           {
             id: "slot-1",
             startsAt: new Date("2026-06-26T15:00:00Z"),
             endsAt: new Date("2026-06-26T16:00:00Z"),
-            user: [{ id: "booker" }, { id: "consultant" }],
           },
         ]),
         findFirst: jest.fn().mockResolvedValue(null), // no #827 overlap

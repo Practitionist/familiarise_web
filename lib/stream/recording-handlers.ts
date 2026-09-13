@@ -191,9 +191,8 @@ export async function handleRecordingReady(
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
-            user: { select: { id: true } },
             appointment: {
               include: {
                 consultation: {
@@ -261,7 +260,7 @@ export async function handleRecordingReady(
       (endDate.getTime() - startDate.getTime()) / (1000 * 60),
     );
 
-    const appointment = meetingSession.slotOfAppointment.appointment;
+    const appointment = meetingSession.occurrence.appointment;
     const title = generateRecordingTitle(appointment, startDate);
 
     // Calculate Stream URL expiration (2 weeks from now)
@@ -339,12 +338,8 @@ export async function handleRecordingReady(
       );
     }
 
-    // Build recipient list — for webinar/class, include all enrolled attendees
-    // (the meeting session slot only has the consultant's allocation slot users)
-    const slotUserIds =
-      meetingSession.slotOfAppointment.user?.map((u: { id: string }) => u.id) ??
-      [];
-    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
+    // Build recipient list — every live seat holder of the booking (#1554)
+    const userIds = await getEventAttendeeIds(appointment);
 
     if (userIds.length > 0) {
       let appointmentType = "consultation";
@@ -429,9 +424,8 @@ export async function handleRecordingFailed(
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
-            user: { select: { id: true } },
             appointment: {
               include: {
                 webinar: { select: { id: true } },
@@ -474,14 +468,13 @@ export async function handleRecordingFailed(
         status: RecordingStatus.FAILED,
         meetingSessionId: meetingSession.id,
         organizationId:
-          meetingSession.slotOfAppointment.appointment?.organizationId ?? null,
+          meetingSession.occurrence.appointment?.organizationId ?? null,
       },
     });
 
-    // Build recipient list — for webinar/class, include all enrolled attendees
-    const appointment = meetingSession.slotOfAppointment.appointment;
-    const slotUserIds = meetingSession.slotOfAppointment.user.map((u) => u.id);
-    const userIds = await getEventAttendeeIds(appointment, slotUserIds);
+    // Build recipient list — every live seat holder of the booking (#1554)
+    const appointment = meetingSession.occurrence.appointment;
+    const userIds = await getEventAttendeeIds(appointment);
 
     const notificationResults = await Promise.allSettled(
       userIds.map((userId) =>

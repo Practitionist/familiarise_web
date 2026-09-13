@@ -5,6 +5,7 @@
 
 import { Prisma, type Recording } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 
 // #780 — payload types derive from the extended client (Prisma.Result), not
 // Prisma.RecordingGetPayload, so BigInt columns (fileSize, plan.price) type
@@ -24,13 +25,15 @@ export const consultantRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meetingSession: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
-            user: {
-              select: { name: true },
-            },
             appointment: {
               include: {
+                // #1554 — the roster is the appointment's live participants.
+                participants: {
+                  where: liveParticipant(),
+                  select: { user: { select: { name: true } } },
+                },
                 webinar: {
                   include: {
                     webinarPlan: {
@@ -74,7 +77,7 @@ export const recordingWithAccessControlInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meetingSession: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -111,7 +114,7 @@ export const webinarPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meetingSession: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -143,7 +146,7 @@ export const classPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meetingSession: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -175,7 +178,7 @@ export const consulteeRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meetingSession: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {

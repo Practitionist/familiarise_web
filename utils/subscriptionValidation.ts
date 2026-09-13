@@ -6,7 +6,7 @@ import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPo
 type AppointmentSlotRecord = { startsAt: Date };
 type AppointmentWithSlots = {
   id: string;
-  slotsOfAppointment: AppointmentSlotRecord[];
+  occurrences: AppointmentSlotRecord[];
 };
 
 interface WeeklyCallInfo {
@@ -224,7 +224,7 @@ export class SubscriptionValidationService {
         },
       },
       include: {
-        slotsOfAppointment: true,
+        occurrences: true,
       },
     });
   }
@@ -239,12 +239,12 @@ export class SubscriptionValidationService {
     const weeklyCallCount = new Map<string, number>();
 
     for (const appointment of appointments) {
-      if (appointment.slotsOfAppointment.length === 0) continue;
+      if (appointment.occurrences.length === 0) continue;
 
       // FIX: Previously iterated over each slot and incremented by 1 per slot.
       // A 1-hour session (2 slots) was counted as 2 calls instead of 1.
       // Now counts each appointment as 1 call using the earliest slot's week.
-      const firstSlot = appointment.slotsOfAppointment.reduce(
+      const firstSlot = appointment.occurrences.reduce(
         (earliest, slot) =>
           new Date(slot.startsAt) < new Date(earliest.startsAt)
             ? slot

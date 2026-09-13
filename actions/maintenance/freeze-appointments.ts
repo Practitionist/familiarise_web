@@ -27,6 +27,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import prisma, { type Tx } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 
 type NotificationPayload = {
   userIds: string[];
@@ -72,7 +73,7 @@ function buildCancellationNotification(params: {
 /** The slot graph the freeze works from — one query, typed once for the helpers. */
 async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
   // Find all slots that overlap with the maintenance window
-  return prisma.slotOfAppointment.findMany({
+  return prisma.appointmentOccurrence.findMany({
     where: {
       startsAt: { lte: windowEnd },
       endsAt: { gte: maintenanceStart },
@@ -81,6 +82,11 @@ async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
     include: {
       appointment: {
         include: {
+          // #1554 — the roster is the appointment's live participants.
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
           consultation: {
             include: {
               consultationPlan: {
@@ -170,7 +176,6 @@ async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
           },
         },
       },
-      user: { select: { id: true } },
     },
   });
 }
@@ -309,9 +314,13 @@ async function freezeSubscription(
   return effects;
 }
 
-/** Every seat holder on the frozen slots — group events notify all attendees. */
+/** Every seat holder on the frozen bookings — group events notify all attendees. */
 function attendeeIds(slots: AffectedSlot[]): string[] {
-  return Array.from(new Set(slots.flatMap((s) => s.user.map((u) => u.id))));
+  return Array.from(
+    new Set(
+      slots.flatMap((s) => s.appointment.participants.map((p) => p.userId)),
+    ),
+  );
 }
 
 // Cancel webinar if applicable
@@ -448,7 +457,7 @@ function refundablePayments(
  */
 async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
   if (ctx.appointment.trialSession) return;
-  await tx.slotOfAppointment.updateMany({
+  await tx.appointmentOccurrence.updateMany({
     where: {
       id: { in: ctx.slots.map((s) => s.id) },
       completionStatus: { in: SLOT_RESCHEDULABLE_FROM },

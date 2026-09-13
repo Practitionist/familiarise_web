@@ -45,7 +45,7 @@ export async function acceptProposal(args: {
       id: true,
       status: true,
       expiresAt: true,
-      proposedSlots: {
+      proposedTimes: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true },
       },
@@ -68,7 +68,7 @@ export async function acceptProposal(args: {
   if (request.expiresAt.getTime() <= Date.now()) {
     return { done: false, reason: "PROPOSAL_EXPIRED" };
   }
-  if (request.proposedSlots.length === 0) {
+  if (request.proposedTimes.length === 0) {
     // A preference-only request (#1065) proposes no concrete times — there is
     // nothing to accept as-is; the consultant answers it by allocating.
     return { done: false, reason: "NO_PROPOSED_TIMES" };
@@ -78,7 +78,7 @@ export async function acceptProposal(args: {
     eventType: args.eventType,
     eventId: args.eventId,
     mode: "manual",
-    slots: request.proposedSlots.map((p) => p.startsAt.toISOString()),
+    slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
     // Same reasoning as auto-confirm: these times were not day-picked by a
     // human on the grid, so the day-sharded key would let two concurrent
     // confirmations pass a per-week cap on stale counts.
@@ -154,20 +154,20 @@ export async function acceptProposal(args: {
             },
           },
         },
-        releasedSlotIds: true,
-        proposedSlots: { orderBy: { startsAt: "asc" }, take: 1, select: { startsAt: true } },
+        releasedOccurrenceIds: true,
+        proposedTimes: { orderBy: { startsAt: "asc" }, take: 1, select: { startsAt: true } },
       },
     });
     const appt = detail?.appointment;
     const side = appt?.consultation ?? appt?.subscription;
-    const released = detail?.releasedSlotIds?.length
-      ? await prisma.slotOfAppointment.findFirst({
-          where: { id: { in: detail.releasedSlotIds } },
+    const released = detail?.releasedOccurrenceIds?.length
+      ? await prisma.appointmentOccurrence.findFirst({
+          where: { id: { in: detail.releasedOccurrenceIds } },
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },
         })
       : null;
-    if (detail && appt && side && released && detail.proposedSlots[0]) {
+    if (detail && appt && side && released && detail.proposedTimes[0]) {
       // Normalize the consultation/subscription union once (TS narrows via
       // the plan-key discriminators).
       const isConsultation = "consultationPlan" in side;
@@ -195,7 +195,7 @@ export async function acceptProposal(args: {
         dashboardUrl: notificationHref(appt.organizationId, "appointments"),
         outcome: "MOVED",
         oldDateTime: released.startsAt.toISOString(),
-        newDateTime: detail.proposedSlots[0].startsAt.toISOString(),
+        newDateTime: detail.proposedTimes[0].startsAt.toISOString(),
       });
     }
   } catch (notifyErr) {
@@ -270,7 +270,7 @@ export async function declineProposal(args: {
             },
           },
         },
-        releasedSlotIds: true,
+        releasedOccurrenceIds: true,
       },
     });
     const appt = detail?.appointment;

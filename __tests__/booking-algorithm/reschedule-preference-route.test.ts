@@ -16,7 +16,7 @@
  *  2. It reports `rescheduleRequestId: null`. The caller reads that id as "your
  *     times were sent"; a preference names no times, and the auto-confirm pass
  *     keys off it too.
- *  3. It stores `releasedSlotIds`, which is what the allocator later matches the
+ *  3. It stores `releasedOccurrenceIds`, which is what the allocator later matches the
  *     preference on — not the appointment the row is filed against.
  */
 
@@ -79,7 +79,7 @@ function subscriptionAppointment() {
     id: APPOINTMENT_ID,
     appointmentType: "SUBSCRIPTION",
     organizationId: null,
-    slotsOfAppointment: [
+    occurrences: [
       { id: "slot-1", appointmentId: APPOINTMENT_ID, startsAt: FUTURE },
     ],
     consultation: null,
@@ -130,8 +130,8 @@ function makeMockTx() {
     appointment: {
       findUnique: jest.fn().mockResolvedValue(subscriptionAppointment()),
       findMany: jest.fn().mockResolvedValue([
-        { id: APPOINTMENT_ID, slotsOfAppointment: [SIBLING_SLOTS[0]] },
-        { id: "apt-2", slotsOfAppointment: [SIBLING_SLOTS[1]] },
+        { id: APPOINTMENT_ID, occurrences: [SIBLING_SLOTS[0]] },
+        { id: "apt-2", occurrences: [SIBLING_SLOTS[1]] },
       ]),
     },
     // Each transition helper reads the from-status before its CAS and appends
@@ -154,7 +154,7 @@ function makeMockTx() {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest
         .fn()
@@ -207,7 +207,7 @@ describe("reschedule route — preference without times", () => {
     // The enums round-trip exactly as the allocator will read them.
     expect(createdData?.preferredTimeOfDay).toBe("MORNING");
     expect(createdData?.preferredDays).toBe("WEEKDAYS");
-    expect(createdData?.proposedSlots).toEqual({ create: [] });
+    expect(createdData?.proposedTimes).toEqual({ create: [] });
   });
 
   it("claims the openForAppointmentId reservation like any other reschedule", async () => {
@@ -224,7 +224,7 @@ describe("reschedule route — preference without times", () => {
     // This is what the allocator matches the preference on. A row filed against
     // apt-1 must still carry apt-2's slot, or releasing a later session loses
     // the preference entirely.
-    expect(createdData?.releasedSlotIds).toEqual(["slot-1", "slot-2"]);
+    expect(createdData?.releasedOccurrenceIds).toEqual(["slot-1", "slot-2"]);
   });
 
   it("reports no rescheduleRequestId and never tries to auto-confirm", async () => {

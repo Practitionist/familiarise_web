@@ -32,13 +32,10 @@ const detail = {
     webinarId: "web-1",
     classId: null,
     webinar: { webinarPlan: { consultantProfile: { userId: HOST } } },
-    slotsOfAppointment: [
-      {
-        user: [
-          { id: A, name: "A", image: null },
-          { id: B, name: "B", image: null },
-        ],
-      },
+    occurrences: [{}],
+    participants: [
+      { userId: A, role: "CONSULTEE", user: { id: A, name: "A", image: null } },
+      { userId: B, role: "CONSULTEE", user: { id: B, name: "B", image: null } },
     ],
     payment: [
       {
@@ -91,7 +88,8 @@ describe("scopeAppointmentDetail", () => {
           consultationPlan: { consultantProfile: { userId: HOST } },
           requestedBy: { userId: A },
         },
-        slotsOfAppointment: [],
+        occurrences: [],
+        participants: [],
         payment: [
           {
             id: "p-sponsor",

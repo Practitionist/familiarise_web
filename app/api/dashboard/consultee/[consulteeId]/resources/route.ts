@@ -9,6 +9,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { liveParticipant } from "@/lib/booking/participants";
 
 const planMaterialSelect = {
   id: true,
@@ -29,7 +30,7 @@ const consultantUserSelect = {
 } satisfies Prisma.UserSelect;
 
 const slotsWithRecordings = {
-  slotsOfAppointment: {
+  occurrences: {
     include: {
       meetingSession: {
         include: {
@@ -160,7 +161,7 @@ type TrialWithResources = Prisma.Result<
   "findFirstOrThrow"
 >;
 
-// Appointment type that has slotsOfAppointment with meetingSession recordings
+// Appointment type that has occurrences with meetingSession recordings
 type AppointmentWithSlots = Prisma.Result<
   typeof prisma.appointment,
   { include: typeof slotsWithRecordings },
@@ -245,9 +246,7 @@ export async function GET(
               {
                 appointment: {
                   organizationId: null,
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
+                  participants: { some: liveParticipant(userId) },
                 },
               },
               // Other instances from paid plans that have recordings
@@ -256,7 +255,7 @@ export async function GET(
                     {
                       webinarPlanId: { in: paidWebinarPlanIds },
                       appointment: {
-                        slotsOfAppointment: {
+                        occurrences: {
                           some: {
                             meetingSession: {
                               recordings: {
@@ -290,9 +289,7 @@ export async function GET(
                 appointments: {
                   some: {
                     organizationId: null,
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
+                    participants: { some: liveParticipant(userId) },
                   },
                 },
               },
@@ -303,7 +300,7 @@ export async function GET(
                       classPlanId: { in: paidClassPlanIds },
                       appointments: {
                         some: {
-                          slotsOfAppointment: {
+                          occurrences: {
                             some: {
                               meetingSession: {
                                 recordings: {
@@ -357,8 +354,7 @@ export async function GET(
             consultantName: c.consultationPlan.consultantProfile.user.name,
             consultantImage: c.consultationPlan.consultantProfile.user.image,
             status: c.status,
-            date:
-              c.appointment?.slotsOfAppointment?.[0]?.startsAt || c.requestedAt,
+            date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
             recordings: await extractRecordings(
               c.appointment ? [c.appointment] : [],
@@ -389,8 +385,7 @@ export async function GET(
             consultantImage:
               w.webinarPlan.consultantProfile?.user.image ?? null,
             status: w.status,
-            date:
-              w.appointment?.slotsOfAppointment?.[0]?.startsAt || w.createdAt,
+            date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
             materials: w.webinarPlan.materials,
             recordings: await extractRecordings(
               w.appointment ? [w.appointment] : [],
@@ -408,7 +403,7 @@ export async function GET(
             status: cl.status,
             date:
               cl.schedulingPeriodStartsAt ||
-              cl.appointments?.[0]?.slotsOfAppointment?.[0]?.startsAt ||
+              cl.appointments?.[0]?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
             recordings: await extractRecordings(cl.appointments),
@@ -425,8 +420,7 @@ export async function GET(
             consultantImage:
               t.subscriptionPlan.consultantProfile?.user.image ?? null,
             status: t.status,
-            date:
-              t.appointment?.slotsOfAppointment?.[0]?.startsAt || t.requestedAt,
+            date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
             materials: t.subscriptionPlan.materials,
             recordings: await extractRecordings(
               t.appointment ? [t.appointment] : [],
@@ -452,9 +446,7 @@ export async function GET(
 
 async function extractRecordings(appointments: AppointmentWithSlots[]) {
   const recordings = appointments.flatMap((apt) =>
-    apt.slotsOfAppointment.flatMap(
-      (slot) => slot.meetingSession?.recordings ?? [],
-    ),
+    apt.occurrences.flatMap((slot) => slot.meetingSession?.recordings ?? []),
   );
 
   return Promise.all(

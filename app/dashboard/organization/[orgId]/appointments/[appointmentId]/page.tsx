@@ -55,14 +55,12 @@ export default async function OrgAppointmentDetailPage({
   if (appointment.organizationId !== orgId) notFound();
 
   // And the caller is on it. Mirrors the consultee detail page's participation
-  // test: requester, trial consultee, or a user attached to one of the slots.
+  // test: requester, trial consultee, or a live seat holder (#1554).
   const owns =
     appointment.consultation?.requestedBy?.id === profile.id ||
     appointment.subscription?.requestedBy?.id === profile.id ||
     appointment.trialSession?.consulteeProfile?.id === profile.id ||
-    appointment.slotsOfAppointment.some((slot) =>
-      slot.user.some((u) => u.id === userId),
-    );
+    appointment.participants.some((seat) => seat.userId === userId);
   if (!owns) notFound();
 
   return (

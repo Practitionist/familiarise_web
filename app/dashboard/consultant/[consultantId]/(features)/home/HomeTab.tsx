@@ -114,7 +114,7 @@ export function HomeTab({
   // bundle. This used to be a private copy of that pattern.
   const handleJoinMeeting = (
     appointment: TAppointment,
-    joinableSlot?: TAppointment["slotsOfAppointment"][number],
+    joinableSlot?: TAppointment["occurrences"][number],
   ) => void joinMeeting(appointment, joinableSlot);
 
   const expandedAppointments = useMemo(() => appointments || [], [appointments]);
@@ -174,7 +174,7 @@ export function HomeTab({
       deriveConsultantActionItems({
         pendingApprovals: pendingRequestsCount,
         upcomingSessions: allUpcomingAppointments.flatMap((a) =>
-          (a.slotsOfAppointment ?? []).map((slot) => ({
+          (a.occurrences ?? []).map((slot) => ({
             id: slot.id,
             appointmentId: a.id,
             startsAt: slot.startsAt,
@@ -226,7 +226,7 @@ export function HomeTab({
                       const userName = getConsumeeName(appointment);
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableSlot(
-                        appointment.slotsOfAppointment ?? [],
+                        appointment.occurrences ?? [],
                       );
                       // #1270 — this row had NO status check at all: any
                       // appointment with a slot inside the window lit up Join,

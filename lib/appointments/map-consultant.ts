@@ -37,7 +37,7 @@ export interface ConsultantTrialLike {
   };
   appointment: {
     id: string;
-    slotsOfAppointment: Array<{
+    occurrences: Array<{
       id: string;
       startsAt: string | Date;
       endsAt: string | Date;
@@ -177,7 +177,7 @@ function collaboratorRoleOf(
 }
 
 function firstSlotTime(appointment: TAppointment): number {
-  const slot = appointment.slotsOfAppointment?.[0];
+  const slot = appointment.occurrences?.[0];
   return slot ? toDate(slot.startsAt).getTime() : Infinity;
 }
 
@@ -192,7 +192,7 @@ function nextActionableChild(
     sorted.find((c) =>
       sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
     ) ??
-    sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
+    sorted.find((c) => (c.occurrences?.length ?? 0) > 0) ??
     sorted[0]
   );
 }
@@ -236,9 +236,7 @@ function mapGroup(
     children.flatMap((c) => sessionsOfAppointment(c)),
   );
   const { title, counterpart, status } = eventFacts(first);
-  const withSlots = children.filter(
-    (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
-  );
+  const withSlots = children.filter((c) => (c.occurrences?.length ?? 0) > 0);
   const completed = withSlots.filter((c) =>
     sessionsOfAppointment(c).every((s) => isSessionOver(s, now)),
   ).length;
@@ -285,9 +283,10 @@ function mapTrial(
     t.appointment
       ? {
           id: t.appointment.id,
-          slotsOfAppointment: (t.appointment.slotsOfAppointment ?? []).map(
-            (slot) => ({ ...slot, isTentative: false }),
-          ),
+          occurrences: (t.appointment.occurrences ?? []).map((slot) => ({
+            ...slot,
+            isTentative: false,
+          })),
         }
       : null,
   );

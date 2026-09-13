@@ -49,7 +49,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Format recordings for response (async — generates presigned URLs)
     const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
       const appointment =
-        recording.meetingSession?.slotOfAppointment?.appointment;
+        recording.meetingSession?.occurrence?.appointment;
 
       let planType: "webinar" | "class" | null = null;
       let planId: string | null = null;

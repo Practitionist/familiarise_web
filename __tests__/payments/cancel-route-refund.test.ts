@@ -51,9 +51,9 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-  // transitionSlotCompletion reads the from-status, then moves the cohort with
+  // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findMany: jest.fn().mockResolvedValue([]),
     updateManyAndReturn: jest
       .fn()
@@ -169,7 +169,7 @@ function consultationAppointment() {
     consultationId: "cons-1",
     subscriptionId: null,
     cancellationPolicy: null,
-    slotsOfAppointment: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
+    occurrences: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
     consultation: {
       id: "cons-1",
       requestedById: CONSULTEE_PROFILE,
@@ -254,7 +254,7 @@ function bookingRows(opts: {
               disputes: [],
             },
           ],
-      slotsOfAppointment: [...done, ...gone, ...unverified, ...live],
+      occurrences: [...done, ...gone, ...unverified, ...live],
     },
   ];
 }
@@ -294,8 +294,8 @@ beforeEach(() => {
   txCommitted = false;
   txStub.consultation.updateMany.mockResolvedValue({ count: 1 });
   txStub.subscription.updateMany.mockResolvedValue({ count: 1 });
-  txStub.slotOfAppointment.findMany.mockResolvedValue([]);
-  txStub.slotOfAppointment.updateManyAndReturn.mockResolvedValue([
+  txStub.appointmentOccurrence.findMany.mockResolvedValue([]);
+  txStub.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
     { id: "slot-1" },
     { id: "slot-2" },
   ]);
@@ -820,8 +820,12 @@ describe("a cancel leaves an audit trail", () => {
     );
     // One per slot the CAS actually moved — the ids come from the UPDATE's own
     // RETURNING, so a slot a racing writer pulled out never gets a row.
-    expect(historyRows.filter((row) => row.entity === "SLOT")).toHaveLength(2);
-    expect(txStub.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(
+      historyRows.filter((row) => row.entity === "OCCURRENCE"),
+    ).toHaveLength(2);
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { completionStatus: "CANCELLED", deletedAt: expect.any(Date) },
       }),

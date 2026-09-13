@@ -16,6 +16,7 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -45,7 +46,7 @@ const liveProposalInclude = {
     expiresAt: true,
     initiatorRole: true,
     initiatedById: true,
-    proposedSlots: {
+    proposedTimes: {
       orderBy: { startsAt: "asc" },
       // #1163 — the consultee card filters these to the current round.
       select: { startsAt: true, endsAt: true, round: true },
@@ -149,7 +150,7 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
@@ -193,7 +194,7 @@ export async function readConsulteeEvents(
           appointments: {
             include: {
               rescheduleRequests: liveProposalInclude,
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
@@ -212,13 +213,9 @@ export async function readConsulteeEvents(
       prisma.webinar.findMany({
         where: {
           appointment: {
-            slotsOfAppointment: {
-              // TTFB bound: the user must own a slot AND it must be in-window.
-              some: {
-                user: { some: { id: userId } },
-                startsAt: { gte: since },
-              },
-            },
+            // TTFB bound: the user must hold a seat AND a call must be in-window.
+            participants: { some: liveParticipant(userId) },
+            occurrences: { some: { startsAt: { gte: since } } },
             ...(oneApptOrgWhere ?? {}),
           },
         },
@@ -259,7 +256,7 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
@@ -279,13 +276,9 @@ export async function readConsulteeEvents(
         where: {
           appointments: {
             some: {
-              slotsOfAppointment: {
-                // TTFB bound: the user must own a slot AND it must be in-window.
-                some: {
-                  user: { some: { id: userId } },
-                  startsAt: { gte: since },
-                },
-              },
+              // TTFB bound: the user must hold a seat AND a call must be in-window.
+              participants: { some: liveParticipant(userId) },
+              occurrences: { some: { startsAt: { gte: since } } },
               ...(manyApptOrgWhere ?? {}),
             },
           },
@@ -327,7 +320,7 @@ export async function readConsulteeEvents(
           },
           appointments: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
                   meetingSession: {
@@ -372,17 +365,9 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                    },
-                  },
                   meetingSession: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },

@@ -60,7 +60,7 @@ function actionableRawSlots(vm: AppointmentVM) {
         : [];
   // Shared with the timings page's own gate, so the menu cannot offer a route
   // that then 404s on a different reading of the same slots (#1082).
-  return upcomingSlots(sources.flatMap((a) => a.slotsOfAppointment ?? []));
+  return upcomingSlots(sources.flatMap((a) => a.occurrences ?? []));
 }
 
 export function useConsultantAppointmentsAdapter(
@@ -108,7 +108,7 @@ export function useConsultantAppointmentsAdapter(
   const closeDialog = () => setDialog(null);
 
   const joinableSlotOf = (vm: AppointmentVM) =>
-    getJoinableSlot(vm.raw.appointment?.slotsOfAppointment ?? [], {
+    getJoinableSlot(vm.raw.appointment?.occurrences ?? [], {
       joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
     });
 
@@ -117,13 +117,13 @@ export function useConsultantAppointmentsAdapter(
     let navigating = false;
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike;
-      const slot = trial.appointment?.slotsOfAppointment?.[0];
+      const slot = trial.appointment?.occurrences?.[0];
       if (trial.appointment && slot) {
         navigating = await joinMeeting(
           {
             id: trial.appointment.id,
             appointmentType: "TRIAL",
-            slotsOfAppointment: [
+            occurrences: [
               {
                 id: slot.id,
                 startsAt: slot.startsAt,
@@ -137,7 +137,7 @@ export function useConsultantAppointmentsAdapter(
       }
     } else if (vm.raw.appointment) {
       const slot = force
-        ? vm.raw.appointment.slotsOfAppointment?.[0]
+        ? vm.raw.appointment.occurrences?.[0]
         : (joinableSlotOf(vm) ?? undefined);
       navigating = await joinMeeting(vm.raw.appointment, slot);
     }
@@ -165,7 +165,7 @@ export function useConsultantAppointmentsAdapter(
   const trialJoinable = (vm: AppointmentVM) => {
     if (vm.kind !== "TRIAL") return false;
     const trial = vm.raw.source as ConsultantTrialLike;
-    const slots = trial.appointment?.slotsOfAppointment ?? [];
+    const slots = trial.appointment?.occurrences ?? [];
     return (
       getJoinableSlot(
         slots.map((s) => ({ ...s, isTentative: false })),
@@ -197,9 +197,9 @@ export function useConsultantAppointmentsAdapter(
   const hasSlotRows = (vm: AppointmentVM): boolean => {
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike | undefined;
-      return (trial?.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+      return (trial?.appointment?.occurrences?.length ?? 0) > 0;
     }
-    return (vm.raw.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+    return (vm.raw.appointment?.occurrences?.length ?? 0) > 0;
   };
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {

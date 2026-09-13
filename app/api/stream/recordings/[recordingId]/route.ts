@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Check access permissions
-    const appointment = recording.meetingSession.slotOfAppointment.appointment;
+    const appointment = recording.meetingSession.occurrence.appointment;
 
     let hasAccess = false;
     // True when the ONLY thing letting this caller through is their platform

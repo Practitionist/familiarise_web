@@ -276,7 +276,7 @@ export async function fetchExpertsMetadata() {
         // of its own, and a subscription appointment spans many meetings.
         // UNVERIFIED (past, no meeting record) is deliberately excluded — it
         // may well have happened offline, but "may have" is not a claim.
-        prisma.slotOfAppointment.count({
+        prisma.appointmentOccurrence.count({
           where: { completionStatus: "COMPLETED", deletedAt: null },
         }),
       ]);

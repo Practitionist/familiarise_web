@@ -9,9 +9,9 @@
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
 -- payment intents in lib/payments/operations/checkout.ts).
 
-ALTER TABLE "SlotOfAppointment" DROP CONSTRAINT IF EXISTS "slot_time_order";
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_time_order";
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_time_order" CHECK ("endsAt" > "startsAt");
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_time_order" CHECK ("endsAt" > "startsAt");
 -- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
@@ -55,17 +55,17 @@ ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParti
 -- #440 — DB-level double-booking backstop for 1:1 bookings. The application
 -- guards (consultant allocation lock, #827 confirm-time recheck) are the
 -- first line; this exclusion constraint is the last line: two CONFIRMED
--- slots for the same consultant may never overlap in time. Scoped to rows
+-- occurrences for the same consultant may never overlap in time. Scoped to rows
 -- carrying the denormalized consultantProfileId — consultation/subscription
--- slot creates set it; webinar/class attendee slots deliberately leave it
+-- occurrence creates set it; webinar/class attendee rows deliberately leave it
 -- NULL (many same-window rows per event are legitimate there) and legacy
--- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back slots don't
+-- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
 -- conflict.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" DROP CONSTRAINT IF EXISTS "slot_no_confirmed_overlap";
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_no_confirmed_overlap"
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_overlap"
   EXCLUDE USING gist (
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&

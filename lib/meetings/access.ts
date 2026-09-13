@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import {
   getStreamVideoClient,
@@ -91,13 +92,12 @@ type ResolvedMeetingSession = NonNullable<
   Awaited<ReturnType<typeof loadMeetingSession>>
 >;
 export type MeetingAppointment =
-  ResolvedMeetingSession["slotOfAppointment"]["appointment"];
+  ResolvedMeetingSession["occurrence"]["appointment"];
 
 /** Hoisted so `MeetingAppointment` can be inferred from the real query. */
 const MEETING_SESSION_INCLUDE = {
-  slotOfAppointment: {
+  occurrence: {
     include: {
-      user: { select: { id: true } },
       appointment: {
         include: {
           consultation: {
@@ -225,7 +225,7 @@ async function meetingPolicyRefusal(args: {
 }): Promise<string | null> {
   const now = new Date();
 
-  const slots = await prisma.slotOfAppointment.findMany({
+  const slots = await prisma.appointmentOccurrence.findMany({
     where: { appointmentId: args.appointmentId, deletedAt: null },
     orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     select: {
@@ -341,16 +341,21 @@ export async function resolveMeetingAccess(
 
   const streamCallId = meetingSession.streamCallId;
   const meetingSessionId = meetingSession.id;
-  const appointment = meetingSession.slotOfAppointment.appointment;
+  const appointment = meetingSession.occurrence.appointment;
 
   const userProfile = await prisma.user.findUnique({
     where: { id: userId },
     select: { consultantProfileId: true },
   });
 
-  let isParticipant = meetingSession.slotOfAppointment.user.some(
-    (u: { id: string }) => u.id === userId,
-  );
+  // #1554 — AppointmentParticipant is the roster for every shape, so one
+  // existence probe answers "is this person on the booking" for a 1:1 and a
+  // 200-attendee webinar alike; nothing is fanned out into the process.
+  const seat = await prisma.appointmentParticipant.findFirst({
+    where: { appointmentId: appointment.id, ...liveParticipant(userId) },
+    select: { id: true },
+  });
+  const isParticipant = seat !== null;
 
   const consultantProfileId =
     appointment.consultation?.consultationPlan?.consultantProfileId ??
@@ -450,23 +455,6 @@ export async function resolveMeetingAccess(
           : grant("participant", "Access granted as accepted collaborator");
       }
     }
-  }
-
-  // For classes/webinars the meeting hangs off the consultant's allocation slot
-  // while the attendee is joined to a separate enrollment slot under the same
-  // appointment, so a direct slot check misses them.
-  if (!isParticipant && (appointment.class || appointment.webinar)) {
-    // An existence probe, not a fan-out: a 200-attendee webinar used to load
-    // every slot and every joined user id back into the process to answer a
-    // question about one person.
-    const enrolledSlot = await prisma.slotOfAppointment.findFirst({
-      where: {
-        appointmentId: appointment.id,
-        user: { some: { id: userId } },
-      },
-      select: { id: true },
-    });
-    isParticipant = enrolledSlot !== null;
   }
 
   if (isParticipant) {

@@ -262,7 +262,7 @@ describe("getSlotStatus", () => {
       {
         id: "apt-1",
         appointmentType: AppointmentsType.CONSULTATION,
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: local(9, 0).toISOString(),
             endsAt: local(10, 0).toISOString(),
@@ -293,7 +293,7 @@ describe("getSlotStatus", () => {
       {
         id: "apt-1",
         appointmentType: AppointmentsType.CONSULTATION,
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: local(9, 15).toISOString(),
             endsAt: local(9, 45).toISOString(),
@@ -320,7 +320,7 @@ describe("getSlotStatus", () => {
       {
         id: "apt-1",
         appointmentType: AppointmentsType.CONSULTATION,
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: local(9, 0).toISOString(),
             endsAt: local(10, 0).toISOString(),
@@ -331,7 +331,7 @@ describe("getSlotStatus", () => {
       {
         id: "apt-2",
         appointmentType: AppointmentsType.SUBSCRIPTION,
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: local(9, 0).toISOString(),
             endsAt: local(10, 0).toISOString(),

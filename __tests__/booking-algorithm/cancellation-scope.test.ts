@@ -80,13 +80,13 @@ function subscriptionRows() {
       id: PLACEHOLDER,
       cancellationPolicy: null,
       payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-      slotsOfAppointment: [],
+      occurrences: [],
     },
     {
       id: SESSION_1,
       cancellationPolicy: null,
       payment: [],
-      slotsOfAppointment: [
+      occurrences: [
         { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
       ],
     },
@@ -94,7 +94,7 @@ function subscriptionRows() {
       id: SESSION_2,
       cancellationPolicy: null,
       payment: [],
-      slotsOfAppointment: [
+      occurrences: [
         { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
         { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
       ],
@@ -181,7 +181,7 @@ describe("resolveBookingRefundContext", () => {
         id: SESSION_1,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [
+        occurrences: [
           { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
         ],
       },
@@ -200,7 +200,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -220,7 +220,7 @@ describe("resolveBookingRefundContext", () => {
           { hoursBefore: 0, refundBps: 0 },
         ]),
         payment: [],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
       {
         id: PLACEHOLDER,
@@ -228,7 +228,7 @@ describe("resolveBookingRefundContext", () => {
           { hoursBefore: 48, refundBps: 9_000 },
         ]),
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -246,7 +246,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
       {
         id: SESSION_1,
@@ -254,7 +254,7 @@ describe("resolveBookingRefundContext", () => {
           { hoursBefore: 12, refundBps: 2_500 },
         ]),
         payment: [],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -270,7 +270,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -297,21 +297,19 @@ describe("resolveBookingRefundContext", () => {
     );
   });
 
-  it("scopes the SLOT counts to the same buyer", async () => {
+  it("reads the shared occurrences unscoped by buyer (#1554)", async () => {
     mockAppointmentFindMany.mockResolvedValue([]);
 
     await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
 
-    // Scoping only the payment left sessionsCompleted, sessionsRemaining,
-    // slotsTotal and the tier itself derived from OTHER attendees' seats — so
-    // one buyer's refund was timed off a session another attendee had booked.
+    // Every attendee of a class shares the appointment's occurrences, so
+    // there is no per-buyer subset to scope to; the buyer filter lives on the
+    // payment lookup instead.
     expect(mockAppointmentFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         select: expect.objectContaining({
-          slotsOfAppointment: expect.objectContaining({
-            where: expect.objectContaining({
-              user: { some: { id: "user-7" } },
-            }),
+          occurrences: expect.objectContaining({
+            where: { deletedAt: null },
           }),
         }),
       }),
@@ -324,7 +322,7 @@ describe("resolveBookingRefundContext", () => {
     await resolveBookingRefundContext({ consultationId: "cons-1" });
 
     const where =
-      mockAppointmentFindMany.mock.calls[0][0].select.slotsOfAppointment.where;
+      mockAppointmentFindMany.mock.calls[0][0].select.occurrences.where;
     expect(where).toEqual({ deletedAt: null });
   });
 
@@ -342,7 +340,7 @@ describe("resolveBookingRefundContext", () => {
           { id: "pay-1", amount: 100_000, refunds: [], disputes: [] },
           { id: "pay-2", amount: 40_000, refunds: [], disputes: [] },
         ],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -365,7 +363,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -380,7 +378,7 @@ describe("resolveBookingRefundContext", () => {
         id: "appt-c1",
         cancellationPolicy: null,
         payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [
+        occurrences: [
           { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
         ],
       },
@@ -425,7 +423,7 @@ describe("resolveBookingRefundContext", () => {
             ],
           },
         ],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -450,7 +448,7 @@ describe("resolveBookingRefundContext", () => {
             disputes: [{ amountPaise: 100_000, status: "LOST" }],
           },
         ],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
 
@@ -469,7 +467,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [],
+        occurrences: [],
       },
     ]);
     expect(
@@ -481,7 +479,7 @@ describe("resolveBookingRefundContext", () => {
         id: PLACEHOLDER,
         cancellationPolicy: null,
         payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
-        slotsOfAppointment: [
+        occurrences: [
           { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
         ],
       },

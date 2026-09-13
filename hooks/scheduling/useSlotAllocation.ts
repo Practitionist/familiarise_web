@@ -1176,7 +1176,7 @@ export function useEventSlotAllocation(
           const pickedSlots: CalendarInterval[] = (response.data ?? [])
             .flatMap(
               (appointment) =>
-                (appointment.slotsOfAppointment as
+                (appointment.occurrences as
                   | { startsAt: string; endsAt: string }[]
                   | undefined) ?? [],
             )

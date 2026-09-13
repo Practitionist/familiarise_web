@@ -25,6 +25,7 @@ import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { reportSentryError } from "@/lib/observability/report";
 import { PRESENTER_ROLES } from "@/lib/collaborators/roles";
 import {
+  liveParticipant,
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
@@ -197,8 +198,8 @@ async function assertNotAttendee(
     planType,
     planId,
   );
-  const seat = await db.slotOfAppointment.findFirst({
-    where: { deletedAt: null, user: { some: { id: userId } }, appointment },
+  const seat = await db.appointmentParticipant.findFirst({
+    where: { ...liveParticipant(userId), appointment },
     select: { id: true },
   });
   if (seat) {
@@ -1095,12 +1096,15 @@ export async function getMyCollaborations(consultantProfileId: string) {
               include: {
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
+                    // #1554 — enrolment is the live participant count on the appointment.
+                    _count: {
+                      select: { participants: { where: liveParticipant() } },
+                    },
+                    occurrences: {
                       select: {
                         startsAt: true,
                         endsAt: true,
                         isTentative: true,
-                        _count: { select: { user: true } },
                       },
                     },
                   },
@@ -1162,12 +1166,15 @@ export async function getMyCollaborations(consultantProfileId: string) {
               include: {
                 appointments: {
                   include: {
-                    slotsOfAppointment: {
+                    // #1554 — enrolment is the live participant count on the appointment.
+                    _count: {
+                      select: { participants: { where: liveParticipant() } },
+                    },
+                    occurrences: {
                       select: {
                         startsAt: true,
                         endsAt: true,
                         isTentative: true,
-                        _count: { select: { user: true } },
                       },
                       orderBy: { startsAt: "asc" },
                     },
@@ -1240,12 +1247,15 @@ export async function getHostedCollaborations(
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: {
+                // #1554 — enrolment is the live participant count on the appointment.
+                _count: {
+                  select: { participants: { where: liveParticipant() } },
+                },
+                occurrences: {
                   select: {
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
-                    _count: { select: { user: true } },
                   },
                 },
               },
@@ -1289,12 +1299,15 @@ export async function getHostedCollaborations(
           include: {
             appointments: {
               include: {
-                slotsOfAppointment: {
+                // #1554 — enrolment is the live participant count on the appointment.
+                _count: {
+                  select: { participants: { where: liveParticipant() } },
+                },
+                occurrences: {
                   select: {
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
-                    _count: { select: { user: true } },
                   },
                   orderBy: { startsAt: "asc" },
                 },

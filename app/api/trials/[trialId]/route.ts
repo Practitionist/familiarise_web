@@ -1,6 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { recordParticipants } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
@@ -114,7 +117,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         subscriptionPlan: true,
         appointment: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               include: {
                 meetingSession: true,
               },
@@ -196,7 +199,7 @@ async function validateSlotAvailability(
   // Use canonical occupancy policy for consistent conflict detection
   const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
 
-  const overlapping = await db.slotOfAppointment.findFirst({
+  const overlapping = await db.appointmentOccurrence.findFirst({
     where: {
       appointment: {
         AND: [
@@ -215,11 +218,13 @@ async function validateSlotAvailability(
   // #1093 §1 follow-through — the consultee's own calendar. The GiST
   // constraint is consultant-keyed, so a consultee double-booked across two
   // consultants is only ever caught here (mirrors validateNoConflicts).
-  const consulteeConflict = await db.slotOfAppointment.findFirst({
+  const consulteeConflict = await db.appointmentOccurrence.findFirst({
     where: {
-      user: { some: { id: consulteeUserId } },
       completionStatus: "SCHEDULED",
-      appointment: { deletedAt: null },
+      appointment: {
+        deletedAt: null,
+        participants: { some: liveParticipant(consulteeUserId) },
+      },
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },
     },
@@ -499,27 +504,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             const appointment = await tx.appointment.create({
               data: {
                 appointmentType: AppointmentsType.TRIAL,
-                slotsOfAppointment: {
+                occurrences: {
                   create: {
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,
                     // #1093 §1 — without this the slot falls outside the
-                    // slot_no_confirmed_overlap exclusion constraint's WHERE
+                    // occurrence_no_confirmed_overlap exclusion constraint's WHERE
                     // clause and the DB accepts a trial on top of a confirmed
                     // consultation for the same consultant.
                     consultantProfileId: existingTrial.consultantProfileId,
-                    user: {
-                      connect: [
-                        { id: existingTrial.consulteeProfile.user.id },
-                        { id: existingTrial.consultantProfile.user.id },
-                      ],
-                    },
                   },
                 },
               },
               include: {
-                slotsOfAppointment: true,
+                occurrences: true,
               },
             });
             // #1319 A9 — a paid trial holds its seat until capture confirms it.
@@ -605,7 +604,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 subscriptionPlan: true,
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
+                    occurrences: {
                       include: {
                         meetingSession: true,
                       },
@@ -929,7 +928,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           subscriptionPlan: true,
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 include: {
                   meetingSession: true,
                 },

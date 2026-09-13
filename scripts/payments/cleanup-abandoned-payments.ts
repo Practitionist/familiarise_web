@@ -20,18 +20,19 @@ import {
   PaymentStatus,
   PaymentGateway,
   AppointmentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 import type Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import {
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
+import { releaseParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 /**
@@ -274,7 +275,7 @@ function findAbandonedAppointments(limit?: number) {
       // non-tentative slots, so a tentative-slot filter would never see an
       // abandoned webinar or class checkout.
       OR: [
-        { slotsOfAppointment: { some: { isTentative: true } } },
+        { occurrences: { some: { isTentative: true } } },
         { webinar: { isNot: null } },
         { class: { isNot: null } },
       ],
@@ -287,7 +288,7 @@ function findAbandonedAppointments(limit?: number) {
       subscription: true,
       webinar: true,
       class: true,
-      slotsOfAppointment: true,
+      occurrences: true,
     },
   });
 }
@@ -484,12 +485,12 @@ async function restoreReferralCredits(
 }
 
 /**
- * Group events: disconnect only the abandoning buyers. The session slots are
- * shared by everyone who registered, so deleting them would strand every other
- * attendee.
+ * Group events: release only the abandoning buyers' seats (#1554: by participant
+ * status). The occurrences are shared by everyone who registered, so deleting
+ * them would strand every other attendee.
  */
 async function releaseGroupSeats(
-  tx: Pick<Tx, "slotOfAppointment">,
+  tx: Pick<Tx, "appointmentParticipant">,
   appointment: AbandonedAppointment,
 ): Promise<void> {
   const kind = appointment.webinar ? "webinar" : "class";
@@ -501,21 +502,12 @@ async function releaseGroupSeats(
     : { appointmentId: appointment.id };
 
   for (const abandonedUserId of abandonedUserIds) {
-    const seatSlots = await tx.slotOfAppointment.findMany({
-      where: {
-        ...seatFilter,
-        user: { some: { id: abandonedUserId } },
-      },
-      select: { id: true },
+    const released = await releaseParticipant(tx, {
+      ...seatFilter,
+      userId: abandonedUserId,
     });
-    for (const slot of seatSlots) {
-      await tx.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: { user: { disconnect: { id: abandonedUserId } } },
-      });
-    }
     console.log(
-      `🗑️ Released ${seatSlots.length} seat slot(s) for user ${abandonedUserId} on ${kind} appointment ${appointment.id}`,
+      `🗑️ Released ${released} seat(s) for user ${abandonedUserId} on ${kind} appointment ${appointment.id}`,
     );
   }
 }
@@ -536,7 +528,7 @@ async function releaseGroupSeats(
 async function expireRequestAndReleaseSlots(
   tx: Pick<
     Tx,
-    | "slotOfAppointment"
+    | "appointmentOccurrence"
     | "appointment"
     | "consultation"
     | "subscription"
@@ -545,7 +537,7 @@ async function expireRequestAndReleaseSlots(
   appointment: AbandonedAppointment,
 ): Promise<void> {
   const kind = appointment.consultation ? "consultation" : "subscription";
-  const confirmedSlots = await tx.slotOfAppointment.count({
+  const confirmedSlots = await tx.appointmentOccurrence.count({
     where: {
       appointmentId: appointment.id,
       isTentative: false,
@@ -555,13 +547,13 @@ async function expireRequestAndReleaseSlots(
 
   if (confirmedSlots > 0) {
     // Only release the tentative slots; confirmed history stays.
-    const released = await transitionSlotCompletion(tx, {
+    const released = await transitionOccurrenceCompletion(tx, {
       where: {
         appointmentId: appointment.id,
         isTentative: true,
         deletedAt: null,
       },
-      to: SlotCompletionStatus.CANCELLED,
+      to: OccurrenceCompletionStatus.CANCELLED,
       data: { deletedAt: now },
       allowZero: true,
     });
@@ -603,9 +595,9 @@ async function expireRequestAndReleaseSlots(
     });
   }
 
-  await transitionSlotCompletion(tx, {
+  await transitionOccurrenceCompletion(tx, {
     where: { appointmentId: appointment.id, deletedAt: null },
-    to: SlotCompletionStatus.CANCELLED,
+    to: OccurrenceCompletionStatus.CANCELLED,
     data: { deletedAt: now },
     allowZero: true,
   });
@@ -820,7 +812,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
             payment: {
               where: { paymentStatus: PaymentStatus.PENDING },
             },
-            slotsOfAppointment: true,
+            occurrences: true,
           },
         },
       },
@@ -863,13 +855,13 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
 
           // Release the tentative hold by status; the rows stay for support.
           if (consultation.appointment) {
-            const released = await transitionSlotCompletion(tx, {
+            const released = await transitionOccurrenceCompletion(tx, {
               where: {
                 appointmentId: consultation.appointment.id,
                 isTentative: true,
                 deletedAt: null,
               },
-              to: SlotCompletionStatus.CANCELLED,
+              to: OccurrenceCompletionStatus.CANCELLED,
               data: { deletedAt: new Date() },
               allowZero: true,
             });

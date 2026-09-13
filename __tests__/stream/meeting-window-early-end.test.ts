@@ -22,7 +22,7 @@ jest.mock("../../lib/prisma", () => {
   return { __esModule: true, default: client };
 });
 jest.mock("../../lib/booking/transitions", () => ({
-  transitionSlotCompletion: jest.fn().mockResolvedValue(1),
+  transitionOccurrenceCompletion: jest.fn().mockResolvedValue(1),
 }));
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: {
@@ -34,7 +34,7 @@ jest.mock("../../lib/stream-logger", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { transitionSlotCompletion } from "../../lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "../../lib/booking/transitions";
 import {
   handleCallEnded,
   handleSessionEnded,
@@ -46,7 +46,7 @@ const db = prisma as unknown as {
   meetingAttendance: { upsert: jest.Mock };
   __tx: { meetingSession: { update: jest.Mock } };
 };
-const mockTransition = transitionSlotCompletion as jest.Mock;
+const mockTransition = transitionOccurrenceCompletion as jest.Mock;
 
 const STARTS = new Date("2026-09-13T10:00:00.000Z");
 const ENDS = new Date("2026-09-13T11:00:00.000Z");
@@ -54,10 +54,10 @@ const ENDS = new Date("2026-09-13T11:00:00.000Z");
 function session(endedAt: Date | null, endedReason: string | null = null) {
   return {
     id: "ms_1",
-    slotOfAppointmentId: "slot_1",
+    appointmentOccurrenceId: "slot_1",
     endedAt,
     endedReason,
-    slotOfAppointment: { startsAt: STARTS, endsAt: ENDS },
+    occurrence: { startsAt: STARTS, endsAt: ENDS },
   };
 }
 

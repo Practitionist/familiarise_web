@@ -77,7 +77,7 @@ interface AppointmentRow {
   subscription?: { subscriptionPlan?: { title?: string } };
   webinar?: { webinarPlan?: { title?: string } };
   class?: { classPlan?: { title?: string } };
-  slotsOfAppointment?: { startsAt: string }[];
+  occurrences?: { startsAt: string }[];
   organization?: { id: string; name: string } | null;
 }
 
@@ -236,8 +236,8 @@ function SessionsTab({
         .slice()
         .sort(
           (a, b) =>
-            Date.parse(b.slotsOfAppointment?.[0]?.startsAt ?? "0") -
-            Date.parse(a.slotsOfAppointment?.[0]?.startsAt ?? "0"),
+            Date.parse(b.occurrences?.[0]?.startsAt ?? "0") -
+            Date.parse(a.occurrences?.[0]?.startsAt ?? "0"),
         )
         .slice(0, 8)
         .map((r) =>
@@ -311,7 +311,7 @@ function SessionsTab({
                   </p>
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <CalendarDays className="h-3 w-3" />
-                    {fmtDate(a.slotsOfAppointment?.[0]?.startsAt)}
+                    {fmtDate(a.occurrences?.[0]?.startsAt)}
                   </p>
                 </div>
                 <SupportThreadSheet

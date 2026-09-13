@@ -119,7 +119,7 @@ describe("#1166 ORG-9 — org sponsorship survives the approval flow", () => {
 describe("checkout hardening (#1093 tail + tentative visibility)", () => {
   it("the pre-booking conflict check sees live tentative holds", () => {
     const start = checkout.indexOf(
-      "const existingBooking = await tx.slotOfAppointment.findFirst(",
+      "const existingBooking = await tx.appointmentOccurrence.findFirst(",
     );
     expect(start).toBeGreaterThan(-1);
     const query = checkout

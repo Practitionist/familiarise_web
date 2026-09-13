@@ -53,7 +53,7 @@ type HeldSlot = {
 async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           endsAt: { lt: now },
           completionStatus: { in: ["UNVERIFIED", "COMPLETED"] },
@@ -105,7 +105,7 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
           },
         },
       },
-      slotsOfAppointment: {
+      occurrences: {
         where: {
           endsAt: { lt: now },
           completionStatus: { in: ["UNVERIFIED", "COMPLETED"] },
@@ -113,9 +113,15 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
         select: {
           id: true,
           endsAt: true,
-          user: {
-            select: { id: true, consulteeProfile: { select: { id: true } } },
-          },
+        },
+      },
+      // #1554 — the roster is AppointmentParticipant; the consultant's own row
+      // is filtered out below.
+      participants: {
+        where: { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+        select: {
+          userId: true,
+          user: { select: { consulteeProfile: { select: { id: true } } } },
         },
       },
     },
@@ -130,8 +136,8 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
       a.class?.classPlan?.consultantProfileId ??
       null;
     if (!consultantProfileId) continue;
-    // The slot's user list holds the consultant too (the #827 double-booking
-    // guard); `appointmentRaterRole` ranks them PROVIDER, never CONSULTEE.
+    // The roster holds the consultant too; `appointmentRaterRole` ranks them
+    // PROVIDER, never CONSULTEE.
     const consultantUserId =
       a.consultation?.consultationPlan?.consultantProfile?.userId ??
       a.subscription?.subscriptionPlan?.consultantProfile?.userId ??
@@ -144,10 +150,10 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
       : a.classId
         ? `class:${a.classId}`
         : null;
-    for (const slot of a.slotsOfAppointment) {
+    for (const slot of a.occurrences) {
       if (!slot.endsAt) continue;
-      for (const u of slot.user) {
-        if (u.id === consultantUserId) continue;
+      for (const seat of a.participants) {
+        if (seat.userId === consultantUserId) continue;
         held.push({
           slotId: slot.id,
           appointmentId: a.id,
@@ -156,8 +162,8 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
           track,
           ratingUnitId,
           consultantProfileId,
-          userId: u.id,
-          consulteeProfileId: u.consulteeProfile?.id ?? null,
+          userId: seat.userId,
+          consulteeProfileId: seat.user.consulteeProfile?.id ?? null,
         });
       }
     }
@@ -239,7 +245,7 @@ async function createAppointmentFeedback(held: HeldSlot[]): Promise<number> {
     seen.add(key);
     const rating = pickRating();
     rows.push({
-      slotOfAppointmentId: h.slotId,
+      appointmentOccurrenceId: h.slotId,
       appointmentId: h.appointmentId,
       organizationId: h.organizationId,
       userId: h.userId,

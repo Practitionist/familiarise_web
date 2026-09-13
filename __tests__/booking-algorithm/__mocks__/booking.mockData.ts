@@ -154,11 +154,11 @@ export function makeAppointmentWithSlots(
   slotStartISOs: string[],
 ): {
   id: string;
-  slotsOfAppointment: { startsAt: Date }[];
+  occurrences: { startsAt: Date }[];
 } {
   return {
     id,
-    slotsOfAppointment: slotStartISOs.map((iso) => ({
+    occurrences: slotStartISOs.map((iso) => ({
       startsAt: new Date(iso),
     })),
   };

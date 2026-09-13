@@ -48,7 +48,7 @@ export interface OpenRescheduleProposal {
   expiresAt: string | Date;
   initiatorRole: string;
   initiatedById: string;
-  proposedSlots: {
+  proposedTimes: {
     startsAt: string | Date;
     endsAt: string | Date;
     round: number;
@@ -80,7 +80,7 @@ export function openProposalTarget(
 
 /** The times currently on offer — a COUNTERED request carries both rounds. */
 export function currentRoundProposedSlots(
-  proposal: Pick<OpenRescheduleProposal, "round" | "proposedSlots">,
-): OpenRescheduleProposal["proposedSlots"] {
-  return proposal.proposedSlots.filter((slot) => slot.round === proposal.round);
+  proposal: Pick<OpenRescheduleProposal, "round" | "proposedTimes">,
+): OpenRescheduleProposal["proposedTimes"] {
+  return proposal.proposedTimes.filter((slot) => slot.round === proposal.round);
 }

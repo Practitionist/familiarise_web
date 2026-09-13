@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
@@ -40,10 +41,10 @@ export async function GET(request: NextRequest) {
         include: {
           appointments: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true } },
-                },
+              // #1554 — seat ids only; the explore card's enrolment check.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest) {
               appointments: {
                 select: {
                   id: true,
-                  slotsOfAppointment: {
+                  occurrences: {
                     where: { createdAt: { gte: thirtyDaysAgo } },
                     // #1071 — what groupSlotsIntoRuns needs to fold the
                     // half-hour atoms of one session back into one session.
@@ -117,7 +118,7 @@ export async function GET(request: NextRequest) {
                 (s, apt) =>
                   s +
                   groupSlotsIntoRuns(
-                    apt.slotsOfAppointment.map((slot) => ({
+                    apt.occurrences.map((slot) => ({
                       ...slot,
                       appointmentId: apt.id,
                     })),

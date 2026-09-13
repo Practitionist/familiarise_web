@@ -9,6 +9,7 @@
  * what they owe.
  */
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
 // #1270 — the shared learner window, not a local copy of its value. Real join
 // (Stream client) lives on the consultee dashboard; the page links there, so
@@ -82,7 +83,7 @@ export async function getMyProgramData(params: {
   const upcomingAppointments = await prisma.appointment.findMany({
     where: {
       organizationId: orgId,
-      slotsOfAppointment: { some: { endsAt: { gte: now } } },
+      occurrences: { some: { endsAt: { gte: now } } },
       OR: [
         ...(consulteeProfileId
           ? [
@@ -91,13 +92,13 @@ export async function getMyProgramData(params: {
               { trialSession: { consulteeProfileId } },
             ]
           : []),
-        { slotsOfAppointment: { some: { user: { some: { id: userId } } } } },
+        { participants: { some: liveParticipant(userId) } },
       ],
     },
     select: {
       id: true,
       appointmentType: true,
-      slotsOfAppointment: {
+      occurrences: {
         where: { endsAt: { gte: now } },
         orderBy: { startsAt: "asc" },
         take: 1,
@@ -121,10 +122,10 @@ export async function getMyProgramData(params: {
 
   const upcomingSessions: UpcomingSession[] = upcomingAppointments
     .filter(
-      (a) => a.slotsOfAppointment.length > 0 && !a.consultation?.cancelledAt,
+      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
     )
     .map((a) => {
-      const slot = a.slotsOfAppointment[0];
+      const slot = a.occurrences[0];
       const title =
         a.consultation?.consultationPlan?.title ??
         a.subscription?.subscriptionPlan?.title ??

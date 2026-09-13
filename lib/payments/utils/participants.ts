@@ -1,124 +1,78 @@
 /**
- * Participant Counting Utility
- * OPT-2: Extracted common participant counting logic to prevent duplication
+ * Participant counting over the appointment roster (#1554).
+ *
+ * The seat is an `AppointmentParticipant` row; the per-occurrence user join is
+ * gone. Every helper here is pure — no Prisma import — so client components can
+ * run them on data a server component handed down. Callers include
+ * `participants` on the appointment (ideally already filtered with
+ * `liveParticipant()`); the status filter below is defence in depth for a
+ * caller that included the whole roster.
  */
 
-/**
- * Type guard to check if a value is an object with an id property
- * TYPE-2: Provides type safety for user arrays from slot data
- */
-export function isUserWithId(value: unknown): value is { id: string } {
-  return typeof value === "object" && value !== null && "id" in value;
+/** Statuses under which a participant row still holds its seat. */
+const LIVE = new Set(["HELD", "CONFIRMED", "ATTENDED"]);
+
+export type SeatHolder = { userId: string; status?: string };
+
+export type SeatBearingAppointment = {
+  participants?: SeatHolder[] | null;
+};
+
+/** Live seat holders of one appointment, minus the excluded ids. */
+export function liveSeatUserIds(
+  appointment: SeatBearingAppointment | null | undefined,
+  excludeUserIds: string[] = [],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const seat of appointment?.participants ?? []) {
+    if (seat.status !== undefined && !LIVE.has(seat.status)) continue;
+    if (excludeUserIds.includes(seat.userId)) continue;
+    ids.add(seat.userId);
+  }
+  return ids;
 }
 
 /**
- * Count unique participants across multiple appointments
- * Used for CLASS checkout where users join all sessions
- *
- * @param appointments - Array of appointments with slots and users
- * @returns Number of unique participants
+ * Count unique participants across multiple appointments — a class student
+ * holds a seat on every session's appointment, so seats are unique users.
  */
 export function countUniqueParticipants(
-  appointments: Array<{
-    slotsOfAppointment: Array<Record<string, unknown>>;
-  }>,
+  appointments: SeatBearingAppointment[],
   excludeUserIds: string[] = [],
 ): number {
   const uniqueUserIds = new Set<string>();
-
-  for (const apt of appointments) {
-    for (const slot of apt.slotsOfAppointment) {
-      if (Array.isArray(slot.user)) {
-        slot.user
-          .filter(isUserWithId)
-          .filter((u) => !excludeUserIds.includes(u.id))
-          .forEach((u) => uniqueUserIds.add(u.id));
-      }
+  for (const appointment of appointments) {
+    for (const id of liveSeatUserIds(appointment, excludeUserIds)) {
+      uniqueUserIds.add(id);
     }
   }
-
   return uniqueUserIds.size;
 }
 
-/**
- * Count participants for a single appointment (webinar)
- * For webinars, there's typically one slot with multiple users
- *
- * @param appointment - Single appointment with slots
- * @returns Number of unique participants across all slots
- */
+/** Count participants of a webinar's single appointment. */
 export function countWebinarParticipants(
-  appointment: {
-    slotsOfAppointment?: Array<Record<string, unknown>>;
-  } | null,
+  appointment: SeatBearingAppointment | null,
   excludeUserIds: string[] = [],
 ): number {
-  if (!appointment?.slotsOfAppointment) return 0;
-
-  // Count users across all slots (webinars have 1 slot with many users)
-  const uniqueUserIds = new Set<string>();
-  for (const slot of appointment.slotsOfAppointment) {
-    if (Array.isArray(slot.user)) {
-      slot.user
-        .filter(isUserWithId)
-        .filter((u: { id: string }) => !excludeUserIds.includes(u.id))
-        .forEach((u: { id: string }) => uniqueUserIds.add(u.id));
-    }
-  }
-  return uniqueUserIds.size;
+  return liveSeatUserIds(appointment, excludeUserIds).size;
 }
 
-/**
- * Check if user is already enrolled in a set of appointments
- * Used for CLASS enrollment validation
- *
- * @param appointments - Array of appointments with slots and users
- * @param userId - User ID to check
- * @returns True if user is already enrolled
- */
+/** Whether the user holds a seat on any of the appointments (class enrolment). */
 export function isUserEnrolled(
-  appointments: Array<{
-    slotsOfAppointment: Array<{ user?: Array<{ id: string }> | unknown }>;
-  }>,
+  appointments: SeatBearingAppointment[],
   userId: string,
 ): boolean {
-  for (const apt of appointments) {
-    for (const slot of apt.slotsOfAppointment) {
-      if (Array.isArray(slot.user)) {
-        if (slot.user.filter(isUserWithId).some((u) => u.id === userId)) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+  return appointments.some((appointment) =>
+    liveSeatUserIds(appointment).has(userId),
+  );
 }
 
-/**
- * Check if user is already registered for a webinar
- * Used for WEBINAR registration validation
- *
- * @param webinars - Array of webinar instances with appointments
- * @param userId - User ID to check
- * @returns True if user is already registered
- */
+/** Whether the user holds a seat on any of the webinars' appointments. */
 export function isUserRegisteredForWebinar(
-  webinars: Array<{
-    appointment?: {
-      slotsOfAppointment?: Array<{ user?: Array<{ id: string }> | unknown }>;
-    } | null;
-  }>,
+  webinars: Array<{ appointment?: SeatBearingAppointment | null }>,
   userId: string,
 ): boolean {
-  for (const webinar of webinars) {
-    if (!webinar.appointment?.slotsOfAppointment) continue;
-    for (const slot of webinar.appointment.slotsOfAppointment) {
-      if (Array.isArray(slot.user)) {
-        if (slot.user.filter(isUserWithId).some((u) => u.id === userId)) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+  return webinars.some((webinar) =>
+    liveSeatUserIds(webinar.appointment).has(userId),
+  );
 }

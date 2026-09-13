@@ -87,7 +87,9 @@ function confirmedSession(id: string, startISO: string) {
     id,
     organizationId: null,
     payment: [],
-    slotsOfAppointment: [
+    // #1554 — the roster the delete branches harvest for the re-seat.
+    participants: [{ userId: "consultee-1" }],
+    occurrences: [
       {
         id: `${id}-slot-1`,
         startsAt,
@@ -136,7 +138,7 @@ function makeSubscription(appointments: ReturnType<typeof confirmedSession>[]) {
 }
 
 /**
- * No `delete`, `deleteMany` or `slotOfAppointment.deleteMany`: the top-up path
+ * No `delete`, `deleteMany` or `appointmentOccurrence.deleteMany`: the top-up path
  * must never reach `deleteExistingAppointments`, and a call here is a
  * TypeError rather than a silent pass.
  */
@@ -163,9 +165,12 @@ function makeNoDeleteTx() {
     },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 2 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      // #1554 — the top-up reads the surviving seats off the roster.
+      findMany: jest.fn().mockResolvedValue([{ userId: "consultee-1" }]),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
     },
@@ -178,12 +183,8 @@ let mockTx: ReturnType<typeof makeNoDeleteTx>;
 /** Slot start times, in order, of every appointment this run created. */
 function createdSlotStarts(): string[] {
   return mockTx.appointment.create.mock.calls.flatMap(
-    ([args]: [
-      { data: { slotsOfAppointment: { create: { startsAt: Date }[] } } },
-    ]) =>
-      args.data.slotsOfAppointment.create.map((slot) =>
-        slot.startsAt.toISOString(),
-      ),
+    ([args]: [{ data: { occurrences: { create: { startsAt: Date }[] } } }]) =>
+      args.data.occurrences.create.map((slot) => slot.startsAt.toISOString()),
   );
 }
 

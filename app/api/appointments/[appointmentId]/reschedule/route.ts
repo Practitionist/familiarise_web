@@ -6,6 +6,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -43,7 +44,7 @@ import {
   SLOT_RESCHEDULABLE_FROM,
   transitionClassEvent,
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
@@ -187,7 +188,7 @@ export async function POST(
           const appointment = await tx.appointment.findUnique({
             where: { id: appointmentId },
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
               },
               consultation: {
@@ -311,25 +312,25 @@ export async function POST(
 
           // For SUBSCRIPTION and CLASS types, we need to get ALL slots across ALL appointments
           // because the UI collects slots from all appointments but only passes one appointmentId
-          let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
+          let allSubscriptionSlots: typeof appointment.occurrences = [];
 
           if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
             // Fetch all appointments for this subscription with their slots
             const allAppointments = await tx.appointment.findMany({
               where: { subscriptionId: appointment.subscription.id },
-              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+              include: { occurrences: { orderBy: { startsAt: "asc" } } },
             });
             allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.slotsOfAppointment,
+              (apt) => apt.occurrences,
             );
           } else if (derivedType === "CLASS" && appointment.class) {
             // Fetch all appointments for this class with their slots
             const allAppointments = await tx.appointment.findMany({
               where: { classId: appointment.class.id },
-              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+              include: { occurrences: { orderBy: { startsAt: "asc" } } },
             });
             allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.slotsOfAppointment,
+              (apt) => apt.occurrences,
             );
           }
 
@@ -351,7 +352,7 @@ export async function POST(
             (!slotIds || slotIds.length === 0) &&
             allSubscriptionSlots.length > 0
               ? allSubscriptionSlots
-              : appointment.slotsOfAppointment;
+              : appointment.occurrences;
 
           // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
           // slots. CLASS previously fell through to the whole-class branch, so
@@ -401,7 +402,7 @@ export async function POST(
           };
           // Every slot flip below releases the row in place: RESCHEDULED plus
           // tentative, never a tombstone. The reschedule keeps these rows —
-          // the proposal's releasedSlotIds point at them and a withdrawal
+          // the proposal's releasedOccurrenceIds point at them and a withdrawal
           // restores them — so `deletedAt` is the cancel path's business only.
           //
           // From-state guard on every slot flip: a reschedule must never
@@ -410,8 +411,10 @@ export async function POST(
           // `completionStatus` in the caller's WHERE with its own from-set.
           // `allowZero` keeps the pre-existing contract: a release that matches
           // no live row answers 200 with `slotsAffected: 0`, not a 409.
-          const releaseSlots = (where: Prisma.SlotOfAppointmentWhereInput) =>
-            transitionSlotCompletion(tx, {
+          const releaseSlots = (
+            where: Prisma.AppointmentOccurrenceWhereInput,
+          ) =>
+            transitionOccurrenceCompletion(tx, {
               ...auditMeta,
               where,
               to: "RESCHEDULED",
@@ -608,7 +611,7 @@ export async function POST(
                 initiatorRole,
                 initiatedById: session.user.id,
                 reason,
-                releasedSlotIds: slotsToReschedule.map((s) => s.id),
+                releasedOccurrenceIds: slotsToReschedule.map((s) => s.id),
                 expiresAt,
                 // Reserves the appointment: the nullable @unique makes a second
                 // live reschedule a DB-level conflict rather than a race. Claimed
@@ -618,7 +621,7 @@ export async function POST(
                 organizationId: appointment.organizationId ?? null,
                 preferredTimeOfDay,
                 preferredDays,
-                proposedSlots: {
+                proposedTimes: {
                   create: (proposedSlots ?? []).map((s) => ({
                     startsAt: s.startsAt,
                     endsAt: s.endsAt,
@@ -852,10 +855,10 @@ export async function POST(
               },
             },
           },
-          slotsOfAppointment: {
-            select: {
-              user: { select: { id: true, name: true } },
-            },
+          // #1554 — every live seat holder (webinar/class attendees included).
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       });
@@ -884,13 +887,9 @@ export async function POST(
         if (requestedBy?.userId) {
           userIds.push(requestedBy.userId);
         }
-        // FIX #624: Add all participants from slots (webinar/class attendees)
-        if (appointment.slotsOfAppointment) {
-          for (const slot of appointment.slotsOfAppointment) {
-            for (const user of slot.user) {
-              userIds.push(user.id);
-            }
-          }
+        // FIX #624: Add every seat holder (webinar/class attendees)
+        for (const seat of appointment.participants) {
+          userIds.push(seat.userId);
         }
 
         // #1580 C-P1-5 — a group event's accepted collaborators are moved too.

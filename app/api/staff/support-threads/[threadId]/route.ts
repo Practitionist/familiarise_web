@@ -52,7 +52,7 @@ async function loadThread(threadId: string) {
         select: {
           id: true,
           appointmentType: true,
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { startsAt: "asc" },
             take: 1,
             select: { startsAt: true, endsAt: true },

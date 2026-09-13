@@ -15,6 +15,7 @@ const slotFindMany = jest.fn(async (..._args: unknown[]) => [
     appointment: {
       id: "appt-1",
       organizationId: null,
+      participants: [{ userId: "u-attendee" }],
       consultation: null,
       subscription: null,
       class: null,
@@ -27,13 +28,14 @@ const slotFindMany = jest.fn(async (..._args: unknown[]) => [
         },
       },
     },
-    user: [{ id: "u-attendee", name: "A" }],
   },
 ]);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findMany: (...a: unknown[]) => slotFindMany(...a) },
+    appointmentOccurrence: {
+      findMany: (...a: unknown[]) => slotFindMany(...a),
+    },
     collaborator: {
       findMany: jest.fn(async () => [
         { consultantProfile: { userId: "u-cohost" } },

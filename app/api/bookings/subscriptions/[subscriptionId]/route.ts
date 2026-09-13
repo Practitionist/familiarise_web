@@ -69,11 +69,7 @@ type SubscriptionWithDetails = Prisma.Result<
       };
       appointments: {
         include: {
-          slotsOfAppointment: {
-            include: {
-              user: true;
-            };
-          };
+          occurrences: true;
         };
       };
     };
@@ -125,18 +121,7 @@ export async function GET(
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -276,18 +261,7 @@ export async function PUT(
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -485,11 +459,7 @@ export async function PATCH(
                   // mint two DM channels for the same pair.
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -553,11 +523,7 @@ export async function PATCH(
                   // mint two DM channels for the same pair.
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -592,7 +558,7 @@ export async function PATCH(
                   // re-confirms the time the consultee asked to leave (#1169
                   // PR 2). One statement, not one per appointment — the loop
                   // multiplied round-trips against the 30s tx budget.
-                  await tx.slotOfAppointment.updateMany({
+                  await tx.appointmentOccurrence.updateMany({
                     where: {
                       appointmentId: {
                         in: subscription.appointments.map((a) => a.id),
@@ -642,11 +608,7 @@ export async function PATCH(
                         // mint two DM channels for the same pair.
                         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                         include: {
-                          slotsOfAppointment: {
-                            include: {
-                              user: true,
-                            },
-                          },
+                          occurrences: true,
                         },
                       },
                     },

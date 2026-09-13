@@ -103,7 +103,7 @@ export const impossibleCases: ValidationTestCase[] = [
     category: "constraint",
     expectedError: "Foreign key constraint failed",
     execute: async () => {
-      await prisma.slotOfAppointment.create({
+      await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: "non-existent-appointment-id",
           startsAt: new Date(),
@@ -256,7 +256,7 @@ export const impossibleCases: ValidationTestCase[] = [
       const appointment = await prisma.appointment.findFirst();
       if (!appointment) throw new Error("No appointment found for test");
 
-      await prisma.slotOfAppointment.create({
+      await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: appointment.id,
           startsAt: new Date("2025-01-15T14:00:00Z"),

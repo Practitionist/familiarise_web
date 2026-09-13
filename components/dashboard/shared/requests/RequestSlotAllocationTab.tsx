@@ -133,7 +133,7 @@ interface RequestSlotAllocationTabProps {
  * single, contradictory list — only the latest round is an open offer.
  */
 function currentRoundSlots(proposal: RescheduleProposalInfo) {
-  return proposal.proposedSlots.filter((slot) => slot.round === proposal.round);
+  return proposal.proposedTimes.filter((slot) => slot.round === proposal.round);
 }
 
 /**
@@ -603,7 +603,7 @@ export function RequestSlotAllocationTab({
       ) {
         processedRequests.push(
           ...consultationsResult.data.map((consultation) => {
-            const slots = consultation.appointment?.slotsOfAppointment || [];
+            const slots = consultation.appointment?.occurrences || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
             const rescheduledCount = slots.filter(
               (s) => s.completionStatus === "RESCHEDULED",
@@ -661,7 +661,7 @@ export function RequestSlotAllocationTab({
             // Flatten all slots from all appointments
             const allSlots =
               subscription.appointments?.flatMap(
-                (appt) => appt.slotsOfAppointment || [],
+                (appt) => appt.occurrences || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
             const rescheduledCount = allSlots.filter(

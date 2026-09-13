@@ -4,7 +4,7 @@
 
 /**
  * #1061 — end-to-end pin on the room key. `getOrCreateAppointmentMeeting` used
- * to mint `slot-${clickedRow.id}`, so a one-hour booking (two `SlotOfAppointment`
+ * to mint `slot-${clickedRow.id}`, so a one-hour booking (two `AppointmentOccurrence`
  * rows) had capacity for two Stream calls and the two sides of the same session
  * could each sit alone in one of them.
  *
@@ -66,7 +66,8 @@ jest.mock("../../lib/auth-helpers", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findUnique: jest.fn(), findMany: jest.fn() },
+    appointmentOccurrence: { findUnique: jest.fn(), findMany: jest.fn() },
+    appointmentParticipant: { findMany: jest.fn() },
     appointment: { findUnique: jest.fn() },
     meetingSession: {
       findUnique: jest.fn(),
@@ -83,7 +84,8 @@ import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { createDbMeetingSession } from "@/actions/stream/meetings/meeting.action";
 
 const db = prisma as unknown as {
-  slotOfAppointment: { findUnique: jest.Mock; findMany: jest.Mock };
+  appointmentOccurrence: { findUnique: jest.Mock; findMany: jest.Mock };
+  appointmentParticipant: { findMany: jest.Mock };
   appointment: { findUnique: jest.Mock };
   meetingSession: {
     findUnique: jest.Mock;
@@ -127,7 +129,8 @@ interface SlotRow {
   isTentative: boolean;
   completionStatus: string;
   deletedAt: Date | null;
-  /** Users connected to this row — both sides for a 1:1, attendees for a group. */
+  /** The fixture's roster spec: the appointment's live seats are the union of
+   *  these across its rows (#1554 — the real roster is AppointmentParticipant). */
   user: Array<{ id: string }>;
 }
 
@@ -202,31 +205,41 @@ function seed(
   mockCallPayloads = [];
   signIn(caller);
 
+  const seatsOf = (appointmentId: string) =>
+    Array.from(
+      new Set(
+        rows
+          .filter((r) => r.appointmentId === appointmentId)
+          .flatMap((r) => r.user.map((u) => u.id)),
+      ),
+    );
   // Both resolvers read a single row through the authorization gate, which
   // pulls the appointment's plan graph and — filtered to the caller — the
-  // slot rows they are connected to. An empty `slotsOfAppointment` is how the
-  // real query says "this caller does not participate".
-  db.slotOfAppointment.findUnique.mockImplementation(
+  // caller's own seat. An empty `participants` is how the real query says
+  // "this caller does not participate" (#1554).
+  db.appointmentOccurrence.findUnique.mockImplementation(
     async ({ where }: { where: { id: string } }) => {
       const row = rows.find((r) => r.id === where.id);
       if (!row) return null;
-      const participates = rows.some(
-        (r) =>
-          r.appointmentId === row.appointmentId &&
-          r.user.some((u) => u.id === caller?.id),
-      );
+      const participates =
+        !!caller && seatsOf(row.appointmentId).includes(caller.id);
       return {
         ...row,
         appointment: appointmentRow
           ? {
               ...appointmentRow,
-              slotsOfAppointment: participates ? [{ id: row.id }] : [],
+              participants: participates ? [{ id: "seat-caller" }] : [],
             }
           : null,
       };
     },
   );
-  db.slotOfAppointment.findMany.mockImplementation(
+  // The 1:1 attendee naming reads the roster with display fields.
+  db.appointmentParticipant.findMany.mockImplementation(
+    async ({ where }: { where: { appointmentId: string } }) =>
+      seatsOf(where.appointmentId).map((id) => ({ user: { id, name: id } })),
+  );
+  db.appointmentOccurrence.findMany.mockImplementation(
     // Cancelled/rescheduled rows are deliberately NOT filtered here: the query
     // only excludes the soft-delete tombstone and leaves every session rule to
     // groupSlotsIntoRuns, so this fake must hand those rows over too.
@@ -240,8 +253,8 @@ function seed(
   );
   db.appointment.findUnique.mockResolvedValue({ organizationId: null });
   db.meetingSession.findUnique.mockImplementation(
-    async ({ where }: { where: { slotOfAppointmentId: string } }) =>
-      sessions.find((s) => s.slotId === where.slotOfAppointmentId) ?? null,
+    async ({ where }: { where: { appointmentOccurrenceId: string } }) =>
+      sessions.find((s) => s.slotId === where.appointmentOccurrenceId) ?? null,
   );
   db.meetingSession.updateMany.mockReset();
   db.meetingSession.updateMany.mockImplementation(
@@ -266,13 +279,13 @@ function seed(
     }: {
       data: {
         streamCallId: string;
-        slotOfAppointment: { connect: { id: string } };
+        occurrence: { connect: { id: string } };
       };
     }) => {
       const created = {
         id: `ms-${sessions.length + 1}`,
         streamCallId: data.streamCallId,
-        slotId: data.slotOfAppointment.connect.id,
+        slotId: data.occurrence.connect.id,
       };
       sessions.push(created);
       return created;
@@ -600,8 +613,8 @@ describe("the call describes the session it belongs to", () => {
     ];
     seed([a, b]);
     // The anchor resolves; the profile's sibling read then falls over.
-    const working = db.slotOfAppointment.findMany.getMockImplementation()!;
-    db.slotOfAppointment.findMany
+    const working = db.appointmentOccurrence.findMany.getMockImplementation()!;
+    db.appointmentOccurrence.findMany
       .mockImplementationOnce(working)
       .mockImplementationOnce(async () => {
         throw new Error("db down");
@@ -787,7 +800,7 @@ describe("anchor resolution failure", () => {
       slotRow("B", "10:30", "11:00"),
     ];
     seed([a, b]);
-    db.slotOfAppointment.findMany.mockRejectedValue(new Error("db down"));
+    db.appointmentOccurrence.findMany.mockRejectedValue(new Error("db down"));
 
     expect(await join(b)).toBe("slot-B");
   });

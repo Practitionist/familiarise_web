@@ -24,7 +24,7 @@ interface AppointmentSlot {
 
 interface AppointmentWithSlots {
   id: string;
-  slotsOfAppointment: AppointmentSlot[];
+  occurrences: AppointmentSlot[];
 }
 
 export function buildSessionsFromAppointments(
@@ -33,15 +33,15 @@ export function buildSessionsFromAppointments(
   const now = new Date();
 
   const sorted = [...appointments]
-    .filter((a) => a.slotsOfAppointment?.length > 0)
+    .filter((a) => a.occurrences?.length > 0)
     .sort((a, b) => {
-      const aStart = new Date(a.slotsOfAppointment[0].startsAt).getTime();
-      const bStart = new Date(b.slotsOfAppointment[0].startsAt).getTime();
+      const aStart = new Date(a.occurrences[0].startsAt).getTime();
+      const bStart = new Date(b.occurrences[0].startsAt).getTime();
       return aStart - bStart;
     });
 
   return sorted.map((appointment, idx) => {
-    const slots = [...appointment.slotsOfAppointment].sort(
+    const slots = [...appointment.occurrences].sort(
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );

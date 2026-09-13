@@ -95,7 +95,7 @@ export async function GET(
     // after the click.
     const rateable = asProvider
       ? []
-      : await prisma.slotOfAppointment.findMany({
+      : await prisma.appointmentOccurrence.findMany({
           where: { appointmentId: { in: scopeIds }, ...heldSlot(auth.userId) },
           select: { id: true },
         });
@@ -109,7 +109,7 @@ export async function GET(
         : { appointmentId: { in: scopeIds }, userId: auth.userId },
       select: {
         id: true,
-        slotOfAppointmentId: true,
+        appointmentOccurrenceId: true,
         rating: true,
         // The SCORE is disclosed to the provider; the free-text note is not.
         // Every comment in this table was typed into AppointmentCsatCard, whose
@@ -182,7 +182,7 @@ export async function POST(
 
     // The slot must belong to THIS appointment: without the check a caller
     // could rate a call from a booking they merely have access to the id of.
-    const slot = await prisma.slotOfAppointment.findFirst({
+    const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
         id: body.data.slotId,
         appointmentId,
@@ -214,7 +214,7 @@ export async function POST(
     // so every row in it satisfies `heldSlot` independently and one 90-minute
     // in-person session could take three separate ratings. Resolving here
     // makes one-rating-per-meeting a rule rather than a UI convention.
-    const runRows = await prisma.slotOfAppointment.findMany({
+    const runRows = await prisma.appointmentOccurrence.findMany({
       where: { appointmentId, deletedAt: null },
       select: {
         id: true,
@@ -238,8 +238,8 @@ export async function POST(
     // not read to a moderator as somebody who keeps changing their mind.
     const previous = await prisma.appointmentFeedback.findUnique({
       where: {
-        slotOfAppointmentId_userId: {
-          slotOfAppointmentId: ratedSlotId,
+        appointmentOccurrenceId_userId: {
+          appointmentOccurrenceId: ratedSlotId,
           userId: auth.userId,
         },
       },
@@ -255,13 +255,13 @@ export async function POST(
 
     const feedback = await prisma.appointmentFeedback.upsert({
       where: {
-        slotOfAppointmentId_userId: {
-          slotOfAppointmentId: ratedSlotId,
+        appointmentOccurrenceId_userId: {
+          appointmentOccurrenceId: ratedSlotId,
           userId: auth.userId,
         },
       },
       create: {
-        slotOfAppointmentId: ratedSlotId,
+        appointmentOccurrenceId: ratedSlotId,
         appointmentId,
         userId: auth.userId,
         organizationId: auth.organizationId,

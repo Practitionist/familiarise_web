@@ -56,7 +56,7 @@ const txStub = {
     update: jest.fn().mockResolvedValue({}),
     updateMany: paymentUpdateMany,
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     create: slotCreate,
     update: slotUpdate,
     updateMany: slotUpdateMany,
@@ -165,7 +165,7 @@ function makeCancelledClass() {
     appointments: [
       {
         id: "session-appt-1",
-        slotsOfAppointment: [{ id: "slot-1" }, { id: "slot-2" }],
+        occurrences: [{ id: "slot-1" }, { id: "slot-2" }],
       },
     ],
   };
@@ -206,7 +206,7 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
       consultation: null,
       subscription: null,
       webinar: null,
-      slotsOfAppointment: [],
+      occurrences: [],
     };
 
     await handlePaymentSuccess(
@@ -220,16 +220,21 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
     expect(appointmentCreate).not.toHaveBeenCalled();
     expect(slotCreate).not.toHaveBeenCalled();
 
-    // The payer is connected to every slot of every existing session instead.
-    expect(slotUpdate).toHaveBeenCalledTimes(2);
-    expect(slotUpdate).toHaveBeenCalledWith({
-      where: { id: "slot-1" },
-      data: { user: { connect: { id: "user-1" } } },
-    });
-    expect(slotUpdate).toHaveBeenCalledWith({
-      where: { id: "slot-2" },
-      data: { user: { connect: { id: "user-1" } } },
-    });
+    // #1554 — the payer is seated on the existing session's appointment; no
+    // occurrence row is touched, the roster is AppointmentParticipant.
+    expect(slotUpdate).not.toHaveBeenCalled();
+    expect(participantCreateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            appointmentId: "session-appt-1",
+            userId: "user-1",
+            role: "CONSULTEE",
+          }),
+        ],
+        skipDuplicates: true,
+      }),
+    );
   });
 
   it("refuses a CANCELLED class: no confirmed flip, refund instead", async () => {
@@ -258,7 +263,9 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
         data: [expect.objectContaining({ userId: "user-1", status: "HELD" })],
       }),
     );
-    expect(participantUpdateMany).not.toHaveBeenCalled();
+    expect(participantUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "CONFIRMED" } }),
+    );
   });
 
   it("confirms the payer's rows when the class is LIVE", async () => {
@@ -279,7 +286,7 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
       consultation: null,
       subscription: null,
       webinar: null,
-      slotsOfAppointment: [],
+      occurrences: [],
     };
 
     await handlePaymentSuccess(
@@ -288,8 +295,15 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
       10000,
     );
 
-    // The confirm machinery flipped the payer's class rows.
-    expect(slotUpdateMany).toHaveBeenCalledWith(
+    // The confirm machinery flipped the payer's seat (#1554: the shared class
+    // occurrences are the consultant's allocation and are never flipped here).
+    expect(participantUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: "user-1", status: "HELD" }),
+        data: { status: "CONFIRMED" },
+      }),
+    );
+    expect(slotUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: { isTentative: false } }),
     );
     expect(refundPayment).not.toHaveBeenCalled();

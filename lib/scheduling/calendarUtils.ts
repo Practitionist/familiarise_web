@@ -42,7 +42,7 @@ export interface AppointmentSlot {
 export interface Appointment {
   id: string;
   appointmentType: AppointmentsType;
-  slotsOfAppointment?: AppointmentSlot[];
+  occurrences?: AppointmentSlot[];
   webinar?: { status: string; webinarPlan?: { title: string } };
   class?: { status: string; classPlan?: { title: string } };
   consultation?: {
@@ -255,7 +255,7 @@ export function getSlotStatus(
   let isPartiallyBooked = false;
 
   existingAppointments.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((apptSlot) => {
+    appointment.occurrences?.forEach((apptSlot) => {
       const apptStart = new Date(apptSlot.startsAt);
       const apptEnd = new Date(apptSlot.endsAt);
 

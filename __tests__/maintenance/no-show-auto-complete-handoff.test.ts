@@ -79,7 +79,7 @@ jest.mock("../../lib/prisma", () => {
     class: { findMany: jest.fn(), updateMany: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
     trialSession: { findMany: jest.fn() },
-    slotOfAppointment: { findMany: jest.fn(), updateMany: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), updateMany: jest.fn() },
     supportTicket: { findFirst: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),
@@ -130,7 +130,7 @@ function consultation(endedMinutesAgo: number, attendees: string[]) {
           paymentStatus: "SUCCEEDED",
         },
       ],
-      slotsOfAppointment: [
+      occurrences: [
         {
           endsAt: minutesAgo(endedMinutesAgo),
           meetingSession: {
@@ -151,7 +151,7 @@ beforeEach(() => {
     "class",
     "subscription",
     "trialSession",
-    "slotOfAppointment",
+    "appointmentOccurrence",
   ]) {
     db[model].findMany.mockResolvedValue([]);
     db[model].updateMany?.mockResolvedValue({ count: 1 });

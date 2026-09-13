@@ -86,7 +86,7 @@ async function run() {
           in: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
         },
       },
-      slotsOfAppointment: { some: {} },
+      occurrences: { some: {} },
     },
     select: {
       id: true,
@@ -116,7 +116,7 @@ async function run() {
   const requester = consultation.requestedBy.user;
 
   // Snapshot for restore.
-  const originalSlots = await prisma.slotOfAppointment.findMany({
+  const originalSlots = await prisma.appointmentOccurrence.findMany({
     where: { appointmentId: appointment.id },
     select: {
       id: true,
@@ -127,7 +127,6 @@ async function run() {
       completedAt: true,
       deletedAt: true,
       consultantProfileId: true,
-      user: { select: { id: true } },
     },
   });
 
@@ -136,7 +135,7 @@ async function run() {
     where: { id: consultation.id },
     data: { status: "APPROVED_PENDING_PAYMENT" },
   });
-  await prisma.slotOfAppointment.updateMany({
+  await prisma.appointmentOccurrence.updateMany({
     where: { appointmentId: appointment.id },
     // The cancel path frees the hold by status now, so the arm has to clear
     // the tombstone as well as the tentative flag.
@@ -225,7 +224,7 @@ async function run() {
         finalStatus,
       });
 
-      const tentativeLeft = await prisma.slotOfAppointment.count({
+      const tentativeLeft = await prisma.appointmentOccurrence.count({
         where: {
           appointmentId: appointment.id,
           isTentative: true,
@@ -246,7 +245,7 @@ async function run() {
         });
         // Released by status, never by delete: every slot of the cancelled
         // booking is still stored, CANCELLED and tombstoned.
-        const releasedSlots = await prisma.slotOfAppointment.findMany({
+        const releasedSlots = await prisma.appointmentOccurrence.findMany({
           where: { appointmentId: appointment.id },
           select: { completionStatus: true, deletedAt: true },
         });
@@ -267,7 +266,7 @@ async function run() {
         // Outcome B (webhook won: cancel 409, slots confirmed) or the
         // documented late-capture orphan C (cancel 200, slots deleted,
         // parent CANCELLED, reconciler refunds). Never a half-state.
-        const confirmed = await prisma.slotOfAppointment.count({
+        const confirmed = await prisma.appointmentOccurrence.count({
           where: { appointmentId: appointment.id, isTentative: false },
         });
         if (cancelWon) {
@@ -302,7 +301,7 @@ async function run() {
       data: { status: "APPROVED_PENDING_PAYMENT" },
     });
     for (const slot of originalSlots) {
-      await prisma.slotOfAppointment.upsert({
+      await prisma.appointmentOccurrence.upsert({
         where: { id: slot.id },
         create: {
           id: slot.id,
@@ -312,7 +311,6 @@ async function run() {
           isTentative: true,
           completionStatus: slot.completionStatus,
           consultantProfileId: slot.consultantProfileId,
-          user: { connect: slot.user.map((u) => ({ id: u.id })) },
         },
         update: {
           isTentative: true,
@@ -377,7 +375,7 @@ async function run() {
       },
     });
     for (const slot of originalSlots) {
-      await prisma.slotOfAppointment.upsert({
+      await prisma.appointmentOccurrence.upsert({
         where: { id: slot.id },
         create: {
           id: slot.id,
@@ -389,7 +387,6 @@ async function run() {
           completedAt: slot.completedAt,
           deletedAt: slot.deletedAt,
           consultantProfileId: slot.consultantProfileId,
-          user: { connect: slot.user.map((u) => ({ id: u.id })) },
         },
         update: {
           isTentative: slot.isTentative,

@@ -1,8 +1,9 @@
 import prisma, { type Tx } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
   ReviewTrack,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 
 /**
@@ -82,7 +83,7 @@ export function heldSlot(userId: string) {
     // only the UNVERIFIED arm actually pinned a status, so an attended slot
     // later stamped CANCELLED stayed rateable through the API.
     completionStatus: {
-      notIn: ["CANCELLED", "RESCHEDULED"] as SlotCompletionStatus[],
+      notIn: ["CANCELLED", "RESCHEDULED"] as OccurrenceCompletionStatus[],
     },
     // Not "the call happened" — "YOU were at the call". A COMPLETED slot the
     // user never joined used to qualify, so a no-show could rate a session they
@@ -117,7 +118,7 @@ export function heldSlot(userId: string) {
       //    MeetingSession", which is what an offline session looks like —
       //    excluding it would deny feedback to everyone who met in person.
       {
-        completionStatus: "UNVERIFIED" as SlotCompletionStatus,
+        completionStatus: "UNVERIFIED" as OccurrenceCompletionStatus,
       },
     ],
   };
@@ -337,7 +338,7 @@ function loadReviewableAppointments(
               ? { consultationPlan: { consultantProfileId } }
               : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldSlot(userId) },
         },
         {
           subscription: {
@@ -346,7 +347,7 @@ function loadReviewableAppointments(
               ? { subscriptionPlan: { consultantProfileId } }
               : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldSlot(userId) },
         },
         {
           trialSession: {
@@ -354,7 +355,7 @@ function loadReviewableAppointments(
             status: { in: ["COMPLETED", "CONVERTED"] },
             ...(consultantProfileId ? { consultantProfileId } : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldSlot(userId) },
         },
         // Group arms — there is no Attendee model: registration IS the m:n
         // between the user and every slot of the shared appointment. A paid
@@ -376,9 +377,8 @@ function loadReviewableAppointments(
               },
             },
           },
-          slotsOfAppointment: {
-            some: { ...heldSlot(userId), user: { some: { id: userId } } },
-          },
+          occurrences: { some: heldSlot(userId) },
+          participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
         {
@@ -395,9 +395,8 @@ function loadReviewableAppointments(
               },
             },
           },
-          slotsOfAppointment: {
-            some: { ...heldSlot(userId), user: { some: { id: userId } } },
-          },
+          occurrences: { some: heldSlot(userId) },
+          participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
       ],
@@ -466,7 +465,7 @@ function loadReviewableAppointments(
           },
         },
       },
-      slotsOfAppointment: {
+      occurrences: {
         where: heldSlot(userId),
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
@@ -538,7 +537,7 @@ function describe(
       row.webinar?.webinarPlan?.title ??
       row.class?.classPlan?.title ??
       "Session",
-    heldAt: row.slotsOfAppointment[0]?.endsAt ?? null,
+    heldAt: row.occurrences[0]?.endsAt ?? null,
     // Keyed on the CONSULTANT and the (track, event), not this appointment: a 1:1
     // review may hang off a different booking, and a webinar's review is that
     // webinar's, not another one's (#1549).

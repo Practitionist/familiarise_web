@@ -8,7 +8,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { RecordingService } from "@/lib/stream/recording-service";
 import {
   getStreamChatClient,
@@ -25,6 +25,7 @@ import {
 } from "@/lib/stream/batch";
 import { getEventChannelIdsForAppointment } from "@/lib/stream/appointment-channels";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import redis, { withCircuitBreaker } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
@@ -67,7 +68,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
   const activeSessions = await prisma.meetingSession.findMany({
     where: {
       endedAt: null,
-      slotOfAppointment: {
+      occurrence: {
         endsAt: { gte: liveSince },
         // Bounded at BOTH ends. `endsAt >= liveSince` alone also matches every
         // FUTURE session, so a room opened early would be "drained": its call
@@ -79,11 +80,15 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     take: MAX_DRAIN_BATCH,
     orderBy: { createdAt: "desc" },
     include: {
-      slotOfAppointment: {
+      occurrence: {
         include: {
-          user: { select: { id: true } },
           appointment: {
             include: {
+              // #1554 — the roster is the appointment's live participants.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
+              },
               consultation: {
                 include: {
                   consultationPlan: {
@@ -149,13 +154,13 @@ export async function drainActiveSessions(): Promise<DrainResult> {
   const allUserIds = new Set<string>();
 
   for (const session of activeSessions) {
-    // Collect participant user IDs from the slot
-    for (const user of session.slotOfAppointment.user) {
-      allUserIds.add(user.id);
+    // Collect every seat holder's user ID
+    for (const seat of session.occurrence.appointment.participants) {
+      allUserIds.add(seat.userId);
     }
 
     // Collect consultant user ID from the appointment
-    const appointment = session.slotOfAppointment.appointment;
+    const appointment = session.occurrence.appointment;
     const consultantUserId =
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ??
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
@@ -255,8 +260,8 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         // because call.end() above fires the call-ended webhook, which can
         // land before this write; a slot the customer already cancelled keeps
         // its history.
-        await transitionSlotCompletion(tx, {
-          where: { id: session.slotOfAppointmentId },
+        await transitionOccurrenceCompletion(tx, {
+          where: { id: session.appointmentOccurrenceId },
           to: "UNVERIFIED",
           data: { completedAt: endedAt },
           allowZero: true,
@@ -326,11 +331,11 @@ export async function drainActiveSessions(): Promise<DrainResult> {
  * transition, which is the whole point of the drain.
  */
 async function freezeChannelsForSessions(
-  sessions: { slotOfAppointment: { appointmentId: string } }[],
+  sessions: { occurrence: { appointmentId: string } }[],
   result: DrainResult,
 ): Promise<void> {
   const appointmentIds = Array.from(
-    new Set(sessions.map((s) => s.slotOfAppointment.appointmentId)),
+    new Set(sessions.map((s) => s.occurrence.appointmentId)),
   );
   if (appointmentIds.length === 0) return;
 
@@ -658,12 +663,12 @@ async function deriveChannelsToUnfreeze(): Promise<string[]> {
       endedAt: { gte: new Date(Date.now() - LIVE_SESSION_WINDOW_MS) },
     },
     take: MAX_DRAIN_BATCH,
-    select: { slotOfAppointment: { select: { appointmentId: true } } },
+    select: { occurrence: { select: { appointmentId: true } } },
   });
   if (drained.length === 0) return [];
 
   return getEventChannelIdsForAppointment(
-    Array.from(new Set(drained.map((s) => s.slotOfAppointment.appointmentId))),
+    Array.from(new Set(drained.map((s) => s.occurrence.appointmentId))),
   );
 }
 

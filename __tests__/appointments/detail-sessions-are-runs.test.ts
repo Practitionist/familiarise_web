@@ -9,7 +9,7 @@
  * surfaces disagreed and the list was the wrong one.
  *
  * All THREE appointment mappers carried their own `sessionsOf`, each mapping
- * one SessionVM per stored `SlotOfAppointment` row, so a four-hour booking
+ * one SessionVM per stored `AppointmentOccurrence` row, so a four-hour booking
  * became eight half-hour "sessions" and every consumer downstream — the row's
  * time range, the session count, the timeline, the anchor — inherited that.
  * They now share `sessionsOfAppointment`, which emits one view-model per
@@ -121,7 +121,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 8),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 8),
       }),
     );
 
@@ -138,7 +138,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 2),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 2),
       }),
     );
 
@@ -153,7 +153,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 1),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 1),
       }),
     );
 
@@ -170,7 +170,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           ...run("morning", "2026-08-01T07:00:00.000Z", 2),
           ...run("evening", "2026-08-01T13:00:00.000Z", 2),
         ],
@@ -191,7 +191,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const appointments = [0, 1, 2, 3].map((week) => ({
       id: `appt-${week}`,
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: run(
+      occurrences: run(
         `w${week}`,
         new Date(
           new Date("2026-08-03T07:00:00.000Z").getTime() +
@@ -224,7 +224,7 @@ describe("a booking is one session, however many rows it is stored as", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           ...run("confirmed", "2026-08-01T07:00:00.000Z", 2),
           ...run("tentative", "2026-08-01T08:00:00.000Z", 2, {
             isTentative: true,
@@ -250,7 +250,7 @@ describe("what a run carries from its rows", () => {
       recordings: [],
     };
 
-    const vm = map(detail({ id: "appt-1", slotsOfAppointment: rows }));
+    const vm = map(detail({ id: "appt-1", occurrences: rows }));
 
     expect(vm.sessions).toHaveLength(1);
     expect(vm.sessions[0].meetingEndedAt).toEqual(
@@ -264,7 +264,7 @@ describe("what a run carries from its rows", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           ...run("live", "2026-08-01T07:00:00.000Z", 2),
           ...run("gone", "2026-08-01T13:00:00.000Z", 2, {
             completionStatus: "CANCELLED",
@@ -286,7 +286,7 @@ describe("what a run carries from its rows", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           row("a", "2026-08-01T07:00:00.000Z"),
           row("b", "2026-08-01T07:30:00.000Z", {
             completionStatus: "CANCELLED",
@@ -307,7 +307,7 @@ describe("consumers that read the sessions array", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 8),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 8),
       }),
     );
 
@@ -321,7 +321,7 @@ describe("consumers that read the sessions array", () => {
     const vm = mapAppointmentDetail(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 8),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 8),
       }),
       "consultee",
       new Date("2026-08-01T08:00:00.000Z"),
@@ -336,12 +336,12 @@ describe("consumers that read the sessions array", () => {
     const past = {
       id: "appt-0",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: run("w0", "2026-07-25T07:00:00.000Z", 2),
+      occurrences: run("w0", "2026-07-25T07:00:00.000Z", 2),
     };
     const upcoming = {
       id: "appt-1",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: run("w1", "2026-08-05T07:00:00.000Z", 2),
+      occurrences: run("w1", "2026-08-05T07:00:00.000Z", 2),
     };
 
     const vm = map(detail(past, [upcoming]));
@@ -356,7 +356,7 @@ describe("consumers that read the sessions array", () => {
     const vm = map(
       detail({
         id: "appt-1",
-        slotsOfAppointment: run("s", "2026-08-01T07:00:00.000Z", 8),
+        occurrences: run("s", "2026-08-01T07:00:00.000Z", 8),
       }),
     );
 
@@ -379,7 +379,7 @@ describe("the two list mappers agree with the detail page", () => {
               title: "Career strategy deep dive",
               consultantProfile: { id: "cp-1", user: { name: "Arjun" } },
             },
-            appointment: { id: "appt-1", slotsOfAppointment: eightRows() },
+            appointment: { id: "appt-1", occurrences: eightRows() },
           },
         ],
       } as never,
@@ -407,7 +407,7 @@ describe("the two list mappers agree with the detail page", () => {
             id: "appt-1",
             appointmentType: "CONSULTATION",
             organizationId: null,
-            slotsOfAppointment: eightRows(),
+            occurrences: eightRows(),
             consultation: {
               status: "SCHEDULED",
               consultationPlan: { title: "Career strategy deep dive" },

@@ -40,7 +40,6 @@ type SlotAtom = {
   endsAt: Date;
   isTentative: boolean;
   consultantProfileId: string;
-  user: { connect: Array<{ id: string }> };
 };
 
 // --- webhook-side transaction stub ------------------------------------------
@@ -59,16 +58,18 @@ const webhookTx = {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findMany: jest.fn(),
     findFirst: jest.fn(),
     updateMany: jest.fn(),
     update: jest.fn(),
   },
-  // #1319 A9 — the creators shadow-write participant rows in the same tx.
+  // #1319 A9 / #1554 — the creators write the roster in the same tx and the
+  // #827 recheck reads it back.
   appointmentParticipant: {
     createMany: jest.fn().mockResolvedValue({ count: 2 }),
     updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    findMany: jest.fn().mockResolvedValue([]),
   },
 };
 
@@ -177,7 +178,7 @@ function materialise(atoms: SlotAtom[]) {
 }
 
 function nestedAtoms(create: jest.Mock): SlotAtom[] {
-  const nested = create.mock.calls[0][0].data.slotsOfAppointment.create;
+  const nested = create.mock.calls[0][0].data.occurrences.create;
   return Array.isArray(nested) ? nested : [nested];
 }
 
@@ -192,10 +193,10 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
     id: "cons-1",
     status: "PENDING",
   });
-  webhookTx.slotOfAppointment.findMany.mockResolvedValue([]);
-  webhookTx.slotOfAppointment.findFirst.mockResolvedValue(null);
-  webhookTx.slotOfAppointment.updateMany.mockResolvedValue({ count: 4 });
-  webhookTx.slotOfAppointment.update.mockResolvedValue({});
+  webhookTx.appointmentOccurrence.findMany.mockResolvedValue([]);
+  webhookTx.appointmentOccurrence.findFirst.mockResolvedValue(null);
+  webhookTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 4 });
+  webhookTx.appointmentOccurrence.update.mockResolvedValue({});
   webhookTx.payment.findUnique.mockResolvedValue({
     id: "pay1",
     paymentIntent: "order1",
@@ -219,12 +220,11 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
     },
   });
   webhookAppointmentCreate.mockImplementation(async (args: unknown) => {
-    const data = (
-      args as { data: { slotsOfAppointment: { create: SlotAtom[] } } }
-    ).data;
+    const data = (args as { data: { occurrences: { create: SlotAtom[] } } })
+      .data;
     return {
       id: "appt-1",
-      slotsOfAppointment: materialise(data.slotsOfAppointment.create),
+      occurrences: materialise(data.occurrences.create),
     };
   });
   webhookTx.appointment.findUnique.mockResolvedValue({
@@ -233,7 +233,7 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
     subscription: null,
     webinar: null,
     class: null,
-    slotsOfAppointment: [],
+    occurrences: [],
   });
   (validateWebhookMetadata as jest.Mock).mockReturnValue(METADATA);
 
@@ -247,8 +247,11 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
   return nestedAtoms(webhookAppointmentCreate);
 }
 
+const checkoutParticipantCreateMany = jest.fn().mockResolvedValue({ count: 2 });
+
 async function runCheckoutCreator(): Promise<SlotAtom[]> {
   const historyCreate = jest.fn().mockResolvedValue({});
+  checkoutParticipantCreateMany.mockClear();
   const checkoutAppointmentCreate = jest
     .fn()
     .mockResolvedValue({ id: "appt-2" });
@@ -264,14 +267,14 @@ async function runCheckoutCreator(): Promise<SlotAtom[]> {
         },
       }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
     },
     consultation: { create: jest.fn().mockResolvedValue({ id: "cons-2" }) },
     appointment: { create: checkoutAppointmentCreate },
     appointmentParticipant: {
-      createMany: jest.fn().mockResolvedValue({ count: 2 }),
+      createMany: checkoutParticipantCreateMany,
       updateMany: jest.fn().mockResolvedValue({ count: 2 }),
     },
     // #1333 — the handler opens the timeline in the same tx as the create.
@@ -319,10 +322,9 @@ function assertTwoHourAtomRun(atoms: SlotAtom[]) {
       30 * 60 * 1000,
     );
     expect(atom.consultantProfileId).toBe(CONSULTANT_PROFILE);
-    // Both parties, or the consultant-scoped conflict filter cannot see it.
-    expect(atom.user.connect.map((u) => u.id).sort()).toEqual(
-      [CONSULTANT_USER, CONSULTEE_USER].sort(),
-    );
+    // #1554 — who attends is never on the atom; the roster is the
+    // AppointmentParticipant rows both creators write (asserted below).
+    expect("user" in atom).toBe(false);
   });
   // Contiguous: every atom starts where the previous one ended.
   for (let i = 1; i < atoms.length; i++) {
@@ -331,16 +333,28 @@ function assertTwoHourAtomRun(atoms: SlotAtom[]) {
 }
 
 describe("#1319 — webhook and checkout consultation writers agree", () => {
-  it("the webhook capture fallback writes a four-atom run with both users", async () => {
+  it("the webhook capture fallback writes a four-atom run and seats both parties", async () => {
     const atoms = await runWebhookCreator();
     expect(atoms).toHaveLength(4);
     assertTwoHourAtomRun(atoms);
+    const created = webhookAppointmentCreate.mock.calls[0][0] as {
+      data: { participants: { create: Array<{ userId: string }> } };
+    };
+    expect(
+      created.data.participants.create.map((p) => p.userId).sort(),
+    ).toEqual([CONSULTANT_USER, CONSULTEE_USER].sort());
   });
 
-  it("checkout writes the same four-atom run with both users", async () => {
+  it("checkout writes the same four-atom run and seats both parties", async () => {
     const atoms = await runCheckoutCreator();
     expect(atoms).toHaveLength(4);
     assertTwoHourAtomRun(atoms);
+    const seated = checkoutParticipantCreateMany.mock.calls[0][0] as {
+      data: Array<{ userId: string }>;
+    };
+    expect(seated.data.map((p) => p.userId).sort()).toEqual(
+      [CONSULTANT_USER, CONSULTEE_USER].sort(),
+    );
   });
 
   it("the two atom sets are identical apart from the tentative flag", async () => {

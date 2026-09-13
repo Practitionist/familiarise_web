@@ -16,6 +16,7 @@ import {
   TrialSessionStatus,
   Prisma,
 } from "@prisma/client";
+import { liveParticipant } from "@/lib/booking/participants";
 
 /**
  * Consultation/Subscription statuses that count as "slot occupied"
@@ -142,15 +143,12 @@ export function buildConsultantOccupancyWhere(
 ): Prisma.AppointmentWhereInput {
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
-      slotsOfAppointment: {
-        some: {
-          user: { some: { id: consultantUserId } },
-          // Defense-in-depth: a tombstoned slot is not a booking. No
-          // completionStatus filter — RESCHEDULED rows are a pending
-          // reschedule's live hold and must still occupy the grid.
-          deletedAt: null,
-        },
-      },
+      // #1554 — the consultant holds a seat (as consultee elsewhere) and the
+      // appointment has a live row. Defense-in-depth: a tombstoned occurrence
+      // is not a booking. No completionStatus filter — RESCHEDULED rows are a
+      // pending reschedule's live hold and must still occupy the grid.
+      participants: { some: liveParticipant(consultantUserId) },
+      occurrences: { some: { deletedAt: null } },
     },
   ];
 

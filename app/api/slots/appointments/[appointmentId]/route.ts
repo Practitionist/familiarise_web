@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
+import { liveParticipant } from "@/lib/booking/participants";
 
 /**
  * Check if the authenticated user is a participant in the given appointment.
@@ -21,10 +22,10 @@ async function isAppointmentParticipant(
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: {
-      slotsOfAppointment: {
-        select: { user: { select: { id: true } } },
+      participants: {
+        select: { id: true },
         take: 1,
-        where: { user: { some: { id: userId } } },
+        where: liveParticipant(userId),
       },
       consultation: {
         select: {
@@ -69,8 +70,8 @@ async function isAppointmentParticipant(
 
   if (!appointment) return false;
 
-  // User is directly on a slot
-  if (appointment.slotsOfAppointment.length > 0) return true;
+  // The user holds a seat on the appointment (#1554)
+  if (appointment.participants.length > 0) return true;
 
   // Check consultation ownership
   if (appointment.consultation) {
@@ -133,7 +134,8 @@ async function isAppointmentParticipant(
 
 type _AppointmentInclude = Prisma.AppointmentGetPayload<{
   include: {
-    slotsOfAppointment: {
+    occurrences: true;
+    participants: {
       include: {
         user: {
           select: {
@@ -280,16 +282,18 @@ export async function GET(
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        slotsOfAppointment: {
+        occurrences: true,
+        // #1554 — the roster lives on the appointment, not on each occurrence.
+        participants: {
+          where: liveParticipant(),
           include: {
             user: {
-              // Changed from consulteeProfile
               select: {
                 id: true,
                 name: true,
                 email: true,
                 image: true,
-                consulteeProfile: true, // Include consulteeProfile if needed
+                consulteeProfile: true,
               },
             },
           },

@@ -32,7 +32,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
-        slotOfAppointment: {
+        appointmentOccurrence: {
           updateMany: (...a: unknown[]) => mockSlotUpdateMany(...a),
         },
         appointmentParticipant: {
@@ -68,7 +68,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
 
-import { SlotCompletionStatus } from "@prisma/client";
+import { OccurrenceCompletionStatus } from "@prisma/client";
 
 import {
   refundCancelledTrial,
@@ -91,9 +91,7 @@ const paidTrial = {
 function appointmentStartingInHours(hours: number) {
   return {
     cancellationPolicy: null,
-    slotsOfAppointment: [
-      { startsAt: new Date(Date.now() + hours * 3_600_000) },
-    ],
+    occurrences: [{ startsAt: new Date(Date.now() + hours * 3_600_000) }],
   };
 }
 
@@ -125,7 +123,7 @@ describe("softCancelTrialAppointment", () => {
       expect.objectContaining({
         where: { appointmentId: APPOINTMENT_ID, deletedAt: null },
         data: {
-          completionStatus: SlotCompletionStatus.CANCELLED,
+          completionStatus: OccurrenceCompletionStatus.CANCELLED,
           deletedAt: expect.any(Date),
         },
       }),

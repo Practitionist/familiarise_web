@@ -24,7 +24,7 @@ import {
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findMany: jest.fn(), groupBy: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), groupBy: jest.fn() },
     appointment: { findMany: jest.fn() },
     consultation: { findMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), count: jest.fn() },
@@ -36,7 +36,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const slotFindMany = prisma.slotOfAppointment.findMany as jest.Mock;
+const slotFindMany = prisma.appointmentOccurrence.findMany as jest.Mock;
 const apptFindMany = prisma.appointment.findMany as jest.Mock;
 const consultationCount = prisma.consultation.count as jest.Mock;
 const subscriptionCount = prisma.subscription.count as jest.Mock;
@@ -48,7 +48,7 @@ describe("consultant Home read shape (#1101)", () => {
     apptFindMany.mockResolvedValue([]);
     consultationCount.mockResolvedValue(0);
     subscriptionCount.mockResolvedValue(0);
-    (prisma.slotOfAppointment.groupBy as jest.Mock).mockResolvedValue([]);
+    (prisma.appointmentOccurrence.groupBy as jest.Mock).mockResolvedValue([]);
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.activityLog.findMany as jest.Mock).mockResolvedValue([]);
@@ -203,7 +203,7 @@ describe("consultant Home read shape (#1101)", () => {
     expect(activeBookCall![0].take).toBeUndefined();
     // Soft-deleted slots must not keep an appointment counted as active.
     for (const clause of activeBookCall![0].where.AND) {
-      expect(clause.slotsOfAppointment.some.deletedAt).toBeNull();
+      expect(clause.occurrences.some.deletedAt).toBeNull();
     }
   });
 });

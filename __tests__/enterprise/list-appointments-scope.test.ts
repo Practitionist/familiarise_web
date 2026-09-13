@@ -96,12 +96,17 @@ describe("buildWhere — personal scope (#org-appts)", () => {
       userId: "u1",
     }) as { OR: Array<Record<string, unknown>> };
 
-    // A webinar/class registrant holds a slot but never appears in
+    // A webinar/class registrant holds a seat but never appears in
     // requestedBy (group events share ONE Appointment), so this arm is the
     // only reason an org-sponsored attendee's session is visible anywhere.
-    // Mirrors lib/data/consultee-events-read.ts slot membership.
+    // #1554 — the seat is a live AppointmentParticipant row.
     expect(w.OR).toContainEqual({
-      slotsOfAppointment: { some: { user: { some: { id: "u1" } } } },
+      participants: {
+        some: {
+          userId: "u1",
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        },
+      },
     });
   });
 });

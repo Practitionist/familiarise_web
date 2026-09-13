@@ -18,6 +18,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope } from "./parse";
@@ -112,7 +113,7 @@ export function buildWhere(
         // this arm an org-sponsored webinar/class attendee's session was
         // invisible on BOTH dashboards (personal excludes org rows by design).
         // Mirrors lib/data/consultee-events-read.ts slot membership.
-        { slotsOfAppointment: { some: { user: { some: { id: uid } } } } },
+        { participants: { some: liveParticipant(uid) } },
         // Delivered as an expert (owns the plan).
         { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
@@ -179,7 +180,7 @@ export async function listAppointmentsScoped(
         // see what they need: without deletedAt a tombstoned row counted as
         // live, and without meetingSession a host-ended call still offered
         // Join (booking-journey audit B7).
-        slotsOfAppointment: {
+        occurrences: {
           select: {
             id: true,
             startsAt: true,

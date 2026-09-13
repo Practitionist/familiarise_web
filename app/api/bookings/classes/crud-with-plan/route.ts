@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   curriculumCreateNested,
   faqCreateNested,
@@ -311,7 +312,7 @@ export async function POST(request: NextRequest) {
                 create: sessionStarts.map((slotStart) => ({
                   // #1071 — N×30min atoms per session (allocator parity).
                   appointmentType: "CLASS" as const,
-                  slotsOfAppointment: {
+                  occurrences: {
                     create: buildContiguousSlotAtoms({
                       startsAt: slotStart,
                       durationInHours: sessionDurationInHours,
@@ -332,11 +333,7 @@ export async function POST(request: NextRequest) {
               },
               appointments: {
                 include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
+                  occurrences: true,
                 },
               },
             },
@@ -374,7 +371,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // #784 — the owner is denormalized onto group-event slots, so a scheduling
-    // overlap trips slot_no_confirmed_overlap (23P01): a conflict, not a 500.
+    // overlap trips occurrence_no_confirmed_overlap (23P01): a conflict, not a 500.
     if (isExclusionViolation(error)) {
       return NextResponse.json(
         {
@@ -737,8 +734,9 @@ export async function PATCH(request: NextRequest) {
               const classAppointments = await tx.appointment.findMany({
                 where: { classId: updatedClass.id },
                 include: {
-                  slotsOfAppointment: {
-                    include: { user: { select: { id: true } } },
+                  participants: {
+                    where: liveParticipant(),
+                    select: { userId: true },
                   },
                 },
               });
@@ -850,7 +848,7 @@ export async function PATCH(request: NextRequest) {
                 where: { classId: updatedClass.id, deletedAt: null },
                 select: {
                   id: true,
-                  slotsOfAppointment: {
+                  occurrences: {
                     where: { deletedAt: null },
                     select: { startsAt: true, endsAt: true },
                   },
@@ -859,7 +857,7 @@ export async function PATCH(request: NextRequest) {
               await assertCollaboratorsAvailableForWindows(tx, {
                 planType: "CLASS",
                 planId: id,
-                windows: liveSessions.flatMap((a) => a.slotsOfAppointment),
+                windows: liveSessions.flatMap((a) => a.occurrences),
                 excludeAppointmentIds: liveSessions.map((a) => a.id),
               });
             }
@@ -878,11 +876,7 @@ export async function PATCH(request: NextRequest) {
                   },
                   appointments: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },
@@ -902,11 +896,7 @@ export async function PATCH(request: NextRequest) {
                   },
                   appointments: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },

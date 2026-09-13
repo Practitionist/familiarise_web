@@ -121,12 +121,9 @@ const consultantAppointmentScope = (consultantProfileId: string) =>
   }) satisfies Prisma.AppointmentWhereInput;
 
 const appointmentInclude = {
-  slotsOfAppointment: {
+  occurrences: {
     orderBy: { startsAt: "asc" as const },
     include: {
-      user: {
-        select: userSelectFields,
-      },
       meetingSession: {
         select: { id: true, endedAt: true, endedReason: true },
       },
@@ -371,7 +368,7 @@ export async function getConsultantDashboard(
     now.getMonth(),
     now.getDate(),
   );
-  const soonestSlots = await prisma.slotOfAppointment.findMany({
+  const soonestSlots = await prisma.appointmentOccurrence.findMany({
     where: {
       deletedAt: null,
       // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
@@ -429,12 +426,12 @@ export async function getConsultantDashboard(
         ...consultantAppointmentScope(consultantProfileId),
         AND: [
           {
-            slotsOfAppointment: {
+            occurrences: {
               some: { deletedAt: null, startsAt: { gte: ninetyDaysAgo } },
             },
           },
           {
-            slotsOfAppointment: {
+            occurrences: {
               some: {
                 deletedAt: null,
                 completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
@@ -552,7 +549,7 @@ export async function getConsultantDashboard(
       where: { consultantProfileId, deletedAt: null },
     }),
     // 3. Session completion rate (last 30 days)
-    prisma.slotOfAppointment.groupBy({
+    prisma.appointmentOccurrence.groupBy({
       by: ["completionStatus"],
       _count: true,
       where: {
@@ -602,8 +599,8 @@ export async function getConsultantDashboard(
 
   // Sort appointments by slot start time (matching original API behavior)
   const sortedAppointments = appointmentsRaw.sort((a, b) => {
-    const aTime = a.slotsOfAppointment?.[0]?.startsAt;
-    const bTime = b.slotsOfAppointment?.[0]?.startsAt;
+    const aTime = a.occurrences?.[0]?.startsAt;
+    const bTime = b.occurrences?.[0]?.startsAt;
 
     if (!aTime && !bTime) return 0;
     if (!aTime) return 1;
@@ -621,21 +618,13 @@ export async function getConsultantDashboard(
       // the consultant Home + Appointments surfaces. Previously dropped
       // by this manual field-mapping transform.
       organizationId: appointment.organizationId,
-      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
+      occurrences: appointment.occurrences.map((slot) => ({
         id: slot.id,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         isTentative: slot.isTentative,
         completionStatus: slot.completionStatus,
         meetingSession: slot.meetingSession ?? null,
-        user: Array.isArray(slot.user)
-          ? slot.user.map((u) => ({
-              id: u.id,
-              name: u.name,
-              email: u.email,
-              image: u.image,
-            }))
-          : [],
       })),
       consultation: appointment.consultation
         ? {

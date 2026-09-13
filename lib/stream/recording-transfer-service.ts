@@ -42,7 +42,7 @@ const TRANSFER_FAILURE_ALERT_THRESHOLD = 3;
  */
 /**
  * Build Prisma where-clause to filter recordings by their plan's storage policy.
- * Joins through Recording → MeetingSession → SlotOfAppointment → Appointment → Event → Plan.
+ * Joins through Recording → MeetingSession → AppointmentOccurrence → Appointment → Event → Plan.
  */
 function buildStoragePolicyFilter(
   policyFilter: "PERMANENT" | "ALL",
@@ -51,7 +51,7 @@ function buildStoragePolicyFilter(
 
   return {
     meetingSession: {
-      slotOfAppointment: {
+      occurrence: {
         appointment: {
           OR: [
             {
@@ -476,7 +476,7 @@ export class RecordingTransferService {
           gt: new Date(), // Not yet expired
         },
         meetingSession: {
-          slotOfAppointment: {
+          occurrence: {
             appointment: {
               OR: [
                 {
@@ -501,7 +501,7 @@ export class RecordingTransferService {
       include: {
         meetingSession: {
           include: {
-            slotOfAppointment: {
+            occurrence: {
               include: {
                 appointment: {
                   include: {
@@ -529,7 +529,7 @@ export class RecordingTransferService {
     });
 
     return recordings.map((r) => {
-      const apt = r.meetingSession.slotOfAppointment.appointment;
+      const apt = r.meetingSession.occurrence.appointment;
       const consultantUserId =
         apt.webinar?.webinarPlan?.consultantProfile?.userId ||
         apt.class?.classPlan?.consultantProfile?.userId ||

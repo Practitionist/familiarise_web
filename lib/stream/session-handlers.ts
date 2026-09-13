@@ -9,7 +9,7 @@
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/slots";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -92,7 +92,7 @@ export async function handleSessionEnded(
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: true,
+        occurrence: true,
       },
     });
 
@@ -131,7 +131,7 @@ export async function handleSessionEnded(
     // did; `endedReason` distinguishes it from a host closing the room, and
     // `isDeliberateEnd` is what the join gates read. The SLOT only completes
     // once its booked time is actually over.
-    const slotEndsAt = meetingSession.slotOfAppointment.endsAt;
+    const slotEndsAt = meetingSession.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
     await prisma.$transaction(async (tx) => {
@@ -147,8 +147,8 @@ export async function handleSessionEnded(
       // CAS (#1319): a late webhook must not resurrect a CANCELLED slot as
       // COMPLETED. Zero rows is expected here, so log rather than throw; the
       // session row above still records the truth about the call.
-      const moved = await transitionSlotCompletion(tx, {
-        where: { id: meetingSession.slotOfAppointmentId },
+      const moved = await transitionOccurrenceCompletion(tx, {
+        where: { id: meetingSession.appointmentOccurrenceId },
         to: "COMPLETED",
         // Never lift UNVERIFIED: the maintenance drain parked it for a human.
         fromIn: ["SCHEDULED"],
@@ -179,7 +179,7 @@ export async function handleSessionEnded(
     }
 
     // Calculate session duration if we have a start reference
-    const slotStartTime = meetingSession.slotOfAppointment.startsAt;
+    const slotStartTime = meetingSession.occurrence.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
         (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),
@@ -232,7 +232,7 @@ export async function handleCallEnded(
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: true,
+        occurrence: true,
       },
     });
 
@@ -257,7 +257,7 @@ export async function handleCallEnded(
     // #1607 — "End for everyone" during the pre-start device check is not the
     // session ending. `ended_early` is not a deliberate end, so every join gate
     // re-lights and the slot stays SCHEDULED for the real call.
-    const slotStartsAt = meetingSession.slotOfAppointment.startsAt;
+    const slotStartsAt = meetingSession.occurrence.startsAt;
     const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
     const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
@@ -273,8 +273,8 @@ export async function handleCallEnded(
       });
       if (endedBeforeStart) return;
       // CAS (#1319) — see the session_timeout arm above.
-      const moved = await transitionSlotCompletion(tx, {
-        where: { id: meetingSession.slotOfAppointmentId },
+      const moved = await transitionOccurrenceCompletion(tx, {
+        where: { id: meetingSession.appointmentOccurrenceId },
         to: "COMPLETED",
         // Never lift UNVERIFIED: the maintenance drain parked it for a human.
         fromIn: ["SCHEDULED"],
@@ -293,7 +293,7 @@ export async function handleCallEnded(
     });
 
     // Calculate session duration if we have a start reference
-    const slotStartTime = meetingSession.slotOfAppointment.startsAt;
+    const slotStartTime = meetingSession.occurrence.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
         (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),

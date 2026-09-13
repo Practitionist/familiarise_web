@@ -33,6 +33,7 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { liveParticipant } from "@/lib/booking/participants";
 
 // Input validation schemas
 const slotIdSchema = z.string().min(1, "Slot ID is required");
@@ -81,9 +82,9 @@ const collaboratorsSelect = {
 
 /**
  * The plan graph both resolvers authorize against and read identity from.
- * `slotsOfAppointment` is filtered to the caller: a non-empty array is the
- * consultee-side proof of participation, and `take: 1` keeps it an existence
- * check rather than a fetch of every attendee.
+ * `participants` is filtered to the caller: a non-empty array is the
+ * consultee-side proof of a held seat (#1554), and `take: 1` keeps it an
+ * existence check rather than a fetch of every attendee.
  */
 const appointmentAccessSelect = (userId: string) =>
   ({
@@ -93,8 +94,8 @@ const appointmentAccessSelect = (userId: string) =>
     // column on MeetingSession was then read back separately; one column on a
     // query that already runs answers both.
     organizationId: true,
-    slotsOfAppointment: {
-      where: { user: { some: { id: userId } } },
+    participants: {
+      where: liveParticipant(userId),
       select: { id: true },
       take: 1,
     },
@@ -167,7 +168,7 @@ async function readSlotForCaller(slotId: string) {
   const userId = session?.user?.id;
   if (!userId || session.user.banned === true) return null;
 
-  const row = await prisma.slotOfAppointment.findUnique({
+  const row = await prisma.appointmentOccurrence.findUnique({
     where: { id: slotId },
     select: {
       ...anchorSlotSelect,
@@ -179,7 +180,7 @@ async function readSlotForCaller(slotId: string) {
   const { appointment, ...slot } = row;
   const consultantProfileId = session.user.consultantProfileId;
   const entitled =
-    appointment.slotsOfAppointment.length > 0 ||
+    appointment.participants.length > 0 ||
     (!!consultantProfileId &&
       resolvePlanOwnerIds(appointment).includes(consultantProfileId)) ||
     isPrivileged(session.user.role);
@@ -278,7 +279,7 @@ export async function resolveSessionAnchorSlot(
     // The `id` tiebreak makes equal-start rows order deterministically in
     // every query that fetches them, so two surfaces can't disagree about
     // which row leads a run merely by fetching in a different order.
-    const siblings = await prisma.slotOfAppointment.findMany({
+    const siblings = await prisma.appointmentOccurrence.findMany({
       where: { appointmentId: slot.appointmentId, deletedAt: null },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
       select: anchorSlotSelect,
@@ -393,18 +394,10 @@ export async function resolveSessionCallProfile(
     const isGroupEvent =
       appointment.appointmentType === "WEBINAR" ||
       appointment.appointmentType === "CLASS";
-    const siblings = await prisma.slotOfAppointment.findMany({
+    const siblings = await prisma.appointmentOccurrence.findMany({
       where: { appointmentId: anchor.appointmentId, deletedAt: null },
       orderBy: { startsAt: "asc" },
-      select: {
-        ...anchorSlotSelect,
-        // `take: 0` rather than a narrower select, so the row type stays the
-        // same shape on both branches.
-        user: {
-          select: { id: true, name: true },
-          ...(isGroupEvent ? { take: 0 } : {}),
-        },
-      },
+      select: anchorSlotSelect,
     });
     const run = findSessionRun(siblings, validatedSlotId);
     if (!run) return null;
@@ -467,19 +460,23 @@ export async function resolveSessionCallProfile(
       ),
     ];
 
-    // Attendees are named only for the 1:1 types, where both sides are
-    // connected to the slot. A webinar or class can hold hundreds of them and
-    // Stream would reject the oversized request, which would turn a working
-    // join into a failure — so group events name their hosts and nobody else.
+    // Attendees are named only for the 1:1 types. A webinar or class can hold
+    // hundreds of them and Stream would reject the oversized request, which
+    // would turn a working join into a failure — so group events name their
+    // hosts and nobody else. #1554 — the roster is AppointmentParticipant.
     const hosts = new Set(hostUserIds);
-    for (const attendee of run.slots.flatMap((slot) => slot.user)) {
+    const attendees = isGroupEvent
+      ? []
+      : await prisma.appointmentParticipant.findMany({
+          where: { appointmentId: anchor.appointmentId, ...liveParticipant() },
+          select: { user: { select: { id: true, name: true } } },
+        });
+    for (const { user: attendee } of attendees) {
       if (attendee.name) userToName.set(attendee.id, attendee.name);
     }
-    const guestUserIds = isGroupEvent
-      ? []
-      : [
-          ...new Set(run.slots.flatMap((slot) => slot.user.map((u) => u.id))),
-        ].filter((userId) => !hosts.has(userId));
+    const guestUserIds = [
+      ...new Set(attendees.map(({ user }) => user.id)),
+    ].filter((userId) => !hosts.has(userId));
 
     const offeringTitle =
       appointment.consultation?.consultationPlan?.title ??
@@ -582,7 +579,7 @@ export async function findDbMeetingSessionBySlot(
 
   try {
     const meetingSession = await prisma.meetingSession.findUnique({
-      where: { slotOfAppointmentId: validatedSlotId },
+      where: { appointmentOccurrenceId: validatedSlotId },
     });
 
     if (meetingSession) {
@@ -655,7 +652,7 @@ async function refuseMeetingCreation(
   // the row's actual persisted state instead of trusting the payload. The
   // booking's status lives on its PARENT row (consultation/subscription/
   // webinar/class/trial), not on Appointment itself.
-  const dbSlot = await prisma.slotOfAppointment.findUnique({
+  const dbSlot = await prisma.appointmentOccurrence.findUnique({
     where: { id: parsedSlot.data.id },
     select: {
       isTentative: true,
@@ -842,7 +839,7 @@ export async function createDbMeetingSession(
       data: {
         streamCallId: validatedStreamCallId,
         platform: "STREAM",
-        slotOfAppointment: {
+        occurrence: {
           connect: { id: slot.id },
         },
         ...(organizationId
@@ -870,7 +867,7 @@ export async function createDbMeetingSession(
         { slotId: slot.id },
       );
       const existing = await prisma.meetingSession.findUnique({
-        where: { slotOfAppointmentId: slot.id },
+        where: { appointmentOccurrenceId: slot.id },
       });
       if (existing) return existing;
     }
@@ -1287,7 +1284,7 @@ export async function provisionAppointmentMeeting(
     return { ok: true, streamCallId };
   }
 
-  // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
+  // Attached to the anchor, so MeetingSession.appointmentOccurrenceId stays
   // @unique-correct: one session per run, not one per half hour. Re-checks the
   // refusal and the entitlement itself; it is the authoritative write gate and
   // is deliberately not weakened by the hoisted copies above.

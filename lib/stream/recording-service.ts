@@ -48,7 +48,7 @@ export interface StreamRecording {
 export type SyncableSession = {
   id: string;
   streamCallId: string | null;
-  slotOfAppointment: {
+  occurrence: {
     appointment:
       | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
           organizationId: string | null;
@@ -227,7 +227,7 @@ export class RecordingService {
       const recordings = await prisma.recording.findMany({
         where: {
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlanId,
@@ -265,7 +265,7 @@ export class RecordingService {
       const recordings = await prisma.recording.findMany({
         where: {
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlanId,
@@ -324,7 +324,7 @@ export class RecordingService {
         // Owner's webinar recordings
         typeConditions.push({
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlan: { consultantProfileId },
@@ -336,7 +336,7 @@ export class RecordingService {
         // Collaborator's webinar recordings
         typeConditions.push({
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlan: {
@@ -355,7 +355,7 @@ export class RecordingService {
         // Owner's class recordings
         typeConditions.push({
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlan: { consultantProfileId },
@@ -367,7 +367,7 @@ export class RecordingService {
         // Collaborator's class recordings
         typeConditions.push({
           meetingSession: {
-            slotOfAppointment: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlan: {
@@ -496,7 +496,7 @@ export class RecordingService {
         if (webinarPlanIds.length > 0) {
           whereConditions.push({
             meetingSession: {
-              slotOfAppointment: {
+              occurrence: {
                 appointment: {
                   webinar: {
                     webinarPlanId: {
@@ -514,7 +514,7 @@ export class RecordingService {
         if (classPlanIds.length > 0) {
           whereConditions.push({
             meetingSession: {
-              slotOfAppointment: {
+              occurrence: {
                 appointment: {
                   class: {
                     classPlanId: {
@@ -797,7 +797,7 @@ export class RecordingService {
         );
 
         // Generate title from appointment info (same logic as handleRecordingReady)
-        const appointment = session.slotOfAppointment.appointment;
+        const appointment = session.occurrence.appointment;
         const title = generateRecordingTitle(appointment, startDate);
 
         // Calculate Stream URL expiration (2 weeks from now)
@@ -862,7 +862,7 @@ export class RecordingService {
     try {
       // Define the include for meeting sessions with full appointment details
       const meetingSessionInclude = {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -896,7 +896,7 @@ export class RecordingService {
       const meetingSessions = await prisma.meetingSession.findMany({
         where: {
           streamCallId: { not: "" },
-          slotOfAppointment: {
+          occurrence: {
             appointment: {
               OR: [
                 // Owned webinars
@@ -1009,11 +1009,11 @@ export class RecordingService {
           refunds: { select: { amountPaise: true, status: true } },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 include: {
                   meetingSession: {
                     include: {
-                      slotOfAppointment: {
+                      occurrence: {
                         include: {
                           appointment: {
                             include: {
@@ -1053,13 +1053,13 @@ export class RecordingService {
       // Collect all meeting sessions from paid enrollments
       type MeetingSessionWithDetails = NonNullable<
         (typeof paidEnrollments)[0]["appointment"]
-      >["slotsOfAppointment"][0]["meetingSession"];
+      >["occurrences"][0]["meetingSession"];
       const meetingSessions: NonNullable<MeetingSessionWithDetails>[] = [];
 
       for (const payment of paidEnrollments) {
         if (!payment.appointment) continue;
         if (!isPaymentEntitled(payment)) continue; // #689 — skip fully-refunded
-        for (const slot of payment.appointment.slotsOfAppointment) {
+        for (const slot of payment.appointment.occurrences) {
           if (slot.meetingSession && slot.meetingSession.streamCallId) {
             meetingSessions.push(slot.meetingSession);
           }

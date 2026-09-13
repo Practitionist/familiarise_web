@@ -39,7 +39,7 @@ jest.mock("../../lib/prisma", () => ({
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
     // collaborators for the recipient list. Default to none.
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
-    slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
@@ -192,7 +192,7 @@ function makeConsultationAppointment() {
   return {
     id: "apt-1",
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: {
       id: "cons-1",
       consultationPlan: {
@@ -219,7 +219,7 @@ function makeSubscriptionAppointment() {
   return {
     id: "apt-1",
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: {
       id: "sub-1",
@@ -246,7 +246,7 @@ function makeWebinarAppointment() {
   return {
     id: "apt-1",
     appointmentType: "WEBINAR",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: {
@@ -264,7 +264,7 @@ function makeClassAppointment() {
   return {
     id: "apt-1",
     appointmentType: "CLASS",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: null,
@@ -311,9 +311,9 @@ function makeMockTx(appointmentData: any = null) {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // transitionSlotCompletion reads the from-status, then moves the cohort
+    // transitionOccurrenceCompletion reads the from-status, then moves the cohort
     // with updateManyAndReturn so each moved id gets its history row.
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),

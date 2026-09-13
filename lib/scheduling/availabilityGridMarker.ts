@@ -58,15 +58,15 @@ export interface AvailabilityGridMarker {
 
 /**
  * One statement, one round trip. Every consultant-scoped arm is an index probe
- * (`SlotOfAppointment_consultantProfileId_startsAt_endsAt_idx`,
- * `_SlotOfAppointmentToUser_B_index`, the four `*Plan_consultantProfileId_idx`,
- * `Payment_expiresAt_paymentStatus_idx`).
+ * (`AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`,
+ * `AppointmentParticipant_userId_status_idx`, the four
+ * `*Plan_consultantProfileId_idx`, `Payment_expiresAt_paymentStatus_idx`).
  *
  * `reach` is the set of appointments that can paint a cell on this calendar:
- * the allocator stamps every slot it writes with BOTH the denormalized
- * consultantProfileId (#440) and a `user` edge to the consultant, and the
- * request arm below rides that set, so a status flip on a booking where the
- * consultant is the CONSULTEE is covered too.
+ * the allocator stamps every occurrence it writes with the denormalized
+ * consultantProfileId (#440) and seats the consultant on the appointment's
+ * roster (#1554), and the request arm below rides that set, so a status flip
+ * on a booking where the consultant is the CONSULTEE is covered too.
  *
  * `consulteeUserId` is the empty string when absent: an index probe that
  * matches nothing, which keeps this one SQL string rather than two.
@@ -85,18 +85,16 @@ export async function readAvailabilityGridMarker(
     ),
     reach AS (
       SELECT s."appointmentId" AS id
-        FROM "SlotOfAppointment" s
+        FROM "AppointmentOccurrence" s
        WHERE s."consultantProfileId" = ${consultantId}
       UNION
-      SELECT s."appointmentId"
-        FROM "SlotOfAppointment" s
-        JOIN "_SlotOfAppointmentToUser" e ON e."A" = s.id
-        JOIN consultant c ON c."userId" = e."B"
+      SELECT p."appointmentId"
+        FROM "AppointmentParticipant" p
+        JOIN consultant c ON c."userId" = p."userId"
       UNION
-      SELECT s."appointmentId"
-        FROM "SlotOfAppointment" s
-        JOIN "_SlotOfAppointmentToUser" e ON e."A" = s.id
-       WHERE e."B" = ${consulteeKey}
+      SELECT p."appointmentId"
+        FROM "AppointmentParticipant" p
+       WHERE p."userId" = ${consulteeKey}
     )
     SELECT
       (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
@@ -118,7 +116,7 @@ export async function readAvailabilityGridMarker(
          FROM "Payment" p
          JOIN reach r ON r.id = p."appointmentId") AS "paymentsUpdatedAt",
       (SELECT max(s."updatedAt")
-         FROM "SlotOfAppointment" s
+         FROM "AppointmentOccurrence" s
          JOIN reach r ON r.id = s."appointmentId") AS "slotsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t

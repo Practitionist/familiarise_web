@@ -51,8 +51,8 @@ export async function tryAutoConfirmProposal(
       appointmentId: true,
       initiatorRole: true,
       status: true,
-      releasedSlotIds: true,
-      proposedSlots: {
+      releasedOccurrenceIds: true,
+      proposedTimes: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true, endsAt: true },
       },
@@ -99,7 +99,7 @@ export async function tryAutoConfirmProposal(
         // exactly the released ones — so confirmed sessions elsewhere in the
         // booking survive untouched.
         mode: "manual",
-        slots: request.proposedSlots.map((p) => p.startsAt.toISOString()),
+        slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
         // Consultant-wide lock: these times were not picked per-day by a human, so
         // the day-sharded manual key would let two concurrent confirmations each
         // pass the per-week cap on a stale count (#860 shards for throughput; GiST

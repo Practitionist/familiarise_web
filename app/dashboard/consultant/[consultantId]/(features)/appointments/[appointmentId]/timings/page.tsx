@@ -62,8 +62,8 @@ async function manageTimingsAllowed(
   // Program-wide, same as the menu's group card: a subscription session is one
   // Appointment among several and any of them may carry the committed time.
   const slots = [
-    ...detail.appointment.slotsOfAppointment,
-    ...detail.siblings.flatMap((sibling) => sibling.slotsOfAppointment),
+    ...detail.appointment.occurrences,
+    ...detail.siblings.flatMap((sibling) => sibling.occurrences),
   ];
   return allowsManageTimings(kind, upcomingSlots(slots));
 }

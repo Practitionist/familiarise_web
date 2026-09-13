@@ -35,7 +35,7 @@ describe("pg-errors predicates", () => {
       expect(
         isExclusionViolation({
           message:
-            'conflicting key value violates exclusion constraint "slot_no_confirmed_overlap"',
+            'conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap"',
         }),
       ).toBe(true);
     });

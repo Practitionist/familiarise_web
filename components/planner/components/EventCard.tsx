@@ -187,8 +187,7 @@ function getEventStatus(event: Event): WebinarStatus | ClassStatus | null {
 
 function getEventStartDate(event: Event): Date | null {
   if (isWebinarEvent(event)) {
-    const startTimeString =
-      event.appointment?.slotsOfAppointment?.[0]?.startsAt;
+    const startTimeString = event.appointment?.occurrences?.[0]?.startsAt;
     return startTimeString ? new Date(startTimeString) : null;
   }
   if (isClassEvent(event)) {
@@ -205,7 +204,7 @@ function getEventStartDate(event: Event): Date | null {
     // only the window the run was authored with and drifts from the sessions
     // actually allocated; it stays as the fallback for a class that has none yet.
     const firstSlotStartsAt = (event.appointments ?? [])
-      .flatMap((appointment) => appointment.slotsOfAppointment ?? [])
+      .flatMap((appointment) => appointment.occurrences ?? [])
       .filter((slot) => !slot.deletedAt)
       .map((slot) => new Date(slot.startsAt).getTime())
       .reduce<number | null>(

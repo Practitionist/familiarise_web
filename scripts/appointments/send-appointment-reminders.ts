@@ -14,6 +14,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "../../lib/novu/service";
@@ -55,7 +56,7 @@ async function sendRemindersForWindow(window: {
   let sent = 0;
 
   // Find slots starting within the reminder window
-  const upcomingSlots = await prisma.slotOfAppointment.findMany({
+  const upcomingSlots = await prisma.appointmentOccurrence.findMany({
     where: {
       startsAt: {
         gte: windowStart,
@@ -67,6 +68,11 @@ async function sendRemindersForWindow(window: {
     include: {
       appointment: {
         include: {
+          // #1554 — the roster: every live seat holder.
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
           consultation: {
             include: {
               consultationPlan: {
@@ -123,8 +129,6 @@ async function sendRemindersForWindow(window: {
           },
         },
       },
-      // Get participant user IDs via M2M relation
-      user: { select: { id: true, name: true } },
     },
   });
 
@@ -196,8 +200,8 @@ async function sendRemindersForWindow(window: {
           "Consultant";
         // Attendees, the host (missing until #1580 — only the slot's joined
         // users were reminded) and the accepted collaborators (C-P1-5).
-        for (const user of slot.user) {
-          userIds.push(user.id);
+        for (const seat of apt.participants) {
+          userIds.push(seat.userId);
         }
         const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
         if (hostId) userIds.push(hostId);
@@ -210,8 +214,8 @@ async function sendRemindersForWindow(window: {
         consultantName =
           apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
         // Same three parties as the webinar branch above.
-        for (const user of slot.user) {
-          userIds.push(user.id);
+        for (const seat of apt.participants) {
+          userIds.push(seat.userId);
         }
         const hostId = apt.class.classPlan?.consultantProfile?.userId;
         if (hostId) userIds.push(hostId);

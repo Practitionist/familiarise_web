@@ -107,7 +107,7 @@ const recordingFixture = {
     id: "ms-1",
     streamCallId: "slot-abc",
     organizationId: "org-1",
-    slotOfAppointment: { appointment: { id: "appt-1" } },
+    occurrence: { appointment: { id: "appt-1" } },
   },
 };
 

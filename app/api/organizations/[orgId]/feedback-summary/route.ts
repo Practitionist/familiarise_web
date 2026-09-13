@@ -85,10 +85,10 @@ export async function GET(
       userId: true,
       rating: true,
       createdAt: true,
-      // `SlotOfAppointment.consultantProfileId` is a denormalised bare string
+      // `AppointmentOccurrence.consultantProfileId` is a denormalised bare string
       // with no relation — it exists to feed the btree_gist overlap constraint —
       // so the name is resolved in one follow-up query below rather than joined.
-      slotOfAppointment: { select: { consultantProfileId: true } },
+      occurrence: { select: { consultantProfileId: true } },
     },
   });
 
@@ -119,7 +119,7 @@ export async function GET(
   const UNATTRIBUTED = "";
   const byConsultant = new Map<string, typeof rows>();
   for (const row of rows) {
-    const id = row.slotOfAppointment?.consultantProfileId ?? UNATTRIBUTED;
+    const id = row.occurrence?.consultantProfileId ?? UNATTRIBUTED;
     const entry = byConsultant.get(id);
     if (entry) entry.push(row);
     else byConsultant.set(id, [row]);

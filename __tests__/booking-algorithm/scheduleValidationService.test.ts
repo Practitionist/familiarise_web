@@ -115,7 +115,7 @@ describe("checkSlotAvailability", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "existing-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: slots[0],
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
@@ -137,9 +137,8 @@ describe("checkSlotAvailability", () => {
   it("uses the fixed 30-minute slot window for the conflict envelope", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
-    const slotFilter = where.AND.find(
-      (clause: any) => clause.slotsOfAppointment,
-    ).slotsOfAppointment.some.AND;
+    const slotFilter = where.AND.find((clause: any) => clause.occurrences)
+      .occurrences.some.AND;
     const ltClause = slotFilter.find((c: any) => c.startsAt).startsAt.lt;
     const gtClause = slotFilter.find((c: any) => c.endsAt).endsAt.gt;
     // A single 10:00 slot must produce a [10:00, 10:30) envelope.
@@ -153,9 +152,8 @@ describe("checkSlotAvailability", () => {
   it("excludes deletedAt slot tombstones from the conflict scan", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
-    const slotFilter = where.AND.find(
-      (clause: any) => clause.slotsOfAppointment,
-    ).slotsOfAppointment.some.AND;
+    const slotFilter = where.AND.find((clause: any) => clause.occurrences)
+      .occurrences.some.AND;
     expect(slotFilter).toContainEqual({ deletedAt: null });
     expect(JSON.stringify(slotFilter)).not.toContain("completionStatus");
   });
@@ -170,15 +168,20 @@ describe("checkSlotAvailability", () => {
   it("mirrors the parent slot predicate into the conflict query's include", async () => {
     await service.checkSlotAvailability(futureSlots(2), "user-1");
     const { where, include } = mockPrisma.appointment.findMany.mock.calls[0][0];
-    const parentFilter = where.AND.find(
-      (clause: any) => clause.slotsOfAppointment,
-    ).slotsOfAppointment.some.AND;
-    const includeFilter = include.slotsOfAppointment.where.AND;
-    // Same four conditions, same order: envelope ×2, participants, tombstone.
+    const parentFilter = where.AND.find((clause: any) => clause.occurrences)
+      .occurrences.some.AND;
+    const includeFilter = include.occurrences.where.AND;
+    // Same three conditions, same order: envelope ×2, tombstone. #1554 — the
+    // participant predicate sits on the appointment, not on the rows.
     expect(includeFilter).toEqual(parentFilter);
     expect(includeFilter).toContainEqual({ deletedAt: null });
-    expect(includeFilter).toContainEqual({
-      user: { some: { id: { in: ["user-1"] } } },
+    expect(where.AND).toContainEqual({
+      participants: {
+        some: {
+          userId: { in: ["user-1"] },
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        },
+      },
     });
   });
 
@@ -187,7 +190,7 @@ describe("checkSlotAvailability", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "expired-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: slots[0],
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
@@ -214,7 +217,7 @@ describe("checkSlotAvailability", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "expired-sub-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: slots[0],
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
@@ -241,7 +244,7 @@ describe("checkSlotAvailability", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "active-sub-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             startsAt: slots[0],
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
@@ -582,14 +585,14 @@ describe("validate: per-day session cap (#898)", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "existing-1",
-        slotsOfAppointment: [
+        occurrences: [
           { startsAt: new Date("2025-06-02T09:00:00Z"), isTentative: false },
           { startsAt: new Date("2025-06-02T09:30:00Z"), isTentative: false },
         ],
       },
       {
         id: "existing-2",
-        slotsOfAppointment: [
+        occurrences: [
           { startsAt: new Date("2025-06-02T11:00:00Z"), isTentative: false },
           { startsAt: new Date("2025-06-02T11:30:00Z"), isTentative: false },
         ],
@@ -802,7 +805,7 @@ describe("validate: class event", () => {
       mockPrisma.appointment.findMany.mockResolvedValueOnce([
         {
           id: "confirmed-apt",
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-06-18T10:00:00Z"), isTentative: false },
             { startsAt: new Date("2025-06-18T10:30:00Z"), isTentative: false },
           ],
@@ -831,7 +834,7 @@ describe("validate: class event", () => {
       mockPrisma.appointment.findMany.mockResolvedValueOnce([
         {
           id: "tentative-apt",
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-06-18T10:00:00Z"), isTentative: true },
             { startsAt: new Date("2025-06-18T10:30:00Z"), isTentative: true },
           ],

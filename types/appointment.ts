@@ -19,9 +19,8 @@ export type TConsultation = Prisma.ConsultationGetPayload<{
     };
     appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
             meetingSession: {
               select: { id: true; endedAt: true; endedReason: true };
             };
@@ -52,9 +51,8 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
     };
     appointments: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
             meetingSession: {
               select: { id: true; endedAt: true; endedReason: true };
             };
@@ -81,9 +79,8 @@ export type TWebinar = Prisma.WebinarGetPayload<{
     };
     appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
             meetingSession: {
               select: { id: true; endedAt: true; endedReason: true };
             };
@@ -116,9 +113,8 @@ export type TClass = Prisma.ClassGetPayload<{
     };
     appointments: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
             meetingSession: {
               select: { id: true; endedAt: true; endedReason: true };
             };
@@ -201,9 +197,8 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
       };
     };
     payment: true;
-    slotsOfAppointment: {
+    occurrences: {
       include: {
-        user: true;
         meetingSession: {
           select: { id: true; endedAt: true; endedReason: true };
         };
@@ -213,4 +208,4 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
 }>;
 
 // Extract slot type from TAppointment for reuse
-export type TSlotOfAppointment = TAppointment["slotsOfAppointment"][number];
+export type TAppointmentOccurrence = TAppointment["occurrences"][number];

@@ -4,7 +4,7 @@
 
 /**
  * #1061 — a booking longer than 30 minutes is stored as N consecutive
- * `SlotOfAppointment` rows, but the video room used to be keyed to whichever
+ * `AppointmentOccurrence` rows, but the video room used to be keyed to whichever
  * single row the clicking surface happened to pick. Two people in the same
  * booking could therefore sit alone in two different Stream rooms.
  *

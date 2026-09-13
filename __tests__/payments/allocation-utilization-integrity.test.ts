@@ -121,7 +121,7 @@ function subscriptionFixture() {
       {
         id: "placeholder-apt",
         organizationId: "org-1",
-        slotsOfAppointment: [],
+        occurrences: [],
         payment: [ORG_PAYMENT],
       },
     ],
@@ -158,7 +158,7 @@ const mockTx = {
     update: jest.fn(),
     deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findFirst: jest.fn().mockResolvedValue(null),
     update: jest.fn(),
     updateMany: jest.fn(),
@@ -186,7 +186,7 @@ beforeEach(() => {
   mockTx.appointment.findMany.mockResolvedValue([]);
   mockTx.appointment.create.mockResolvedValue({
     id: "apt-new-1",
-    slotsOfAppointment: [],
+    occurrences: [],
   });
   mockTx.membership.findUnique.mockResolvedValue({
     id: "membership-1",
@@ -284,13 +284,13 @@ describe("removed subscription sessions return the engagement", () => {
         {
           id: "placeholder-apt",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [ORG_PAYMENT],
         },
         {
           id: "apt-new-1",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [],
         },
       ],
@@ -323,13 +323,13 @@ describe("removed subscription sessions return the engagement", () => {
         {
           id: "placeholder-apt",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [ORG_PAYMENT],
         },
         {
           id: "apt-new-1",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [],
         },
       ],
@@ -355,19 +355,19 @@ describe("removed subscription sessions return the engagement", () => {
         {
           id: "placeholder-apt",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [ORG_PAYMENT],
         },
         {
           id: "apt-old-1",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [],
         },
         {
           id: "apt-new-1",
           organizationId: "org-1",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: [],
         },
       ],

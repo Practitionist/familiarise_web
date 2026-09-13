@@ -65,7 +65,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Map recordings to response format with best URLs (async — presigned URLs)
     const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
-      const slot = recording.meetingSession.slotOfAppointment;
+      const slot = recording.meetingSession.occurrence;
       const appointment = slot.appointment;
 
       let planType: "webinar" | "class" | null = null;
@@ -82,9 +82,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         planTitle = appointment.class.classPlan.title;
       }
 
-      // Extract participant info from slot users
-      const allNames = slot.user
-        .map((u) => u.name)
+      // Participant names come from the appointment's live roster (#1554)
+      const allNames = appointment.participants
+        .map((participant) => participant.user.name)
         .filter((n): n is string => n !== null);
       const participantNames = allNames.slice(0, 3);
       const participantCount = allNames.length;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import { endOfDay, parseISO, startOfDay } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
@@ -163,16 +164,10 @@ async function removeBookedSlots(
 
   const appointments = await prisma.appointment.findMany({
     where: {
-      slotsOfAppointment: {
-        some: {
-          startsAt: { in: candidateTimes },
-          // Scope to this consultant only — prevents Consultant A's bookings
-          // from incorrectly hiding Consultant B's availability
-          user: {
-            some: { id: consultantUserId },
-          },
-        },
-      },
+      // Scope to this consultant only — prevents Consultant A's bookings
+      // from incorrectly hiding Consultant B's availability (#1554 roster).
+      participants: { some: liveParticipant(consultantUserId) },
+      occurrences: { some: { startsAt: { in: candidateTimes } } },
     },
     // Over-fetch fix: the old shape was an unfiltered include returning
     // EVERY slot of every matched appointment (a 200-slot subscription
@@ -180,7 +175,7 @@ async function removeBookedSlots(
     // request. Only candidate-time slots can block a candidate, so the
     // include is filtered to them and nothing else is selected.
     select: {
-      slotsOfAppointment: {
+      occurrences: {
         where: { startsAt: { in: candidateTimes } },
         select: { startsAt: true },
       },
@@ -189,7 +184,7 @@ async function removeBookedSlots(
 
   const bookedSlotTimes = new Set(
     appointments.flatMap((a) =>
-      a.slotsOfAppointment.map((slot) =>
+      a.occurrences.map((slot) =>
         formatInTimeZone(slot.startsAt, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
       ),
     ),
@@ -295,7 +290,7 @@ function mapWeeklySlotToTiming(
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
     availabilityWindowId: slot.id,
-    slotOfAppointmentId: "",
+    appointmentOccurrenceId: "",
     localStartTime: formatInTimeZone(adjustedStart, userTimeZone, "HH:mm"),
     localEndTime: formatInTimeZone(adjustedEnd, userTimeZone, "HH:mm"),
     type: "WEEKLY" as const,
@@ -335,7 +330,7 @@ function mapCustomSlotToTiming(
       "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
     ),
     availabilityWindowId: slot.id,
-    slotOfAppointmentId: "",
+    appointmentOccurrenceId: "",
     localStartTime: formatInTimeZone(slotStart, userTimeZone, "HH:mm"),
     localEndTime: formatInTimeZone(slotEnd, userTimeZone, "HH:mm"),
     // Added type field to satisfy TIntervalTiming interface requirements

@@ -68,7 +68,7 @@ export default async function TrialCheckoutPage({
       },
       appointment: {
         select: {
-          slotsOfAppointment: {
+          occurrences: {
             select: { startsAt: true },
             orderBy: { startsAt: "asc" },
             take: 1,
@@ -94,7 +94,7 @@ export default async function TrialCheckoutPage({
   // guessable id would leak who is trialling whom.
   if (!trial || trial.consulteeProfile.userId !== session.user.id) notFound();
 
-  const startsAt = trial.appointment?.slotsOfAppointment[0]?.startsAt ?? null;
+  const startsAt = trial.appointment?.occurrences[0]?.startsAt ?? null;
   // Prefer the frozen charge; fall back to the plan only before a payment
   // exists, where the plan price genuinely IS the quote.
   const chargedPayment = trial.appointment?.payment[0] ?? null;

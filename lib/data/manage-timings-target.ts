@@ -129,7 +129,7 @@ export async function readManageTimingsTarget(
       ? [appointment, ...siblings]
       : null;
   const scheduled = program?.filter(
-    (row) => row.slotsOfAppointment.length > 0,
+    (row) => row.occurrences.length > 0,
   );
 
   // The PLAN's count, not the number of Appointment rows that happen to carry
@@ -163,8 +163,8 @@ export async function readManageTimingsTarget(
       // `include` and carry the attendee list and recording URLs with them,
       // which this route has no business shipping to the client.
       slots: [
-        ...appointment.slotsOfAppointment,
-        ...siblings.flatMap((sibling) => sibling.slotsOfAppointment),
+        ...appointment.occurrences,
+        ...siblings.flatMap((sibling) => sibling.occurrences),
       ].map(toSlotLike),
       consultation: appointment.consultation,
       subscription: appointment.subscription,
@@ -173,7 +173,7 @@ export async function readManageTimingsTarget(
     },
     planOwnerIds,
     completedSessions: scheduled
-      ? scheduled.filter((row) => isCompleted(row.slotsOfAppointment)).length
+      ? scheduled.filter((row) => isCompleted(row.occurrences)).length
       : undefined,
     groupTotalSessions,
   };

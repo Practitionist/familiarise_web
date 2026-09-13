@@ -63,8 +63,6 @@ model User {
   orgWorkspaceProfile   OrgWorkspaceProfile?
   orgWorkspaceProfileId String?              @unique
 
-  slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
-
   rescheduleRequestsInitiated RescheduleRequest[]      @relation("RescheduleInitiator")
   // #1319 — A9 participant edge, A12 status-history actor, cancelledBy FKs.
   appointmentParticipations   AppointmentParticipant[]
@@ -72,7 +70,7 @@ model User {
   consultationsCancelled      Consultation[]           @relation("ConsultationCancelledBy")
   subscriptionsCancelled      Subscription[]           @relation("SubscriptionCancelledBy")
   rescheduleRequestsResolved  RescheduleRequest[]      @relation("RescheduleResolver")
-  rescheduleSlotsProposed     RescheduleProposedSlot[] @relation("ProposedSlotAuthor")
+  rescheduleTimesProposed     RescheduleProposedTime[] @relation("ProposedTimeAuthor")
 
   // Newsletter signup, when the subscriber was signed in at the time.
   waitlistSubscriptions Waitlist[]
@@ -570,12 +568,12 @@ enum SupportFlowOutcomeKind {
 model AppointmentFeedback {
   id String @id @default(uuid())
 
-  // The call being rated. Nullable only for rows written before feedback moved
+  // The held call being rated. Nullable only for rows written before feedback moved
   // to the per-call unit; the API requires it.
-  slotOfAppointment   SlotOfAppointment? @relation(fields: [slotOfAppointmentId], references: [id], onDelete: Cascade)
-  slotOfAppointmentId String?
+  occurrence              AppointmentOccurrence? @relation(fields: [appointmentOccurrenceId], references: [id], onDelete: Cascade)
+  appointmentOccurrenceId String?
 
-  // Kept alongside the slot: the org quality aggregate and every appointment-
+  // Kept alongside the occurrence: the org quality aggregate and every appointment-
   // scoped read filter on this, and denormalizing it avoids a join on the
   // hottest path.
   appointmentId  String
@@ -608,10 +606,9 @@ model AppointmentFeedback {
   excludedFromAggregateAt DateTime?          @db.Timestamptz
   moderationActions       ModerationAction[]
 
-  // One rating per person per CALL. Rows predating the column carry a NULL slot
-  // and Postgres treats a NULL key as distinct, so they coexist rather than
-  // colliding on the appointment they share.
-  @@unique([slotOfAppointmentId, userId])
+  // One rating per person per CALL. Rows predating the column carry a NULL
+  // occurrence and Postgres treats a NULL key as distinct, so they coexist.
+  @@unique([appointmentOccurrenceId, userId])
   // Still the unit for "show me this booking's feedback".
   @@index([appointmentId, userId])
   // The org aggregate filters raterRole before the date range, so
@@ -4340,9 +4337,9 @@ model Appointment {
   cancellationPolicy   CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
   cancellationPolicyId String?
 
-  id                 String              @id @default(uuid())
-  appointmentType    AppointmentsType
-  slotsOfAppointment SlotOfAppointment[]
+  id              String                  @id @default(uuid())
+  appointmentType AppointmentsType
+  occurrences     AppointmentOccurrence[]
 
   // Dedupe surface for allocation retries (client double-submit, webhook
   // redelivery): the allocate routes read the Idempotency-Key header and
@@ -4430,13 +4427,9 @@ model Appointment {
   @@index([cancellationPolicyId])
 }
 
-/// #1319 A9 (adopted, schema-only) — the participant edge the implicit
-/// SlotOfAppointment↔User m:n cannot carry: role, per-seat status, and which
-/// Payment funded the seat. Written by every slot-connect writer in the SAME
-/// transaction; read by nothing in production yet (readers flip in a later
-/// epic), so it is a shadow write whose only consumer is the drift assertion
-/// in scripts/appointments/reconcile-slot-availability.ts. Added before the
-/// pre-MVP reset so it is populated from day one and never backfilled.
+/// #1319 A9 / #1554 — the ONLY participant list: role, per-seat status, and which
+/// Payment funded the seat. Written by every creation path in the SAME transaction
+/// (#1544); its unique is the #827 double-booking guard since the per-occurrence m:n went.
 model AppointmentParticipant {
   id String @id @default(uuid())
 
@@ -4518,7 +4511,7 @@ enum BookingHistoryEntity {
   CLASS
   TRIAL
   RESCHEDULE_REQUEST
-  SLOT
+  OCCURRENCE
 }
 
 enum AppointmentsType {
@@ -4607,16 +4600,16 @@ model RescheduleRequest {
   status RescheduleRequestStatus @default(PENDING_REVIEW)
   reason String?
 
-  /// The slots being released. Held as ids rather than a relation because the
+  /// The occurrences being released. Held as ids rather than a relation because the
   /// rows stay on the appointment (flipped to RESCHEDULED) and are re-confirmed
   /// in place when a proposal is accepted.
-  releasedSlotIds String[]
+  releasedOccurrenceIds String[]
 
   /// 1 = the opening proposal, 2 = the single permitted counter. There is no
   /// round 3; an unresolved counter falls back to consultant allocation.
   round Int @default(1)
 
-  /// min(now + 72h, first released slot − 24h). A proposal on a session three
+  /// min(now + 72h, first released occurrence − 24h). A proposal on a call three
   /// months out can wait days; one on a session this week has to resolve before
   /// the session itself arrives, so a single fixed timer gets one case wrong.
   expiresAt DateTime @db.Timestamptz
@@ -4657,7 +4650,7 @@ model RescheduleRequest {
   preferredTimeOfDay ReschedulePreferredTimeOfDay?
   preferredDays      ReschedulePreferredDays?
 
-  proposedSlots RescheduleProposedSlot[]
+  proposedTimes RescheduleProposedTime[]
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4670,8 +4663,9 @@ model RescheduleRequest {
   @@index([organizationId])
 }
 
-/// One concrete time offered as a replacement, by whichever side proposed it.
-model RescheduleProposedSlot {
+/// One concrete time offered as a replacement, by whichever side proposed it;
+/// it becomes an occurrence only if accepted (#1554).
+model RescheduleProposedTime {
   id String @id @default(uuid())
 
   rescheduleRequest   RescheduleRequest @relation(fields: [rescheduleRequestId], references: [id], onDelete: Cascade)
@@ -4683,7 +4677,7 @@ model RescheduleProposedSlot {
   /// Which round offered this; round 2 rows are the counter-offer.
   round Int @default(1)
 
-  proposedBy   User   @relation("ProposedSlotAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
+  proposedBy   User   @relation("ProposedTimeAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
   proposedById String
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
@@ -4894,14 +4888,11 @@ model PlanFaq {
   @@index([classPlanId, order])
 }
 
-model SlotOfAppointment {
+/// #1554 — one held call of an appointment. Who attends is AppointmentParticipant
+/// (#827 guard lives on its unique); the overlap guard is the range exclusion sidecar.
+model AppointmentOccurrence {
   id String @id @default(uuid())
 
-  /// #834 — the implicit m:n join table's unique index on (A,B) is
-  /// load-bearing: it makes concurrent checkout `connect` calls
-  /// double-assignment-safe. Restored automatically at every push/reset;
-  /// do not convert to an explicit join model without re-declaring it.
-  user     User[]                @relation("SlotOfAppointmentToUser")
   // #705 — the per-call private rating.
   feedback AppointmentFeedback[]
 
@@ -4909,8 +4900,8 @@ model SlotOfAppointment {
   endsAt      DateTime @db.Timestamptz
   isTentative Boolean  @default(false)
 
-  completionStatus SlotCompletionStatus @default(SCHEDULED)
-  completedAt      DateTime?            @db.Timestamptz
+  completionStatus OccurrenceCompletionStatus @default(SCHEDULED)
+  completedAt      DateTime?                  @db.Timestamptz
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -4918,9 +4909,9 @@ model SlotOfAppointment {
   /// #440 — denormalized consultant for the DB-level overlap guard. The
   /// exclusion constraint (btree_gist on (consultantProfileId,
   /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
-  /// sidecar (prisma/sql/check-constraints.sql: slot_no_confirmed_overlap); a
+  /// sidecar (prisma/sql/check-constraints.sql: occurrence_no_confirmed_overlap); a
   /// violation surfaces as Postgres 23P01 → 409 (SchedulingService
-  /// .classifyError). Nullable for attendee (webinar/class) slots, which the
+  /// .classifyError). Nullable for attendee (webinar/class) rows, which the
   /// partial-index guard excludes.
   consultantProfileId String?
 
@@ -4944,15 +4935,15 @@ model SlotOfAppointment {
   @@index([deletedAt])
 }
 
-enum SlotCompletionStatus {
+enum OccurrenceCompletionStatus {
   SCHEDULED // Default — future, not yet happened
-  COMPLETED // Session held (MeetingSession.endedAt OR manual mark)
-  UNVERIFIED // Past + no MeetingSession record (may be offline session)
+  COMPLETED // Call held (MeetingSession.endedAt OR manual mark)
+  UNVERIFIED // Past + no MeetingSession record (may be an offline call)
   CANCELLED // Explicitly cancelled before it occurred
   /// KEEP + WIRE decision (2026-06-10 audit): reschedule historically rode
   /// the isTentative boolean and never wrote this value; the reschedule flow
-  /// now stamps replaced slots RESCHEDULED so lifecycle is explicit.
-  RESCHEDULED // Replaced by a later slot (via reschedule/reallocation)
+  /// now stamps replaced occurrences RESCHEDULED so lifecycle is explicit.
+  RESCHEDULED // Replaced by a later occurrence (via reschedule/reallocation)
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
@@ -4977,16 +4968,16 @@ model MeetingSession {
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
   recordingConsents MeetingRecordingConsent[] // #1134 P1-7
 
-  slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAppointmentId String            @unique
+  occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String                @unique
 
-  /// Denormalized from `slotOfAppointment.appointment.organizationId` —
+  /// Denormalized from `occurrence.appointment.organizationId` —
   /// the canonical tenant key (#674). Lets org-scoped Stream call audit
   /// queries (e.g. `/api/organizations/[orgId]/stream/calls`) index
   /// directly on (organizationId, createdAt) instead of joining
-  /// MeetingSession → SlotOfAppointment → Appointment. Nullable because
+  /// MeetingSession → AppointmentOccurrence → Appointment. Nullable because
   /// platform calls (personal bookings) have no org context. Written at
-  /// MeetingSession.create time alongside slotOfAppointmentId; never
+  /// MeetingSession.create time alongside appointmentOccurrenceId; never
   /// updated after.
   organizationId String?
   organization   Organization? @relation("StreamSessionByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -5225,7 +5216,7 @@ model Recording {
   meetingSessionId String
 
   // #674 personal-vs-org scope split — denormalized via parent appointment
-  // (Recording → MeetingSession → SlotOfAppointment → Appointment.organizationId).
+  // (Recording → MeetingSession → AppointmentOccurrence → Appointment.organizationId).
   organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 

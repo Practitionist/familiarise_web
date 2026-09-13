@@ -7,7 +7,7 @@ export type TIntervalTiming = {
   startsAt: string;
   endsAt: string;
   availabilityWindowId: string;
-  slotOfAppointmentId: string;
+  appointmentOccurrenceId: string;
   localStartTime: string;
   localEndTime: string;
   isAllocated?: boolean;

@@ -105,7 +105,7 @@ function dbOccupying(instants: Date[]) {
                 consultation: { status: "SCHEDULED" },
                 subscription: null,
                 payment: [],
-                slotsOfAppointment: instants.map((startsAt, i) => ({
+                occurrences: instants.map((startsAt, i) => ({
                   id: `booked-slot-${i}`,
                   startsAt,
                 })),
@@ -394,7 +394,7 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
       [
         {
           id: "surviving-appointment",
-          slotsOfAppointment: [{ id: "s1", startsAt: survivor }],
+          occurrences: [{ id: "s1", startsAt: survivor }],
         },
       ],
     );
@@ -476,7 +476,7 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
       [
         {
           id: "surviving-appointment",
-          slotsOfAppointment: [{ id: "s1", startsAt: firstSaturday }],
+          occurrences: [{ id: "s1", startsAt: firstSaturday }],
         },
       ],
     );

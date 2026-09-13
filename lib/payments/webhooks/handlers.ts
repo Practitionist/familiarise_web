@@ -9,6 +9,7 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import {
+  liveParticipant,
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
@@ -19,7 +20,7 @@ import {
   PaymentStatus,
   Prisma,
   AppointmentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   TrialSessionStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
@@ -28,7 +29,7 @@ import {
   REQUEST_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   CLASS_EVENT_ALLOWED_FROM,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -37,7 +38,6 @@ import {
   assertSingleContiguousLiveRun,
   buildContiguousSlotAtomsForWindow,
 } from "@/lib/appointments/contiguous-slot-run";
-import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
@@ -676,7 +676,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // match the row.
         ...capturedGatewayId,
         description:
-          "Refund pending: legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap) — booking NOT confirmed.",
+          "Refund pending: legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap) — booking NOT confirmed.",
       },
     });
     if (restamped.count === 0) {
@@ -686,7 +686,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         orderId: paymentIntentId,
         observedStatus: loser.paymentStatus,
         reason:
-          "legacy-shape capture overlapped a confirmed booking (slot_no_confirmed_overlap)",
+          "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
       });
       return;
     }
@@ -1050,7 +1050,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
     // #1085 — the template renders a session time; omitting it left an empty
     // placeholder in the user's very first booking notification.
-    const firstSlot = await prisma.slotOfAppointment.findFirst({
+    const firstSlot = await prisma.appointmentOccurrence.findFirst({
       where: { appointmentId },
       orderBy: { startsAt: "asc" },
       select: { startsAt: true },
@@ -1446,17 +1446,16 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
     // This creator only runs AFTER capture, so confirmed is the same end state
     // by a shorter road — confirmExistingAppointment re-flips it either way.
     isTentative: false,
-    userIds: [consultantUserId, data.userId],
   });
 
   const appointment = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.CONSULTATION,
       consultationId: consultation.id,
-      slotsOfAppointment: { create: slotAtoms },
+      occurrences: { create: slotAtoms },
       // #1319 A9 — legacy-shape capture creates the appointment itself, so the
       // participant rows are born here rather than flipped by the confirm path.
-      // One row per user the atoms connect: the consultant attends too.
+      // One row per party: the consultant attends too.
       participants: {
         create: [
           { userId: consultantUserId, role: "CONSULTANT", status: "CONFIRMED" },
@@ -1465,13 +1464,13 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
       },
     },
     include: {
-      slotsOfAppointment: true,
+      occurrences: true,
     },
   });
 
   // #1071 — assert before the transaction commits, not after a reader trips
   // over it. Free: the rows are already in hand from the create's include.
-  assertSingleContiguousLiveRun(appointment.slotsOfAppointment);
+  assertSingleContiguousLiveRun(appointment.occurrences);
 
   return appointment;
 }
@@ -1534,7 +1533,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       subscriptionId: subscription.id,
     },
     include: {
-      slotsOfAppointment: true,
+      occurrences: true,
     },
   });
 }
@@ -1542,29 +1541,19 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
 async function createWebinar(tx: Tx, data: EventData) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
-    include: { appointment: { include: { slotsOfAppointment: true } } },
+    include: { appointment: { include: { occurrences: true } } },
   });
   if (!webinar) throw new Error("Webinar not found");
 
   // Validate webinar has been scheduled (has an appointment with at least one slot)
-  const masterSlot = webinar.appointment?.slotsOfAppointment?.[0];
+  const masterSlot = webinar.appointment?.occurrences?.[0];
   if (!webinar.appointment || !masterSlot) {
     throw new Error("Webinar has not been scheduled. Cannot create booking.");
   }
 
-  // #1319 — register the payer against the consultant's existing slots, which
-  // is what handleWebinarCheckout does. The seat row this used to mint carried
-  // no `consultantProfileId` and duplicated the master slot's window, so a
-  // webinar's occupancy grew by a full session for every ticket sold and the
-  // atom run gained a second, parallel row nobody could group with it.
-  await connectAttendeeToEventSlots(tx, {
-    appointments: [webinar.appointment],
-    userId: data.userId,
-  });
-
-  // #1319 A9 — the seat row is gone, but the seat is not: record the payer
-  // against the event's own appointment, the same edge handleWebinarCheckout
-  // writes, in the same HELD state. Born CONFIRMED it would outlive its own
+  // #1319 / #1554 — the seat is the participant row on the event's own
+  // appointment, the same edge handleWebinarCheckout writes, in the same HELD
+  // state. Born CONFIRMED it would outlive its own
   // guard: `confirmExistingAppointment` runs AFTER this and its B2 CAS refuses
   // a capture landing on a cancelled webinar, but this transaction commits
   // either way — leaving a confirmed seat on a dead event that Phase 2 has
@@ -1578,7 +1567,7 @@ async function createWebinar(tx: Tx, data: EventData) {
 
   const createdAppointment = await tx.appointment.findUnique({
     where: { id: webinar.appointment.id },
-    include: { slotsOfAppointment: true },
+    include: { occurrences: true },
   });
   if (!createdAppointment) {
     throw new Error("Failed to fetch created appointment");
@@ -1591,7 +1580,7 @@ async function createClass(tx: Tx, data: EventData) {
     where: { id: data.eventId },
     include: {
       appointments: {
-        include: { slotsOfAppointment: { select: { id: true } } },
+        include: { occurrences: { select: { id: true } } },
       },
     },
   });
@@ -1610,7 +1599,7 @@ async function createClass(tx: Tx, data: EventData) {
   // let that case through and still recorded a paid seat, so the buyer was
   // enrolled in a class with no time on the calendar.
   const scheduledSessions = classInstance.appointments.filter(
-    (appointment) => appointment.slotsOfAppointment.length > 0,
+    (appointment) => appointment.occurrences.length > 0,
   );
   const [firstAppointment] = scheduledSessions;
   if (!firstAppointment) {
@@ -1618,11 +1607,6 @@ async function createClass(tx: Tx, data: EventData) {
     // nothing to enrol into, and inventing a placeholder is what caused this.
     throw new Error("Class has not been scheduled. Cannot create booking.");
   }
-
-  await connectAttendeeToEventSlots(tx, {
-    appointments: scheduledSessions,
-    userId: data.userId,
-  });
 
   // #1319 A9 — one participant row per scheduled session, matching
   // handleClassCheckout. HELD for the same reason as the webinar arm: the B2
@@ -1639,7 +1623,7 @@ async function createClass(tx: Tx, data: EventData) {
 
   const createdAppointment = await tx.appointment.findUnique({
     where: { id: firstAppointment.id },
-    include: { slotsOfAppointment: true },
+    include: { occurrences: true },
   });
   if (!createdAppointment) {
     throw new Error("Failed to fetch created appointment");
@@ -1801,30 +1785,34 @@ export async function confirmExistingAppointment(
   // conflict is surfaced loudly instead of double-booking the consultant.
   // Webinars/classes are capacity-based, not exclusive — skipped.
   if (appointment.consultation || appointment.subscription) {
-    const mySlots = await tx.slotOfAppointment.findMany({
+    const mySlots = await tx.appointmentOccurrence.findMany({
       where: { appointmentId, isTentative: true },
-      select: {
-        id: true,
-        startsAt: true,
-        endsAt: true,
-        user: { select: { id: true } },
-      },
+      select: { id: true, startsAt: true, endsAt: true },
     });
+    // The non-booker participants (the consultant) attend both bookings —
+    // a confirmed overlapping occurrence sharing one of them is a true conflict.
+    const participantIds = (
+      await tx.appointmentParticipant.findMany({
+        where: { appointmentId, ...liveParticipant() },
+        select: { userId: true },
+      })
+    )
+      .map((p) => p.userId)
+      .filter((id) => id !== userId);
     for (const slot of mySlots) {
-      // The non-booker participants (the consultant) attend both bookings —
-      // a confirmed overlapping slot sharing one of them is a true conflict.
-      const participantIds = slot.user
-        .map((u) => u.id)
-        .filter((id) => id !== userId);
       if (participantIds.length === 0) continue;
-      const conflict = await tx.slotOfAppointment.findFirst({
+      const conflict = await tx.appointmentOccurrence.findFirst({
         where: {
           id: { not: slot.id },
           startsAt: { lt: slot.endsAt },
           endsAt: { gt: slot.startsAt },
           isTentative: false,
-          user: { some: { id: { in: participantIds } } },
-          appointment: { OR: buildOccupiedAppointmentFilter() },
+          appointment: {
+            OR: buildOccupiedAppointmentFilter(),
+            participants: {
+              some: { userId: { in: participantIds }, ...liveParticipant() },
+            },
+          },
         },
         select: { id: true, appointmentId: true },
       });
@@ -1912,16 +1900,11 @@ export async function confirmExistingAppointment(
       }
     }
 
-    await tx.slotOfAppointment.updateMany({
-      where: {
-        appointment: { classId: appointment.class.id },
-        user: { some: { id: userId } },
-      },
-      data: { isTentative: false },
-    });
-    // #1319 A9 — the seat is paid for; mirror the flip on the participant rows.
-    // Only a HELD seat confirms: a capture landing on a cancelled seat must
-    // not resurrect it (the refund arm below handles the money).
+    // #1554 — a seat is the participant row, and the class's occurrences are
+    // the consultant's confirmed allocation shared by every attendee, so the
+    // capture flips the seat and never the occurrences. Only a HELD seat
+    // confirms: a capture landing on a cancelled seat must not resurrect it
+    // (the refund arm below handles the money).
     await setParticipantStatus(
       tx,
       {
@@ -1969,13 +1952,8 @@ export async function confirmExistingAppointment(
       }
     }
 
-    await tx.slotOfAppointment.updateMany({
-      where: {
-        appointmentId,
-        user: { some: { id: userId } },
-      },
-      data: { isTentative: false },
-    });
+    // #1554 — same as the class arm: the seat flips, the shared occurrences
+    // do not.
     await setParticipantStatus(
       tx,
       { appointmentId, userId, status: "HELD" },
@@ -1993,7 +1971,7 @@ export async function confirmExistingAppointment(
   }
   // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
   else {
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: { appointmentId },
       data: { isTentative: false },
     });
@@ -2039,7 +2017,7 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      slotsOfAppointment: true,
+      occurrences: true,
       consultation: true,
       subscription: true,
     },
@@ -2049,16 +2027,16 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
 
   // Live holds only: a previously released row is soft-cancelled, not gone,
   // and counting it here would re-run this arm on every replayed failure.
-  const tentativeSlots = appointment.slotsOfAppointment.filter(
+  const tentativeSlots = appointment.occurrences.filter(
     (slot) => slot.isTentative && slot.deletedAt === null,
   );
 
   if (tentativeSlots.length > 0) {
     // Doctrine rule 2: the hold is freed by status, so the slot survives for
     // the dispute trail that a failed payment is most likely to need.
-    await transitionSlotCompletion(tx, {
+    await transitionOccurrenceCompletion(tx, {
       where: { appointmentId, isTentative: true, deletedAt: null },
-      to: SlotCompletionStatus.CANCELLED,
+      to: OccurrenceCompletionStatus.CANCELLED,
       data: { deletedAt: new Date() },
       allowZero: true,
     });
@@ -2067,7 +2045,7 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
       // Live rows only — the release above leaves its rows in place, so an
       // unfiltered count would never reach zero and the EXPIRED transition
       // this gates would never fire again.
-      const remainingSlots = await tx.slotOfAppointment.count({
+      const remainingSlots = await tx.appointmentOccurrence.count({
         where: { appointmentId, deletedAt: null },
       });
       if (remainingSlots === 0) {

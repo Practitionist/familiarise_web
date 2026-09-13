@@ -143,7 +143,7 @@ async function verifyConsultantSlots() {
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               where: {
                 startsAt: {
                   gte: START_DATE,
@@ -183,9 +183,9 @@ async function verifyConsultantSlots() {
 
       // Show slots for this subscription in the date range
       sub.appointments.forEach((appt, apptIdx) => {
-        if (appt.slotsOfAppointment.length > 0) {
+        if (appt.occurrences.length > 0) {
           console.log(`\n  Appointment ${apptIdx + 1} (${appt.id}):`);
-          appt.slotsOfAppointment.forEach((slot) => {
+          appt.occurrences.forEach((slot) => {
             console.log(
               `    📅 ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
             );
@@ -199,7 +199,7 @@ async function verifyConsultantSlots() {
     // 5. Get all appointments in the date range for this consultant
     const appointments = await prisma.appointment.findMany({
       where: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: {
               gte: START_DATE,
@@ -239,7 +239,7 @@ async function verifyConsultantSlots() {
         ],
       },
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: START_DATE,
@@ -275,8 +275,8 @@ async function verifyConsultantSlots() {
         console.log(`  Plan: ${appt.subscription.subscriptionPlan.title}`);
       }
 
-      console.log(`  Slots in range: ${appt.slotsOfAppointment.length}`);
-      appt.slotsOfAppointment.forEach((slot) => {
+      console.log(`  Slots in range: ${appt.occurrences.length}`);
+      appt.occurrences.forEach((slot) => {
         const day = slot.startsAt.toLocaleDateString("en-US", {
           weekday: "short",
           month: "short",

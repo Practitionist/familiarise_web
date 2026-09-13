@@ -34,7 +34,7 @@ import {
   AppointmentStatus,
   CancellationReason,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   SupportIssueType,
 } from "@prisma/client";
 import {
@@ -112,7 +112,7 @@ function findNoShowCandidates(graceCutoff: Date) {
             deletedAt: null,
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           every: { endsAt: { lt: graceCutoff } },
           some: {
             endsAt: { lt: graceCutoff },
@@ -143,7 +143,7 @@ function findNoShowCandidates(graceCutoff: Date) {
               paymentStatus: true,
             },
           },
-          slotsOfAppointment: {
+          occurrences: {
             include: {
               meetingSession: {
                 include: { attendances: { select: { userId: true } } },
@@ -188,7 +188,7 @@ function evaluateConsultantNoShow(
 
   // Presence across every session tied to this booking's slots.
   const verdict = classifyConsultantAttendance(
-    consultation.appointment?.slotsOfAppointment ?? [],
+    consultation.appointment?.occurrences ?? [],
     { consultantUserId, consulteeUserId },
   );
   if (verdict !== "consultant-absent") return null;
@@ -219,7 +219,7 @@ export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
-  const callIds = (consultation.appointment?.slotsOfAppointment ?? [])
+  const callIds = (consultation.appointment?.occurrences ?? [])
     .map((slot) => slot.meetingSession?.streamCallId)
     .filter((id): id is string => !!id);
 
@@ -337,7 +337,7 @@ export async function detectBothAbsent(
       if (!consultantUserId || !consulteeUserId) continue;
 
       const sessions = meetingSessionsOf(
-        consultation.appointment?.slotsOfAppointment ?? [],
+        consultation.appointment?.occurrences ?? [],
       );
       if (sessions.length === 0) continue;
 
@@ -438,17 +438,17 @@ async function claimConsultantNoShow(
         },
       });
 
-      await tx.slotOfAppointment.updateMany({
+      await tx.appointmentOccurrence.updateMany({
         where: {
           appointmentId,
           completionStatus: {
             in: [
-              SlotCompletionStatus.SCHEDULED,
-              SlotCompletionStatus.UNVERIFIED,
+              OccurrenceCompletionStatus.SCHEDULED,
+              OccurrenceCompletionStatus.UNVERIFIED,
             ],
           },
         },
-        data: { completionStatus: SlotCompletionStatus.CANCELLED },
+        data: { completionStatus: OccurrenceCompletionStatus.CANCELLED },
       });
     });
   } catch (error) {

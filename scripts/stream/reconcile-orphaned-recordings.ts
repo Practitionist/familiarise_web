@@ -148,7 +148,7 @@ async function runRecoveryPass(
  * include, and it has to be: the two produce the same rows.
  */
 const orphanedSessionInclude = {
-  slotOfAppointment: {
+  occurrence: {
     include: {
       appointment: {
         include: {

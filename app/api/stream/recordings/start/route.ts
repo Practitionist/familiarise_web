@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { id: meetingSessionId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
     // effect or it is not consent. Group sessions are never blocked here — their
     // recording is the product, disclosed at purchase, and acknowledged rather
     // than consented to.
-    const appointment = meetingSession.slotOfAppointment?.appointment;
+    const appointment = meetingSession.occurrence?.appointment;
 
     /** One shape for a refusal, used by the pre-claim gate and the race re-read. */
     const refuse = (reason: string | undefined) => {

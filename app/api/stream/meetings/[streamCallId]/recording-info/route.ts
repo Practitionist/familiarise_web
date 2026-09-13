@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
   isAppointmentOwner,
@@ -39,9 +40,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
-            user: { select: { id: true } },
             appointment: {
               include: {
                 webinar: {
@@ -117,7 +117,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const appointment = meetingSession.slotOfAppointment?.appointment;
+    const appointment = meetingSession.occurrence?.appointment;
 
     // Authorization check - verify user has access to this meeting
     const consultantProfileId =
@@ -134,13 +134,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // audit write below.
     let viaOperatorGrant = false;
 
-    // Participant on the meeting slot (either side).
-    if (!hasAccess) {
-      const slotUserIds =
-        meetingSession.slotOfAppointment?.user?.map(
-          (u: { id: string }) => u.id,
-        ) ?? [];
-      hasAccess = slotUserIds.includes(session.user.id);
+    // Holds a seat on the booking (either side) — #1554 roster probe.
+    if (!hasAccess && appointment) {
+      const seat = await prisma.appointmentParticipant.findFirst({
+        where: {
+          appointmentId: appointment.id,
+          ...liveParticipant(session.user.id),
+        },
+        select: { id: true },
+      });
+      hasAccess = seat !== null;
     }
 
     // Provider path: owns the consultant profile that delivered the session, or

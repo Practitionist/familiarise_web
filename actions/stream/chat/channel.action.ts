@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
@@ -279,8 +280,9 @@ export async function createWebinarChannel(
       },
       appointment: {
         include: {
-          slotsOfAppointment: {
-            include: { user: { select: { id: true } } },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -296,11 +298,9 @@ export async function createWebinarChannel(
     throw new Error(`Consultant not found for webinar: ${webinarId}`);
   }
 
-  // Registrants are the users connected to the webinar's session slots.
+  // Registrants are the live seat holders on the webinar's appointment (#1554).
   const appointmentIds =
-    webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
-      slot.user.map((u) => u.id),
-    ) || [];
+    webinar.appointment?.participants.map((p) => p.userId) || [];
 
   const allParticipantIds = Array.from(new Set(appointmentIds));
 
@@ -360,8 +360,9 @@ export async function createClassChannel(
       },
       appointments: {
         include: {
-          slotsOfAppointment: {
-            include: { user: { select: { id: true } } },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -379,7 +380,7 @@ export async function createClassChannel(
 
   const appointmentIds =
     classData.appointments?.flatMap((apt) =>
-      apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
+      apt.participants.map((p) => p.userId),
     ) || [];
 
   const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));

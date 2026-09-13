@@ -21,14 +21,14 @@ import prisma from "../../lib/prisma";
 import {
   AppointmentStatus,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -206,13 +206,13 @@ async function expirePendingConsultations(): Promise<{
             fromIn: [AppointmentStatus.PENDING],
           });
           if (!stale.appointment) return 0;
-          return transitionSlotCompletion(tx, {
+          return transitionOccurrenceCompletion(tx, {
             where: {
               appointmentId: stale.appointment.id,
               isTentative: true,
               deletedAt: null,
             },
-            to: SlotCompletionStatus.CANCELLED,
+            to: OccurrenceCompletionStatus.CANCELLED,
             data: { deletedAt: new Date() },
             allowZero: true,
           });
@@ -412,10 +412,10 @@ async function releaseStaleRescheduledSlots(): Promise<{
     };
     // Bounded, oldest first, released in chunked transactions; the CAS
     // re-states the cohort's guards on every chunk.
-    const stale = await prisma.slotOfAppointment.findMany({
+    const stale = await prisma.appointmentOccurrence.findMany({
       where: {
         ...staleRescheduled,
-        completionStatus: SlotCompletionStatus.RESCHEDULED,
+        completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
       },
       select: { id: true },
       orderBy: { updatedAt: "asc" },
@@ -425,9 +425,9 @@ async function releaseStaleRescheduledSlots(): Promise<{
       stale.map((s) => s.id),
       (idChunk) => ({
         where: { id: { in: idChunk }, ...staleRescheduled },
-        to: SlotCompletionStatus.CANCELLED,
+        to: OccurrenceCompletionStatus.CANCELLED,
         data: { deletedAt: new Date() },
-        fromIn: [SlotCompletionStatus.RESCHEDULED],
+        fromIn: [OccurrenceCompletionStatus.RESCHEDULED],
         allowZero: true,
       }),
     );
@@ -460,7 +460,7 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     NOT: {
       appointments: {
         some: {
-          slotsOfAppointment: {
+          occurrences: {
             some: { isTentative: false, deletedAt: null },
           },
         },

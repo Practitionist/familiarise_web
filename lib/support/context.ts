@@ -56,7 +56,7 @@ export async function buildSupportContext(
       appointmentType: true,
       organizationId: true,
       cancellationPolicy: POLICY_TERMS_INCLUDE,
-      slotsOfAppointment: {
+      occurrences: {
         // Every live row, not the next one. A session is the contiguous RUN of
         // 30-minute rows (#1061), so taking a single row gave a 90-minute
         // meeting a 30-minute window: `endsAt` fell an hour early and the
@@ -172,7 +172,7 @@ export async function buildSupportContext(
 
   const nowMs = Date.now();
   const runs = groupSlotsIntoRuns(
-    appt.slotsOfAppointment.map((slot) => ({ ...slot, appointmentId })),
+    appt.occurrences.map((slot) => ({ ...slot, appointmentId })),
   );
   /** The session in progress or still to come — the forward-looking subject. */
   const activeRun = runs.find((run) => run.endsAt.getTime() > nowMs) ?? null;
@@ -204,9 +204,9 @@ export async function buildSupportContext(
     : "COMPLETED";
 
   // Recordings hang off the slot's meeting session, not the appointment directly
-  // (Recording → MeetingSession → SlotOfAppointment → Appointment).
+  // (Recording → MeetingSession → AppointmentOccurrence → Appointment).
   const recording = await prisma.recording.findFirst({
-    where: { meetingSession: { slotOfAppointment: { appointmentId } } },
+    where: { meetingSession: { occurrence: { appointmentId } } },
     select: { id: true },
   });
 

@@ -39,7 +39,7 @@ import type {
   RecordingStatus,
   ReferralStatus,
   RefundStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   TrialSessionStatus,
   WaitlistStatus,
   WebinarStatus,
@@ -211,34 +211,36 @@ export const eventStatusBadge = (
   status: WebinarStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(EVENT_STATUS_BADGE, status);
 
-// ───────────────────────────── SlotCompletionStatus ─────────────────────────────
+// ───────────────────────────── OccurrenceCompletionStatus ─────────────────────────────
 
-export const SLOT_STATUS_BADGE: Record<SlotCompletionStatus, StatusBadgeStyle> =
-  {
-    SCHEDULED: {
-      label: "Scheduled",
-      className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    },
-    COMPLETED: {
-      label: "Completed",
-      className: "bg-green-100 text-green-900 border-green-200",
-    },
-    UNVERIFIED: {
-      label: "Unverified",
-      className: "bg-amber-100 text-amber-900 border-amber-200",
-    },
-    CANCELLED: {
-      label: "Cancelled",
-      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    },
-    RESCHEDULED: {
-      label: "Rescheduled",
-      className: "bg-blue-100 text-blue-900 border-blue-200",
-    },
-  };
+export const SLOT_STATUS_BADGE: Record<
+  OccurrenceCompletionStatus,
+  StatusBadgeStyle
+> = {
+  SCHEDULED: {
+    label: "Scheduled",
+    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  },
+  COMPLETED: {
+    label: "Completed",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  UNVERIFIED: {
+    label: "Unverified",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
+  CANCELLED: {
+    label: "Cancelled",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
+  },
+  RESCHEDULED: {
+    label: "Rescheduled",
+    className: "bg-blue-100 text-blue-900 border-blue-200",
+  },
+};
 
 export const slotStatusBadge = (
-  status: SlotCompletionStatus | string | null | undefined,
+  status: OccurrenceCompletionStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(SLOT_STATUS_BADGE, status);
 
 // ───────────────────────────── WaitlistStatus ─────────────────────────────

@@ -7,6 +7,7 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   AppointmentStatus,
   ScheduleType,
@@ -362,17 +363,19 @@ export class ScheduleValidationService {
             ...(excludeAppointmentIds && excludeAppointmentIds.length > 0
               ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
               : []),
+            // #1554 — the roster is AppointmentParticipant; the occurrence
+            // window is a separate predicate on the same appointment.
             {
-              slotsOfAppointment: {
+              participants: {
+                some: { userId: { in: participantIds }, ...liveParticipant() },
+              },
+            },
+            {
+              occurrences: {
                 some: {
-                  // FIX: All conditions must be inside a single AND array.
-                  // Mixing AND:[...] with a sibling relation filter (user:{})
-                  // at the same level causes Prisma to silently ignore the
-                  // relation condition when using the non-transaction client.
                   AND: [
                     { startsAt: { lt: new Date(latestEnd) } },
                     { endsAt: { gt: new Date(earliestStart) } },
-                    { user: { some: { id: { in: participantIds } } } },
                     // Defense-in-depth: a tombstoned slot is not a booking.
                     // No completionStatus filter here — RESCHEDULED rows are
                     // a pending reschedule's live hold and must still block.
@@ -384,18 +387,16 @@ export class ScheduleValidationService {
           ],
         },
         include: {
-          slotsOfAppointment: {
+          occurrences: {
             // The include carries the SAME predicate as the `some` filter
             // above: the JS matcher below treats every returned child as a
             // candidate conflict, so an unfiltered collection would let a
-            // tombstoned (or non-participating) slot of a qualifying
-            // appointment produce a [CONFLICT] the parent-level filter just
-            // excluded. CodeRabbit triage on the allocation-audit PR.
+            // tombstoned slot of a qualifying appointment produce a
+            // [CONFLICT] the parent-level filter just excluded.
             where: {
               AND: [
                 { startsAt: { lt: new Date(latestEnd) } },
                 { endsAt: { gt: new Date(earliestStart) } },
-                { user: { some: { id: { in: participantIds } } } },
                 { deletedAt: null },
               ],
             },
@@ -427,7 +428,7 @@ export class ScheduleValidationService {
       const slotEnd = new Date(slot.getTime() + SLOT_DURATION_MS);
 
       const existingAppointment = conflictingAppointments.find((appt) =>
-        appt.slotsOfAppointment.some(
+        appt.occurrences.some(
           (existingSlot) =>
             new Date(existingSlot.startsAt) < slotEnd &&
             new Date(existingSlot.endsAt) > slot,
@@ -848,7 +849,7 @@ export class ScheduleValidationService {
     const tentativeAppointments = await this.prismaClient.appointment.findMany({
       where: {
         subscriptionId,
-        slotsOfAppointment: { some: { isTentative: true } },
+        occurrences: { some: { isTentative: true } },
       },
       select: { id: true },
     });
@@ -874,7 +875,7 @@ export class ScheduleValidationService {
         where: { subscriptionId },
         select: {
           id: true,
-          slotsOfAppointment: { select: { startsAt: true, isTentative: true } },
+          occurrences: { select: { startsAt: true, isTentative: true } },
         },
       });
     const perDayErrors = this.validatePerDaySessionCap(
@@ -1057,13 +1058,13 @@ export class ScheduleValidationService {
       where: { classId },
       select: {
         id: true,
-        slotsOfAppointment: {
+        occurrences: {
           select: { startsAt: true, isTentative: true },
         },
       },
     });
     const tentativeIds = classAppointments
-      .filter((a) => a.slotsOfAppointment.some((s) => s.isTentative))
+      .filter((a) => a.occurrences.some((s) => s.isTentative))
       .map((a) => a.id);
     const excludeSet = new Set([
       ...(excludeAppointmentIds || []),
@@ -1076,8 +1077,8 @@ export class ScheduleValidationService {
     const existingSessionsPerWeek = new Map<string, number>();
     for (const appt of classAppointments) {
       if (excludeSet.has(appt.id)) continue;
-      if (appt.slotsOfAppointment.length === 0) continue;
-      const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
+      if (appt.occurrences.length === 0) continue;
+      const firstSlot = appt.occurrences.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
       const weekKey = ScheduleCalculationService.weekKey(
@@ -1147,7 +1148,7 @@ export class ScheduleValidationService {
   private validatePerDaySessionCap(
     existingAppointments: {
       id: string;
-      slotsOfAppointment: { startsAt: Date | string; isTentative: boolean }[];
+      occurrences: { startsAt: Date | string; isTentative: boolean }[];
     }[],
     excludeSet: Set<string>,
     slots: Date[],
@@ -1159,8 +1160,8 @@ export class ScheduleValidationService {
     const existingPerDay = new Map<string, number>();
     for (const appt of existingAppointments) {
       if (excludeSet.has(appt.id)) continue;
-      if (appt.slotsOfAppointment.length === 0) continue;
-      const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
+      if (appt.occurrences.length === 0) continue;
+      const firstSlot = appt.occurrences.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
       const dayKey = ScheduleCalculationService.dayKey(

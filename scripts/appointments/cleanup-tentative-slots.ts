@@ -18,7 +18,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
+import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 
@@ -67,7 +67,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
     // unbounded scan over every stale tentative row OOMs/times out the
     // function before it pages. Oldest-first so hourly runs drain a backlog.
     const MAX_SLOTS_PER_RUN = 5000;
-    const staleTentativeSlots = await prisma.slotOfAppointment.findMany({
+    const staleTentativeSlots = await prisma.appointmentOccurrence.findMany({
       take: MAX_SLOTS_PER_RUN,
       orderBy: { updatedAt: "asc" },
       where: {
@@ -282,7 +282,7 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
               ],
             },
           },
-          to: SlotCompletionStatus.CANCELLED,
+          to: OccurrenceCompletionStatus.CANCELLED,
           data: { deletedAt: new Date() },
           // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):
           // auto-complete stamps a past SCHEDULED slot UNVERIFIED an hour after

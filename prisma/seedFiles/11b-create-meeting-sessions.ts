@@ -81,7 +81,7 @@ export async function createMeetingSessions(): Promise<void> {
   );
 
   // Get slots of appointments that can have meeting sessions
-  const slotsOfAppointment = await prisma.slotOfAppointment.findMany({
+  const occurrences = await prisma.appointmentOccurrence.findMany({
     where: {
       meetingSession: null, // Only slots without existing meeting sessions
     },
@@ -98,7 +98,7 @@ export async function createMeetingSessions(): Promise<void> {
     take: NUM_MEETING_SESSIONS * 2, // Get more than needed to have options
   });
 
-  if (slotsOfAppointment.length === 0) {
+  if (occurrences.length === 0) {
     console.warn(
       "No eligible appointment slots found for meeting session creation",
     );
@@ -111,12 +111,8 @@ export async function createMeetingSessions(): Promise<void> {
   // Track which slots we've used
   const usedSlotIds = new Set<string>();
 
-  for (
-    let i = 0;
-    i < Math.min(NUM_MEETING_SESSIONS, slotsOfAppointment.length);
-    i++
-  ) {
-    const slot = slotsOfAppointment[i];
+  for (let i = 0; i < Math.min(NUM_MEETING_SESSIONS, occurrences.length); i++) {
+    const slot = occurrences[i];
 
     // Skip if slot already used
     if (usedSlotIds.has(slot.id)) {
@@ -142,7 +138,7 @@ export async function createMeetingSessions(): Promise<void> {
           platform,
           passcode,
           hostKeys,
-          slotOfAppointmentId: slot.id,
+          appointmentOccurrenceId: slot.id,
         },
       });
 

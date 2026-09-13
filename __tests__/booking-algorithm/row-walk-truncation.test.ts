@@ -115,15 +115,11 @@ const mockTx = {
     // inherit the policy version the booking was sold under. Null here:
     // these fixtures predate the FK, so the created rows carry no policy.
     findFirst: jest.fn().mockResolvedValue(null),
-    create: jest
-      .fn()
-      .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
-    update: jest
-      .fn()
-      .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
+    create: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
+    update: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
     deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findFirst: jest.fn().mockResolvedValue(null),
     updateMany: jest.fn(),
     deleteMany: jest.fn(),

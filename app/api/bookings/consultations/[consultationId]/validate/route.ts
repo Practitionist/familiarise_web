@@ -109,7 +109,7 @@ export async function POST(
       const tentativeAppointments = await prisma.appointment.findMany({
         where: {
           consultationId,
-          slotsOfAppointment: { some: { isTentative: true } },
+          occurrences: { some: { isTentative: true } },
         },
         select: { id: true },
       });

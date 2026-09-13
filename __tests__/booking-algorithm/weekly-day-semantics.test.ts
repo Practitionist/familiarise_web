@@ -315,7 +315,7 @@ describe("the expert page merges slots exactly as booking does (#1416)", () => {
       startsAt: new Date(start).toISOString(),
       endsAt: new Date(start + THIRTY_MIN_MS).toISOString(),
       availabilityWindowId: "row",
-      slotOfAppointmentId: "",
+      appointmentOccurrenceId: "",
       localStartTime: "",
       localEndTime: "",
       type: "WEEKLY",

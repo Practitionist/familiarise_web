@@ -40,6 +40,7 @@ import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import {
@@ -101,9 +102,8 @@ async function isEventParticipant(
           {
             appointment: {
               deletedAt: null,
-              slotsOfAppointment: {
-                some: { deletedAt: null, user: { some: { id: userId } } },
-              },
+              occurrences: { some: { deletedAt: null } },
+              participants: { some: liveParticipant(userId) },
             },
           },
           { webinarPlan: { consultantProfile: { userId } } },
@@ -114,7 +114,7 @@ async function isEventParticipant(
         appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },
@@ -125,7 +125,7 @@ async function isEventParticipant(
     });
     if (!hit) return false;
     return !isPastRetention(
-      hit.appointment?.slotsOfAppointment[0]?.endsAt ?? null,
+      hit.appointment?.occurrences[0]?.endsAt ?? null,
       hit.appointment?.organization?.streamRecordingRetentionDays ??
         DEFAULT_RETENTION_DAYS,
     );
@@ -140,9 +140,8 @@ async function isEventParticipant(
           appointments: {
             some: {
               deletedAt: null,
-              slotsOfAppointment: {
-                some: { deletedAt: null, user: { some: { id: userId } } },
-              },
+              occurrences: { some: { deletedAt: null } },
+              participants: { some: liveParticipant(userId) },
             },
           },
         },
@@ -159,7 +158,7 @@ async function isEventParticipant(
         // cohort.
         select: {
           organization: { select: { streamRecordingRetentionDays: true } },
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
             select: { endsAt: true },
@@ -176,7 +175,7 @@ async function isEventParticipant(
       }
     | null
   >((latest, apt) => {
-    const aptLatest = apt.slotsOfAppointment[0]?.endsAt;
+    const aptLatest = apt.occurrences[0]?.endsAt;
     if (!aptLatest) return latest;
     const retentionDays =
       apt.organization?.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;

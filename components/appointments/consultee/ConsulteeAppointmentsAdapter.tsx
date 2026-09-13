@@ -10,7 +10,7 @@ import { useSession } from "@/lib/auth-client";
 // #248: the shared hook reads the connected client singleton at click time and
 // lazy-imports lib/meeting, so the Stream SDK stays off this bundle.
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
-import type { SlotOfAppointment } from "@prisma/client";
+import type { AppointmentOccurrence } from "@prisma/client";
 import type {
   AppointmentActionAdapter,
   OverflowItem,
@@ -155,7 +155,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
     appointmentId: activeVm?.appointmentId ?? undefined,
-    rawSlots: (activeVm?.raw.rawSlots ?? []) as SlotOfAppointment[],
+    rawSlots: (activeVm?.raw.rawSlots ?? []) as AppointmentOccurrence[],
     title: activeVm?.title ?? "",
     consultant: activeVm?.counterpart.name ?? "",
     type: typeLabel,

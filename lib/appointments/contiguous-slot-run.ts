@@ -1,9 +1,9 @@
 /**
  * Canonical N×30-minute slot atoms for a single session (#1071 / ADR B1).
  *
- * Planner CRUD historically wrote one long SlotOfAppointment spanning the full
+ * Planner CRUD historically wrote one long AppointmentOccurrence spanning the full
  * duration, while SchedulingService wrote ceil(hours/0.5) half-hour rows.
- * Reschedule then updated only slotsOfAppointment[0], stranding the rest.
+ * Reschedule then updated only occurrences[0], stranding the rest.
  *
  * Every planner create/update path must go through these helpers so an
  * appointment's live slots always form exactly one contiguous run.
@@ -20,8 +20,6 @@ export type ContiguousSlotAtomInput = {
   durationInHours: number;
   consultantProfileId: string;
   isTentative?: boolean;
-  /** User ids to connect on every atom (host + enrolled attendees). */
-  userIds?: string[];
 };
 
 export type ContiguousSlotAtomCreate = {
@@ -29,7 +27,6 @@ export type ContiguousSlotAtomCreate = {
   endsAt: Date;
   isTentative: boolean;
   consultantProfileId: string;
-  user?: { connect: Array<{ id: string }> };
 };
 
 /**
@@ -49,7 +46,6 @@ export function buildContiguousSlotAtoms(
   const slotsPerSession =
     ScheduleCalculationService.getSlotsPerCall(durationInHours);
   const isTentative = input.isTentative ?? false;
-  const userIds = [...new Set((input.userIds ?? []).filter(Boolean))];
 
   const atoms: ContiguousSlotAtomCreate[] = [];
   for (let i = 0; i < slotsPerSession; i++) {
@@ -60,9 +56,6 @@ export function buildContiguousSlotAtoms(
       endsAt: atomEnd,
       isTentative,
       consultantProfileId,
-      ...(userIds.length > 0
-        ? { user: { connect: userIds.map((id) => ({ id })) } }
-        : {}),
     });
   }
   return atoms;
@@ -73,10 +66,10 @@ export function buildContiguousSlotAtoms(
  *
  * #1319 — checkout and the webhook capture fallback both hold a session as a
  * start/end pair rather than a duration, and each grew its own chunking loop.
- * They agreed on the arithmetic and disagreed on everything else (one connected
- * both parties, the other only the buyer), which is precisely the drift the
- * atom invariant exists to prevent. One entry point now, so a future edit
- * cannot land on one writer and miss the other.
+ * They agreed on the arithmetic and disagreed on everything else, which is
+ * precisely the drift the atom invariant exists to prevent. One entry point
+ * now, so a future edit cannot land on one writer and miss the other. Who
+ * attends is AppointmentParticipant (#1554), never a field on the atom.
  *
  * A window that is not a whole number of half-hours rounds UP, matching
  * `getSlotsPerCall`: a partial atom still occupies the consultant's calendar.
@@ -185,7 +178,7 @@ export function assertSingleContiguousLiveRun(
  *
  * The first #1071 cut hard-deleted live rows and inserted new ones. That fixed
  * the stranded-atom bug, but `MeetingSession` / `Recording` cascade on
- * `SlotOfAppointment` delete (`onDelete: Cascade`). A free webinar (or one
+ * `AppointmentOccurrence` delete (`onDelete: Cascade`). A free webinar (or one
  * whose payments are all FAILED/EXPIRED) still reaches this path, and a host
  * who opened the room once already has a MeetingSession — so a duration-only
  * edit could wipe recordings. The pre-#1071 code updated `[0]` in place and
@@ -212,45 +205,34 @@ export async function replaceContiguousSlotRun(
     durationInHours: number;
     consultantProfileId: string;
     isTentative?: boolean;
-    /** Extra user ids to connect (merged with users already on live slots). */
-    extraUserIds?: string[];
   },
-): Promise<{ createdCount: number; preservedUserIds: string[] }> {
-  const existing = await tx.slotOfAppointment.findMany({
+): Promise<{ createdCount: number }> {
+  const existing = await tx.appointmentOccurrence.findMany({
     where: { appointmentId: args.appointmentId },
     orderBy: { startsAt: "asc" },
-    include: { user: { select: { id: true } } },
   });
 
-  // Only live rows participate in the run. Users on dead rows are intentionally
-  // not re-attached — those seats were already left / cancelled.
+  // Only live rows participate in the run. The roster is untouched by a move:
+  // it lives on AppointmentParticipant (#1554), not on the rows.
   const live = existing.filter((s) => !isDeadSlot(s));
-  const preservedUserIds = new Set<string>(args.extraUserIds ?? []);
-  for (const slot of live) {
-    for (const u of slot.user ?? []) {
-      preservedUserIds.add(u.id);
-    }
-  }
-  const userIds = Array.from(preservedUserIds);
 
   const atoms = buildContiguousSlotAtoms({
     startsAt: args.startsAt,
     durationInHours: args.durationInHours,
     consultantProfileId: args.consultantProfileId,
     isTentative: args.isTentative ?? false,
-    userIds,
   });
 
   const shared = Math.min(live.length, atoms.length);
 
-  // `slot_no_confirmed_overlap` is NOT DEFERRABLE: each UPDATE is checked
+  // `occurrence_no_confirmed_overlap` is NOT DEFERRABLE: each UPDATE is checked
   // against sibling rows that still hold their old times. Shifting a 2h run
   // forward by 1h makes atom 0 land on atom 2's old window → 23P01 against
   // ourselves. Flip every live row tentative first (drops them out of the
   // partial exclusion index), then write the new times and restore the real
   // flag. Contiguous `[)` target atoms cannot collide with each other.
   if (live.length > 0) {
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: { id: { in: live.map((s) => s.id) } },
       data: { isTentative: true },
     });
@@ -259,31 +241,26 @@ export async function replaceContiguousSlotRun(
   // In-place updates: Stream room keys and recordings stay keyed to these ids.
   for (let i = 0; i < shared; i++) {
     const atom = atoms[i];
-    await tx.slotOfAppointment.update({
+    await tx.appointmentOccurrence.update({
       where: { id: live[i].id },
       data: {
         startsAt: atom.startsAt,
         endsAt: atom.endsAt,
         isTentative: atom.isTentative,
         consultantProfileId: atom.consultantProfileId,
-        // `set` replaces the M2M so host + enrolled attendees survive the move.
-        ...(userIds.length > 0
-          ? { user: { set: userIds.map((id) => ({ id })) } }
-          : {}),
       },
     });
   }
 
   for (let i = shared; i < atoms.length; i++) {
     const atom = atoms[i];
-    await tx.slotOfAppointment.create({
+    await tx.appointmentOccurrence.create({
       data: {
         appointmentId: args.appointmentId,
         startsAt: atom.startsAt,
         endsAt: atom.endsAt,
         isTentative: atom.isTentative,
         consultantProfileId: atom.consultantProfileId,
-        ...(atom.user ? { user: atom.user } : {}),
       },
     });
   }
@@ -292,7 +269,7 @@ export async function replaceContiguousSlotRun(
   // Hard-delete would cascade MeetingSession → Recording for those rows.
   // They are already tentative from the pre-pass above.
   for (let i = shared; i < live.length; i++) {
-    await tx.slotOfAppointment.update({
+    await tx.appointmentOccurrence.update({
       where: { id: live[i].id },
       data: {
         isTentative: true,
@@ -302,7 +279,7 @@ export async function replaceContiguousSlotRun(
   }
 
   // completionStatus defaults to SCHEDULED and is never NULL — plain notIn.
-  const liveAfter = await tx.slotOfAppointment.findMany({
+  const liveAfter = await tx.appointmentOccurrence.findMany({
     where: {
       appointmentId: args.appointmentId,
       deletedAt: null,
@@ -317,6 +294,5 @@ export async function replaceContiguousSlotRun(
   return {
     /** Live atoms after the rewrite (not "how many were inserted"). */
     createdCount: liveAfter.length,
-    preservedUserIds: userIds,
   };
 }

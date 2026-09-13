@@ -96,7 +96,7 @@ export function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
 // slots; scanning the full appointment array per window is O(windows × appts)
 // and dominated cold wall-clock for wide ranges. Bucket booked slots by 30-min
 // interval once so each window only compares against the handful that can
-// actually overlap it. Every SlotOfAppointment is exactly 30 min and 30-min
+// actually overlap it. Every AppointmentOccurrence is exactly 30 min and 30-min
 // aligned, so a 30-min bucket is exact; the multi-bucket span below keeps it
 // correct even for legacy/longer rows.
 // #997 Phase 2 — exported so the availability-with-allocation route can bucket
@@ -574,7 +574,7 @@ export function convertToSlotTimings(
       startsAt: slot.start.toISOString(),
       endsAt: slot.end.toISOString(),
       availabilityWindowId: slot.availabilityId,
-      slotOfAppointmentId: "",
+      appointmentOccurrenceId: "",
       localStartTime: loc.timeP(slot.start),
       localEndTime: loc.timeP(slot.end),
       type: slot.type, // Explicitly set the type field

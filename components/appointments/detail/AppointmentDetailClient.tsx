@@ -353,9 +353,7 @@ export function AppointmentDetailClient({
     );
   const participants = Array.from(
     new Map(
-      detail.appointment.slotsOfAppointment
-        .flatMap((slot) => slot.user)
-        .map((u) => [u.id, u]),
+      detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
     ).values(),
   );
   const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);

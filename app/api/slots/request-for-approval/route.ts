@@ -15,6 +15,7 @@ import { notifyNewBookingRequest } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
+import { recordParticipants } from "@/lib/booking/participants";
 import { RequestForApprovalSchema } from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -199,7 +200,7 @@ export async function POST(req: NextRequest) {
         );
 
         // Generate 30-minute slot chunks from startTime to endTime.
-        // SlotOfAppointment records are always 30 minutes each — consistent with
+        // AppointmentOccurrence records are always 30 minutes each — consistent with
         // manual and auto allocation paths in SchedulingService.
         const SLOT_DURATION_MS = 30 * 60 * 1000;
         const slotChunkStarts: Date[] = [];
@@ -255,7 +256,7 @@ export async function POST(req: NextRequest) {
         );
 
         // CRITICAL SECTION: Create consultation (protected by lock AND validated)
-        // Create one SlotOfAppointment per 30-min chunk — consistent with
+        // Create one AppointmentOccurrence per 30-min chunk — consistent with
         // SchedulingService which also uses 30-min granularity.
         const slotChunksToCreate = slotChunkStarts.map((chunkStart) => ({
           startsAt: chunkStart,
@@ -265,12 +266,6 @@ export async function POST(req: NextRequest) {
           // tentative rows: approval/webhook confirm flips isTentative via
           // updateMany, so whatever is on the row rides into confirmed state.
           consultantProfileId,
-          user: {
-            connect: [
-              { id: session.user.id }, // Consultee
-              { id: consultationPlan.consultantProfile.user.id }, // Consultant
-            ],
-          },
         }));
 
         // #1333 — the request and its opening timeline row commit together, so
@@ -292,7 +287,7 @@ export async function POST(req: NextRequest) {
                     // #1166 ORG-9 — org attribution rides the appointment from
                     // the moment the request exists.
                     organizationId: organizationId ?? null,
-                    slotsOfAppointment: {
+                    occurrences: {
                       create: slotChunksToCreate,
                     },
                   },
@@ -315,11 +310,27 @@ export async function POST(req: NextRequest) {
                 },
                 appointment: {
                   include: {
-                    slotsOfAppointment: true,
+                    occurrences: true,
                   },
                 },
               },
             });
+            // #1544 / #1554 — the roster is born with the request: this was the
+            // one creation path that never wrote AppointmentParticipant.
+            if (created.appointment) {
+              await recordParticipants(
+                tx,
+                created.appointment.id,
+                [
+                  {
+                    userId: consultationPlan.consultantProfile.user.id,
+                    role: "CONSULTANT",
+                  },
+                  { userId: session.user.id, role: "CONSULTEE" },
+                ],
+                { organizationId: organizationId ?? null, status: "HELD" },
+              );
+            }
             await appendCreationHistory(
               tx,
               "CONSULTATION",

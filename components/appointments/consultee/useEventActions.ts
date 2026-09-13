@@ -6,7 +6,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import type { SlotOfAppointment } from "@prisma/client";
+import type { AppointmentOccurrence } from "@prisma/client";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableSlot as getJoinableSlotShared,
@@ -15,7 +15,7 @@ import type { SlotPreference } from "@/components/scheduling/slot-picker-policy"
 
 interface UseEventActionsOptions {
   appointmentId?: string;
-  rawSlots: SlotOfAppointment[];
+  rawSlots: AppointmentOccurrence[];
   title: string;
   consultant: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
@@ -180,7 +180,7 @@ export function useEventActions({
   const [showReportDialog, setShowReportDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
-  const getJoinableSlot = (): SlotOfAppointment | null =>
+  const getJoinableSlot = (): AppointmentOccurrence | null =>
     getJoinableSlotShared(rawSlots ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
     });

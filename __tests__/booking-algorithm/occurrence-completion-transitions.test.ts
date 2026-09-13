@@ -3,20 +3,20 @@
  */
 
 /**
- * #1319 — the two lifecycles that had no CAS helper: SlotOfAppointment
+ * #1319 — the two lifecycles that had no CAS helper: AppointmentOccurrence
  * completion and TrialSession status. The maps are pinned exactly so a silent
  * widening (e.g. letting COMPLETED come from CANCELLED) fails review here.
  */
 
 import {
-  SLOT_COMPLETION_ALLOWED_FROM,
+  OCCURRENCE_COMPLETION_ALLOWED_FROM,
   TRIAL_ALLOWED_FROM,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionTrialSession,
 } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
-type SlotTx = Parameters<typeof transitionSlotCompletion>[0];
+type SlotTx = Parameters<typeof transitionOccurrenceCompletion>[0];
 type TrialTx = Parameters<typeof transitionTrialSession>[0];
 
 // #1319 A12 — both helpers pre-read the from-status and append one
@@ -35,7 +35,7 @@ function slotTx(count: number, from: string = "SCHEDULED") {
   const create = jest.fn().mockResolvedValue({});
   return {
     tx: {
-      slotOfAppointment: { updateManyAndReturn, findMany },
+      appointmentOccurrence: { updateManyAndReturn, findMany },
       bookingStatusHistory: { create },
     } as unknown as SlotTx,
     updateManyAndReturn,
@@ -59,9 +59,9 @@ function trialTx(count: number, from: string = "SCHEDULED") {
   };
 }
 
-describe("SLOT_COMPLETION_ALLOWED_FROM", () => {
+describe("OCCURRENCE_COMPLETION_ALLOWED_FROM", () => {
   it("pins every edge", () => {
-    expect(SLOT_COMPLETION_ALLOWED_FROM).toEqual({
+    expect(OCCURRENCE_COMPLETION_ALLOWED_FROM).toEqual({
       SCHEDULED: ["RESCHEDULED"],
       COMPLETED: ["SCHEDULED", "UNVERIFIED"],
       UNVERIFIED: ["SCHEDULED", "COMPLETED"],
@@ -71,15 +71,19 @@ describe("SLOT_COMPLETION_ALLOWED_FROM", () => {
   });
 
   it("a late Stream webhook cannot resurrect a cancelled slot", () => {
-    expect(SLOT_COMPLETION_ALLOWED_FROM.COMPLETED).not.toContain("CANCELLED");
-    expect(SLOT_COMPLETION_ALLOWED_FROM.UNVERIFIED).not.toContain("CANCELLED");
+    expect(OCCURRENCE_COMPLETION_ALLOWED_FROM.COMPLETED).not.toContain(
+      "CANCELLED",
+    );
+    expect(OCCURRENCE_COMPLETION_ALLOWED_FROM.UNVERIFIED).not.toContain(
+      "CANCELLED",
+    );
   });
 });
 
-describe("transitionSlotCompletion", () => {
+describe("transitionOccurrenceCompletion", () => {
   it("bakes the allowed-from set into the WHERE and returns the count", async () => {
     const { tx, updateManyAndReturn, create } = slotTx(2);
-    const moved = await transitionSlotCompletion(tx, {
+    const moved = await transitionOccurrenceCompletion(tx, {
       where: { appointmentId: "apt_1", deletedAt: null },
       to: "CANCELLED",
       data: { deletedAt: new Date("2026-09-02T00:00:00Z") },
@@ -105,7 +109,7 @@ describe("transitionSlotCompletion", () => {
     for (const [call] of create.mock.calls) {
       expect(call.data).toEqual(
         expect.objectContaining({
-          entity: "SLOT",
+          entity: "OCCURRENCE",
           toStatus: "CANCELLED",
           appointmentId: "apt_1",
         }),
@@ -115,7 +119,7 @@ describe("transitionSlotCompletion", () => {
 
   it("fromIn narrows the set", async () => {
     const { tx, updateManyAndReturn } = slotTx(1);
-    await transitionSlotCompletion(tx, {
+    await transitionOccurrenceCompletion(tx, {
       where: { id: "slot_1" },
       to: "COMPLETED",
       fromIn: ["SCHEDULED"],
@@ -129,13 +133,13 @@ describe("transitionSlotCompletion", () => {
   it("zero rows throws unless allowZero", async () => {
     const { tx } = slotTx(0);
     await expect(
-      transitionSlotCompletion(tx, {
+      transitionOccurrenceCompletion(tx, {
         where: { id: "slot_1" },
         to: "COMPLETED",
       }),
     ).rejects.toBeInstanceOf(IllegalTransitionError);
     await expect(
-      transitionSlotCompletion(tx, {
+      transitionOccurrenceCompletion(tx, {
         where: { id: "slot_1" },
         to: "COMPLETED",
         allowZero: true,

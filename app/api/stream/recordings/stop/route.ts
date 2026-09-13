@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const meetingSession = await prisma.meetingSession.findUnique({
       where: { id: meetingSessionId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {

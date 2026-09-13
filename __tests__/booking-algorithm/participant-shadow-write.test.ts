@@ -97,25 +97,25 @@ describe("setParticipantStatus / linkParticipantsToPayment", () => {
   });
 });
 
-describe("every slot writer records the participant edge", () => {
+describe("every creation path records the participant edge (#1544 / #1554)", () => {
   const read = (f: string) =>
     fs.readFileSync(path.join(process.cwd(), f), "utf8");
   const writers: Array<[string, RegExp]> = [
     ["lib/payments/operations/checkout.ts", /recordParticipants\(/],
     ["utils/scheduling-engine/SchedulingService.ts", /recordParticipants\(/],
     ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
+    // #1544 — the one creation path that never wrote the roster until #1554.
+    ["app/api/slots/request-for-approval/route.ts", /recordParticipants\(/],
     [
       "lib/payments/webhooks/handlers.ts",
       /setParticipantStatus\(|participants: \{/,
     ],
     [
       "app/api/participants/webinar/[webinarId]/route.ts",
-      /appointmentParticipant\.updateMany/,
+      /releaseParticipant\(/,
     ],
-    [
-      "app/api/participants/class/[classId]/route.ts",
-      /appointmentParticipant\.updateMany/,
-    ],
+    ["app/api/participants/class/[classId]/route.ts", /releaseParticipant\(/],
+    ["lib/payments/operations/cancel-pending.ts", /releaseParticipant\(/],
     [
       "app/api/appointments/[appointmentId]/cancel/route.ts",
       /setParticipantStatus\(/,
@@ -132,7 +132,7 @@ describe("every slot writer records the participant edge", () => {
     expect(read(file)).toMatch(pattern);
   });
 
-  it("checkout records participants once per handler that connects slots", () => {
+  it("checkout records participants once per handler that seats a buyer", () => {
     const src = read("lib/payments/operations/checkout.ts");
     expect((src.match(/recordParticipants\(/g) ?? []).length).toBe(4);
   });

@@ -25,7 +25,7 @@ export function WebinarScheduleSummary({
   plan: WebinarPlanSchedule;
 }) {
   const webinar = plan.webinars[0];
-  const slot = webinar?.appointment?.slotsOfAppointment[0];
+  const slot = webinar?.appointment?.occurrences[0];
 
   if (!webinar) {
     return (
@@ -68,7 +68,8 @@ export function WebinarScheduleSummary({
           <div className="flex items-center gap-1.5">
             <Users className="w-3 h-3 text-zinc-400" />
             <span>
-              {slot._count.user} / {plan.maxParticipants} participants
+              {webinar.appointment?._count.participants ?? 0} /{" "}
+              {plan.maxParticipants} participants
             </span>
           </div>
         </div>
@@ -85,7 +86,7 @@ export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
   return (
     <div className="space-y-2">
       {plan.webinars.map((webinar) => {
-        const slot = webinar.appointment?.slotsOfAppointment[0];
+        const slot = webinar.appointment?.occurrences[0];
         if (!slot) return null;
         return (
           <div
@@ -107,7 +108,8 @@ export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
               <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                 <Users className="w-3 h-3" />
                 <span>
-                  {slot._count.user} / {plan.maxParticipants}
+                  {webinar.appointment?._count.participants ?? 0} /{" "}
+                  {plan.maxParticipants}
                 </span>
               </div>
             </div>
@@ -141,13 +143,11 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
 
   const activeClass =
     plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
-  const allSlots = activeClass.appointments.flatMap(
-    (a) => a.slotsOfAppointment,
-  );
+  const allSlots = activeClass.appointments.flatMap((a) => a.occurrences);
   const now = new Date();
   const upcomingSlots = allSlots.filter((s) => new Date(s.startsAt) > now);
   const nextSlot = upcomingSlots[0];
-  const totalEnrolled = allSlots[0]?._count.user ?? 0;
+  const totalEnrolled = activeClass.appointments[0]?._count.participants ?? 0;
 
   return (
     <div className="space-y-2">
@@ -211,7 +211,9 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
 }
 
 function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
-  const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
+  const allSlots = cls.appointments.flatMap((a) =>
+    a.occurrences.map((slot) => ({ ...slot, enrolled: a._count.participants })),
+  );
   if (allSlots.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic py-1">
@@ -252,7 +254,7 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
             </div>
             <div className="flex items-center gap-1.5 text-zinc-400">
               <Users className="w-3 h-3" />
-              <span>{slot._count.user}</span>
+              <span>{slot.enrolled}</span>
               {slot.isTentative && (
                 <Badge
                   variant="outline"
@@ -277,8 +279,8 @@ function ClassEventCard({
   plan: ClassPlanSchedule;
 }) {
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
-  const allSlots = cls.appointments.flatMap((a) => a.slotsOfAppointment);
-  const totalEnrolled = allSlots[0]?._count.user ?? 0;
+  const allSlots = cls.appointments.flatMap((a) => a.occurrences);
+  const totalEnrolled = cls.appointments[0]?._count.participants ?? 0;
 
   return (
     <div className="rounded-md border border-zinc-100 bg-zinc-50/50 px-3 py-2">

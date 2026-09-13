@@ -60,7 +60,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     await expect(
       resolveOrg("consultation", "consultation", {
         ...base,
-        appointment: { organizationId: "wipro-org-id", slotsOfAppointment: [] },
+        appointment: { organizationId: "wipro-org-id", occurrences: [] },
       }),
     ).resolves.toBe("wipro-org-id");
 
@@ -68,7 +68,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     await expect(
       resolveOrg("consultation", "consultation", {
         ...base,
-        appointment: { organizationId: null, slotsOfAppointment: [] },
+        appointment: { organizationId: null, occurrences: [] },
       }),
     ).resolves.toBeNull();
   });
@@ -80,7 +80,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
       appointments: [
         {
           organizationId: "wipro-org-id",
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: { organizationId: null },
         },
       ],
@@ -99,7 +99,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
       appointments: [
         {
           organizationId: null,
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: { organizationId: "wipro-org-id" },
         },
       ],
@@ -116,7 +116,7 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
       appointments: [
         {
           organizationId: null,
-          slotsOfAppointment: [],
+          occurrences: [],
           payment: { organizationId: null },
         },
       ],

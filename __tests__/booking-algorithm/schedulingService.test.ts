@@ -123,13 +123,13 @@ function makeMockTx() {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({
         id: "apt-1",
-        slotsOfAppointment: [],
+        occurrences: [],
       }),
       // #898 — REUSE path: createAppointments updates the preserved 1:1
       // (consultation/webinar) appointment instead of creating a second row.
       update: jest.fn().mockResolvedValue({
         id: "reused-apt",
-        slotsOfAppointment: [],
+        occurrences: [],
       }),
       delete: jest.fn(),
       // B-P1-05 — the payment guard rides in the delete's WHERE clause, so
@@ -141,9 +141,11 @@ function makeMockTx() {
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // #1554 — the roster read behind the top-up's re-seat.
+      findMany: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       update: jest.fn(),
       updateMany: jest.fn(),
       deleteMany: jest.fn(),
@@ -454,7 +456,7 @@ describe("Manual allocation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    const slotsToCreate = createCall.data.slotsOfAppointment.create;
+    const slotsToCreate = createCall.data.occurrences.create;
 
     expect(slotsToCreate).toHaveLength(2);
     // Each slot should have 30-minute offset between startsAt and endsAt
@@ -473,12 +475,13 @@ describe("Manual allocation", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
+    // #1554 — the roster is AppointmentParticipant, never a field on the row.
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    const userConnect =
-      createCall.data.slotsOfAppointment.create[0].user.connect;
-
-    expect(userConnect).toEqual(
-      expect.arrayContaining([{ id: "consultant-1" }, { id: "consultee-1" }]),
+    expect(createCall.data.occurrences.create[0]).not.toHaveProperty("user");
+    const seated = mockTx.appointmentParticipant.createMany.mock.calls[0][0]
+      .data as Array<{ userId: string }>;
+    expect(seated.map((seat) => seat.userId)).toEqual(
+      expect.arrayContaining(["consultant-1", "consultee-1"]),
     );
   });
 
@@ -535,10 +538,10 @@ describe("Manual allocation", () => {
   it("should delete existing appointments before creating new ones", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     // Simulate existing appointments to delete
-    // First findMany: reschedule detection (needs slotsOfAppointment)
+    // First findMany: reschedule detection (needs occurrences)
     // Second findMany: deleteExistingAppointments full-delete path
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "old-apt-1", slotsOfAppointment: [] },
+      { id: "old-apt-1", occurrences: [], participants: [] },
     ]);
 
     await SchedulingService.allocate({
@@ -649,7 +652,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
+          occurrences: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
         },
       }),
     );
@@ -674,7 +677,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -684,7 +687,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [
+        occurrences: [
           { id: "s1", completionStatus: "RESCHEDULED" },
           { id: "s2", completionStatus: "RESCHEDULED" },
         ],
@@ -701,14 +704,14 @@ describe("Requested slot allocation", () => {
     expect(result.error).toContain("Cannot reuse requested times");
     expect(result.error).toContain("2 slot(s) are awaiting reschedule");
     // The status write must not have happened.
-    expect(mockTx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
   });
 
   it("should return error when appointment slot count mismatches requested", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -719,7 +722,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date("2025-01-06T10:00:00Z"),
@@ -748,7 +751,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -758,7 +761,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date("2025-01-06T10:00:00Z"),
@@ -785,7 +788,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -795,7 +798,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [{ id: "s1" }, { id: "s2" }],
       },
     ]);
     mockValidateFn.mockResolvedValue({
@@ -818,7 +821,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -828,7 +831,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [{ id: "s1" }, { id: "s2" }],
       },
     ]);
 
@@ -839,7 +842,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
+    expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
       where: { appointmentId: { in: ["apt-1"] } },
       data: { isTentative: false },
     });
@@ -849,7 +852,7 @@ describe("Requested slot allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -859,7 +862,7 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        slotsOfAppointment: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [{ id: "s1" }, { id: "s2" }],
       },
     ]);
 
@@ -883,13 +886,13 @@ describe("Requested slot allocation", () => {
     const existingApts = [
       {
         id: "apt-1",
-        slotsOfAppointment: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [{ id: "s1" }, { id: "s2" }],
       },
     ];
     mockTx.consultation.findUnique.mockResolvedValue(
       makeConsultationEvent({
         appointment: {
-          slotsOfAppointment: [
+          occurrences: [
             { startsAt: new Date("2025-01-06T10:00:00Z") },
             { startsAt: new Date("2025-01-06T10:30:00Z") },
           ],
@@ -962,7 +965,7 @@ describe("Auto allocation", () => {
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
     // Appointment should have 2 slots (1hr ÷ 30min = 2)
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.slotsOfAppointment.create).toHaveLength(2);
+    expect(createCall.data.occurrences.create).toHaveLength(2);
   });
 
   it("should find consecutive slots for webinar", async () => {
@@ -1013,7 +1016,7 @@ describe("Auto allocation", () => {
     mockTx.appointment.findMany
       .mockResolvedValueOnce([]) // reschedule check
       .mockResolvedValueOnce([]) // consultant booked slots — none
-      .mockResolvedValueOnce([{ slotsOfAppointment: consulteeBusy }]) // #898 consultee-busy query
+      .mockResolvedValueOnce([{ occurrences: consulteeBusy }]) // #898 consultee-busy query
       .mockResolvedValue([]); // delete
 
     const result = await SchedulingService.allocate({
@@ -1024,7 +1027,7 @@ describe("Auto allocation", () => {
 
     expect(result.success).toBe(true);
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    const starts = createCall.data.slotsOfAppointment.create.map((s: any) =>
+    const starts = createCall.data.occurrences.create.map((s: any) =>
       new Date(s.startsAt).toISOString(),
     );
     // Booked the mutually-free Tuesday block, not a consultant-free Monday slot
@@ -1059,7 +1062,7 @@ describe("Auto allocation", () => {
 
     mockTx.appointment.findMany
       .mockResolvedValueOnce([]) // reschedule check
-      .mockResolvedValueOnce([{ slotsOfAppointment: bookedSlots }]) // booked slots
+      .mockResolvedValueOnce([{ occurrences: bookedSlots }]) // booked slots
       .mockResolvedValue([]); // delete
 
     const result = await SchedulingService.allocate({
@@ -1106,7 +1109,7 @@ describe("Auto allocation", () => {
       .mockResolvedValueOnce([
         {
           id: "expired-hold",
-          slotsOfAppointment: blockedSlots,
+          occurrences: blockedSlots,
           consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
           subscription: null,
           payment: [
@@ -1158,7 +1161,7 @@ describe("Auto allocation", () => {
       .mockResolvedValueOnce([
         {
           id: "live-hold",
-          slotsOfAppointment: blockedSlots,
+          occurrences: blockedSlots,
           consultation: { status: AppointmentStatus.APPROVED_PENDING_PAYMENT },
           subscription: null,
           payment: [
@@ -1224,8 +1227,7 @@ describe("Auto allocation", () => {
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(8);
 
     const sessionStarts = mockTx.appointment.create.mock.calls.map(
-      (call: any[]) =>
-        new Date(call[0].data.slotsOfAppointment.create[0].startsAt),
+      (call: any[]) => new Date(call[0].data.occurrences.create[0].startsAt),
     );
     // Two sessions stacked on the first Monday (09:00 and 10:00) — the
     // per-day-cap behavior the validator already allowed.
@@ -1302,8 +1304,8 @@ describe("Auto allocation", () => {
     for (const index of [1, 2]) {
       const { where, include } = findManyCalls[index][0];
       const boundedArm = where.AND.find(
-        (clause: any) => clause.slotsOfAppointment?.some?.endsAt !== undefined,
-      )?.slotsOfAppointment.some;
+        (clause: any) => clause.occurrences?.some?.endsAt !== undefined,
+      )?.occurrences.some;
       expect(boundedArm).toBeDefined();
       // Live intervals only — past slots can never collide with a candidate.
       expect(boundedArm.endsAt).toHaveProperty("gt");
@@ -1314,7 +1316,7 @@ describe("Auto allocation", () => {
       // deleted child of a qualifying appointment block selection
       // (CodeRabbit triage). Past children are deliberately admitted —
       // candidates before `now` are rejected anyway.
-      expect(include.slotsOfAppointment).toMatchObject({
+      expect(include.occurrences).toMatchObject({
         where: { deletedAt: null },
       });
     }
@@ -1347,7 +1349,7 @@ describe("Auto allocation", () => {
       .mockResolvedValueOnce([
         {
           id: "old-apt",
-          slotsOfAppointment: [
+          occurrences: [
             { isTentative: true, startsAt: new Date() },
             { isTentative: true, startsAt: new Date() },
           ],
@@ -1814,11 +1816,11 @@ describe("createAppointments - grouping and validation", () => {
 
     // First appointment: first 2 slots
     const call1 = mockTx.appointment.create.mock.calls[0][0];
-    expect(call1.data.slotsOfAppointment.create).toHaveLength(2);
+    expect(call1.data.occurrences.create).toHaveLength(2);
 
     // Second appointment: next 2 slots
     const call2 = mockTx.appointment.create.mock.calls[1][0];
-    expect(call2.data.slotsOfAppointment.create).toHaveLength(2);
+    expect(call2.data.occurrences.create).toHaveLength(2);
   });
 
   it("should group 6 slots into 2 appointments for 1.5-hour sessions", async () => {
@@ -1852,10 +1854,10 @@ describe("createAppointments - grouping and validation", () => {
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(2);
     // Each appointment has 3 slots
     expect(
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create,
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create,
     ).toHaveLength(3);
     expect(
-      mockTx.appointment.create.mock.calls[1][0].data.slotsOfAppointment.create,
+      mockTx.appointment.create.mock.calls[1][0].data.occurrences.create,
     ).toHaveLength(3);
   });
 
@@ -1870,7 +1872,7 @@ describe("createAppointments - grouping and validation", () => {
     });
 
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
     for (const slot of slotsCreated) {
       expect(slot.isTentative).toBe(false);
     }
@@ -1910,13 +1912,12 @@ describe("createAppointments - grouping and validation", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    const userConnect =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment
-        .create[0].user.connect;
-    expect(userConnect).toEqual([{ id: "consultant-1" }]);
+    const seated = mockTx.appointmentParticipant.createMany.mock.calls[0][0]
+      .data as Array<{ userId: string }>;
+    expect(seated.map((seat) => seat.userId)).toEqual(["consultant-1"]);
   });
 
-  it("should include slotsOfAppointment in create response", async () => {
+  it("should include occurrences in create response", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
     await SchedulingService.allocate({
@@ -1927,7 +1928,7 @@ describe("createAppointments - grouping and validation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.include).toEqual({ slotsOfAppointment: true });
+    expect(createCall.include).toEqual({ occurrences: true });
   });
 });
 
@@ -1937,10 +1938,10 @@ describe("deleteExistingAppointments", () => {
   it("should delete all existing appointments for manual allocation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     // findMany for reschedule detection and delete returns existing appointments
-    // Must include slotsOfAppointment for reschedule detection in manualAllocate
+    // Must include occurrences for reschedule detection in manualAllocate
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "old-1", slotsOfAppointment: [] },
-      { id: "old-2", slotsOfAppointment: [] },
+      { id: "old-1", occurrences: [], participants: [] },
+      { id: "old-2", occurrences: [], participants: [] },
     ]);
 
     await SchedulingService.allocate({
@@ -1970,19 +1971,24 @@ describe("deleteExistingAppointments", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "old-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             isTentative: false,
-            user: [{ id: "consultant-1" }],
             startsAt: new Date("2025-01-06T10:00:00Z"),
             endsAt: new Date("2025-01-06T10:30:00Z"),
             meetingSession: null,
           },
         ],
+        participants: [{ userId: "consultant-1" }],
         _count: { payment: 0 },
       },
-      { id: "old-2", slotsOfAppointment: [], _count: { payment: 0 } },
+      {
+        id: "old-2",
+        occurrences: [],
+        participants: [],
+        _count: { payment: 0 },
+      },
     ]);
     mockTx.appointment.deleteMany.mockImplementation(async ({ where }: any) =>
       where.id === "old-2" ? { count: 0 } : { count: 1 },
@@ -2004,7 +2010,7 @@ describe("deleteExistingAppointments", () => {
     );
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // Its sessionless slots were stripped so they no longer block availability.
-    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+    expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: { appointmentId: "old-2", meetingSession: { is: null } },
     });
   });
@@ -2029,10 +2035,11 @@ describe("deleteExistingAppointments", () => {
 
     const tentativeAppointment = {
       id: "rescheduled-apt",
-      slotsOfAppointment: [
+      occurrences: [
         { id: "s1", isTentative: true },
         { id: "s2", isTentative: true },
       ],
+      participants: [],
       _count: { payment: 0 },
     };
 
@@ -2052,7 +2059,7 @@ describe("deleteExistingAppointments", () => {
     // The freed ids must be threaded up to the AllocationResult.
     expect(result.deletedAppointmentIds).toEqual(["rescheduled-apt"]);
     // And only tentative slots were removed (partial reschedule path).
-    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+    expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: { appointmentId: "rescheduled-apt", isTentative: true },
     });
   });
@@ -2069,22 +2076,21 @@ describe("deleteExistingAppointments", () => {
     // One tentative session (2 slots for a 1h class) the learner is enrolled in.
     const tentativeClassAppt = {
       id: "class-apt-1",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "ts1",
           isTentative: true,
-          user: [{ id: "consultant-1" }, { id: "learner-1" }],
           startsAt: new Date("2025-01-06T10:00:00Z"),
           endsAt: new Date("2025-01-06T10:30:00Z"),
         },
         {
           id: "ts2",
           isTentative: true,
-          user: [{ id: "consultant-1" }, { id: "learner-1" }],
           startsAt: new Date("2025-01-06T10:30:00Z"),
           endsAt: new Date("2025-01-06T11:00:00Z"),
         },
       ],
+      participants: [{ userId: "consultant-1" }, { userId: "learner-1" }],
       _count: { payment: 0 },
     };
     mockTx.appointment.findMany.mockResolvedValue([tentativeClassAppt]);
@@ -2092,7 +2098,7 @@ describe("deleteExistingAppointments", () => {
     // slots) so reconnect re-links the learner to every new slot (#898 #6).
     mockTx.appointment.create.mockResolvedValue({
       id: "new-class-apt",
-      slotsOfAppointment: [{ id: "new-slot-1" }, { id: "new-slot-1b" }],
+      occurrences: [{ id: "new-slot-1" }, { id: "new-slot-1b" }],
     });
 
     const result = await SchedulingService.allocate({
@@ -2103,19 +2109,31 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(result.success).toBe(true);
-    // The enrolled learner is reconnected to BOTH new slots...
-    for (const slotId of ["new-slot-1", "new-slot-1b"]) {
-      expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
-        where: { id: slotId },
-        data: { user: { connect: [{ id: "learner-1" }] } },
-      });
-    }
-    // ...and the consultant is NOT in the reconnect set (already connected).
-    const reconnectCalls = mockTx.slotOfAppointment.update.mock.calls;
-    const connectedIds = reconnectCalls.flatMap((c: any[]) =>
-      (c[0]?.data?.user?.connect ?? []).map((u: { id: string }) => u.id),
+    // #1554 — the enrolled learner is re-seated on the new appointment...
+    expect(mockTx.appointmentParticipant.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            appointmentId: "new-class-apt",
+            userId: "learner-1",
+            status: "CONFIRMED",
+          }),
+        ],
+      }),
     );
-    expect(connectedIds).not.toContain("consultant-1");
+    // ...and the consultant is NOT in the reconnect set: createAppointments
+    // seats them as CONSULTANT itself, so the CONSULTEE re-seat names only
+    // the learner.
+    const reseatCalls = mockTx.appointmentParticipant.createMany.mock.calls;
+    const reseated = reseatCalls.flatMap((c: any[]) =>
+      (c[0]?.data ?? [])
+        .filter(
+          (row: { appointmentId: string; role: string }) =>
+            row.appointmentId === "new-class-apt" && row.role === "CONSULTEE",
+        )
+        .map((row: { userId: string }) => row.userId),
+    );
+    expect(reseated).toEqual(["learner-1"]);
   });
 
   // Same hazard via the full-delete branch: re-scheduling a CONFIRMED,
@@ -2128,28 +2146,27 @@ describe("deleteExistingAppointments", () => {
     // One confirmed (non-tentative), future session the learner is enrolled in.
     const confirmedClassAppt = {
       id: "confirmed-class-apt",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "cs1",
           isTentative: false,
-          user: [{ id: "consultant-1" }, { id: "learner-1" }],
           startsAt: new Date("2025-01-06T10:00:00Z"),
           endsAt: new Date("2025-01-06T10:30:00Z"),
         },
         {
           id: "cs2",
           isTentative: false,
-          user: [{ id: "consultant-1" }, { id: "learner-1" }],
           startsAt: new Date("2025-01-06T10:30:00Z"),
           endsAt: new Date("2025-01-06T11:00:00Z"),
         },
       ],
+      participants: [{ userId: "consultant-1" }, { userId: "learner-1" }],
       _count: { payment: 0 },
     };
     mockTx.appointment.findMany.mockResolvedValue([confirmedClassAppt]);
     mockTx.appointment.create.mockResolvedValue({
       id: "new-class-apt-2",
-      slotsOfAppointment: [{ id: "new-slot-2" }, { id: "new-slot-2b" }],
+      occurrences: [{ id: "new-slot-2" }, { id: "new-slot-2b" }],
     });
 
     const result = await SchedulingService.allocate({
@@ -2160,13 +2177,17 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(result.success).toBe(true);
-    // Both new slots (1h session = 2×30-min) re-link the learner (#898 #6).
-    for (const slotId of ["new-slot-2", "new-slot-2b"]) {
-      expect(mockTx.slotOfAppointment.update).toHaveBeenCalledWith({
-        where: { id: slotId },
-        data: { user: { connect: [{ id: "learner-1" }] } },
-      });
-    }
+    // The learner is re-seated on the new appointment (#898 #6 / #1554).
+    expect(mockTx.appointmentParticipant.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            appointmentId: "new-class-apt-2",
+            userId: "learner-1",
+          }),
+        ],
+      }),
+    );
   });
 
   it("AE-4: returns an empty deletedAppointmentIds on a non-reschedule allocation", async () => {
@@ -2197,7 +2218,12 @@ describe("deleteExistingAppointments", () => {
 
     // Placeholder: zero slots, carries the signup Payment.
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "placeholder-apt", slotsOfAppointment: [], _count: { payment: 1 } },
+      {
+        id: "placeholder-apt",
+        occurrences: [],
+        participants: [],
+        _count: { payment: 1 },
+      },
     ]);
 
     const result = await SchedulingService.allocate({
@@ -2214,7 +2240,7 @@ describe("deleteExistingAppointments", () => {
     });
     // Its slots are freed via deleteMany scoped to the appointment id —
     // excluding held-session slots (#1169 PR 1, Recording cascade guard).
-    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+    expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: {
         appointmentId: "placeholder-apt",
         meetingSession: { is: null },
@@ -2229,7 +2255,12 @@ describe("deleteExistingAppointments", () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
     mockTx.appointment.findMany.mockResolvedValue([
-      { id: "no-pay-1", slotsOfAppointment: [], _count: { payment: 0 } },
+      {
+        id: "no-pay-1",
+        occurrences: [],
+        participants: [],
+        _count: { payment: 0 },
+      },
     ]);
 
     const result = await SchedulingService.allocate({
@@ -2261,13 +2292,14 @@ describe("deleteExistingAppointments", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "paid-consult-apt",
-        slotsOfAppointment: [],
+        occurrences: [],
+        participants: [],
         _count: { payment: 1 },
       },
     ]);
     mockTx.appointment.update.mockResolvedValue({
       id: "paid-consult-apt",
-      slotsOfAppointment: [{ id: "reused-slot-1" }, { id: "reused-slot-2" }],
+      occurrences: [{ id: "reused-slot-1" }, { id: "reused-slot-2" }],
     });
 
     const result = await SchedulingService.allocate({
@@ -2287,7 +2319,7 @@ describe("deleteExistingAppointments", () => {
     // The appointment is preserved (slots stripped), never hard-deleted.
     // #1169 PR 1 — held-session slots are excluded from the strip so a
     // MeetingSession (and its Recording) can never be cascade-deleted.
-    expect(mockTx.slotOfAppointment.deleteMany).toHaveBeenCalledWith({
+    expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
       where: {
         appointmentId: "paid-consult-apt",
         meetingSession: { is: null },
@@ -2310,36 +2342,31 @@ describe("deleteExistingAppointments", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "paid-webinar-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "ws1",
             isTentative: true,
-            user: [
-              { id: "consultant-1" },
-              { id: "attendee-1" },
-              { id: "attendee-2" },
-            ],
             startsAt: new Date("2025-01-06T10:00:00Z"),
             endsAt: new Date("2025-01-06T10:30:00Z"),
           },
           {
             id: "ws2",
             isTentative: true,
-            user: [
-              { id: "consultant-1" },
-              { id: "attendee-1" },
-              { id: "attendee-2" },
-            ],
             startsAt: new Date("2025-01-06T10:30:00Z"),
             endsAt: new Date("2025-01-06T11:00:00Z"),
           },
+        ],
+        participants: [
+          { userId: "consultant-1" },
+          { userId: "attendee-1" },
+          { userId: "attendee-2" },
         ],
         _count: { payment: 3 },
       },
     ]);
     mockTx.appointment.update.mockResolvedValue({
       id: "paid-webinar-apt",
-      slotsOfAppointment: [{ id: "reused-ws-1" }, { id: "reused-ws-2" }],
+      occurrences: [{ id: "reused-ws-1" }, { id: "reused-ws-2" }],
     });
     // B-P1-05 — the onlyTentative branch now deletes via a payment-guarded
     // deleteMany; this appointment carries payments, so the DB would answer
@@ -2359,21 +2386,24 @@ describe("deleteExistingAppointments", () => {
       expect.objectContaining({ where: { id: "paid-webinar-apt" } }),
     );
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
-    // Both paid attendees are re-linked to the new slots; the consultant is not
-    // re-added (already connected).
-    for (const slotId of ["reused-ws-1", "reused-ws-2"]) {
-      const call = mockTx.slotOfAppointment.update.mock.calls.find(
-        (c: any[]) => c[0]?.where?.id === slotId,
-      );
-      expect(call).toBeDefined();
-      const connectedIds = (call![0].data.user.connect as { id: string }[]).map(
-        (u) => u.id,
-      );
-      expect(connectedIds).toEqual(
-        expect.arrayContaining(["attendee-1", "attendee-2"]),
-      );
-      expect(connectedIds).not.toContain("consultant-1");
-    }
+    // Both paid attendees are re-seated on the reused appointment; the
+    // consultant is not re-added (already seated). #1554
+    const reseat = mockTx.appointmentParticipant.createMany.mock.calls.find(
+      (c: any[]) =>
+        (c[0]?.data ?? []).some(
+          (row: { appointmentId: string; role: string }) =>
+            row.appointmentId === "paid-webinar-apt" &&
+            row.role === "CONSULTEE",
+        ),
+    );
+    expect(reseat).toBeDefined();
+    const reseated = (reseat![0].data as { userId: string }[]).map(
+      (row) => row.userId,
+    );
+    expect(reseated).toEqual(
+      expect.arrayContaining(["attendee-1", "attendee-2"]),
+    );
+    expect(reseated).not.toContain("consultant-1");
   });
 
   // #898 decision C: preservePastSlots must not hard-delete a payment-bearing
@@ -2393,27 +2423,27 @@ describe("deleteExistingAppointments", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "past-session-apt",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "past-1",
             isTentative: false,
-            user: [{ id: "consultant-1" }, { id: "consultee-1" }],
             startsAt: new Date("2024-12-30T10:00:00Z"),
             endsAt: new Date("2024-12-30T10:30:00Z"),
           },
           {
             id: "past-2",
             isTentative: false,
-            user: [{ id: "consultant-1" }, { id: "consultee-1" }],
             startsAt: new Date("2024-12-30T10:30:00Z"),
             endsAt: new Date("2024-12-30T11:00:00Z"),
           },
         ],
+        participants: [{ userId: "consultant-1" }, { userId: "consultee-1" }],
         _count: { payment: 0 },
       },
       {
         id: "paid-placeholder",
-        slotsOfAppointment: [],
+        occurrences: [],
+        participants: [],
         _count: { payment: 1 },
       },
     ]);
@@ -2460,7 +2490,7 @@ describe("partial reschedule slot count", () => {
   const twoTentativeAppointments = [
     {
       id: "resched-1",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "ts1",
           isTentative: true,
@@ -2468,11 +2498,12 @@ describe("partial reschedule slot count", () => {
           endsAt: new Date(),
         },
       ],
+      participants: [],
       _count: { payment: 0 },
     },
     {
       id: "resched-2",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "ts2",
           isTentative: true,
@@ -2480,6 +2511,7 @@ describe("partial reschedule slot count", () => {
           endsAt: new Date(),
         },
       ],
+      participants: [],
       _count: { payment: 0 },
     },
   ];
@@ -2545,7 +2577,7 @@ describe("Edge cases", () => {
 
     expect(result.success).toBe(true);
     const slotsCreated =
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create;
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
     expect(slotsCreated).toHaveLength(1);
   });
 
@@ -2575,7 +2607,7 @@ describe("Edge cases", () => {
     expect(result.success).toBe(true);
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);
     expect(
-      mockTx.appointment.create.mock.calls[0][0].data.slotsOfAppointment.create,
+      mockTx.appointment.create.mock.calls[0][0].data.occurrences.create,
     ).toHaveLength(4);
   });
 
@@ -2854,7 +2886,7 @@ describe("Auto allocation - timezone day shift", () => {
 
     // Verify the created slots are on a Monday in UTC
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    const firstSlot = createCall.data.slotsOfAppointment.create[0];
+    const firstSlot = createCall.data.occurrences.create[0];
     const slotDate = new Date(firstSlot.startsAt);
     expect(slotDate.getUTCDay()).toBe(1); // Monday
     expect(slotDate.getUTCHours()).toBeGreaterThanOrEqual(3);

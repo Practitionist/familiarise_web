@@ -13,8 +13,8 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  * these helpers — Today/Upcoming lists, HomeTab action items — inherits the
  * filter.
  */
-function liveSlotsOf(appointment: TAppointment): TAppointment["slotsOfAppointment"] {
-  return (appointment.slotsOfAppointment ?? []).filter(
+function liveSlotsOf(appointment: TAppointment): TAppointment["occurrences"] {
+  return (appointment.occurrences ?? []).filter(
     (slot) => !isDeadSlot(slot) && !slot.isTentative,
   );
 }
@@ -208,11 +208,11 @@ export const getAppointmentTypeAndPlan = (
 
 // Get all slot times from appointment with proper type conversion
 export const getSlotTimes = (appointment: TAppointment): Date[] => {
-  if (!appointment?.slotsOfAppointment?.length) {
+  if (!appointment?.occurrences?.length) {
     return [];
   }
 
-  return appointment.slotsOfAppointment
+  return appointment.occurrences
     .map((slot) => new Date(slot.startsAt))
     .filter((date) => !isNaN(date.getTime()));
 };
@@ -339,7 +339,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   }
 
   // Check if a slot is currently in progress (not ended early)
-  const currentSlot = appointment?.slotsOfAppointment?.find((slot) => {
+  const currentSlot = appointment?.occurrences?.find((slot) => {
     if (slot.isTentative) return false;
     if (
       slot.completionStatus === "CANCELLED" ||
@@ -458,13 +458,13 @@ export const getTodayAppointments = (
       return liveSlots.map((slot) => ({
         ...appointment,
         id: `${appointment.id}-${slot.id}`,
-        slotsOfAppointment: [slot],
+        occurrences: [slot],
       }));
     }
 
     // Keep consultations and webinars as single appointments — but with only
     // their live rows, so a released reschedule slot cannot anchor "today".
-    return [{ ...appointment, slotsOfAppointment: liveSlots }];
+    return [{ ...appointment, occurrences: liveSlots }];
   });
 
   return expandedAppointments.filter((appointment) => {
@@ -493,10 +493,10 @@ export const getUpcomingAppointments = (
   // behavior (their liveness is decided by the checks below, not slots).
   const withLiveSlots = appointments.flatMap((appointment) => {
     const live = liveSlotsOf(appointment);
-    if (live.length === 0 && (appointment.slotsOfAppointment ?? []).length > 0) {
+    if (live.length === 0 && (appointment.occurrences ?? []).length > 0) {
       return [];
     }
-    return [{ ...appointment, slotsOfAppointment: live }];
+    return [{ ...appointment, occurrences: live }];
   });
 
   // First filter out completed appointments

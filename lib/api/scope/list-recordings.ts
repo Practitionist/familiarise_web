@@ -3,7 +3,7 @@
  * `Recording.organizationId` is denormalized from the parent appointment
  * (kept in sync by checkout + the backfill script). Listing by org is
  * a single-hop lookup instead of joining through MeetingSession →
- * SlotOfAppointment → Appointment.
+ * AppointmentOccurrence → Appointment.
  */
 
 import prisma from "@/lib/prisma";
@@ -46,7 +46,7 @@ const recordingMetadataSelect = {
   meetingSession: {
     select: {
       id: true,
-      slotOfAppointment: {
+      occurrence: {
         select: {
           appointment: {
             select: { id: true, appointmentType: true, organizationId: true },
@@ -110,7 +110,7 @@ function buildWhere(
       ...base,
       organizationId: null,
       meetingSession: {
-        slotOfAppointment: {
+        occurrence: {
           appointment: {
             OR: [
               { consultation: { requestedBy: { userId: params.userId } } },
@@ -135,7 +135,7 @@ function buildWhere(
       ...base,
       organizationId: params.scope.orgId,
       meetingSession: {
-        slotOfAppointment: {
+        occurrence: {
           appointment: {
             OR: [
               { consultation: { requestedBy: { userId: params.scope.userId } } },

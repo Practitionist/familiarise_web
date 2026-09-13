@@ -104,7 +104,7 @@ interface AppointmentSlotRaw {
 interface Appointment {
   id: string;
   appointmentType: string;
-  slotsOfAppointment?: AppointmentSlotRaw[];
+  occurrences?: AppointmentSlotRaw[];
   consultation?: AppointmentConsultation;
   subscription?: AppointmentSubscription;
   webinar?: AppointmentWebinar;
@@ -514,7 +514,7 @@ export function useCalendarData(
         const confirmedSlots: BookableInterval[] = [];
         const tentativeSlots: BookableInterval[] = [];
         for (const appointment of activeData) {
-          for (const slot of (appointment.slotsOfAppointment ||
+          for (const slot of (appointment.occurrences ||
             []) as AppointmentSlotRaw[]) {
             const start = new Date(slot.startsAt);
             const end = new Date(slot.endsAt);

@@ -2,7 +2,7 @@ import type { Prisma, OrgPlanVisibility } from "@prisma/client";
 
 /**
  * Shared traversal for the #366 marketplace routes: Recording → MeetingSession
- * → SlotOfAppointment → Appointment → (Webinar|Class)Plan. Every route used to
+ * → AppointmentOccurrence → Appointment → (Webinar|Class)Plan. Every route used to
  * inline its own four-arm include + fallback chain — Sonar flagged the copy
  * drift as >3% new-code duplication, and duplicated authz selects are exactly
  * how two endpoints end up enforcing different rules.
@@ -210,7 +210,7 @@ export async function loadOwnedListingRecording(
       previewTranscript: true,
       meetingSession: {
         select: {
-          slotOfAppointment: {
+          occurrence: {
             select: {
               appointment: { select: appointmentPlanArmsSelect },
             },
@@ -222,7 +222,7 @@ export async function loadOwnedListingRecording(
   if (!recording) return { status: "not_found" };
 
   const plan = resolveListingPlan(
-    recording.meetingSession.slotOfAppointment.appointment,
+    recording.meetingSession.occurrence.appointment,
   );
   if (!plan) return { status: "not_found" };
 

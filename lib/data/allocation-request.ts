@@ -89,7 +89,7 @@ export async function readAllocationRequest(
           },
         },
         appointments: {
-          select: { slotsOfAppointment: slotSelect },
+          select: { occurrences: slotSelect },
         },
       },
     });
@@ -112,10 +112,10 @@ export async function readAllocationRequest(
       allowedStart: subscription.schedulingPeriodStartsAt,
       allowedEnd: subscription.schedulingPeriodEndsAt,
       hasReleasedSlots: subscription.appointments.some((appointment) =>
-        appointment.slotsOfAppointment.some((slot) => slot.isTentative),
+        appointment.occurrences.some((slot) => slot.isTentative),
       ),
       slots: subscription.appointments.flatMap(
-        (appointment) => appointment.slotsOfAppointment,
+        (appointment) => appointment.occurrences,
       ),
     });
   }
@@ -133,7 +133,7 @@ export async function readAllocationRequest(
           durationInHours: true,
         },
       },
-      appointment: { select: { slotsOfAppointment: slotSelect } },
+      appointment: { select: { occurrences: slotSelect } },
     },
   });
   if (!consultation?.consultationPlan) return null;
@@ -149,8 +149,8 @@ export async function readAllocationRequest(
     consulteeName: consultation.requestedBy?.user?.name,
     durationInHours: plan.durationInHours,
     hasReleasedSlots: (
-      consultation.appointment?.slotsOfAppointment ?? []
+      consultation.appointment?.occurrences ?? []
     ).some((slot) => slot.isTentative),
-    slots: consultation.appointment?.slotsOfAppointment ?? [],
+    slots: consultation.appointment?.occurrences ?? [],
   });
 }

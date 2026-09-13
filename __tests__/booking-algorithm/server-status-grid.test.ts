@@ -51,7 +51,7 @@ describe("computeWeeklyConfirmedCallCounts", () => {
     return {
       appointmentType: "SUBSCRIPTION",
       subscription: { id: SUB_ID, schedulingTimezone: opts?.tz },
-      slotsOfAppointment: [
+      occurrences: [
         { startsAt: start, isTentative: false },
         { startsAt: new Date(start.getTime() + 30 * 60 * 1000), isTentative: false },
       ],
@@ -80,14 +80,14 @@ describe("computeWeeklyConfirmedCallCounts", () => {
 
   it("excludes tentative slots (mid-reschedule, not a completed call)", () => {
     const appt = confirmedAppt("2025-01-06T10:00:00.000Z");
-    appt.slotsOfAppointment[0].isTentative = true;
+    appt.occurrences[0].isTentative = true;
     const counts = computeWeeklyConfirmedCallCounts([appt], SUB_ID, SLOTS_PER_CALL);
     expect(counts).toEqual({});
   });
 
   it("excludes appointments whose slot count doesn't match slotsPerCall", () => {
     const appt = confirmedAppt("2025-01-06T10:00:00.000Z");
-    appt.slotsOfAppointment.pop(); // now 1 slot, slotsPerCall expects 2
+    appt.occurrences.pop(); // now 1 slot, slotsPerCall expects 2
     const counts = computeWeeklyConfirmedCallCounts([appt], SUB_ID, SLOTS_PER_CALL);
     expect(counts).toEqual({});
   });
@@ -98,7 +98,7 @@ describe("computeWeeklyConfirmedCallCounts", () => {
     const consultation = {
       appointmentType: "CONSULTATION",
       subscription: undefined,
-      slotsOfAppointment: [{ startsAt: new Date("2025-01-06T10:00:00.000Z") }],
+      occurrences: [{ startsAt: new Date("2025-01-06T10:00:00.000Z") }],
     };
     const counts = computeWeeklyConfirmedCallCounts(
       [otherSub, consultation],
@@ -120,7 +120,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a1",
       appointmentType: "CONSULTATION",
-      slotsOfAppointment: [],
+      occurrences: [],
       consultation: {
         consultationPlan: { title: "Career Coaching" },
         requestedBy: { user: { name: "Jane Doe" } },
@@ -133,7 +133,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a2",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: [],
+      occurrences: [],
       subscription: {
         subscriptionPlan: { title: "Monthly Mentorship" },
         requestedBy: { user: { name: "John Smith" } },
@@ -146,7 +146,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a3",
       appointmentType: "WEBINAR",
-      slotsOfAppointment: [],
+      occurrences: [],
       webinar: { webinarPlan: { title: null } },
     });
     expect(result).toEqual({ title: "Webinar" });
@@ -156,7 +156,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const webinar = extractOverlapTitleAndParticipant({
       id: "a4",
       appointmentType: "WEBINAR",
-      slotsOfAppointment: [],
+      occurrences: [],
       webinar: { webinarPlan: { title: "Group Session" } },
     });
     expect(webinar.with).toBeUndefined();
@@ -167,7 +167,7 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
   const baseAppt = (id: string, startIso: string, endIso: string) => ({
     id,
     appointmentType: "CONSULTATION" as const,
-    slotsOfAppointment: [
+    occurrences: [
       { id: `${id}-slot`, startsAt: new Date(startIso), endsAt: new Date(endIso) },
     ],
     consultation: {

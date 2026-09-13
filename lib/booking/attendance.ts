@@ -50,7 +50,7 @@ export interface AttendedSession {
   attendances: { userId: string }[];
 }
 
-/** The subset of a `SlotOfAppointment` this module needs: its session, if any. */
+/** The subset of a `AppointmentOccurrence` this module needs: its session, if any. */
 export interface SlotWithSession<S extends AttendedSession = AttendedSession> {
   meetingSession: S | null;
 }

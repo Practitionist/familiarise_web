@@ -20,7 +20,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
-    slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
@@ -100,7 +100,7 @@ function makeConsultationAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: {
       id: "cons-1",
       consultationPlan: {
@@ -121,7 +121,7 @@ function makeSubscriptionAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: {
       id: "sub-1",
@@ -142,7 +142,7 @@ function makeWebinarAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "WEBINAR",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: {
@@ -193,9 +193,9 @@ function makeMockTx(appointmentData: any) {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // transitionSlotCompletion reads the from-status, then moves the cohort
+    // transitionOccurrenceCompletion reads the from-status, then moves the cohort
     // with updateManyAndReturn so each moved id gets its history row.
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),
@@ -371,7 +371,7 @@ describe("Reschedule — derivedType fallback when no ?type param", () => {
     // For subscription entire reschedule, the route calls findMany twice
     mockTx.appointment.findMany
       .mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
+        { id: "apt-1", occurrences: appointment.occurrences },
       ])
       .mockResolvedValueOnce([{ id: "apt-1" }]);
     (prisma.$transaction as jest.Mock).mockImplementation(
@@ -445,7 +445,7 @@ describe("Reschedule — 24-hour policy", () => {
     const mockTx = makeMockTx(appointment);
     // For subscription, route fetches all slots
     mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
+      { id: "apt-1", occurrences: appointment.occurrences },
     ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
@@ -520,7 +520,7 @@ describe("Reschedule — Response shape", () => {
     const appointment = makeSubscriptionAppointment();
     const mockTx = makeMockTx(appointment);
     mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
+      { id: "apt-1", occurrences: appointment.occurrences },
     ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
@@ -546,7 +546,7 @@ describe("Reschedule — Response shape", () => {
     const appointment = makeSubscriptionAppointment(twoSlots);
     const mockTx = makeMockTx(appointment);
     mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: twoSlots },
+      { id: "apt-1", occurrences: twoSlots },
     ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
@@ -573,8 +573,8 @@ describe("Reschedule — Response shape", () => {
     const appointment = makeSubscriptionAppointment([slotA]);
     const mockTx = makeMockTx(appointment);
     mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: [slotA] },
-      { id: "apt-2", slotsOfAppointment: [slotB] },
+      { id: "apt-1", occurrences: [slotA] },
+      { id: "apt-2", occurrences: [slotB] },
     ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),

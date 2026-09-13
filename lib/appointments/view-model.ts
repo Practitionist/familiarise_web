@@ -28,8 +28,8 @@ export type NeedsActionReason =
   | "TENTATIVE";
 
 /**
- * Minimal structural slot shape. Both Prisma's bare SlotOfAppointment and
- * the relation-carrying TSlotOfAppointment satisfy it, and API payloads may
+ * Minimal structural slot shape. Both Prisma's bare AppointmentOccurrence and
+ * the relation-carrying TAppointmentOccurrence satisfy it, and API payloads may
  * deliver dates as ISO strings — consumers must go through `new Date(...)`.
  */
 export interface SlotLike {
@@ -80,7 +80,7 @@ export interface SessionVM {
   startsAt: Date;
   endsAt: Date | null;
   isTentative: boolean;
-  /** Raw SlotCompletionStatus (CANCELLED/RESCHEDULED mark a dead session). */
+  /** Raw OccurrenceCompletionStatus (CANCELLED/RESCHEDULED mark a dead session). */
   completionStatus: string | null;
   /** Meeting ended early by the host — session is over regardless of endsAt. */
   meetingEndedAt: Date | null;

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
@@ -110,15 +111,10 @@ export async function GET(request: NextRequest) {
             {
               appointments: {
                 some: {
-                  slotsOfAppointment: {
+                  participants: {
                     some: {
-                      user: {
-                        some: {
-                          consulteeProfile: {
-                            id: consulteeProfileId,
-                          },
-                        },
-                      },
+                      ...liveParticipant(),
+                      user: { consulteeProfile: { id: consulteeProfileId } },
                     },
                   },
                 },
@@ -152,19 +148,7 @@ export async function GET(request: NextRequest) {
           },
           appointments: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                      consulteeProfileId: true,
-                    },
-                  },
-                },
-              },
+              occurrences: true,
               payment: true,
             },
           },
@@ -204,7 +188,7 @@ export async function GET(request: NextRequest) {
           // alone left the card falling back to the authoring window.
           appointments: {
             include: {
-              slotsOfAppointment: { orderBy: { startsAt: "asc" } },
+              occurrences: { orderBy: { startsAt: "asc" } },
             },
           },
         },

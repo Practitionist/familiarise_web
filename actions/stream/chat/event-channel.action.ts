@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -436,8 +437,9 @@ async function getEventData(eventType: EventType, eventId: string) {
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: { user: { select: { id: true } } },
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -452,9 +454,7 @@ async function getEventData(eventType: EventType, eventId: string) {
         ...(webinar.webinarPlan.collaborators ?? []).map(
           (c) => c.consultantProfile.userId,
         ),
-        ...(webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
-          s.user.map((u) => u.id),
-        ) || []),
+        ...(webinar.appointment?.participants.map((p) => p.userId) || []),
       ];
 
       // #1280 PR 7 — the funding org, resolved by the SAME `bookingOrgId`
@@ -494,8 +494,9 @@ async function getEventData(eventType: EventType, eventId: string) {
           },
           appointments: {
             include: {
-              slotsOfAppointment: {
-                include: { user: { select: { id: true } } },
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -510,9 +511,8 @@ async function getEventData(eventType: EventType, eventId: string) {
         ...(classData.classPlan.collaborators ?? []).map(
           (c) => c.consultantProfile.userId,
         ),
-        ...(classData.appointments?.flatMap(
-          (a) =>
-            a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
+        ...(classData.appointments?.flatMap((a) =>
+          a.participants.map((p) => p.userId),
         ) || []),
       ];
 
@@ -1082,7 +1082,7 @@ interface RetentionWindow {
 /** Structural shape of one event's retention-relevant appointment data. */
 interface AppointmentWindow {
   organization: { streamRecordingRetentionDays: number | null } | null;
-  slotsOfAppointment: { endsAt: Date }[];
+  occurrences: { endsAt: Date }[];
 }
 
 function isPastRetentionWindow(window: RetentionWindow): boolean {
@@ -1098,7 +1098,7 @@ function webinarRetentionWindow(
     // No session yet — the cron can't have expired something that never ran.
     return { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS };
   }
-  const endsAt = appointment.slotsOfAppointment.reduce<Date | null>(
+  const endsAt = appointment.occurrences.reduce<Date | null>(
     (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
     null,
   );
@@ -1125,7 +1125,7 @@ function latestClassRetentionWindow(
   }
   return appointments.reduce<RetentionWindow>(
     (latest, apt) => {
-      const aptLatest = apt.slotsOfAppointment.reduce<Date | null>(
+      const aptLatest = apt.occurrences.reduce<Date | null>(
         (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
         null,
       );
@@ -1188,7 +1188,7 @@ async function getWebinarIdsForUser(
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { endsAt: "desc" },
                 take: 1,
                 select: { endsAt: true },
@@ -1205,7 +1205,7 @@ async function getWebinarIdsForUser(
     prisma.webinar.findMany({
       where: {
         appointment: {
-          slotsOfAppointment: { some: { user: { some: { id: userId } } } },
+          participants: { some: liveParticipant(userId) },
         },
       },
       select: {
@@ -1213,7 +1213,7 @@ async function getWebinarIdsForUser(
         appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },
@@ -1257,7 +1257,7 @@ async function getClassIdsForUser(
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { endsAt: "desc" },
                 take: 1,
                 select: { endsAt: true },
@@ -1275,7 +1275,7 @@ async function getClassIdsForUser(
       where: {
         appointments: {
           some: {
-            slotsOfAppointment: { some: { user: { some: { id: userId } } } },
+            participants: { some: liveParticipant(userId) },
           },
         },
       },
@@ -1284,7 +1284,7 @@ async function getClassIdsForUser(
         appointments: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },

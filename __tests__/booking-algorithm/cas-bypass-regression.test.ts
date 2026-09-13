@@ -54,7 +54,7 @@ describe("sweeps cancel only from a cancellable state", () => {
       ).length,
     ).toBe(4);
     expect((src.match(/fromIn: CANCELLABLE_FROM/g) ?? []).length).toBe(2);
-    expect(src).not.toMatch(/transitionSlotCompletion\(prisma,/);
+    expect(src).not.toMatch(/transitionOccurrenceCompletion\(prisma,/);
   });
 
   it("cleanup-stale-pending-consultations' from-set is its own cohort (APPROVED*)", () => {
@@ -69,7 +69,7 @@ describe("sweeps cancel only from a cancellable state", () => {
   });
 });
 
-describe("slot completion writers use transitionSlotCompletion", () => {
+describe("slot completion writers use transitionOccurrenceCompletion", () => {
   for (const file of [
     "lib/stream/session-handlers.ts",
     "jobs/meetings/reconcile-orphaned-sessions.ts",
@@ -78,9 +78,9 @@ describe("slot completion writers use transitionSlotCompletion", () => {
     it(`${file} has no bare completionStatus write`, () => {
       const src = read(file);
       expect(src).not.toMatch(
-        /slotOfAppointment\.update\(\{[\s\S]*?completionStatus/,
+        /appointmentOccurrence\.update\(\{[\s\S]*?completionStatus/,
       );
-      expect(src).toContain("transitionSlotCompletion(");
+      expect(src).toContain("transitionOccurrenceCompletion(");
     });
   }
 });

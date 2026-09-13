@@ -74,12 +74,10 @@ function actionableSlots(slots: SlotLike[], now: Date): SlotLike[] {
 /** Group progress in calculateSessionProgress semantics: only slot-carrying
  *  child appointments are sessions; completed = all its slots elapsed. */
 function groupProgress(
-  children: Array<{ id: string; slotsOfAppointment?: SlotLike[] }>,
+  children: Array<{ id: string; occurrences?: SlotLike[] }>,
   now: Date,
 ): { total: number; completed: number } {
-  const withSlots = children.filter(
-    (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
-  );
+  const withSlots = children.filter((c) => (c.occurrences?.length ?? 0) > 0);
   // Per SESSION, not per row: a four-hour booking is not three-quarters
   // complete an hour in.
   const completed = withSlots.filter((c) =>
@@ -91,14 +89,14 @@ function groupProgress(
 /** The child appointment the action hook should target: the next one with a
  *  live/future slot, else the first slot-carrying child, else the first. */
 function nextActionableChild<
-  T extends { id: string; slotsOfAppointment?: SlotLike[] },
+  T extends { id: string; occurrences?: SlotLike[] },
 >(children: T[], now: Date): T | undefined {
   const sorted = [...children].sort((a, b) => {
-    const aStart = a.slotsOfAppointment?.[0]
-      ? toDate(a.slotsOfAppointment[0].startsAt).getTime()
+    const aStart = a.occurrences?.[0]
+      ? toDate(a.occurrences[0].startsAt).getTime()
       : Infinity;
-    const bStart = b.slotsOfAppointment?.[0]
-      ? toDate(b.slotsOfAppointment[0].startsAt).getTime()
+    const bStart = b.occurrences?.[0]
+      ? toDate(b.occurrences[0].startsAt).getTime()
       : Infinity;
     return aStart - bStart;
   });
@@ -106,7 +104,7 @@ function nextActionableChild<
     sorted.find((c) =>
       sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
     ) ??
-    sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
+    sorted.find((c) => (c.occurrences?.length ?? 0) > 0) ??
     sorted[0]
   );
 }
@@ -133,7 +131,7 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (c.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(c.appointment?.slotsOfAppointment ?? [], now),
+      rawSlots: actionableSlots(c.appointment?.occurrences ?? [], now),
       source: c,
     },
   };
@@ -166,7 +164,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     raw: {
       appointment: target as TAppointment | undefined,
       rawSlots: actionableSlots(
-        children.flatMap((child) => child.slotsOfAppointment ?? []),
+        children.flatMap((child) => child.occurrences ?? []),
         now,
       ),
       groupAppointments: children as TAppointment[],
@@ -197,7 +195,7 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (w.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(w.appointment?.slotsOfAppointment ?? [], now),
+      rawSlots: actionableSlots(w.appointment?.occurrences ?? [], now),
       source: w,
     },
   };
@@ -230,7 +228,7 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
     raw: {
       appointment: target as TAppointment | undefined,
       rawSlots: actionableSlots(
-        children.flatMap((child) => child.slotsOfAppointment ?? []),
+        children.flatMap((child) => child.occurrences ?? []),
         now,
       ),
       groupAppointments: children as TAppointment[],
@@ -265,7 +263,7 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (t.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(t.appointment?.slotsOfAppointment ?? [], now),
+      rawSlots: actionableSlots(t.appointment?.occurrences ?? [], now),
       source: t,
     },
   };

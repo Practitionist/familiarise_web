@@ -6,7 +6,7 @@
  * #1074 / #1319 — rule 2 of the booking doctrine, made durable.
  *
  * Nothing under scripts/ may hard-delete an Appointment, a request row, or a
- * SlotOfAppointment. A trial cancellation once deleted the appointment and
+ * AppointmentOccurrence. A trial cancellation once deleted the appointment and
  * took the Payment row with it (#1074); the abandoned-payment sweep shipped the
  * same shape for another two months. This is a source-text contract: it fails
  * the moment a `delete`/`deleteMany` on those models is reintroduced, which a
@@ -40,8 +40,8 @@ const FORBIDDEN = [
   /\bpayment\.delete\(/,
   /\bpayment\.deleteMany\(/,
   // A tentative hold is freed by status, never by DELETE (doctrine rule 2).
-  /\bslotOfAppointment\.delete\(/,
-  /\bslotOfAppointment\.deleteMany\(/,
+  /\bappointmentOccurrence\.delete\(/,
+  /\bappointmentOccurrence\.deleteMany\(/,
 ];
 
 // The global slot rule below scans these trees. `utils/` is included because
@@ -64,7 +64,7 @@ const SLOT_DELETE_ALLOWLIST = [
 // Tolerates `delete (` and bracket access; Prettier normalises the former,
 // but the pin should not depend on it.
 const SLOT_DELETE =
-  /\bslotOfAppointment(?:\??\.delete(?:Many)?|\[\s*["']delete(?:Many)?["']\s*\])\s*\(/;
+  /\bappointmentOccurrence(?:\??\.delete(?:Many)?|\[\s*["']delete(?:Many)?["']\s*\])\s*\(/;
 // A file entry (no trailing slash) matches exactly; a directory entry matches
 // on a path boundary, so `SchedulingService.tsx` is not the allocator.
 function isAllowlisted(file: string): boolean {
@@ -107,9 +107,9 @@ describe("no sweep hard-deletes a booking row (#1319)", () => {
     ]) {
       const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
       // Single-row deletes in a loop are the #1074 shape; forbid both forms.
-      expect(source).not.toMatch(/slotOfAppointment\.delete\(/);
-      expect(source).not.toMatch(/slotOfAppointment\.deleteMany\(/);
-      expect(source).toContain("transitionSlotCompletion(");
+      expect(source).not.toMatch(/appointmentOccurrence\.delete\(/);
+      expect(source).not.toMatch(/appointmentOccurrence\.deleteMany\(/);
+      expect(source).toContain("transitionOccurrenceCompletion(");
     }
   });
 

@@ -578,7 +578,7 @@ describe("bands are read in the event's scheduling timezone", () => {
 describe("findAllocationPreference", () => {
   /** Private, and the seam where the preference is either found or silently lost. */
   const findAllocationPreference = (
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
   ): Promise<AllocationPreference | undefined> =>
     (
       SchedulingService as unknown as {
@@ -586,7 +586,7 @@ describe("findAllocationPreference", () => {
           ids: string[],
         ) => Promise<AllocationPreference | undefined>;
       }
-    ).findAllocationPreference(releasedSlotIds);
+    ).findAllocationPreference(releasedOccurrenceIds);
 
   const findFirst = prisma.rescheduleRequest.findFirst as jest.Mock;
 
@@ -614,7 +614,7 @@ describe("findAllocationPreference", () => {
     const where = findFirst.mock.calls[0][0].where;
     // Matched by what was RELEASED, which is the same on every appointment of
     // the booking...
-    expect(where.releasedSlotIds).toEqual({
+    expect(where.releasedOccurrenceIds).toEqual({
       hasSome: ["a3-slot-1", "a3-slot-2"],
     });
     // ...and never by the appointment the row happens to be filed against.
@@ -785,7 +785,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
 
   interface SweepWhere {
     id?: { not?: string };
-    proposedSlots?: unknown;
+    proposedTimes?: unknown;
   }
 
   /** A transaction stub that answers the sweep's reads the way Postgres would. */
@@ -796,7 +796,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
         // Two reads in order: the preference-only rows first, then every OTHER
         // open proposal on the same released slots.
         findMany: jest.fn(async ({ where }: { where: SweepWhere }) => {
-          if (where.proposedSlots) return [];
+          if (where.proposedTimes) return [];
           const excluded = where.id?.not;
           return openProposalIds
             .filter((id) => id !== excluded)
@@ -826,7 +826,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
 
   const runSweep = (
     tx: unknown,
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
     excludeRescheduleRequestId?: string,
   ): Promise<void> =>
     (
@@ -835,7 +835,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
       }
     ).resolveConsumedPreferenceRequests(
       tx,
-      releasedSlotIds,
+      releasedOccurrenceIds,
       excludeRescheduleRequestId,
     );
 
@@ -847,7 +847,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     expect(declined).toEqual([STALE]);
     const supersedeRead = tx.rescheduleRequest.findMany.mock.calls
       .map(([arg]) => arg.where)
-      .find((where) => !where.proposedSlots);
+      .find((where) => !where.proposedTimes);
     expect(supersedeRead?.id).toEqual({ not: SELF });
   });
 

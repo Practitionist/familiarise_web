@@ -23,7 +23,7 @@ function consultationDetail(
     appointment: {
       id: "appt-uuid-1",
       appointmentType: "CONSULTATION",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "slot-1",
           startsAt: futureStart,
@@ -66,7 +66,7 @@ function subscriptionDetail(): TAppointmentDetail {
     appointment: {
       id: "appt-sub-1",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "slot-s1",
           startsAt: futureStart,

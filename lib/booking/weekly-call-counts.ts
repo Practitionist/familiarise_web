@@ -12,7 +12,7 @@ export function computeWeeklyConfirmedCallCounts(
   appointments: Array<{
     appointmentType: string;
     subscription?: { id?: string; schedulingTimezone?: string | null } | null;
-    slotsOfAppointment?: Array<{ startsAt: Date | string; isTentative?: boolean }>;
+    occurrences?: Array<{ startsAt: Date | string; isTentative?: boolean }>;
   }>,
   subscriptionId: string,
   slotsPerCall: number,
@@ -21,7 +21,7 @@ export function computeWeeklyConfirmedCallCounts(
   for (const appt of appointments) {
     if (appt.appointmentType !== "SUBSCRIPTION") continue;
     if (appt.subscription?.id !== subscriptionId) continue;
-    const slots = appt.slotsOfAppointment || [];
+    const slots = appt.occurrences || [];
     // Tentative slots are the OLD slots mid-reschedule — never a completed call.
     if (slots.some((s) => s.isTentative)) continue;
     if (slots.length !== slotsPerCall) continue;

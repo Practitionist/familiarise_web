@@ -201,7 +201,7 @@ export async function GET(request: NextRequest) {
           subscriptionPlan: true,
           appointment: {
             include: {
-              slotsOfAppointment: true,
+              occurrences: true,
             },
           },
           convertedToSubscription: true,

@@ -45,7 +45,7 @@ jest.mock("../../lib/prisma", () => ({
     collaborator: { findMany: jest.fn() },
     consultantProfile: { findUnique: jest.fn() },
     membership: { findMany: jest.fn() },
-    slotOfAppointment: { groupBy: jest.fn() },
+    appointmentOccurrence: { groupBy: jest.fn() },
   },
 }));
 
@@ -55,7 +55,7 @@ const db = prisma as unknown as {
   collaborator: { findMany: jest.Mock };
   consultantProfile: { findUnique: jest.Mock };
   membership: { findMany: jest.Mock };
-  slotOfAppointment: { groupBy: jest.Mock };
+  appointmentOccurrence: { groupBy: jest.Mock };
 };
 const mockedAuth = requireApiAuth as unknown as jest.Mock;
 
@@ -76,13 +76,14 @@ interface StoredSlot {
     endedAt: Date | null;
     endedReason: string | null;
   } | null;
-  user: Array<{ id: string }>;
 }
 
 interface StoredAppointment {
   id: string;
   organizationId: string | null;
-  slotsOfAppointment: StoredSlot[];
+  occurrences: StoredSlot[];
+  /** #1554 — the roster lives on the appointment. */
+  participants?: Array<{ userId: string }>;
 }
 
 function storedSlot(
@@ -98,7 +99,6 @@ function storedSlot(
     completionStatus: "SCHEDULED",
     deletedAt: null,
     meetingSession: null,
-    user: [{ id: "user-attendee" }],
     ...extra,
   };
 }
@@ -113,7 +113,7 @@ interface SlotSpec {
   select?: Record<string, true | { select: Record<string, true> }>;
 }
 interface ClassIncludeSpec {
-  appointments?: true | { include?: { slotsOfAppointment?: SlotSpec } };
+  appointments?: true | { include?: { occurrences?: SlotSpec } };
 }
 
 function projectSlots(spec: SlotSpec, slots: StoredSlot[]) {
@@ -184,7 +184,7 @@ beforeEach(() => {
   // The mock applies the predicates the route actually sends, so a regression
   // that drops the deletedAt or completionStatus filter fails here instead of
   // being masked by a filter the mock invented.
-  db.slotOfAppointment.groupBy.mockImplementation(
+  db.appointmentOccurrence.groupBy.mockImplementation(
     async (args: {
       where: {
         appointmentId: { in: string[] };
@@ -204,7 +204,7 @@ beforeEach(() => {
       for (const row of classRows) {
         for (const appt of row.appointments) {
           if (!ids.has(appt.id)) continue;
-          const live = appt.slotsOfAppointment.filter(
+          const live = appt.occurrences.filter(
             (slot) =>
               !excludedStatuses.has(slot.completionStatus) &&
               (!requiresNotDeleted || slot.deletedAt === null),
@@ -235,9 +235,7 @@ beforeEach(() => {
         return classRows.map((row) => ({
           id: row.id,
           appointments: row.appointments.map((appt) => ({
-            slotsOfAppointment: appt.slotsOfAppointment.map((slot) => ({
-              user: slot.user,
-            })),
+            participants: appt.participants ?? [{ userId: "user-attendee" }],
           })),
         }));
       }
@@ -248,18 +246,17 @@ beforeEach(() => {
         return [];
       }
       const spec = args.include.appointments;
-      const slotSpec =
-        spec === true ? undefined : spec?.include?.slotsOfAppointment;
+      const slotSpec = spec === true ? undefined : spec?.include?.occurrences;
       return classRows.map((row) => ({
         ...row,
         appointments: row.appointments.map((appt) => {
-          const { slotsOfAppointment, ...scalars } = appt;
+          const { occurrences, participants: _seats, ...scalars } = appt;
           // `appointments: true` — scalars only, and no slots at all. This is
           // the shape the route used to ask for.
           return slotSpec
             ? {
                 ...scalars,
-                slotsOfAppointment: projectSlots(slotSpec, slotsOfAppointment),
+                occurrences: projectSlots(slotSpec, occurrences),
               }
             : scalars;
         }),
@@ -296,7 +293,7 @@ async function plannerClasses() {
     firstSessionAt: string | null;
     appointments: Array<{
       id: string;
-      slotsOfAppointment?: PayloadSlot[];
+      occurrences?: PayloadSlot[];
     }>;
   }>;
 }
@@ -305,7 +302,7 @@ async function plannerClasses() {
 const liveSitting = (extra: Partial<StoredSlot> = {}): StoredAppointment => ({
   id: "appt-live",
   organizationId: null,
-  slotsOfAppointment: [
+  occurrences: [
     storedSlot("slot-a1", hoursFromNow(-0.5), extra),
     storedSlot("slot-a2", hoursFromNow(0), extra),
   ],
@@ -316,7 +313,7 @@ describe("the planner payload carries what a class join reads", () => {
     seedClass([liveSitting()]);
 
     const [cls] = await plannerClasses();
-    const slots = cls.appointments[0].slotsOfAppointment;
+    const slots = cls.appointments[0].occurrences;
 
     expect(slots).toHaveLength(2);
     // An exact key set, both ways: the join path's fields are all present, and
@@ -335,7 +332,7 @@ describe("the planner payload carries what a class join reads", () => {
     seedClass([liveSitting()]);
 
     const [cls] = await plannerClasses();
-    const run = getJoinableSession(cls.appointments[0].slotsOfAppointment!, {
+    const run = getJoinableSession(cls.appointments[0].occurrences!, {
       joinWindowMs: 10 * 60 * 1000,
       now: NOW,
     });
@@ -361,7 +358,7 @@ describe("the planner payload carries what a class join reads", () => {
     ]);
 
     const [cls] = await plannerClasses();
-    const slots = cls.appointments[0].slotsOfAppointment!;
+    const slots = cls.appointments[0].occurrences!;
     const run = getCurrentOrNextSession(slots, NOW);
 
     expect(run).not.toBeNull();
@@ -376,13 +373,13 @@ describe("the planner payload carries what a class join reads", () => {
       {
         id: "appt-next-month",
         organizationId: null,
-        slotsOfAppointment: [storedSlot("slot-far", hoursFromNow(24 * 30))],
+        occurrences: [storedSlot("slot-far", hoursFromNow(24 * 30))],
       },
     ]);
 
     const [cls] = await plannerClasses();
     const ids = cls.appointments.flatMap((appt) =>
-      (appt.slotsOfAppointment ?? []).map((slot) => slot.id as string),
+      (appt.occurrences ?? []).map((slot) => slot.id as string),
     );
 
     // Truncating a run mid-way would re-split the room #1061 closed, so the
@@ -399,18 +396,18 @@ describe("the planner payload carries what a class join reads", () => {
       {
         id: "appt-far",
         organizationId: null,
-        slotsOfAppointment: [storedSlot("slot-far", farStart)],
+        occurrences: [storedSlot("slot-far", farStart)],
       },
     ]);
 
     const [cls] = await plannerClasses();
 
-    expect(cls.appointments[0].slotsOfAppointment).toHaveLength(0);
+    expect(cls.appointments[0].occurrences).toHaveLength(0);
     expect(cls.firstSessionAt).toBe(farStart.toISOString());
   });
 
   it("still counts participants from its own batched query", async () => {
-    // The slot select carries no `user`, so the count must not have silently
+    // The slot select carries no roster, so the count must not have silently
     // moved onto the trimmed rows.
     seedClass([liveSitting()]);
 

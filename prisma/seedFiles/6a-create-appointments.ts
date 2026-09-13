@@ -149,7 +149,7 @@ type SlotData =
 // --- Helper function to create MeetingSession data ---
 const createMeetingSessionData = (
   isPastAppointment: boolean,
-): Prisma.MeetingSessionCreateNestedOneWithoutSlotOfAppointmentInput => {
+): Prisma.MeetingSessionCreateNestedOneWithoutOccurrenceInput => {
   return {
     create: {
       streamCallId: faker.string.uuid(),
@@ -206,13 +206,8 @@ const createConsultationAppointment = (
           : []),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: {
-        user: {
-          connect: consultantUserId
-            ? [{ id: consultantUserId }, { id: consultee.id }]
-            : [{ id: consultee.id }],
-        },
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -324,9 +319,6 @@ const createSubscriptionAppointment = (
         // Ensure slot is within subscription period
         if (slotStart >= startDate && slotEnd <= endDate) {
           slots.push({
-            user: {
-              connect: [{ id: consultee.id }],
-            },
             startsAt: slotStart,
             endsAt: slotEnd,
             isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -362,11 +354,6 @@ const createSubscriptionAppointment = (
     );
 
     slots.push({
-      user: {
-        connect: consultantUserId
-          ? [{ id: consultantUserId }, { id: consultee.id }]
-          : [{ id: consultee.id }],
-      },
       startsAt: slotStart,
       endsAt: slotEnd,
       isTentative: defaultStatus === AppointmentStatus.PENDING,
@@ -395,7 +382,7 @@ const createSubscriptionAppointment = (
           : []),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: slots,
     },
     subscription: {
@@ -461,15 +448,8 @@ const createWebinarAppointment = async (
         })),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: {
-        user: {
-          connect: [
-            ...(consultantUserId ? [{ id: consultantUserId }] : []),
-            { id: consultee.id },
-            ...additionalParticipants.map((c) => ({ id: c.id })),
-          ],
-        },
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: false,
@@ -534,7 +514,7 @@ const createClassAppointment = async (
         })),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: Array.from({ length: limitedSlots }, (_, index) => {
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
@@ -548,13 +528,6 @@ const createClassAppointment = async (
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
         return {
-          user: {
-            connect: [
-              ...(consultantUserId ? [{ id: consultantUserId }] : []),
-              { id: consultee.id },
-              ...additionalParticipants.map((c) => ({ id: c.id })),
-            ],
-          },
           startsAt: slotStart,
           endsAt: slotEnd,
           isTentative: false,
@@ -808,7 +781,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const classPlans = await prisma.classPlan.findMany();
 
   // Build a map of consultantProfileId -> consultantUserId so we can connect
-  // the consultant user to every SlotOfAppointment. Without this, the
+  // the consultant user to every AppointmentOccurrence. Without this, the
   // validateNoConflicts query (which filters by user.some.id = consultantUserId)
   // cannot detect conflicts against seed-generated appointments.
   const consultantProfiles = await prisma.consultantProfile.findMany({

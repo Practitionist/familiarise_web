@@ -56,7 +56,7 @@ export interface MyAppointmentItem {
   id: string;
   appointmentType: AppointmentsType;
   createdAt: string | Date;
-  slotsOfAppointment: MyAppointmentSlot[];
+  occurrences: MyAppointmentSlot[];
   consultation: {
     consultationPlan: PlanSide | null;
     requestedBy: RequestedBySide | null;
@@ -197,7 +197,7 @@ export function MyAppointmentsClient({
     const appointment: MeetingAppointment = {
       id: item.id,
       appointmentType: item.appointmentType,
-      slotsOfAppointment: item.slotsOfAppointment.map((s) => ({
+      occurrences: item.occurrences.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -243,10 +243,10 @@ export function MyAppointmentsClient({
       <ul className="space-y-3">
         {items.map((item) => {
           const identity = resolveIdentity(item, viewerId);
-          const joinable = getJoinableSlot(item.slotsOfAppointment, {
+          const joinable = getJoinableSlot(item.occurrences, {
             joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
           });
-          const shown = displaySlot(item.slotsOfAppointment);
+          const shown = displaySlot(item.occurrences);
           const busy = joiningId === item.id;
           return (
             <li

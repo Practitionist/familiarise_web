@@ -135,7 +135,7 @@ export function mapAppointmentDetail(
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
-  const withSlots = all.filter((a) => a.slotsOfAppointment.length > 0);
+  const withSlots = all.filter((a) => a.occurrences.length > 0);
   const completed = withSlots.filter((a) =>
     sessionsOfAppointment(a).every((s) => isSessionOver(s, now)),
   ).length;
@@ -146,9 +146,7 @@ export function mapAppointmentDetail(
       : (facts.consultee ?? facts.consultant);
 
   const rawSlots: SlotLike[] = all
-    .flatMap((a) =>
-      a.slotsOfAppointment.map((slot) => ({ ...slot }) as SlotLike),
-    )
+    .flatMap((a) => a.occurrences.map((slot) => ({ ...slot }) as SlotLike))
     .filter((slot) => {
       const end = toDate(slot.endsAt ?? slot.startsAt);
       return end.getTime() >= now.getTime();
@@ -189,7 +187,7 @@ export function mapAppointmentDetail(
   };
 
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
-    a.slotsOfAppointment.flatMap((slot) =>
+    a.occurrences.flatMap((slot) =>
       (slot.meetingSession?.recordings ?? []).map((rec) => ({
         id: rec.id,
         title: rec.title,

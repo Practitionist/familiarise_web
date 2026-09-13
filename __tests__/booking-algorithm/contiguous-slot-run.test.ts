@@ -55,16 +55,6 @@ describe("buildContiguousSlotAtoms", () => {
     );
   });
 
-  it("attaches user connects when userIds are provided", () => {
-    const atoms = buildContiguousSlotAtoms({
-      startsAt,
-      durationInHours: 1,
-      consultantProfileId: "cp_1",
-      userIds: ["u1", "u2", "u1"],
-    });
-    expect(atoms[0].user?.connect).toEqual([{ id: "u1" }, { id: "u2" }]);
-  });
-
   it("rejects non-positive duration", () => {
     expect(() =>
       buildContiguousSlotAtoms({
@@ -169,7 +159,7 @@ describe("replaceContiguousSlotRun", () => {
       creates,
       updateManyCalls,
       tx: {
-        slotOfAppointment: {
+        appointmentOccurrence: {
           findMany: jest.fn(async () => {
             findManyCalls += 1;
             if (findManyCalls === 1) return liveRows;
@@ -239,7 +229,6 @@ describe("replaceContiguousSlotRun", () => {
         endsAt: new Date("2026-08-10T10:30:00.000Z"),
         completionStatus: "SCHEDULED",
         deletedAt: null,
-        user: [{ id: "u1" }],
       },
       {
         id: "s1",
@@ -247,7 +236,6 @@ describe("replaceContiguousSlotRun", () => {
         endsAt: new Date("2026-08-10T11:00:00.000Z"),
         completionStatus: "SCHEDULED",
         deletedAt: null,
-        user: [{ id: "u1" }],
       },
       {
         id: "dead",
@@ -255,7 +243,6 @@ describe("replaceContiguousSlotRun", () => {
         endsAt: new Date("2026-08-01T10:30:00.000Z"),
         completionStatus: "RESCHEDULED",
         deletedAt: null,
-        user: [{ id: "u2" }],
       },
     ];
     const { tx, updates, creates } = stubTx(liveRows);
@@ -284,11 +271,10 @@ describe("replaceContiguousSlotRun", () => {
     ).toBe(true);
     expect(updates.some((u) => u.id === "dead")).toBe(false);
     expect(creates).toHaveLength(0);
-    expect(result.preservedUserIds).toEqual(["u1"]);
     expect(result.createdCount).toBe(1);
   });
 
-  it("creates extra atoms when duration grows and preserves user ids", async () => {
+  it("creates extra atoms when duration grows", async () => {
     const liveRows = [
       {
         id: "s0",
@@ -296,7 +282,6 @@ describe("replaceContiguousSlotRun", () => {
         endsAt: new Date("2026-08-10T10:30:00.000Z"),
         completionStatus: "SCHEDULED",
         deletedAt: null,
-        user: [{ id: "host" }, { id: "buyer" }],
       },
     ];
     const { tx, updates, creates } = stubTx(liveRows);
@@ -317,13 +302,12 @@ describe("replaceContiguousSlotRun", () => {
       ),
     ).toBe(true);
     expect(creates).toHaveLength(1);
-    expect(result.preservedUserIds.sort()).toEqual(["buyer", "host"]);
     expect(result.createdCount).toBe(2);
   });
 
   it("tentative-flips the whole live run before an overlapping forward shift", async () => {
     // 2h @ 10:00 → 11:00: without the pre-pass, updating s0 to [11:00,11:30)
-    // collides with s2 still holding that window under slot_no_confirmed_overlap.
+    // collides with s2 still holding that window under occurrence_no_confirmed_overlap.
     const liveRows = [0, 1, 2, 3].map((i) => ({
       id: `s${i}`,
       startsAt: new Date(`2026-08-10T${10 + Math.floor(i / 2)}:${i % 2 === 0 ? "00" : "30"}:00.000Z`),
@@ -332,7 +316,6 @@ describe("replaceContiguousSlotRun", () => {
       ),
       completionStatus: "SCHEDULED",
       deletedAt: null,
-      user: [],
     }));
     const { tx, updateManyCalls, updates } = stubTx(liveRows);
 

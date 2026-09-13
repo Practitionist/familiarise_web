@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 interface SlotFeedback {
-  slotOfAppointmentId: string | null;
+  appointmentOccurrenceId: string | null;
   rating: number;
 }
 
@@ -75,11 +75,11 @@ export function useSessionFeedback(
       // the group score.
       const bySlot = new Map<string, { total: number; n: number }>();
       for (const r of rows) {
-        if (!r.slotOfAppointmentId) continue;
-        const acc = bySlot.get(r.slotOfAppointmentId) ?? { total: 0, n: 0 };
+        if (!r.appointmentOccurrenceId) continue;
+        const acc = bySlot.get(r.appointmentOccurrenceId) ?? { total: 0, n: 0 };
         acc.total += r.rating;
         acc.n += 1;
-        bySlot.set(r.slotOfAppointmentId, acc);
+        bySlot.set(r.appointmentOccurrenceId, acc);
       }
       return {
         ratings: Object.fromEntries(

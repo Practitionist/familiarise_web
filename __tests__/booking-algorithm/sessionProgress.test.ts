@@ -9,11 +9,11 @@
 
 import { calculateSessionProgress } from "@/app/dashboard/consultant/[consultantId]/utils/appointmentHelpers";
 
-// Minimal appointment shape — calculateSessionProgress only reads slotsOfAppointment[].startsAt.
+// Minimal appointment shape — calculateSessionProgress only reads occurrences[].startsAt.
 function slottedAppt(startISO: string) {
-  return { slotsOfAppointment: [{ startsAt: startISO }] } as any;
+  return { occurrences: [{ startsAt: startISO }] } as any;
 }
-const placeholder = { slotsOfAppointment: [] } as any; // checkout placeholder: no slots
+const placeholder = { occurrences: [] } as any; // checkout placeholder: no slots
 
 describe("calculateSessionProgress", () => {
   const ref = new Date("2025-06-01T00:00:00Z");

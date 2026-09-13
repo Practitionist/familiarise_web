@@ -61,7 +61,7 @@ async function investigateSundaySlots() {
         },
         appointments: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { startsAt: "asc" },
             },
           },
@@ -98,9 +98,9 @@ async function investigateSundaySlots() {
 
     subscription.appointments.forEach((appt, idx) => {
       console.log(`Appointment ${idx + 1} (${appt.id}):`);
-      console.log(`  Total slots: ${appt.slotsOfAppointment.length}`);
+      console.log(`  Total slots: ${appt.occurrences.length}`);
 
-      appt.slotsOfAppointment.forEach((slot) => {
+      appt.occurrences.forEach((slot) => {
         const startDate = new Date(slot.startsAt);
         const dayOfWeek = startDate.toLocaleDateString("en-US", {
           weekday: "long",
@@ -153,7 +153,7 @@ async function investigateSundaySlots() {
             consultantProfileId: CONSULTANT_ID,
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: {
               gte: augustStart,
@@ -177,7 +177,7 @@ async function investigateSundaySlots() {
             },
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: augustStart,
@@ -203,9 +203,9 @@ async function investigateSundaySlots() {
         console.log(
           `  Subscription Period: ${appt.subscription.schedulingPeriodStartsAt.toISOString()} to ${appt.subscription.schedulingPeriodEndsAt.toISOString()}`,
         );
-        console.log(`  August Slots: ${appt.slotsOfAppointment.length}`);
+        console.log(`  August Slots: ${appt.occurrences.length}`);
 
-        appt.slotsOfAppointment.forEach((slot) => {
+        appt.occurrences.forEach((slot) => {
           const dayOfWeek = new Date(slot.startsAt).toLocaleDateString(
             "en-US",
             { weekday: "short" },

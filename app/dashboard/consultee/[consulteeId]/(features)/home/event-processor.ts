@@ -201,7 +201,7 @@ function toSlotContexts(
 function processConsultation(
   consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
-  const slots = consultation.appointment?.slotsOfAppointment;
+  const slots = consultation.appointment?.occurrences;
   if (!slots || slots.length === 0) return null;
 
   const appointmentId = consultation.appointment?.id ?? "";
@@ -215,7 +215,7 @@ function processConsultation(
   const joinableAppointment: MeetingAppointment = {
     id: appointmentId,
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: slots.map((s) => ({
+    occurrences: slots.map((s) => ({
       id: s.id,
       startsAt: s.startsAt,
       endsAt: s.endsAt,
@@ -266,7 +266,7 @@ function processSubscription(
 
   subscription.appointments?.forEach((appointment) => {
     allSlots.push(
-      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+      ...toSlotContexts(appointment.occurrences ?? [], appointment.id),
     );
   });
 
@@ -284,8 +284,8 @@ function processSubscription(
   const joinableAppointment: MeetingAppointment = {
     id: nextSlot.appointmentId,
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment:
-      nextAppointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      nextAppointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -334,7 +334,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   // Get slots from the appointment
   allSlots.push(
     ...toSlotContexts(
-      webinar.appointment?.slotsOfAppointment ?? [],
+      webinar.appointment?.occurrences ?? [],
       appointmentId,
     ),
   );
@@ -348,8 +348,8 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   const joinableAppointment: MeetingAppointment = {
     id: appointmentId,
     appointmentType: "WEBINAR",
-    slotsOfAppointment:
-      webinar.appointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      webinar.appointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -365,7 +365,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 
   // Registered = the consultee is connected to at least one session slot.
   const bookingStatus: BookingStatus =
-    (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0
+    (webinar.appointment?.occurrences?.length ?? 0) > 0
       ? "CONFIRMED"
       : null;
 
@@ -407,7 +407,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
 
   classEvent.appointments?.forEach((appointment) => {
     allSlots.push(
-      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
+      ...toSlotContexts(appointment.occurrences ?? [], appointment.id),
     );
   });
 
@@ -425,8 +425,8 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   const joinableAppointment: MeetingAppointment = {
     id: nextSlot.appointmentId,
     appointmentType: "CLASS",
-    slotsOfAppointment:
-      nextAppointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      nextAppointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -442,7 +442,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
 
   const bookingStatus: BookingStatus =
     (classEvent.appointments?.some(
-      (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
+      (a) => (a.occurrences?.length ?? 0) > 0,
     ) ?? false)
       ? "CONFIRMED"
       : null;

@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import {
+  liveParticipant,
+  releaseParticipant,
+} from "@/lib/booking/participants";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
@@ -75,11 +79,9 @@ export async function GET(
         appointments: {
           select: {
             id: true,
-            slotsOfAppointment: {
-              select: {
-                id: true,
-                user: { select: PARTICIPANT_USER_SELECT },
-              },
+            participants: {
+              where: liveParticipant(),
+              select: { user: { select: PARTICIPANT_USER_SELECT } },
             },
           },
         },
@@ -94,13 +96,8 @@ export async function GET(
     const participants = Array.from(
       new Map(
         classEvent.appointments
-          ?.flatMap(
-            (appointment) =>
-              appointment.slotsOfAppointment?.flatMap(
-                (slot) => slot.user || [],
-              ) || [],
-          )
-          .map((user) => [user.id, user]) || [],
+          ?.flatMap((appointment) => appointment.participants)
+          .map((participant) => [participant.user.id, participant.user]) || [],
       ).values(),
     );
 
@@ -162,7 +159,7 @@ export async function DELETE(
     }
 
     // Ownership check for organiser removals; self-leave only needs the event
-    // to exist and the caller to be on the roster (checked via userSlots).
+    // to exist and the caller to be on the roster (the seat release below matches zero rows otherwise).
     const classEvent = await prisma.class.findFirst({
       where: {
         id: classId,
@@ -209,51 +206,21 @@ export async function DELETE(
     // Re-reading inside a Serializable transaction makes the seat itself the
     // arbiter — the loser is aborted on the row it also tried to write, and its
     // retry sees the empty roster.
-    const removedSlots = await withSerializableRetry(() =>
+    const removedSeats = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
-          const userSlots = await tx.slotOfAppointment.findMany({
-            where: {
-              appointment: { classId },
-              user: { some: { id: userId } },
-            },
-            select: { id: true },
+          // #1554 — the participant row IS the seat. The live-status CAS in the
+          // WHERE makes the loser of a concurrent removal match zero rows, so
+          // a `removed: false` answer never refunds a seat twice.
+          return releaseParticipant(tx, {
+            appointment: { classId },
+            userId,
           });
-          if (userSlots.length === 0) return 0;
-
-          // Sequential inside the tx: the parent row's `updatedAt` write is
-          // what raises the serialization conflict for the losing writer.
-          for (const slot of userSlots) {
-            await tx.slotOfAppointment.update({
-              where: { id: slot.id },
-              data: {
-                user: {
-                  disconnect: { id: userId },
-                },
-              },
-            });
-          }
-
-          // #1319 A9 — the seat is released; the participant row stays
-          // as history. Same transaction as the disconnects, and only on
-          // the seat-was-present path, so a `removed: false` answer never
-          // flips a row this request did not release.
-          await tx.appointmentParticipant.updateMany({
-            where: { appointment: { classId }, userId },
-            data: { status: "CANCELLED" },
-          });
-
-          return userSlots.length;
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          // The disconnect loop is one round trip per seat and a months-long
-          // class carries every past session on the roster, so the default 5s
-          // budget is reachable. A P2028 timeout is not a serialization abort:
-          // withSerializableRetry rethrows it, the handler answers 500, and the
-          // rollback leaves the seat held and the fee unrefunded. House budget
-          // (see lib/payments/operations/*), shared with the webinar handler so
-          // the two removals keep one concurrency contract.
+          // One CAS statement now, but the house budget stays matched to the
+          // sibling handler so the two removals keep one contract.
           maxWait: 10_000,
           timeout: 15_000,
         },
@@ -265,7 +232,7 @@ export async function DELETE(
     // as a failure to the roster client, which throws on any non-ok response —
     // so it showed "Failed to remove participant" and never invalidated the
     // query, leaving the removed row on screen.
-    if (removedSlots === 0) {
+    if (removedSeats === 0) {
       return NextResponse.json({ removed: false, refund: null });
     }
 

@@ -6,7 +6,7 @@
  *    their start instants differ (the double-charge shape: 10:00–12:00 vs
  *    11:00–12:00).
  * 2. The trial route writes consultantProfileId on its slot (without it the
- *    slot escapes the slot_no_confirmed_overlap exclusion constraint, #1093
+ *    slot escapes the occurrence_no_confirmed_overlap exclusion constraint, #1093
  *    §1) and locks under the SHARED slot-booking namespace (the retired
  *    trial-slot-booking namespace contended with nothing).
  * 3. Capacity reads whose query forgot the user include throw loudly instead
@@ -322,26 +322,27 @@ describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
 describe("capacity include-trap (#676 CN-4)", () => {
   const plan = { maxParticipants: 10 };
 
-  it("throws when webinar slots were loaded without the user relation", () => {
+  it("throws when the webinar appointment was loaded without participants", () => {
     expect(() =>
       getWebinarCapacity({
         webinar: {
           maxParticipants: null,
-          appointment: { slotsOfAppointment: [{ startsAt: "x" }] },
+          appointment: {} as { participants?: { userId: string }[] },
         },
         plan,
       }),
-    ).toThrow(/user was not included/);
+    ).toThrow(/participants was not included/);
   });
 
-  it("counts normally when the user relation is present", () => {
+  it("counts live seats when participants are present (#1554)", () => {
     const capacity = getWebinarCapacity({
       webinar: {
         maxParticipants: null,
         appointment: {
-          slotsOfAppointment: [
-            { user: [{ id: "u1" }, { id: "u2" }] },
-            { user: [{ id: "u1" }] },
+          participants: [
+            { userId: "u1", status: "CONFIRMED" },
+            { userId: "u2", status: "HELD" },
+            { userId: "u3", status: "CANCELLED" },
           ],
         },
       },
@@ -352,18 +353,18 @@ describe("capacity include-trap (#676 CN-4)", () => {
     expect(capacity.isFull).toBe(false);
   });
 
-  it("throws for class capacity with a missing user relation on any session", () => {
+  it("throws for class capacity with participants missing on any session", () => {
     expect(() =>
       getClassCapacity({
         classInstance: {
           maxParticipants: 1,
           appointments: [
-            { slotsOfAppointment: [{ user: [{ id: "u1" }] }] },
-            { slotsOfAppointment: [{ notUser: true }] },
+            { participants: [{ userId: "u1" }] },
+            {} as { participants?: { userId: string }[] },
           ],
         },
         plan,
       }),
-    ).toThrow(/user was not included/);
+    ).toThrow(/participants was not included/);
   });
 });

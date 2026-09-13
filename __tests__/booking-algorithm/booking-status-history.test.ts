@@ -13,7 +13,7 @@ import {
   transitionWebinarEvent,
   transitionClassEvent,
   transitionRescheduleRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionTrialSession,
 } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
@@ -183,7 +183,7 @@ describe("slot completion history", () => {
     });
     return {
       tx: {
-        slotOfAppointment: { findMany, updateManyAndReturn },
+        appointmentOccurrence: { findMany, updateManyAndReturn },
         bookingStatusHistory: { create },
       } as never,
       findMany,
@@ -197,7 +197,7 @@ describe("slot completion history", () => {
       { id: "slot_1", completionStatus: "SCHEDULED" },
       { id: "slot_2", completionStatus: "UNVERIFIED" },
     ]);
-    const moved = await transitionSlotCompletion(tx, {
+    const moved = await transitionOccurrenceCompletion(tx, {
       where: { appointmentId: "apt_1", deletedAt: null },
       to: "CANCELLED",
       actorUserId: "u1",
@@ -206,14 +206,14 @@ describe("slot completion history", () => {
     expect(order).toEqual(["read", "cas", "history", "history"]);
     expect(create.mock.calls.map((c) => c[0].data)).toEqual([
       expect.objectContaining({
-        entity: "SLOT",
+        entity: "OCCURRENCE",
         entityId: "slot_1",
         fromStatus: "SCHEDULED",
         toStatus: "CANCELLED",
         actorUserId: "u1",
       }),
       expect.objectContaining({
-        entity: "SLOT",
+        entity: "OCCURRENCE",
         entityId: "slot_2",
         fromStatus: "UNVERIFIED",
         toStatus: "CANCELLED",
@@ -225,7 +225,7 @@ describe("slot completion history", () => {
     const { tx, findMany } = slotTx([
       { id: "slot_1", completionStatus: "SCHEDULED" },
     ]);
-    await transitionSlotCompletion(tx, {
+    await transitionOccurrenceCompletion(tx, {
       where: { appointmentId: "apt_1" },
       to: "CANCELLED",
     });
@@ -250,14 +250,14 @@ describe("slot completion history", () => {
       ],
       ["slot_2"],
     );
-    const moved = await transitionSlotCompletion(tx, {
+    const moved = await transitionOccurrenceCompletion(tx, {
       where: { appointmentId: "apt_1" },
       to: "CANCELLED",
     });
     expect(moved).toBe(1);
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0].data).toMatchObject({
-      entity: "SLOT",
+      entity: "OCCURRENCE",
       entityId: "slot_2",
       fromStatus: "SCHEDULED",
       toStatus: "CANCELLED",
@@ -267,7 +267,7 @@ describe("slot completion history", () => {
   it("writes no history when a permitted zero-row sweep matches nothing", async () => {
     const { tx, create } = slotTx([]);
     await expect(
-      transitionSlotCompletion(tx, {
+      transitionOccurrenceCompletion(tx, {
         where: { appointmentId: "apt_1" },
         to: "CANCELLED",
         allowZero: true,

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -23,13 +24,14 @@ const webinarInclude = {
   },
   appointment: {
     include: {
-      slotsOfAppointment: {
+      // #1554 — the seat count is the live roster; ids only, so the planner
+      // payload never carries a User row per attendee.
+      participants: {
+        where: liveParticipant(),
+        select: { userId: true },
+      },
+      occurrences: {
         include: {
-          // Display fields only — the full User row per attendee was the
-          // planner payload's biggest over-fetch. Slot scalars
-          // (isTentative etc.) still come through; the in-memory
-          // participant count below relies on them.
-          user: { select: { id: true, name: true, email: true, image: true } },
           // #1061 — without this the planner cannot tell that the host has
           // already ended the call, so its Join gate could only ever expire on
           // the clock. Two columns per row.
@@ -84,7 +86,7 @@ const classInclude = (now: Date) =>
         // `meetingSession` is not optional — without it `getSessionJoinState`
         // can only expire on the clock and never sees a host-ended call, the
         // same reason `webinarInclude` selects it.
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: new Date(now.getTime() - PLANNER_CLASS_SLOT_WINDOW_MS),
@@ -147,32 +149,24 @@ interface PlannerData {
 
 /**
  * Webinar participant counts computed from the ALREADY-FETCHED webinar rows
- * (webinarInclude carries appointment.slotsOfAppointment.user) — the old
+ * (webinarInclude carries appointment.participants) — the old
  * helper re-queried the same rows from Postgres a second time per request.
- * FIX #556 semantics preserved: confirmed (non-tentative) slots only,
- * deduplicated across multi-slot webinars, consultant host excluded.
+ * FIX #556 semantics preserved: live seats only, deduplicated per webinar,
+ * consultant host excluded.
  */
 function countWebinarParticipants(
   webinars: Array<{
     id: string;
-    appointment: {
-      slotsOfAppointment: Array<{
-        isTentative: boolean;
-        user: Array<{ id: string }>;
-      }>;
-    } | null;
+    appointment: { participants: Array<{ userId: string }> } | null;
   }>,
   excludeConsultantUserId?: string,
 ): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const webinar of webinars) {
     const uniqueUserIds = new Set<string>();
-    for (const slot of webinar.appointment?.slotsOfAppointment || []) {
-      if (slot.isTentative) continue;
-      for (const user of slot.user) {
-        if (user.id !== excludeConsultantUserId) {
-          uniqueUserIds.add(user.id);
-        }
+    for (const seat of webinar.appointment?.participants || []) {
+      if (seat.userId !== excludeConsultantUserId) {
+        uniqueUserIds.add(seat.userId);
       }
     }
     counts[webinar.id] = uniqueUserIds.size;
@@ -199,13 +193,9 @@ async function getClassParticipantCounts(
         id: true,
         appointments: {
           select: {
-            slotsOfAppointment: {
-              select: {
-                user: {
-                  select: { id: true },
-                },
-              },
-              where: { isTentative: false },
+            participants: {
+              where: liveParticipant(),
+              select: { userId: true },
             },
           },
         },
@@ -218,11 +208,9 @@ async function getClassParticipantCounts(
       const uniqueUserIds = new Set<string>();
 
       for (const appointment of classEvent.appointments) {
-        for (const slot of appointment.slotsOfAppointment) {
-          for (const user of slot.user) {
-            if (user.id !== excludeConsultantUserId) {
-              uniqueUserIds.add(user.id);
-            }
+        for (const seat of appointment.participants) {
+          if (seat.userId !== excludeConsultantUserId) {
+            uniqueUserIds.add(seat.userId);
           }
         }
       }
@@ -452,7 +440,7 @@ export async function GET(
       c.appointments.map((a) => a.id),
     );
     if (classAppointmentIds.length > 0) {
-      const earliestSlots = await prisma.slotOfAppointment.groupBy({
+      const earliestSlots = await prisma.appointmentOccurrence.groupBy({
         by: ["appointmentId"],
         where: {
           appointmentId: { in: classAppointmentIds },

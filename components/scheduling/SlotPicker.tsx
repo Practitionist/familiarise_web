@@ -102,7 +102,7 @@ export function SlotPicker({
   const selectionIncomplete =
     picksSpecificSessions && selectedSlotIds.length === 0;
 
-  const releasedSlotIds = picksSpecificSessions
+  const releasedOccurrenceIds = picksSpecificSessions
     ? selectedSlotIds
     : /* Every session; the API reads an absent list as "all of them". */
       undefined;
@@ -149,7 +149,7 @@ export function SlotPicker({
   const submit = (withTimes: boolean) => {
     const named = withTimes && proposedSlots.length > 0;
     void policy.onSubmit({
-      slotIds: releasedSlotIds,
+      slotIds: releasedOccurrenceIds,
       proposedSlots: named ? proposedSlots : undefined,
       preference: named ? undefined : preference(),
     });

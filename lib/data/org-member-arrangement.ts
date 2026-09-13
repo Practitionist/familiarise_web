@@ -103,7 +103,7 @@ export async function getMyArrangementData(params: {
     ? await prisma.appointment.findMany({
         where: {
           organizationId: orgId,
-          slotsOfAppointment: { some: { endsAt: { gte: now } } },
+          occurrences: { some: { endsAt: { gte: now } } },
           OR: [
             {
               consultation: {
@@ -123,7 +123,7 @@ export async function getMyArrangementData(params: {
         select: {
           id: true,
           appointmentType: true,
-          slotsOfAppointment: {
+          occurrences: {
             where: { endsAt: { gte: now } },
             orderBy: { startsAt: "asc" },
             take: 1,
@@ -160,10 +160,10 @@ export async function getMyArrangementData(params: {
 
   const upcomingSessions = hostedSessions
     .filter(
-      (a) => a.slotsOfAppointment.length > 0 && !a.consultation?.cancelledAt,
+      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
     )
     .map((a) => {
-      const slot = a.slotsOfAppointment[0];
+      const slot = a.occurrences[0];
       const learner =
         a.consultation?.requestedBy?.user?.name ??
         a.subscription?.requestedBy?.user?.name ??

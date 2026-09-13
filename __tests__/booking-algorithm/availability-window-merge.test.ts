@@ -175,7 +175,7 @@ function atom(
     startsAt: start.toISOString(),
     endsAt: end.toISOString(),
     availabilityWindowId: rowId,
-    slotOfAppointmentId: "",
+    appointmentOccurrenceId: "",
     localStartTime: "",
     localEndTime: "",
     type: "WEEKLY",

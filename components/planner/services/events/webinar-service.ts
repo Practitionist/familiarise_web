@@ -80,8 +80,8 @@ export class WebinarService {
         ...webinar,
         type: "webinar" as const,
         // Compute scheduledAt from appointment slots
-        scheduledAt: webinar.appointment?.slotsOfAppointment?.[0]?.startsAt
-          ? new Date(webinar.appointment.slotsOfAppointment[0].startsAt)
+        scheduledAt: webinar.appointment?.occurrences?.[0]?.startsAt
+          ? new Date(webinar.appointment.occurrences[0].startsAt)
           : undefined,
       }));
     } catch (error) {

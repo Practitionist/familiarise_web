@@ -1,7 +1,7 @@
 /**
  * One SessionVM per SESSION, not per stored row (#1061).
  *
- * A booking is chunked into 30-minute `SlotOfAppointment` rows, and all three
+ * A booking is chunked into 30-minute `AppointmentOccurrence` rows, and all three
  * appointment mappers used to emit one view-model per row. So a four-hour
  * consultation reached the list as eight half-hour sessions and rendered as
  * the first of them — "2:00 PM – 2:30 PM" for a booking that runs until 4:30
@@ -28,7 +28,7 @@ import {
 
 export interface SessionSourceAppointment {
   id: string;
-  slotsOfAppointment?: SlotLike[] | null;
+  occurrences?: SlotLike[] | null;
 }
 
 /**
@@ -45,9 +45,10 @@ export interface SessionSourceAppointment {
 export function sessionsOfAppointment(
   appointment: SessionSourceAppointment | null | undefined,
 ): SessionVM[] {
-  const rows: SlotLike[] = (appointment?.slotsOfAppointment ?? []).map(
-    (slot) => ({ ...slot, appointmentId: appointment?.id ?? null }),
-  );
+  const rows: SlotLike[] = (appointment?.occurrences ?? []).map((slot) => ({
+    ...slot,
+    appointmentId: appointment?.id ?? null,
+  }));
 
   const buckets = new Map<string, SlotLike[]>();
   for (const row of rows) {
