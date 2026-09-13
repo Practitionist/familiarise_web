@@ -1859,7 +1859,7 @@ export class SchedulingService {
       // Convert to Date objects with validation
       const slots = slotStrings.map((s, i) => {
         const date = new Date(s);
-        if (isNaN(date.getTime())) {
+        if (Number.isNaN(date.getTime())) {
           throw new AllocationValidationError(
             `Invalid date string at position ${i + 1}: "${s}". ` +
               `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,

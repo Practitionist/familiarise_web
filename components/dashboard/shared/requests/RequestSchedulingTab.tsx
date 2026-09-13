@@ -220,7 +220,7 @@ async function fetchDataFromApi<T>(
 /** One line, one time. Long-form dates wrap into three lines in a table cell. */
 function formatDateTime(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
-  if (isNaN(date.getTime())) return "Invalid date";
+  if (Number.isNaN(date.getTime())) return "Invalid date";
   return date.toLocaleString(undefined, {
     dateStyle: "medium",
     timeStyle: "short",

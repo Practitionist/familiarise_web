@@ -20,8 +20,8 @@ const VALIDATION_CONFIG = {
 const getMinutes = (time: string): number | null => {
   if (!time || typeof time !== "string") return null;
   const [hours, minutes] = time.split(":").map(Number);
-  return !isNaN(hours) &&
-    !isNaN(minutes) &&
+  return !Number.isNaN(hours) &&
+    !Number.isNaN(minutes) &&
     hours >= 0 &&
     hours < 24 &&
     minutes >= 0 &&

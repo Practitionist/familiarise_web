@@ -665,7 +665,7 @@ export class ScheduleCalculationService {
     // For subscriptions and classes
     if (scheduled === 0) {
       const limitText = sessionsPerWeek
-        ? ` | Limit: ${sessionsPerWeek}/${eventType === "class" ? "week" : "week"}`
+        ? ` | Limit: ${sessionsPerWeek}/week`
         : "";
       return `📅 Schedule ${required} ${sessionWordPlural} (${durationText} each)${limitText}`;
     } else if (remaining > 0) {

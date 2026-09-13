@@ -114,7 +114,7 @@ export function buildAppointmentIndex(
     if (!slot || !slot.startsAt || !slot.endsAt) continue;
     const startMs = new Date(slot.startsAt).getTime();
     const endMs = new Date(slot.endsAt).getTime();
-    if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) continue;
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) continue;
     const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
     const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
     for (let b = firstBucket; b <= lastBucket; b++) {
@@ -253,8 +253,8 @@ export function processWeeklySlots(
   if (
     !startDate ||
     !endDate ||
-    isNaN(startDate.getTime()) ||
-    isNaN(endDate.getTime())
+    Number.isNaN(startDate.getTime()) ||
+    Number.isNaN(endDate.getTime())
   ) {
     console.warn("⚠️ processWeeklySlots: invalid startDate or endDate");
     return processedSlots;
@@ -314,8 +314,8 @@ export function processCustomSlots(
   if (
     !startDate ||
     !endDate ||
-    isNaN(startDate.getTime()) ||
-    isNaN(endDate.getTime())
+    Number.isNaN(startDate.getTime()) ||
+    Number.isNaN(endDate.getTime())
   ) {
     console.warn("⚠️ processCustomSlots: invalid startDate or endDate");
     return [];
@@ -339,7 +339,7 @@ export function processCustomSlots(
       // Defensive: Validate dates are valid
       const start = new Date(slot.startsAt);
       const end = new Date(slot.endsAt);
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
         console.warn(
           `⚠️ processCustomSlots: skipping slot ${slot.id} with invalid date format`,
         );
@@ -452,8 +452,8 @@ export function getSlotBookingStatus(
   if (
     !slotStart ||
     !slotEnd ||
-    isNaN(slotStart.getTime()) ||
-    isNaN(slotEnd.getTime())
+    Number.isNaN(slotStart.getTime()) ||
+    Number.isNaN(slotEnd.getTime())
   ) {
     console.warn("⚠️ getSlotBookingStatus: invalid slotStart or slotEnd");
     return BOOKING_STATUS.AVAILABLE;
@@ -486,7 +486,7 @@ export function getSlotBookingStatus(
 
     const start = new Date(apptSlot.startsAt);
     const end = new Date(apptSlot.endsAt);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       return false;
     }
 
