@@ -15,6 +15,7 @@ import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import type { UpsertRefusal } from "@/lib/stream/connect-failure";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 
@@ -143,9 +144,10 @@ export const upsertUserToStream = async (userId: string) => {
       throw error;
     }
     // Code 16 / 404 on an upsert is the account itself — deactivated by a
-    // moderation ban, or missing — not an outage. The client classifies the
-    // connect that follows and reports it once; capturing here too made three
-    // Sentry error shapes per page load for one disabled account.
+    // moderation ban, or missing — not an outage. Returned, not thrown: Sentry
+    // auto-captures anything a server action throws, and this made three error
+    // shapes per page load for one disabled account. The client classifies
+    // the connect that follows and reports it once.
     if (isExpectedStreamError(error)) {
       streamLogger.warn(
         "Stream refused the upsert — account deactivated or missing",
@@ -153,7 +155,8 @@ export const upsertUserToStream = async (userId: string) => {
           userId: validatedUserId,
         },
       );
-      throw error;
+      const refusal: UpsertRefusal = { refused: "account-disabled" };
+      return refusal;
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

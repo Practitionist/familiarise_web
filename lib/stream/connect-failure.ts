@@ -66,6 +66,24 @@ function readStreamError(error: unknown): {
   return { code: null, message };
 }
 
+/**
+ * What `upsertUserToStream` RETURNS when Stream refuses the account itself
+ * (deactivated by a moderation ban, or missing). Returned rather than thrown:
+ * `@sentry/nextjs` captures anything a server action throws, and an account
+ * state is not an outage. The connect that follows classifies it for the UI.
+ */
+export interface UpsertRefusal {
+  refused: "account-disabled";
+}
+
+export function isUpsertRefusal(value: unknown): value is UpsertRefusal {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { refused?: unknown }).refused === "account-disabled"
+  );
+}
+
 export const RETRYABLE_CONNECT_FAILURE: ConnectFailure = {
   kind: "retryable",
   code: null,

@@ -133,7 +133,7 @@ describe("User Actions", () => {
       );
     });
 
-    it("does not report a deactivated account to Sentry — it is an account state, not an outage", async () => {
+    it("returns a refusal for a deactivated account instead of throwing — an account state, not an outage", async () => {
       mockUserCache.isUserSynced.mockReturnValue(false);
       mockPrisma.user.findUnique.mockResolvedValue({
         id: "user-deact",
@@ -154,7 +154,10 @@ describe("User Actions", () => {
       const { upsertUserToStream } =
         await import("../../actions/stream/chat/user.action");
 
-      await expect(upsertUserToStream("user-deact")).rejects.toBe(deactivated);
+      // Returned, not thrown: a thrown server-action error is auto-captured.
+      await expect(upsertUserToStream("user-deact")).resolves.toEqual({
+        refused: "account-disabled",
+      });
       expect(Sentry.captureException).not.toHaveBeenCalled();
       expect(mockLogger.error).not.toHaveBeenCalled();
       expect(mockLogger.warn).toHaveBeenCalledWith(

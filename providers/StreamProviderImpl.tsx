@@ -527,6 +527,19 @@ const StreamProviderImpl = ({
         // Stream said this cannot succeed as-is (deactivated user, bad token,
         // suspended app). Report once with a stable fingerprint and stop: the
         // five backoff retries per client per page were the Sentry noise.
+        //
+        // The video client connects in the background from its constructor
+        // and its coordinator keeps reconnecting after a rejection — every
+        // attempt reached Sentry through the global handlers. Tear it down.
+        const video = getGlobalVideoClient();
+        if (video) {
+          setGlobalVideoClient(null);
+          setVideoConnected(false);
+          setClients((current) =>
+            current ? { ...current, video: null } : current,
+          );
+          void video.disconnectUser().catch(() => undefined);
+        }
         if (!signedOutRef.current && process.env.NODE_ENV !== "development") {
           Sentry.captureException(
             error instanceof Error ? error : new Error(classified.detail),
