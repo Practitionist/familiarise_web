@@ -4,7 +4,7 @@ import {
   UserRole,
   Gender,
   CareerStage,
-  SessionType,
+  OfferingFormat,
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
@@ -65,7 +65,7 @@ const consultantScalarFields = ConsultantProfileSchema.pick({
   languages: true,
   toolsAndTechnologies: true,
   mentoringStyle: true,
-  sessionTypes: true,
+  offeringFormats: true,
   qualifications: true,
   specialization: true,
   scheduleType: true,
@@ -349,7 +349,7 @@ const consultantFormFields = sharedFormFields.extend({
   // Make array defaults optional for form state
   languages: z.array(z.string()).optional(),
   toolsAndTechnologies: z.array(z.string()).optional(),
-  sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
+  offeringFormats: z.array(z.nativeEnum(OfferingFormat)).optional(),
   // Verification
   verificationLinkedinUrl: z.string().url().optional().or(z.literal("")),
   verificationNotes: z.string().max(500).optional(),
@@ -529,7 +529,7 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
     languages: formData.languages ?? [],
     toolsAndTechnologies: formData.toolsAndTechnologies ?? [],
     mentoringStyle: formData.mentoringStyle,
-    sessionTypes: formData.sessionTypes ?? [],
+    offeringFormats: formData.offeringFormats ?? [],
   };
 }
 
@@ -699,7 +699,7 @@ export function transformFrontendToServerData(
             languages: p.languages ?? [],
             toolsAndTechnologies: p.toolsAndTechnologies ?? [],
             mentoringStyle: p.mentoringStyle,
-            sessionTypes: p.sessionTypes ?? [],
+            offeringFormats: p.offeringFormats ?? [],
           },
         },
         consulteeProfile: undefined,

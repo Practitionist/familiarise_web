@@ -17,7 +17,7 @@ import {
   resolveSchedulingTimezone,
 } from "@/lib/scheduling/schedulingTimezone";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { validateDailyHours } from "@/lib/scheduling/slotSelectionValidation";
+import { validateDailyHours } from "@/lib/scheduling/intervalSelectionValidation";
 import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 
 const hourSlot = (startIso: string): CalendarInterval => {

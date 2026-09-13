@@ -9,10 +9,10 @@ import { supportsProposals } from "@/lib/booking/reschedule-proposals";
  * They differ in how much notice a session needs, whether anything is being
  * released, and who owns the submit — not in structure. Threading those as
  * boolean props through one component is how `EventPlanner` reached 3,890
- * lines, so the differences live here and `SlotPicker` only ever reads fields.
+ * lines, so the differences live here and `TimePicker` only ever reads fields.
  */
 
-export type SlotPickerPolicyKind =
+export type TimePickerPolicyKind =
   | "ALLOCATE"
   | "RESCHEDULE_CONSULTEE"
   | "RESCHEDULE_CONSULTANT"
@@ -35,7 +35,7 @@ export interface SlotPreference {
  * error here instead of a silent `false` at runtime.
  */
 const APPOINTMENT_TYPE: Record<
-  SlotPickerSubject["eventType"],
+  TimePickerSubject["eventType"],
   AppointmentsType
 > = {
   consultation: "CONSULTATION",
@@ -55,12 +55,12 @@ const APPOINTMENT_TYPE: Record<
  * the SAME predicate the route gates on rather than restating the rule.
  */
 export function acceptsSlotPreference(
-  eventType: SlotPickerSubject["eventType"],
+  eventType: TimePickerSubject["eventType"],
 ): boolean {
   return supportsProposals(APPOINTMENT_TYPE[eventType]);
 }
 
-export interface SlotPickerSubmission {
+export interface TimePickerSubmission {
   /** Sessions being released. Undefined = every session of the booking. */
   slotIds?: string[];
   /** Times asked for. Absent = "any time works". */
@@ -69,8 +69,8 @@ export interface SlotPickerSubmission {
   preference?: SlotPreference;
 }
 
-export interface SlotPickerPolicy {
-  kind: SlotPickerPolicyKind;
+export interface TimePickerPolicy {
+  kind: TimePickerPolicyKind;
   /**
    * Notice a session needs before it may be moved. Zero is not "no rule": a
    * pending request was never scheduled and a consultant's own event instance
@@ -107,7 +107,7 @@ export interface SlotPickerPolicy {
   appliesInitialAllocationGuard: boolean;
   /** One line above the grid; the only place the two roles read differently. */
   pickerHint: string;
-  onSubmit: (submission: SlotPickerSubmission) => void | Promise<void>;
+  onSubmit: (submission: TimePickerSubmission) => void | Promise<void>;
   /** The grid reported a 409 — someone else allocated this first. */
   onConflict?: () => void;
 }
@@ -116,7 +116,7 @@ export interface SlotPickerPolicy {
  * What is being placed. Pure scheduling data: the surrounding page or dialog
  * owns its own title and description, so no copy lives here.
  */
-export interface SlotPickerSubject {
+export interface TimePickerSubject {
   /** Whose availability grid is drawn. */
   consultantProfileId: string;
   eventType: "consultation" | "subscription" | "webinar" | "class";
@@ -150,11 +150,11 @@ export interface SlotPickerSubject {
 /** Lead time the reschedule API enforces server-side; mirrored for the UI. */
 const RESCHEDULE_MIN_LEAD_HOURS = 24;
 
-type PolicyHandlers = Pick<SlotPickerPolicy, "onSubmit"> &
-  Partial<Pick<SlotPickerPolicy, "onConflict">>;
+type PolicyHandlers = Pick<TimePickerPolicy, "onSubmit"> &
+  Partial<Pick<TimePickerPolicy, "onConflict">>;
 
 /** A consultant placing a pending request that has never been scheduled. */
-export function allocatePolicy(handlers: PolicyHandlers): SlotPickerPolicy {
+export function allocatePolicy(handlers: PolicyHandlers): TimePickerPolicy {
   return {
     kind: "ALLOCATE",
     minLeadHours: 0,
@@ -172,7 +172,7 @@ export function allocatePolicy(handlers: PolicyHandlers): SlotPickerPolicy {
 /** A consultee moving a live booking of theirs. */
 export function rescheduleConsulteePolicy(
   handlers: PolicyHandlers,
-): SlotPickerPolicy {
+): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTEE",
     minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
@@ -190,7 +190,7 @@ export function rescheduleConsulteePolicy(
 /** A consultant moving a booking they deliver. */
 export function rescheduleConsultantPolicy(
   handlers: PolicyHandlers,
-): SlotPickerPolicy {
+): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTANT",
     minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
@@ -210,7 +210,7 @@ export function rescheduleConsultantPolicy(
 /** A consultant setting the times of their own event instance. */
 export function manageTimingsPolicy(
   handlers: PolicyHandlers,
-): SlotPickerPolicy {
+): TimePickerPolicy {
   return {
     kind: "MANAGE_TIMINGS",
     minLeadHours: 0,

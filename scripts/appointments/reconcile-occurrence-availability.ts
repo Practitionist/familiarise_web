@@ -12,8 +12,8 @@
  *
  * This module exports the core reconciliation function.
  * It is imported by:
- * - jobs/reconcile-slot-availability.ts (GitHub Actions)
- * - app/api/cleanup/reconcile-slot-availability/route.ts (API endpoint)
+ * - jobs/reconcile-occurrence-availability.ts (GitHub Actions)
+ * - app/api/cleanup/reconcile-occurrence-availability/route.ts (API endpoint)
  *
  * Schedule: Hourly
  */
@@ -865,9 +865,9 @@ async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
   }
 }
 
-export async function reconcileSlotAvailability(): Promise<SlotReconciliationResult> {
+export async function reconcileOccurrenceAvailability(): Promise<SlotReconciliationResult> {
   return withCronLock(
-    "reconcile-slot-availability",
+    "reconcile-occurrence-availability",
     { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
     () => reconcileSlotAvailabilityUnlocked(),
   );

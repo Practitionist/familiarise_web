@@ -79,8 +79,8 @@ export const consultantFetchers = {
   appointments: (consultantId: string, orgScope?: string | null) =>
     fetchWithErrorHandling<TAppointment[]>(
       orgScope && orgScope !== "personal"
-        ? `/api/slots/appointments?consultantProfileId=${consultantId}&orgScope=${encodeURIComponent(orgScope)}`
-        : `/api/slots/appointments?consultantProfileId=${consultantId}`,
+        ? `/api/scheduling/appointments?consultantProfileId=${consultantId}&orgScope=${encodeURIComponent(orgScope)}`
+        : `/api/scheduling/appointments?consultantProfileId=${consultantId}`,
       "Appointments fetch failed",
     ),
 

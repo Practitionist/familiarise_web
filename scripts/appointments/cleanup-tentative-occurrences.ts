@@ -11,8 +11,8 @@
  *
  * This module exports the core cleanup function.
  * It is imported by:
- * - jobs/cleanup-tentative-slots.ts (GitHub Actions)
- * - app/api/cleanup/tentative-slots/route.ts (API endpoint)
+ * - jobs/cleanup-tentative-occurrences.ts (GitHub Actions)
+ * - app/api/cleanup/tentative-occurrences/route.ts (API endpoint)
  *
  * Schedule: Every 2 hours
  */
@@ -41,9 +41,11 @@ export interface TentativeSlotCleanupResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
-export async function cleanupTentativeSlots(): Promise<TentativeSlotCleanupResult> {
-  return withCronLock("cleanup-tentative-slots", { failMode: "open" }, () =>
-    cleanupTentativeSlotsUnlocked(),
+export async function cleanupTentativeOccurrences(): Promise<TentativeSlotCleanupResult> {
+  return withCronLock(
+    "cleanup-tentative-occurrences",
+    { failMode: "open" },
+    () => cleanupTentativeSlotsUnlocked(),
   );
 }
 

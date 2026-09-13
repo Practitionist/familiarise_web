@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
         const startTime = Date.now();
         try {
           const response = await fetch(
-            `${getAppUrl()}/api/slots/request-for-approval`,
+            `${getAppUrl()}/api/scheduling/request-for-approval`,
             {
               method: "POST",
               headers: {

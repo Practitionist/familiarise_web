@@ -173,8 +173,8 @@ describe("resolveWeeklyUtcOffsetMinutes (#1326)", () => {
 
   it.each([
     "utils/onboarding-server.ts",
-    "app/api/slots/availability/weekly/route.ts",
-    "app/api/slots/availability/weekly/[id]/route.ts",
+    "app/api/scheduling/availability/weekly/route.ts",
+    "app/api/scheduling/availability/weekly/[id]/route.ts",
     "app/api/user/consultants/[id]/route.ts",
   ])("%s resolves the offset through the shared resolver", (file) => {
     const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");

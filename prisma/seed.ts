@@ -38,7 +38,7 @@ import { createDiscountCodes } from "./seedFiles/8a-create-discount-codes";
 import { createPayments } from "./seedFiles/8b-create-payments";
 
 // Phase 9: Support & Feedback
-import { createFeedbacks } from "./seedFiles/9a-create-feedbacks";
+import { createPlatformFeedback } from "./seedFiles/9a-create-platform-feedback";
 import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
 
 // Phase 11: Documents & Meetings
@@ -161,7 +161,7 @@ async function seed() {
     // Phase 9: Support & Feedback
     console.log("\n[Phase 9] Creating support & feedback data...");
     console.log("Creating feedbacks...");
-    await createFeedbacks(users);
+    await createPlatformFeedback(users);
 
     console.log("Creating support tickets...");
     await createSupportTickets(users);

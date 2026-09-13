@@ -30,11 +30,11 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { GET } from "../../app/api/slots/availability-with-allocation/[consultantId]/route";
+import { GET } from "../../app/api/scheduling/availability-with-allocation/[consultantId]/route";
 import prisma from "@/lib/prisma";
 
 const CONSULTANT_ID = "consultant-1";
-const URL_BASE = `https://x.test/api/slots/availability-with-allocation/${CONSULTANT_ID}`;
+const URL_BASE = `https://x.test/api/scheduling/availability-with-allocation/${CONSULTANT_ID}`;
 const QUERY =
   "startDateInUtc=2026-09-07T00:00:00.000Z&endDateInUtc=2026-09-14T00:00:00.000Z&timezone=UTC";
 

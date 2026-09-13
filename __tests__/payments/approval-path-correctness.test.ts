@@ -29,7 +29,9 @@ const subscriptionsRoute = read(
 );
 const trialsRoute = read("app/api/trials/[trialId]/route.ts");
 const approvalPayment = read("lib/payments/operations/approval-payment.ts");
-const requestForApproval = read("app/api/slots/request-for-approval/route.ts");
+const requestForApproval = read(
+  "app/api/scheduling/request-for-approval/route.ts",
+);
 const checkout = read("lib/payments/operations/checkout.ts");
 
 describe("CORE-3 — no fabricated appointments on approval", () => {

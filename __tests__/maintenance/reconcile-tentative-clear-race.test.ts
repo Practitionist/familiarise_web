@@ -3,7 +3,7 @@
  */
 
 /**
- * #1424 — the tentative-clear sweep of `reconcile-slot-availability` reads a
+ * #1424 — the tentative-clear sweep of `reconcile-occurrence-availability` reads a
  * cohort of tentative slots whose payment succeeded and then stamps them
  * confirmed. The write used to be scoped by `id IN (...)` alone, so it did not
  * care whether a row was still in the cohort. A partial reschedule releases a
@@ -56,10 +56,10 @@ jest.mock("../../utils/scheduling-engine/ScheduleCalculationService", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { reconcileSlotAvailability } from "../../scripts/appointments/reconcile-slot-availability";
+import { reconcileOccurrenceAvailability } from "../../scripts/appointments/reconcile-occurrence-availability";
 import { OccurrenceCompletionStatus } from "@prisma/client";
 
-describe("reconcile-slot-availability × tentative-clear race (#1424)", () => {
+describe("reconcile-occurrence-availability × tentative-clear race (#1424)", () => {
   it("skips a slot whose completion status changed after the cohort read", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     // Two slots read; one is moved to RESCHEDULED by a partial reschedule
@@ -82,7 +82,7 @@ describe("reconcile-slot-availability × tentative-clear race (#1424)", () => {
       count: 1,
     });
 
-    const result = await reconcileSlotAvailability();
+    const result = await reconcileOccurrenceAvailability();
 
     const write = (prisma.appointmentOccurrence.updateMany as jest.Mock).mock
       .calls[0][0];

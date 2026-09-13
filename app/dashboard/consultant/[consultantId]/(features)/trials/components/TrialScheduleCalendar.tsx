@@ -87,7 +87,7 @@ export function TrialScheduleCalendar({
         endDateInUtc.setHours(23, 59, 59, 999);
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${consultantId}?` +
+          `/api/scheduling/availability-with-allocation/${consultantId}?` +
             `startDateInUtc=${startDateInUtc.toISOString()}&` +
             `endDateInUtc=${endDateInUtc.toISOString()}&` +
             `timezone=${timezone}`,

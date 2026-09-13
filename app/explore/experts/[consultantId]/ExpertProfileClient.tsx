@@ -82,7 +82,7 @@ export function ExpertProfileClient({
         endDateInUtc.setHours(23, 59, 59, 999);
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${
+          `/api/scheduling/availability-with-allocation/${
             consultantDetails.id
           }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );

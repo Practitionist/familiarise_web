@@ -54,7 +54,7 @@ interface SessionTimelineProps {
   /**
    * #1428 — opt-in: render tentative (held-pending-payment) sessions instead
    * of silently dropping them. Off by default so AppointmentSheet and
-   * RequestSlotAllocationTab, which never learned a hold deadline, keep
+   * RequestSchedulingTab, which never learned a hold deadline, keep
    * their existing tentative-is-invisible behaviour.
    */
   showHeld?: boolean;

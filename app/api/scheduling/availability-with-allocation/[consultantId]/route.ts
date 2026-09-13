@@ -47,7 +47,7 @@ type SlotTimingWithOverlap = TIntervalTiming & {
 // No SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old.
 const GRID_CACHE_CONTROL = "private, max-age=30";
 
-// An org OWNER/MAINTAINER acting for a member consultant (RequestSlotAllocationTab
+// An org OWNER/MAINTAINER acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
 // is authorized the same as the owning consultant. isPrivileged only covers
 // PLATFORM staff, so without this an org admin 403s and loses the whole

@@ -19,11 +19,11 @@ import {
 } from "@/components/ui/select";
 import {
   acceptsSlotPreference,
-  type SlotPickerPolicy,
-  type SlotPickerSubject,
+  type TimePickerPolicy,
+  type TimePickerSubject,
   type SlotPreference,
-} from "@/components/scheduling/slot-picker-policy";
-import { resolveFocusTarget } from "@/lib/scheduling/slot-picker-focus";
+} from "@/components/scheduling/time-picker-policy";
+import { resolveFocusTarget } from "@/lib/scheduling/time-picker-focus";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -32,7 +32,7 @@ import { cn } from "@/utils/tailwind";
  *
  * It takes a policy object rather than a prop per difference. The four callers
  * disagree about lead time, whether anything is being released and who owns
- * the submit; all of that is data in `slot-picker-policy.ts`, so nothing here
+ * the submit; all of that is data in `time-picker-policy.ts`, so nothing here
  * branches on which caller it is.
  */
 
@@ -55,9 +55,9 @@ const DAYS_OPTIONS = [
   { value: "WEEKENDS", label: "Weekends" },
 ] as const;
 
-export interface SlotPickerProps {
-  policy: SlotPickerPolicy;
-  subject: SlotPickerSubject;
+export interface TimePickerProps {
+  policy: TimePickerPolicy;
+  subject: TimePickerSubject;
   /** A submit is in flight; the policy's owner knows, this component does not. */
   isSubmitting?: boolean;
   /** Back out. Also wired to the allocate grid's own Cancel button. */
@@ -65,13 +65,13 @@ export interface SlotPickerProps {
   className?: string;
 }
 
-export function SlotPicker({
+export function TimePicker({
   policy,
   subject,
   isSubmitting = false,
   onCancel,
   className,
-}: Readonly<SlotPickerProps>) {
+}: Readonly<TimePickerProps>) {
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
     [subject.slots],

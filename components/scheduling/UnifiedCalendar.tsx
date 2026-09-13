@@ -53,7 +53,7 @@ import {
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
-import { useEventSlotAllocation } from "@/hooks/scheduling/useSlotAllocation";
+import { useEventSlotAllocation } from "@/hooks/scheduling/useScheduling";
 import type { AllocationResponse } from "@/lib/scheduling/allocationService";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
@@ -72,14 +72,14 @@ import {
   SLOT_STATUS_TOKENS,
   resolveSlotStatusKey,
   slotCellClassName,
-} from "@/lib/scheduling/slot-status-tokens";
+} from "@/lib/scheduling/interval-status-tokens";
 import {
   focusGridPosition,
   focusScrollRow,
   focusTargetRow,
   gridTimeZone,
-  type SlotPickerFocus,
-} from "@/lib/scheduling/slot-picker-focus";
+  type TimePickerFocus,
+} from "@/lib/scheduling/time-picker-focus";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -398,7 +398,7 @@ export interface UnifiedCalendarProps {
    * week grid: it chooses the starting week and scroll position and then
    * never touches either again.
    */
-  focus?: SlotPickerFocus;
+  focus?: TimePickerFocus;
   /**
    * When true, SafeUnifiedCalendar shows the consultant legend (Selected /
    * Being moved / This booking). Defaults from mode === "allocate"; reschedule
@@ -607,7 +607,7 @@ export function UnifiedCalendar({
   // re-renders.
   //
   // The callback is held in a ref and kept out of the dependency array on
-  // purpose. SlotPicker passes an inline arrow, so depending on
+  // purpose. TimePicker passes an inline arrow, so depending on
   // it meant a new identity every render: effect fires, parent setState,
   // re-render, new identity, fire again, forever — React error #185. Nothing
   // caught it because "select" is the consultee picker's mode and the picker

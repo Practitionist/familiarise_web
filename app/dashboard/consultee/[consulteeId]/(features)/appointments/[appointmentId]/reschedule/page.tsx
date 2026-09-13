@@ -11,7 +11,7 @@ import prisma from "@/lib/prisma";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { safeReturnTo } from "@/lib/navigation/safe-return-to";
-import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
+import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
 

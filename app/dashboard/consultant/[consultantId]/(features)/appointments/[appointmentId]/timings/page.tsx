@@ -22,7 +22,7 @@ import { ManageTimingsClient } from "./ManageTimingsClient";
 
 /**
  * The consultant setting the times of their own event instance — the fourth
- * caller of the shared slot-picker surface, and the one `SlotPicker` was
+ * caller of the shared slot-picker surface, and the one `TimePicker` was
  * generalised FROM. It stayed a dialog the longest because nothing here felt
  * per-appointment enough to deserve a URL; cramped on a real calendar grid
  * regardless, so it gets the same page treatment as the other three.

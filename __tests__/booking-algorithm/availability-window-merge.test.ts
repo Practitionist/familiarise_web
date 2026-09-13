@@ -302,17 +302,20 @@ describe("checkout coverage rule (#1320)", () => {
       expect(src).toContain("mergeAdjacentCustomRows(");
     }
     for (const [f, helper] of [
-      ["app/api/slots/availability/weekly/route.ts", "coalesceAndResolve("],
       [
-        "app/api/slots/availability/weekly/[id]/route.ts",
+        "app/api/scheduling/availability/weekly/route.ts",
         "coalesceAndResolve(",
       ],
       [
-        "app/api/slots/availability/custom/route.ts",
+        "app/api/scheduling/availability/weekly/[id]/route.ts",
+        "coalesceAndResolve(",
+      ],
+      [
+        "app/api/scheduling/availability/custom/route.ts",
         "coalesceAndResolveCustom(",
       ],
       [
-        "app/api/slots/availability/custom/[id]/route.ts",
+        "app/api/scheduling/availability/custom/[id]/route.ts",
         "coalesceAndResolveCustom(",
       ],
     ]) {

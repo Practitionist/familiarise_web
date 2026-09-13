@@ -11,7 +11,7 @@ import { cn } from "@/utils/tailwind";
 /**
  * Which sessions of a booking are being released, for the reschedule
  * surfaces. Lifted out of the reschedule modal it replaced, unchanged in behaviour;
- * `SlotPicker` shows it beside the grid rather than as a first step, because a
+ * `TimePicker` shows it beside the grid rather than as a first step, because a
  * page has the width the dialog did not.
  */
 

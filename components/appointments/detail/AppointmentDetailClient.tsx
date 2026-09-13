@@ -228,7 +228,7 @@ function SoleSessionRating({
       <SessionRatingRow
         appointmentId={session.appointmentId ?? appointmentId}
         bookingAppointmentId={appointmentId}
-        slotId={session.occurrenceId}
+        occurrenceId={session.occurrenceId}
         existingRating={rating}
         readOnly={readOnly}
       />
@@ -660,7 +660,7 @@ export function AppointmentDetailClient({
                         <SessionRatingRow
                           appointmentId={session.appointmentId ?? appointmentId}
                           bookingAppointmentId={appointmentId}
-                          slotId={session.occurrenceId}
+                          occurrenceId={session.occurrenceId}
                           existingRating={rating}
                           // The consultant sees what a call scored; only the
                           // attendee can set it.

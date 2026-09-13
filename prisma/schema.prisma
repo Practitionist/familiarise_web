@@ -75,8 +75,8 @@ model User {
   // Newsletter signup, when the subscriber was signed in at the time.
   waitlistSubscriptions Waitlist[]
 
-  // Feedback and Support
-  feedbacks                 Feedback[]
+  // Platform feedback and support
+  platformFeedback          PlatformFeedback[]
   supportTickets            SupportTicket[]
   // #appt-support — per-appointment support conversations + private CSAT.
   appointmentSupportThreads AppointmentSupportThread[]
@@ -249,13 +249,15 @@ model OnboardingDraft {
   @@map("onboarding_drafts")
 }
 
-model Feedback {
-  id          String         @id @default(uuid())
+// Feedback ABOUT THE PLATFORM (bugs, suggestions), triaged by staff; not a
+// rating of any call — that is AppointmentFeedback (#1554).
+model PlatformFeedback {
+  id          String                 @id @default(uuid())
   title       String
-  description String         @db.Text
-  rating      Int?           @db.SmallInt
+  description String                 @db.Text
+  rating      Int?                   @db.SmallInt
   category    String?
-  status      FeedbackStatus @default(PENDING)
+  status      PlatformFeedbackStatus @default(PENDING)
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
@@ -688,7 +690,7 @@ enum SupportThreadCategory {
   OTHER
 }
 
-enum FeedbackStatus {
+enum PlatformFeedbackStatus {
   PENDING
   ACKNOWLEDGED
   IN_PROGRESS
@@ -3000,7 +3002,7 @@ model ConsultantProfile {
   languages                   String[]                     @default([])
   toolsAndTechnologies        String[]                     @default([])
   mentoringStyle              String?                      @db.Text
-  sessionTypes                SessionType[]                @default([])
+  offeringFormats             OfferingFormat[]             @default([])
   profileCompletionPercentage Int                          @default(0)
   isVerified                  Boolean                      @default(false)
   verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
@@ -3187,9 +3189,9 @@ model ConsultantReview {
   ratingCause             RatingCause?
   excludedFromAggregateAt DateTime?    @db.Timestamptz
 
-  // #1300 — the SESSION's clock for recency decay, stamped from the run anchor's endsAt;
+  // #1300 — the rated OCCURRENCE's clock for recency decay, stamped from its endsAt;
   // an edit must not refresh it. NULL = legacy or unbounded offline; falls back to createdAt.
-  ratedSessionAt DateTime? @db.Timestamptz
+  ratedOccurrenceAt DateTime? @db.Timestamptz
 
   // #1300 — the append-only edit trail.
   revisions ConsultantReviewRevision[]
@@ -6468,9 +6470,10 @@ enum BudgetPreference {
   FLEXIBLE // No specific preference
 }
 
-enum SessionType {
-  ONE_ON_ONE // 1:1 video/audio sessions
-  GROUP // Group sessions
+// #1554 — the SHAPES of work a consultant offers; not a scheduling unit.
+enum OfferingFormat {
+  ONE_ON_ONE // 1:1 video/audio calls
+  GROUP // Group events
   ASYNC_REVIEW // Asynchronous document/code review
 }
 

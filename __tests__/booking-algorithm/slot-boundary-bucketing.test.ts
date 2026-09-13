@@ -21,7 +21,7 @@ import {
   dayKey,
   weekKey,
   type SlotLimits,
-} from "@/lib/scheduling/slotSelectionValidation";
+} from "@/lib/scheduling/intervalSelectionValidation";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
 import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";

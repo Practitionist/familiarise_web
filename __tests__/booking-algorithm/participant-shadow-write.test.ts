@@ -105,7 +105,10 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
     ["utils/scheduling-engine/SchedulingService.ts", /recordParticipants\(/],
     ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
     // #1544 — the one creation path that never wrote the roster until #1554.
-    ["app/api/slots/request-for-approval/route.ts", /recordParticipants\(/],
+    [
+      "app/api/scheduling/request-for-approval/route.ts",
+      /recordParticipants\(/,
+    ],
     [
       "lib/payments/webhooks/handlers.ts",
       /setParticipantStatus\(|participants: \{/,
@@ -124,7 +127,7 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
     ["lib/payments/operations/booking-refund.ts", /setParticipantStatus\(/],
     ["prisma/seedFiles/6a-create-appointments.ts", /participants: \{/],
     [
-      "scripts/appointments/reconcile-slot-availability.ts",
+      "scripts/appointments/reconcile-occurrence-availability.ts",
       /participant_drift/,
     ],
   ];

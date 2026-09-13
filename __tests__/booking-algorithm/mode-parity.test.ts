@@ -21,7 +21,7 @@ import {
   validateEventSlots,
   getEventConstraints,
   getSlotLimits,
-} from "@/lib/scheduling/slotSelectionValidation";
+} from "@/lib/scheduling/intervalSelectionValidation";
 import { type CalendarInterval } from "@/lib/scheduling/calendarUtils";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";

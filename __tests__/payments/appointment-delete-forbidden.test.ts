@@ -24,7 +24,7 @@ const SWEEPS = [
   "scripts/payments/cleanup-abandoned-payments.ts",
   "scripts/appointments/cleanup-invalid-appointments.ts",
   "scripts/appointments/cleanup-stale-pending-consultations.ts",
-  "scripts/appointments/cleanup-tentative-slots.ts",
+  "scripts/appointments/cleanup-tentative-occurrences.ts",
   "scripts/appointments/expire-stale-requests.ts",
   "scripts/appointments/auto-complete-appointments.ts",
 ];

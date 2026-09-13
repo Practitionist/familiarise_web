@@ -96,7 +96,7 @@ import {
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
-import { cleanupTentativeSlots } from "../../scripts/appointments/cleanup-tentative-slots";
+import { cleanupTentativeOccurrences } from "../../scripts/appointments/cleanup-tentative-occurrences";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1271,7 +1271,7 @@ describe("Cancel Route Handler - POST", () => {
 // Cleanup Tentative Slots
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("cleanupTentativeSlots", () => {
+describe("cleanupTentativeOccurrences", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // #1319 wave 6 — the sweep releases holds inside prisma.$transaction so
@@ -1287,7 +1287,7 @@ describe("cleanupTentativeSlots", () => {
   it("should return success with 0 slots when none are stale", async () => {
     (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(true);
     expect(result.slotsReleased).toBe(0);
@@ -1328,7 +1328,7 @@ describe("cleanupTentativeSlots", () => {
       }
     ).updateManyAndReturn.mockResolvedValue([{ id: "slot-1" }]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(true);
     expect(result.slotsReleased).toBe(1);
@@ -1382,7 +1382,7 @@ describe("cleanupTentativeSlots", () => {
       { id: "slot-3" },
     ]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.slotsReleased).toBe(3);
     expect(result.appointmentsAffected).toBe(2); // 2 unique appointments
@@ -1393,7 +1393,7 @@ describe("cleanupTentativeSlots", () => {
       new Error("Connection lost"),
     );
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
@@ -1405,7 +1405,7 @@ describe("cleanupTentativeSlots", () => {
     (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
     const before = new Date().toISOString();
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
     const after = new Date().toISOString();
 
     expect(result.timestamp).toBeDefined();
@@ -1416,7 +1416,7 @@ describe("cleanupTentativeSlots", () => {
   it("should query for tentative slots with no successful payment", async () => {
     (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
 
     expect((prisma.appointmentOccurrence as any).findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1442,7 +1442,7 @@ describe("cleanupTentativeSlots", () => {
   it("should not write when no stale slots found", async () => {
     (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
 
     expect(
       (

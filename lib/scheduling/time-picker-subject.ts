@@ -1,4 +1,4 @@
-import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
+import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import { toOccurrenceLike, type OccurrenceLike } from "@/lib/appointments/view-model";
 
@@ -19,7 +19,7 @@ export type BookingTypeLabel =
   | "Trial";
 
 export interface RescheduleSubject {
-  subject: SlotPickerSubject;
+  subject: TimePickerSubject;
   /** Plan title, for the page header. */
   title: string;
   /** Drives copy and the reschedule endpoint's `?type=` discriminator. */
@@ -75,7 +75,7 @@ export function buildRescheduleSubject(
     sessionDurationInHours?: number;
     /** Consultation/Subscription/Webinar/Class id for "This booking" /
      * "Being moved" paint. Absent for Trial (no event-slots fetch). */
-    eventType?: SlotPickerSubject["eventType"];
+    eventType?: TimePickerSubject["eventType"];
     eventId?: string;
     /** Recurring bookings only — the grid clamps selection to this window and
      *  buckets its per-day/week caps in this zone. */

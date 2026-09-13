@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
       whereClause.status = status;
     }
 
-    // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
+    // Personal-vs-org scope filter (same mechanism as /api/scheduling/appointments:
     // the denormalized Appointment.organizationId, here through the
     // subscription's wrapper, #1554). #org-appts — an ABSENT param now
     // means PERSONAL/B2C (matching resolveOrgScope's default), NOT the old
@@ -150,7 +150,7 @@ export async function GET(request: NextRequest) {
     // includes joined consultantProfile.domain/subDomains/tags (M2M) and a
     // per-slot user M2M that no list consumer reads, and over-shared user
     // PII (email/role/phone) against the #946 allowlist direction. Field
-    // superset verified across RequestSlotAllocationTab, the Mini tab,
+    // superset verified across RequestSchedulingTab, the Mini tab,
     // fetchApprovals, and useEvents consumers.
     const [subscriptions, total] = await Promise.all([
       prisma.subscription.findMany({

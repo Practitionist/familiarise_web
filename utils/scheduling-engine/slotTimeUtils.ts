@@ -340,7 +340,7 @@ export function getTimezoneOffsetMinutes(
     // fan out into per-candidate volume.
     reportSentryError(error, {
       subsystem: "scheduling",
-      op: "slot-validation",
+      op: "schedule-validation",
       expected: true,
       extra: { timezone },
     });

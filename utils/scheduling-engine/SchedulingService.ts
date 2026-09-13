@@ -186,7 +186,7 @@ export class SchedulingService {
       const modeled = this.isModeledOutcome(error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
         expected: modeled,
         extra: {
           mode: request.mode,

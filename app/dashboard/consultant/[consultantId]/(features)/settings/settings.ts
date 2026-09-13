@@ -7,7 +7,7 @@ import {
 import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
-import { DayOfWeek, ScheduleType, SessionType } from "@prisma/client";
+import { DayOfWeek, ScheduleType, OfferingFormat } from "@prisma/client";
 
 export interface FormData {
   description: string;
@@ -26,7 +26,7 @@ export interface FormData {
   languages: string[];
   toolsAndTechnologies: string[];
   mentoringStyle: string;
-  sessionTypes: SessionType[];
+  offeringFormats: OfferingFormat[];
 }
 
 export interface Domain {
@@ -76,7 +76,7 @@ export const getInitialFormData = (
   languages: consultant?.languages ?? [],
   toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],
   mentoringStyle: consultant?.mentoringStyle ?? "",
-  sessionTypes: consultant?.sessionTypes ?? [],
+  offeringFormats: consultant?.offeringFormats ?? [],
 });
 
 /**

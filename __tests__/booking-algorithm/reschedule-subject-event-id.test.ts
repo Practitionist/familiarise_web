@@ -5,7 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
+import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 const futureStart = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);

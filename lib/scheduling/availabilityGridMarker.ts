@@ -5,7 +5,7 @@ import type { Db } from "@/lib/prisma";
  * #1319 PR 9 — the change marker behind the availability grid's conditional GET.
  *
  * ADR 16 settled that slot freshness is polled, not pushed, so every open
- * calendar re-asks `/api/slots/availability-with-allocation/[consultantId]`
+ * calendar re-asks `/api/scheduling/availability-with-allocation/[consultantId]`
  * once a minute and almost always gets back the answer it already has. This
  * module answers "has anything the response depends on changed?" in ONE
  * indexed read, so the unchanged case can be a 304 instead of the 8–18

@@ -4,7 +4,7 @@ import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCa
 
 /**
  * Pure client-side selection validation for the Allocate Slots calendar.
- * Extracted from useSlotAllocation so the rules are unit-testable and can
+ * Extracted from useScheduling so the rules are unit-testable and can
  * later move server-side (#997 Phase 3).
  *
  * All daily/weekly bucketing uses ScheduleCalculationService's day/week keys in

@@ -5,7 +5,7 @@ import {
   validateSlotDistribution,
 } from "./calendarUtils";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { countSessionsForDay } from "./slotSelectionValidation";
+import { countSessionsForDay } from "./intervalSelectionValidation";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import { AllocationService } from "./allocationService";
 
@@ -210,7 +210,7 @@ export class AllocationAlgorithms {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "client", feature: "slot-allocation" },
+          tags: { subsystem: "client", feature: "scheduling" },
           extra: { eventType: options.eventType, mode: "manual" },
         },
       );
@@ -299,7 +299,7 @@ export class AllocationAlgorithms {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "client", feature: "slot-allocation" },
+          tags: { subsystem: "client", feature: "scheduling" },
           extra: { eventType: options.eventType, mode: "requested" },
         },
       );

@@ -2,8 +2,8 @@
  * #appt-support — private per-participant CSAT (1–5 + note), distinct from the
  * public ConsultantReview. Re-submitting edits.
  *
- * #1554 — a rating is about ONE CALL (`slotId` names the occurrence) or about
- * the WHOLE BOOKING (no `slotId`; the row's occurrence is NULL). A subscription
+ * #1554 — a rating is about ONE CALL (`occurrenceId` names it) or about the
+ * WHOLE BOOKING (no `occurrenceId`; the row's occurrence is NULL). A subscription
  * holds up to 24 calls, so one rating per appointment alone meant a single score
  * for a three-month package; both levels now coexist, one row per person per
  * level, guarded by the `appointment_feedback_level_key` sidecar unique.
@@ -35,7 +35,7 @@ const feedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
   comment: z.string().trim().max(2000).optional(),
   /** Which call of this booking is being rated; absent = the whole booking. */
-  slotId: z.string().min(1).max(64).optional(),
+  occurrenceId: z.string().min(1).max(64).optional(),
 });
 
 export async function GET(
@@ -174,13 +174,13 @@ export async function POST(
       });
     }
 
-    // The slot must belong to THIS appointment: without the check a caller
-    // could rate a call from a booking they merely have access to the id of.
-    // Without a slot the rating is about the whole booking, which still needs
-    // at least one held call to rate at all.
+    // The occurrence must belong to THIS appointment: without the check a
+    // caller could rate a call from a booking they merely have access to the
+    // id of. Without one the rating is about the whole booking, which still
+    // needs at least one held call to rate at all.
     const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
-        ...(body.data.slotId ? { id: body.data.slotId } : {}),
+        ...(body.data.occurrenceId ? { id: body.data.occurrenceId } : {}),
         appointmentId,
         // You may rate a call you ATTENDED, or one nobody could have recorded
         // (an offline session). A COMPLETED slot the caller never joined does
@@ -203,7 +203,7 @@ export async function POST(
 
     // #1554 — the rating belongs to the MEETING, and the occurrence IS the
     // meeting: one row per held call; NULL is the whole-booking level.
-    const ratedSlotId = body.data.slotId ? slot.id : null;
+    const ratedOccurrenceId = body.data.occurrenceId ? slot.id : null;
 
     // `updatedAt` is stamped HERE, not by `@updatedAt`. Prisma populates that
     // attribute on create as well as on update, so the column could never be NULL
@@ -218,7 +218,7 @@ export async function POST(
     const previous = await prisma.appointmentFeedback.findFirst({
       where: {
         appointmentId,
-        appointmentOccurrenceId: ratedSlotId,
+        appointmentOccurrenceId: ratedOccurrenceId,
         userId: auth.userId,
       },
       select: { id: true, rating: true, comment: true },
@@ -245,7 +245,7 @@ export async function POST(
           })
         : await prisma.appointmentFeedback.create({
             data: {
-              appointmentOccurrenceId: ratedSlotId,
+              appointmentOccurrenceId: ratedOccurrenceId,
               appointmentId,
               userId: auth.userId,
               organizationId: auth.organizationId,

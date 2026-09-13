@@ -36,7 +36,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
+import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
 
 const mocked = prisma as unknown as {
   appointmentOccurrence: {
@@ -65,7 +65,7 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
       { id: "slot-1" },
     ]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.slotsReleased).toBe(1);
     expect(
@@ -101,7 +101,7 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
     // Without this the sweep re-collects its own soft-cancelled rows every
     // run and a backlog fills the per-run cap with dead slots forever.
     mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
 
     const [cohortRead] = mocked.appointmentOccurrence.findMany.mock.calls[0];
     expect(cohortRead.where).toEqual(
@@ -111,7 +111,7 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
 
   it("releases nothing when the scan finds nothing", async () => {
     mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
     expect(
       mocked.appointmentOccurrence.updateManyAndReturn,
     ).not.toHaveBeenCalled();

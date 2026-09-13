@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
-import { FeedbackStatus, Prisma } from "@prisma/client";
+import { PlatformFeedbackStatus, Prisma } from "@prisma/client";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
@@ -16,10 +16,10 @@ export async function GET(req: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
 
     // Build where clause
-    const where: Prisma.FeedbackWhereInput = {};
+    const where: Prisma.PlatformFeedbackWhereInput = {};
 
     if (status && status !== "all") {
-      where.status = status as FeedbackStatus;
+      where.status = status as PlatformFeedbackStatus;
     }
 
     if (search) {
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
     // Get feedbacks with pagination
     const [feedbacks, total] = await Promise.all([
-      prisma.feedback.findMany({
+      prisma.platformFeedback.findMany({
         where,
         include: {
           user: {
@@ -49,17 +49,17 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.feedback.count({ where }),
+      prisma.platformFeedback.count({ where }),
     ]);
 
     // Get status counts
     const [pending, acknowledged, inProgress, resolved, closed] =
       await Promise.all([
-        prisma.feedback.count({ where: { status: "PENDING" } }),
-        prisma.feedback.count({ where: { status: "ACKNOWLEDGED" } }),
-        prisma.feedback.count({ where: { status: "IN_PROGRESS" } }),
-        prisma.feedback.count({ where: { status: "RESOLVED" } }),
-        prisma.feedback.count({ where: { status: "CLOSED" } }),
+        prisma.platformFeedback.count({ where: { status: "PENDING" } }),
+        prisma.platformFeedback.count({ where: { status: "ACKNOWLEDGED" } }),
+        prisma.platformFeedback.count({ where: { status: "IN_PROGRESS" } }),
+        prisma.platformFeedback.count({ where: { status: "RESOLVED" } }),
+        prisma.platformFeedback.count({ where: { status: "CLOSED" } }),
       ]);
 
     return NextResponse.json({

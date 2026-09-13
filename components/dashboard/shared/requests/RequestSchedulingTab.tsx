@@ -52,7 +52,7 @@ import {
   computeAttemptFingerprint,
   resolveAttemptKey,
   type AllocationAttemptKey,
-} from "@/hooks/scheduling/useSlotAllocation";
+} from "@/hooks/scheduling/useScheduling";
 import { cn } from "@/utils/tailwind";
 
 // Slot with tentative status for reschedule visibility
@@ -103,7 +103,7 @@ interface Request {
 
 type RequestType = "all" | "consultation" | "subscription";
 
-interface RequestSlotAllocationTabProps {
+interface RequestSchedulingTabProps {
   type: RequestType;
   onUpdate: () => void;
   /**
@@ -530,12 +530,12 @@ function StoredTimes({ request }: { request: Request }) {
   return <p className="text-xs text-muted-foreground">Not available</p>;
 }
 
-export function RequestSlotAllocationTab({
+export function RequestSchedulingTab({
   type,
   onUpdate,
   consultantProfileId,
   orgScope = "personal",
-}: RequestSlotAllocationTabProps) {
+}: RequestSchedulingTabProps) {
   const params = useParams();
   const router = useRouter();
   const routeConsultantId = params.consultantId as string | undefined;
@@ -716,7 +716,7 @@ export function RequestSlotAllocationTab({
                         {
                           tags: {
                             subsystem: "client",
-                            feature: "slot-allocation",
+                            feature: "scheduling",
                           },
                           extra: { subscriptionId: subscription.id },
                         },
@@ -873,7 +873,7 @@ export function RequestSlotAllocationTab({
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client", feature: "slot-allocation" } },
+        { tags: { subsystem: "client", feature: "scheduling" } },
       );
       toast(
         allocationFailed(
@@ -963,7 +963,7 @@ export function RequestSlotAllocationTab({
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client", feature: "slot-allocation" } },
+        { tags: { subsystem: "client", feature: "scheduling" } },
       );
       toast(
         allocationFailed(

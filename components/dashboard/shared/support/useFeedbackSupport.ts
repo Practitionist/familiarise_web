@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Feedback,
+  PlatformFeedback,
   SupportPriority,
   SupportIssueType,
   SupportTicket,
@@ -58,7 +58,7 @@ export function useFeedbackSupport(scopeId: string) {
   const consulteeQueries = createConsulteeQueries(scopeId);
   const { data: feedbacksData } = useQuery(consulteeQueries.feedback);
   const { data: ticketsData } = useQuery(consulteeQueries.supportTickets);
-  const feedbacks = (feedbacksData ?? []) as unknown as Feedback[];
+  const feedbacks = (feedbacksData ?? []) as unknown as PlatformFeedback[];
   const tickets = (ticketsData ?? []) as unknown as SupportTicketWithResponses[];
 
   const invalidateFeedbacks = () =>

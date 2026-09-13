@@ -1,4 +1,4 @@
-import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
+import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /**
@@ -16,7 +16,7 @@ import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCa
  * grid is drawn in.
  */
 
-export interface SlotPickerFocus {
+export interface TimePickerFocus {
   /** The instant to open on. */
   at: Date;
   /**
@@ -39,7 +39,7 @@ interface DatedSlot {
 }
 
 function liveSlotsInOrder(
-  subject: Pick<SlotPickerSubject, "slots">,
+  subject: Pick<TimePickerSubject, "slots">,
 ): DatedSlot[] {
   return (subject.slots ?? [])
     .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
@@ -88,9 +88,9 @@ function periodAnchor(now: Date, start?: Date, end?: Date): Date {
  * period on the endpoint #997 measured in tens of seconds.
  */
 export function resolveFocusTarget(
-  subject: Pick<SlotPickerSubject, "slots" | "allowedStart" | "allowedEnd">,
+  subject: Pick<TimePickerSubject, "slots" | "allowedStart" | "allowedEnd">,
   now: Date = new Date(),
-): SlotPickerFocus {
+): TimePickerFocus {
   const slots = liveSlotsInOrder(subject);
 
   // Only one that can still BE placed. A released session whose old time has
@@ -183,7 +183,7 @@ export function earliestAvailabilityRow(
  * time answers for itself.
  */
 export function focusTargetRow(
-  focus: SlotPickerFocus,
+  focus: TimePickerFocus,
   availableSlots: readonly { startTime: Date }[],
   timeZone: string,
 ): number {

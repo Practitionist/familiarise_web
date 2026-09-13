@@ -71,7 +71,7 @@ const ROUTE_PATTERNS = {
     "/api/participants/", // Private: participant management for classes/webinars/etc.
     "/api/dashboard/", // Private: dashboard data routes
     "/api/trials/", // Private: trial session routes (public sub-routes exempted below)
-    "/api/slots/", // Private: appointment slot data and mutations
+    "/api/scheduling/", // Private: appointment slot data and mutations
     "/api/admin/", // Private: platform admin operations (handler-level auth still runs)
     "/api/staff/", // Private: platform staff operations (handler-level auth still runs)
     "/api/organizations/", // Private: enterprise org CRUD, members, billing, sso (handler-level requireOrgAccess still runs)
@@ -92,8 +92,8 @@ const ROUTE_PATTERNS = {
     "/api/plans/classes", // Public: browse and view class plans (sub-routes enforce their own auth)
     "/api/plans/webinars", // Public: browse and view webinar plans (sub-routes enforce their own auth)
     "/api/explore/recordings", // Public: #366 recordings library listing (metadata only; playback is authed)
-    "/api/slots/availability/", // Public: consultant availability for booking page
-    "/api/slots/availability-with-allocation/", // Public: consultant availability with allocation info
+    "/api/scheduling/availability/", // Public: consultant availability for booking page
+    "/api/scheduling/availability-with-allocation/", // Public: consultant availability with allocation info
   ],
 };
 
@@ -321,7 +321,7 @@ const RATE_LIMIT_RULES: RateRule[] = [
   },
   {
     label: "public: booking-page availability",
-    match: (p) => p.startsWith("/api/slots/availability/"),
+    match: (p) => p.startsWith("/api/scheduling/availability/"),
     limiter: availabilityLimiter,
     skipLocalhost: false,
   },

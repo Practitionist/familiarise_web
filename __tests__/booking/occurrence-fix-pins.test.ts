@@ -20,7 +20,7 @@
  *         range exclusion on the occurrence rows is the cross-user backstop.
  *  #828 — checkout had no request-level idempotency; the replay helper must
  *         return the original attempt instead of minting a duplicate.
- *  #829 — cleanup-tentative-slots deleted by id only, destroying slots whose
+ *  #829 — cleanup-tentative-occurrences deleted by id only, destroying slots whose
  *         capture webhook confirmed them between the scan and the delete.
  */
 

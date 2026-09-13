@@ -11,7 +11,7 @@ import {
   focusScrollRow,
   focusTargetRow,
   resolveFocusTarget,
-} from "@/lib/scheduling/slot-picker-focus";
+} from "@/lib/scheduling/time-picker-focus";
 
 const NOW = new Date("2026-08-01T09:00:00Z");
 

@@ -244,7 +244,7 @@ export default function ConsultationPricingToggle({
           selectedSlot.availabilityWindowId;
       }
 
-      const response = await fetch("/api/slots/request-for-approval", {
+      const response = await fetch("/api/scheduling/request-for-approval", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

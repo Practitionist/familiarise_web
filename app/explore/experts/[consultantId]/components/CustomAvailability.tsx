@@ -8,7 +8,7 @@ import {
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
-import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/slot-status-tokens";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 
 interface DayWithSlots {
   date: Date;

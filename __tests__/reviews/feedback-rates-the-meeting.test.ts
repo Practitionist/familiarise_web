@@ -3,20 +3,13 @@
  */
 
 /**
- * #705 — a rating belongs to the MEETING, and a meeting is a contiguous RUN of
- * 30-minute rows (#1061), not any single row.
- *
- * The client sends the run's anchor because that is what `OccurrenceVM.slotId`
- * carries, so the video path was safe by accident: only the anchor holds a
- * Meeting, so `heldOccurrence`'s attendance arm rejects every other row of the
- * run on its own. The OFFLINE path had no such backstop. An in-person 90-minute
- * session is three UNVERIFIED rows, each of which satisfies `heldOccurrence`
- * independently, so three separate ratings could be stored for one conversation
- * and the org quality aggregate would count all three.
- *
- * The route now resolves whatever row it is given back to its run's anchor,
- * which is already "the only row the video room may ever be keyed to". These
- * pin that the unique key is the anchor no matter which row is submitted.
+ * #705 / #1554 — a rating belongs to the MEETING, and since the reset the
+ * occurrence row IS the meeting: one row per held call, so the client posts
+ * that row's id and there is no run anchor to resolve to. An in-person
+ * 90-minute session is one UNVERIFIED row, which satisfies `heldOccurrence`
+ * once, so one conversation can only ever take one rating per person per
+ * level — and the whole-booking level is a second, separate row (NULL
+ * occurrence), guarded by the `appointment_feedback_level_key` sidecar.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -88,7 +81,7 @@ const RUN = [
 ];
 
 function post(
-  slotId: string | null,
+  occurrenceId: string | null,
   rating = 4,
   comment?: string,
 ): NextRequest {
@@ -97,7 +90,7 @@ function post(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       rating,
-      ...(slotId ? { slotId } : {}),
+      ...(occurrenceId ? { occurrenceId } : {}),
       ...(comment ? { comment } : {}),
     }),
   });
@@ -260,7 +253,7 @@ describe("a rating is about one call or the whole booking (#1554)", () => {
     await POST(post("slot-a"), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    // No slotId: the whole booking. The prior-row read looks for a NULL
+    // No occurrenceId: the whole booking. The prior-row read looks for a NULL
     // occurrence, so the call-level row above is not what it updates.
     const res = await POST(post(null), {
       params: Promise.resolve({ appointmentId: APPT }),

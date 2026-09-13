@@ -62,7 +62,7 @@ import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
-import { RequestSlotAllocationTabMini } from "@/components/dashboard/shared/requests/RequestSlotAllocationTabMini";
+import { RequestSchedulingTabMini } from "@/components/dashboard/shared/requests/RequestSchedulingTabMini";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
 import { FinancialSummary } from "./FinancialSummary";
 import type {
@@ -573,7 +573,7 @@ export function HomeTab({
                 viewAllText="View all requests"
               >
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
-                  <RequestSlotAllocationTabMini />
+                  <RequestSchedulingTabMini />
                 </div>
               </DataCard>
 

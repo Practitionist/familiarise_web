@@ -226,7 +226,7 @@ export default function ConsultationCheckoutPage({
 
         if (availabilityWindowWeeklyId) {
           const response = await fetch(
-            `/api/slots/availability/weekly/${availabilityWindowWeeklyId}`,
+            `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`,
           );
           if (response.ok) {
             const data = await response.json();
@@ -234,7 +234,7 @@ export default function ConsultationCheckoutPage({
           }
         } else if (availabilityWindowCustomId) {
           const response = await fetch(
-            `/api/slots/availability/custom/${availabilityWindowCustomId}`,
+            `/api/scheduling/availability/custom/${availabilityWindowCustomId}`,
           );
           if (response.ok) {
             const data = await response.json();

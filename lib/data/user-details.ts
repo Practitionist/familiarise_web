@@ -48,7 +48,7 @@ export function getUserDetails(id: string) {
           languages: true,
           toolsAndTechnologies: true,
           mentoringStyle: true,
-          sessionTypes: true,
+          offeringFormats: true,
           profileCompletionPercentage: true,
           isVerified: true,
           totalMenteesHelped: true,

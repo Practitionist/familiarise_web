@@ -4,12 +4,12 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
-import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/slot-status-tokens";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 
-type ProcessedSlotsByDay = Record<DayOfWeek, PickerInterval[]>;
+type PickerIntervalsByDay = Record<DayOfWeek, PickerInterval[]>;
 
 interface WeeklyAvailabilityProps {
-  slotsByDay: ProcessedSlotsByDay;
+  slotsByDay: PickerIntervalsByDay;
 }
 
 const VISIBLE_SLOT_COUNT = 5;

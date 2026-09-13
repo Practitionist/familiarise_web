@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
       whereClause.status = status;
     }
 
-    // Personal-vs-org scope filter (same mechanism as /api/slots/appointments:
+    // Personal-vs-org scope filter (same mechanism as /api/scheduling/appointments:
     // the denormalized Appointment.organizationId). #org-appts — an ABSENT param
     // now means PERSONAL/B2C (matching resolveOrgScope's documented default),
     // NOT the old unfiltered union: the personal dashboards dropped the org

@@ -36,7 +36,7 @@ interface Request {
   status: AppointmentStatus;
 }
 
-export function RequestSlotAllocationTabMini() {
+export function RequestSchedulingTabMini() {
   const params = useParams();
   const consultantId = params.consultantId as string;
   const [loading, setLoading] = useState(true);

@@ -26,7 +26,7 @@ import {
   findConsecutiveGroupContaining,
   dayKey,
   weekKey,
-} from "@/lib/scheduling/slotSelectionValidation";
+} from "@/lib/scheduling/intervalSelectionValidation";
 import {
   AllocationToast,
   weeklyLimitReached,
@@ -56,7 +56,7 @@ import {
  * ==========================
  *
  * Unified interface for managing slot allocation across all event types.
- * Selection/validation rules live in utils/slotSelectionValidation (pure,
+ * Selection/validation rules live in utils/intervalSelectionValidation (pure,
  * unit-tested, scheduling-timezone-bucketed to match the server, ADR B9); user-facing strings live
  * in utils/allocationMessages. This hook owns React state, toast queueing,
  * and the three allocation entry points (manual / auto / requested).
@@ -1106,7 +1106,7 @@ export function useEventSlotAllocation(
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "client", feature: "slot-allocation" },
+          tags: { subsystem: "client", feature: "scheduling" },
           extra: { eventType, mode: "manual" },
         },
       );
@@ -1240,7 +1240,7 @@ export function useEventSlotAllocation(
         Sentry.captureException(
           error instanceof Error ? error : new Error(String(error)),
           {
-            tags: { subsystem: "client", feature: "slot-allocation" },
+            tags: { subsystem: "client", feature: "scheduling" },
             extra: { eventType, mode: "auto" },
           },
         );
@@ -1319,7 +1319,7 @@ export function useEventSlotAllocation(
         Sentry.captureException(
           error instanceof Error ? error : new Error(String(error)),
           {
-            tags: { subsystem: "client", feature: "slot-allocation" },
+            tags: { subsystem: "client", feature: "scheduling" },
             extra: { eventType, mode: "requested" },
           },
         );

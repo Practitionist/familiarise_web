@@ -769,7 +769,7 @@ export class ScheduleValidationService {
       // (bad plan config), not a fault — reported at info for visibility.
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-validation",
+        op: "schedule-validation",
         expected: true,
         extra: { phase: "consultation-duration" },
       });
@@ -945,7 +945,7 @@ export class ScheduleValidationService {
       // config-validation answer, reported at info.
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-validation",
+        op: "schedule-validation",
         expected: true,
         extra: { phase: "webinar-duration" },
       });
@@ -1039,7 +1039,7 @@ export class ScheduleValidationService {
       // Same reasoning as the consultation/webinar duration guards.
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-validation",
+        op: "schedule-validation",
         expected: true,
         extra: { phase: "class-session-duration" },
       });

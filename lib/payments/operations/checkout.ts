@@ -1387,7 +1387,7 @@ export async function validateSlotAvailability(
         // predicate), so two overlapping holds both reached payment and both
         // charged. The occupancy term below is the whole check now — it admits
         // live holds and drops released/expired ones by status, and
-        // cleanup-tentative-slots bounds any stale remainder. Re-adding a
+        // cleanup-tentative-occurrences bounds any stale remainder. Re-adding a
         // confirmed-only predicate here reopens the double-charge.
         // Filter by consultant — only rows whose booking seats this consultant
         // (#1554: the roster is the appointment's participant list).

@@ -2,7 +2,7 @@
  * Shared read for the consultant Appointments list. #890
  *
  * Single source of truth for the appointment-list payload behind
- * `GET /api/slots/appointments`. Both that route and the consultant
+ * `GET /api/scheduling/appointments`. Both that route and the consultant
  * Appointments server page call this directly so SSR hydration and the
  * client `useQuery` resolve identical payloads — the route wraps it in
  * `{ data }`, the prefetch returns it raw (matching

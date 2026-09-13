@@ -9,7 +9,7 @@ import "./setup";
 import {
   computeAttemptFingerprint,
   resolveAttemptKey,
-} from "@/hooks/scheduling/useSlotAllocation";
+} from "@/hooks/scheduling/useScheduling";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
 import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";

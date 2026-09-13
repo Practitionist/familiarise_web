@@ -1,6 +1,6 @@
 "use client";
 
-import { SessionType } from "@prisma/client";
+import { OfferingFormat } from "@prisma/client";
 import { Checkbox } from "components/ui/checkbox";
 import { Input } from "components/ui/input";
 import { Label } from "components/ui/label";
@@ -259,17 +259,17 @@ export function ProfileSection({
                 Select the types of sessions you offer
               </p>
               <div className="space-y-3">
-                {Object.values(SessionType).map((type) => (
+                {Object.values(OfferingFormat).map((type) => (
                   <div key={type} className="flex items-center space-x-3">
                     <Checkbox
                       id={`session-${type}`}
-                      checked={formData.sessionTypes?.includes(type)}
+                      checked={formData.offeringFormats?.includes(type)}
                       onCheckedChange={(checked) => {
                         setFormData((prev) => ({
                           ...prev,
-                          sessionTypes: checked
-                            ? [...(prev.sessionTypes || []), type]
-                            : (prev.sessionTypes || []).filter(
+                          offeringFormats: checked
+                            ? [...(prev.offeringFormats || []), type]
+                            : (prev.offeringFormats || []).filter(
                                 (t) => t !== type,
                               ),
                         }));

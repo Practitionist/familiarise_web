@@ -1,17 +1,17 @@
 /**
  * Tentative Slot Cleanup Job (GitHub Actions Wrapper)
  *
- * Thin wrapper around scripts/cleanup-tentative-slots.ts
+ * Thin wrapper around scripts/cleanup-tentative-occurrences.ts
  * Adds GitHub Actions-specific outputs and error handling.
  *
  * Runs every 2 hours via scheduled workflow.
  */
 
 import {
-  cleanupTentativeSlots,
+  cleanupTentativeOccurrences,
   disconnectDatabase,
   type TentativeSlotCleanupResult,
-} from "../../scripts/appointments/cleanup-tentative-slots";
+} from "../../scripts/appointments/cleanup-tentative-occurrences";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -51,13 +51,13 @@ function outputToGitHubActions(result: TentativeSlotCleanupResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
-  await abortIfMaintenance("cleanup-tentative-slots");
-  Sentry.logger.info("job:cleanup-tentative-slots started");
+  await abortIfMaintenance("cleanup-tentative-occurrences");
+  Sentry.logger.info("job:cleanup-tentative-occurrences started");
   console.log("🧹 Starting tentative slot cleanup job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
   try {
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     console.log("\n📊 Job Results:");
     console.log(`   Slots Released: ${result.slotsReleased}`);
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    Sentry.logger.info("job:cleanup-tentative-slots finished", {
+    Sentry.logger.info("job:cleanup-tentative-occurrences finished", {
       slotsReleased: result.slotsReleased,
       appointmentsAffected: result.appointmentsAffected,
     });
@@ -85,4 +85,4 @@ async function main(): Promise<void> {
   }
 }
 
-runJob("cleanup-tentative-slots", main);
+runJob("cleanup-tentative-occurrences", main);

@@ -1,17 +1,17 @@
 /**
  * Slot Availability Reconciliation Job (GitHub Actions Wrapper)
  *
- * Thin wrapper around scripts/reconcile-slot-availability.ts
+ * Thin wrapper around scripts/reconcile-occurrence-availability.ts
  * Adds GitHub Actions-specific outputs and error handling.
  *
  * Runs hourly via scheduled workflow.
  */
 
 import {
-  reconcileSlotAvailability,
+  reconcileOccurrenceAvailability,
   disconnectDatabase,
   type SlotReconciliationResult,
-} from "../../scripts/appointments/reconcile-slot-availability";
+} from "../../scripts/appointments/reconcile-occurrence-availability";
 import fs from "fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -59,13 +59,13 @@ function outputToGitHubActions(result: SlotReconciliationResult): void {
  * Main entry point
  */
 async function main(): Promise<void> {
-  await abortIfMaintenance("reconcile-slot-availability");
-  Sentry.logger.info("job:reconcile-slot-availability started");
+  await abortIfMaintenance("reconcile-occurrence-availability");
+  Sentry.logger.info("job:reconcile-occurrence-availability started");
   console.log("🔄 Starting slot availability reconciliation job...");
   console.log(`Timestamp: ${new Date().toISOString()}`);
 
   try {
-    const result = await reconcileSlotAvailability();
+    const result = await reconcileOccurrenceAvailability();
 
     console.log("\n📊 Job Results:");
     console.log(`   Tentative Flags Cleared: ${result.tentativeFlagsCleared}`);
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
 
     outputToGitHubActions(result);
 
-    Sentry.logger.info("job:reconcile-slot-availability finished", {
+    Sentry.logger.info("job:reconcile-occurrence-availability finished", {
       tentativeFlagsCleared: result.tentativeFlagsCleared,
       doubleBookingsDetected: result.doubleBookingsDetected,
       topUpSessionsPlaced: result.topUps.sessionsPlaced,
@@ -121,4 +121,4 @@ async function main(): Promise<void> {
   }
 }
 
-runJob("reconcile-slot-availability", main);
+runJob("reconcile-occurrence-availability", main);

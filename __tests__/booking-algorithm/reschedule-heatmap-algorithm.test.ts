@@ -9,8 +9,8 @@ import "./setup";
 import {
   findConsecutiveGroupContaining,
   isCompleteCall,
-} from "@/lib/scheduling/slotSelectionValidation";
-import { resolveSlotStatusKey } from "@/lib/scheduling/slot-status-tokens";
+} from "@/lib/scheduling/intervalSelectionValidation";
+import { resolveSlotStatusKey } from "@/lib/scheduling/interval-status-tokens";
 import type { BookableInterval } from "@/hooks/scheduling/useCalendarData";
 
 const slot = (hour: number, minute = 0): BookableInterval => {

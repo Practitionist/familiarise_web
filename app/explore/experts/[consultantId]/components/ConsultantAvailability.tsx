@@ -4,7 +4,7 @@ import { TIntervalTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
-import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/slot-status-tokens";
+import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/interval-status-tokens";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, formatInTimeZone } from "date-fns-tz";
 import type { ConsultantDetailData, PickerInterval } from "../types";
@@ -14,7 +14,7 @@ interface ConsultantAvailabilityProps {
   timezone: string;
 }
 
-type ProcessedSlotsByDay = Record<DayOfWeek, PickerInterval[]>;
+type PickerIntervalsByDay = Record<DayOfWeek, PickerInterval[]>;
 
 type DayWithSlots = {
   date: Date;
@@ -59,7 +59,7 @@ export function ConsultantAvailability({
         const endDateInUtc = endOfDay(addDays(windowStart, 6));
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
+          `/api/scheduling/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
 
         if (!response.ok) {
@@ -80,8 +80,8 @@ export function ConsultantAvailability({
   }, [consultantDetails?.id, timezone, weekOffset]);
 
   // Process data for WeeklyAvailability component (group by day of week)
-  const processedWeeklySlots = useMemo((): ProcessedSlotsByDay => {
-    const slotsByDay: ProcessedSlotsByDay = {
+  const processedWeeklySlots = useMemo((): PickerIntervalsByDay => {
+    const slotsByDay: PickerIntervalsByDay = {
       MONDAY: [],
       TUESDAY: [],
       WEDNESDAY: [],

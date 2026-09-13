@@ -13,7 +13,7 @@ import {
   type OrgPlanVisibility,
   Prisma,
   ScheduleType,
-  SessionType,
+  OfferingFormat,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -97,7 +97,10 @@ const updateConsultantSchema = z
     languages: z.array(z.string()).nullable().optional(),
     toolsAndTechnologies: z.array(z.string()).nullable().optional(),
     mentoringStyle: z.string().nullable().optional(),
-    sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
+    offeringFormats: z
+      .array(z.nativeEnum(OfferingFormat))
+      .nullable()
+      .optional(),
     // User-level field (stored on User model, not ConsultantProfile)
     linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
   })
@@ -329,7 +332,7 @@ export async function PUT(
       languages,
       toolsAndTechnologies,
       mentoringStyle,
-      sessionTypes,
+      offeringFormats,
       // User-level field
       linkedinUrl,
     } = data;
@@ -384,7 +387,7 @@ export async function PUT(
         languages: languages ?? [],
         toolsAndTechnologies: toolsAndTechnologies ?? [],
         mentoringStyle: mentoringStyle ?? null,
-        sessionTypes: sessionTypes ?? [],
+        offeringFormats: offeringFormats ?? [],
       },
     });
 

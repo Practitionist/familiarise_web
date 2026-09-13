@@ -62,7 +62,7 @@ const PENDING_EXPIRATION_DAYS = 30;
 // Also expire APPROVED_PENDING_PAYMENT after 7 days
 const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 
-// Per-run cap, same shape as cleanup-tentative-slots' MAX_SLOTS_PER_RUN:
+// Per-run cap, same shape as cleanup-tentative-occurrences' MAX_SLOTS_PER_RUN:
 // every arm now expires one request per transaction instead of one bulk
 // statement, so an unbounded cohort times the function out before it pages.
 // Oldest-first, so consecutive hourly runs drain a backlog.

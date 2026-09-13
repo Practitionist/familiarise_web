@@ -52,7 +52,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       languages: true,
       toolsAndTechnologies: true,
       mentoringStyle: true,
-      sessionTypes: true,
+      offeringFormats: true,
       profileCompletionPercentage: true,
       isVerified: true,
       verificationStatus: true,
@@ -135,7 +135,7 @@ export const getConsultantReviews = cache(
       // #1300 — the ALLOWLIST, not a bare `include`. `sanitisePublicReviews` only
       // strips the anonymous reviewer and a removed reply; swapping the sanitiser
       // while leaving the projection wide still shipped `removedBy`,
-      // `revisionNo`, `ratedSessionAt` and the reviewer's whole ConsulteeProfile
+      // `revisionNo`, `ratedOccurrenceAt` and the reviewer's whole ConsulteeProfile
       // row into this page's client props.
       select: publicReviewSelect,
       orderBy: { rating: "desc" },

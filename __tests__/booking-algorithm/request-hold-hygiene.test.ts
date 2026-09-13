@@ -65,7 +65,7 @@ import { expireStaleRequests } from "../../scripts/appointments/expire-stale-req
 const rfaRoute = require("fs").readFileSync(
   require("path").resolve(
     __dirname,
-    "../../app/api/slots/request-for-approval/route.ts",
+    "../../app/api/scheduling/request-for-approval/route.ts",
   ),
   "utf8",
 );

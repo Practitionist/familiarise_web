@@ -202,7 +202,7 @@ async function createReviews(held: HeldSlot[]): Promise<number> {
         appointmentId: h.appointmentId,
         track: h.track,
         ratingUnitId: h.ratingUnitId,
-        ratedSessionAt: h.endsAt,
+        ratedOccurrenceAt: h.endsAt,
         isAnonymous: faker.datatype.boolean({ probability: 0.2 }),
         ratingCause:
           rating <= 2 ? faker.helpers.arrayElement(LOW_SCORE_CAUSES) : null,

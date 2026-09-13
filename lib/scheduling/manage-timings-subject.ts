@@ -1,4 +1,4 @@
-import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
+import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
 
@@ -223,7 +223,7 @@ export interface ManageTimingsClassInfo {
 }
 
 export interface ManageTimingsSubject {
-  subject: SlotPickerSubject;
+  subject: TimePickerSubject;
   /** The offering's own title, for the page header — not "Manage timings"
    *  on every tab (#1064 pattern, matches the other three routes). */
   title: string;
@@ -264,7 +264,7 @@ export function buildManageTimingsSubject(
       eventId: eventDetails.eventId,
       durationInMonths: eventDetails.durationInMonths,
       sessionsPerWeek: eventDetails.sessionsPerWeek,
-      // One duration field, two meanings — see slot-picker-subject.ts.
+      // One duration field, two meanings — see time-picker-subject.ts.
       durationInHours:
         eventDetails.eventType === "webinar" ||
         eventDetails.eventType === "consultation"

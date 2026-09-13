@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { FeedbackStatus } from "@prisma/client";
+import { PlatformFeedbackStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 
@@ -13,7 +13,7 @@ const FEEDBACK_CATEGORIES = [
 ];
 
 // Status distribution: 40% PENDING, 20% ACKNOWLEDGED, 20% IN_PROGRESS, 15% RESOLVED, 5% CLOSED
-const STATUS_WEIGHTS: { status: FeedbackStatus; weight: number }[] = [
+const STATUS_WEIGHTS: { status: PlatformFeedbackStatus; weight: number }[] = [
   { status: "PENDING", weight: 40 },
   { status: "ACKNOWLEDGED", weight: 20 },
   { status: "IN_PROGRESS", weight: 20 },
@@ -133,7 +133,7 @@ const FEEDBACK_TEMPLATES: Record<
   },
 };
 
-function getWeightedStatus(): FeedbackStatus {
+function getWeightedStatus(): PlatformFeedbackStatus {
   const totalWeight = STATUS_WEIGHTS.reduce(
     (sum, item) => sum + item.weight,
     0,
@@ -184,7 +184,7 @@ import { config } from "./config";
 // Feedback volume - configurable via SEED_MODE environment variable
 const NUM_FEEDBACKS = config.volumes.feedbacks;
 
-export async function createFeedbacks(
+export async function createPlatformFeedback(
   users: UserWithProfiles[],
 ): Promise<void> {
   console.log(`Creating ${NUM_FEEDBACKS} feedback entries...`);
@@ -208,7 +208,7 @@ export async function createFeedbacks(
       const { title, description, rating } = generateFeedbackData(category);
       const status = getWeightedStatus();
 
-      await prisma.feedback.create({
+      await prisma.platformFeedback.create({
         data: {
           title,
           description,

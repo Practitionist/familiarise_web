@@ -11,7 +11,7 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   getJoinableOccurrence as getJoinableOccurrenceShared,
 } from "@/lib/appointments/occurrences";
-import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
+import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 
 interface UseEventActionsOptions {
   appointmentId?: string;

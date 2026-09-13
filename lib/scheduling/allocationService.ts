@@ -167,7 +167,7 @@ export class AllocationService {
       console.error(`Allocation request failed (${url}):`, error);
       reportSentryError(error, {
         subsystem: "client",
-        tags: { feature: "slot-allocation" },
+        tags: { feature: "scheduling" },
       });
       return {
         success: false,
@@ -213,7 +213,7 @@ export class AllocationService {
       console.error("Error validating consultation slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -259,7 +259,7 @@ export class AllocationService {
       console.error("Error validating subscription slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -361,7 +361,7 @@ export class AllocationService {
       console.error("Error validating class slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -407,7 +407,7 @@ export class AllocationService {
       console.error("Error validating webinar slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -476,7 +476,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { consultantId, httpStatus },
       });
@@ -567,7 +567,7 @@ export class AllocationService {
           ? { headers: { "If-None-Match": ifNoneMatch } }
           : undefined;
       const response = await fetch(
-        `/api/slots/availability-with-allocation/${consultantId}?${params}`,
+        `/api/scheduling/availability-with-allocation/${consultantId}?${params}`,
         bypassHttpCache ? { cache: "no-store" } : conditional,
       );
       // 304 — the marker says nothing this grid reads has changed. The caller
@@ -611,7 +611,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { consultantId, httpStatus },
       });
@@ -655,7 +655,7 @@ export class AllocationService {
         params.append("consultationId", eventId);
       }
 
-      const response = await fetch(`/api/slots/appointments?${params}`);
+      const response = await fetch(`/api/scheduling/appointments?${params}`);
 
       if (!response.ok) {
         // See fetchConsultantData: httpStatus lets the catch distinguish a
@@ -683,7 +683,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { eventType, eventId, httpStatus },
       });

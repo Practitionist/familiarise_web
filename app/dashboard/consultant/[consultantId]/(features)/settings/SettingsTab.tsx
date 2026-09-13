@@ -471,7 +471,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         languages: formData.languages || [],
         toolsAndTechnologies: formData.toolsAndTechnologies || [],
         mentoringStyle: formData.mentoringStyle || null,
-        sessionTypes: formData.sessionTypes || [],
+        offeringFormats: formData.offeringFormats || [],
       };
 
       const response = await fetch(`/api/user/consultants/${consultant.id}`, {

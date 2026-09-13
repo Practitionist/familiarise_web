@@ -5,7 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
-import type { SlotPreference } from "@/components/scheduling/slot-picker-policy";
+import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 
 interface UseConsultantEventActionsOptions {
   consultantId: string;
