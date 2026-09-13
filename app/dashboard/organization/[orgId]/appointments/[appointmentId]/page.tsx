@@ -59,7 +59,7 @@ export default async function OrgAppointmentDetailPage({
   const owns =
     appointment.consultation?.requestedBy?.id === profile.id ||
     appointment.subscription?.requestedBy?.id === profile.id ||
-    appointment.trialSession?.consulteeProfile?.id === profile.id ||
+    appointment.trial?.consulteeProfile?.id === profile.id ||
     appointment.participants.some((seat) => seat.userId === userId);
   if (!owns) notFound();
 

@@ -53,7 +53,7 @@ describe("freeze-appointments doctrine (#1162)", () => {
   it("guards the trial status flip and tombstones via the domain helper", () => {
     expect(freezeSource).toContain("softCancelTrialAppointment(");
     expect(freezeSource).toMatch(
-      /trialSession\.updateMany\(\{\s*where:\s*\{\s*id: trial\.id,\s*status: \{ in:/,
+      /trial\.updateMany\(\{\s*where:\s*\{\s*id: trial\.id,\s*status: \{ in:/,
     );
   });
 

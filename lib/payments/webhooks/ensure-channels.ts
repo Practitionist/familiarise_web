@@ -127,10 +127,10 @@ export async function ensureChannelsForAppointment(
         },
       },
       // A trial appointment has none of the four relations above — the
-      // consultant hangs off TrialSession directly. Without this the
+      // consultant hangs off Trial directly. Without this the
       // resolution below yields undefined, the guard fails, and the TRIAL
       // branch never executes for the only appointments that can reach it.
-      trialSession: {
+      trial: {
         select: { consultantProfile: { select: { userId: true } } },
       },
     },
@@ -145,10 +145,10 @@ export async function ensureChannelsForAppointment(
     appointment.subscription?.subscriptionPlan?.consultantProfile ||
     appointment.webinar?.webinarPlan?.consultantProfile ||
     appointment.class?.classPlan?.consultantProfile ||
-    // `TrialSession.consultantProfile` is the required, authoritative
-    // relation — not `trialSession.subscriptionPlan.consultantProfile`,
+    // `Trial.consultantProfile` is the required, authoritative
+    // relation — not `trial.subscriptionPlan.consultantProfile`,
     // which is the plan author and can differ.
-    appointment.trialSession?.consultantProfile;
+    appointment.trial?.consultantProfile;
 
   const consultantUserId = consultantProfile?.userId;
   if (!consultantUserId) {

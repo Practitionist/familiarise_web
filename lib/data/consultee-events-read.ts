@@ -94,7 +94,7 @@ export async function readConsulteeEvents(
   //   - Subscription / Class (1:many appointments): filter via
   //     `appointments.some.organizationId` so the parent surfaces if
   //     ANY child appointment matches the scope
-  //   - TrialSession: filter directly via `organizationId`
+  //   - Trial: filter directly via `organizationId`
   //
   // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active member
   // below `operations.read` resolves to. Branching on `kind === "org"` alone
@@ -105,7 +105,7 @@ export async function readConsulteeEvents(
     scope.kind === "all" ? undefined : scopeToWhereOrgId(scope);
   const manyApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
     oneApptOrgWhere;
-  const trialOrgWhere: Prisma.TrialSessionWhereInput | undefined =
+  const trialOrgWhere: Prisma.TrialWhereInput | undefined =
     scope.kind === "all" ? undefined : scopeToWhereOrgId(scope);
 
   // TTFB bound: cap each booking query to recent-or-future rows. The
@@ -334,7 +334,7 @@ export async function readConsulteeEvents(
         take: EVENTS_TAKE,
       }),
       // Trial sessions requested by the consultee
-      prisma.trialSession.findMany({
+      prisma.trial.findMany({
         where: {
           consulteeProfileId: consulteeId,
           ...(trialOrgWhere ?? {}),

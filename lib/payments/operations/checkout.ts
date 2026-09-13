@@ -20,7 +20,7 @@ import {
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
-  transitionTrialSession,
+  transitionTrial,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
@@ -34,7 +34,7 @@ import {
   PaymentStatus,
   Prisma,
   AppointmentStatus,
-  TrialSessionStatus,
+  TrialStatus,
 } from "@prisma/client";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
@@ -2445,11 +2445,11 @@ export async function handleSubscriptionCheckout(
 
   // Link any completed trial to this subscription (trial conversion tracking)
   // Find a completed trial from the same consultee for this consultant
-  const completedTrial = await tx.trialSession.findFirst({
+  const completedTrial = await tx.trial.findFirst({
     where: {
       consulteeProfileId,
       consultantProfileId: plan.consultantProfileId,
-      status: TrialSessionStatus.COMPLETED, // Only link completed trials, not pending/scheduled
+      status: TrialStatus.COMPLETED, // Only link completed trials, not pending/scheduled
       convertedToSubscriptionId: null, // Not already linked to another subscription
     },
   });
@@ -2458,9 +2458,9 @@ export async function handleSubscriptionCheckout(
     // Mark the trial as converted and link to this subscription
     // CAS (#1319): the findFirst above filtered COMPLETED; the WHERE here is
     // what makes that hold at write time.
-    await transitionTrialSession(tx, {
+    await transitionTrial(tx, {
       where: { id: completedTrial.id },
-      to: TrialSessionStatus.CONVERTED,
+      to: TrialStatus.CONVERTED,
       data: { convertedToSubscriptionId: subscription.id },
     });
 

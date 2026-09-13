@@ -99,7 +99,7 @@ describe("fall-through 2 — the consultee events read", () => {
         subscription: { findMany },
         webinar: { findMany },
         class: { findMany },
-        trialSession: { findMany },
+        trial: { findMany },
       },
     }));
     const { readConsulteeEvents } =
@@ -123,7 +123,7 @@ describe("fall-through 3 — the trial list", () => {
       __esModule: true,
       default: {
         membership: { findMany: jest.fn(async () => learnerAt(ORG)) },
-        trialSession: {
+        trial: {
           findMany: trialFindMany,
           count: jest.fn(async () => 0),
         },

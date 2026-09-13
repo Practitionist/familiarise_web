@@ -30,7 +30,7 @@ import {
   ClassStatus,
   AppointmentStatus,
   OccurrenceCompletionStatus,
-  TrialSessionStatus,
+  TrialStatus,
   Prisma,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
@@ -40,7 +40,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
-  transitionTrialSession,
+  transitionTrial,
 } from "@/lib/booking/transitions";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 import {
@@ -507,9 +507,9 @@ async function completeTrials(): Promise<{
   );
 
   // Find SCHEDULED trials where the appointment slot has ended
-  const trialsToComplete = await prisma.trialSession.findMany({
+  const trialsToComplete = await prisma.trial.findMany({
     where: {
-      status: TrialSessionStatus.SCHEDULED,
+      status: TrialStatus.SCHEDULED,
       appointment: {
         occurrences: {
           some: {
@@ -556,9 +556,9 @@ async function completeTrials(): Promise<{
 
       // CAS (#1319): a trial cancelled or converted since the read stays put.
       try {
-        await transitionTrialSession(prisma, {
+        await transitionTrial(prisma, {
           where: { id: trial.id },
-          to: TrialSessionStatus.COMPLETED,
+          to: TrialStatus.COMPLETED,
           data: { completedAt: new Date() },
         });
       } catch (error) {
@@ -577,7 +577,7 @@ async function completeTrials(): Promise<{
             actorName: trial.consulteeProfile.user.name,
             actorImage: trial.consulteeProfile.user.image,
             consultantProfileId: trial.consultantProfileId,
-            trialSessionId: trial.id,
+            trialId: trial.id,
             metadata: {
               planTitle: trial.subscriptionPlan.title,
               autoCompleted: true,

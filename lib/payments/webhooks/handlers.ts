@@ -21,7 +21,7 @@ import {
   Prisma,
   AppointmentStatus,
   OccurrenceCompletionStatus,
-  TrialSessionStatus,
+  TrialStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -585,13 +585,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // updateMany so a re-delivered webhook is a no-op rather than
           // resurrecting a trial the learner cancelled or the expiry job closed.
           if (metadata.trialId) {
-            const scheduled = await tx.trialSession.updateMany({
+            const scheduled = await tx.trial.updateMany({
               where: {
                 id: metadata.trialId,
-                status: TrialSessionStatus.AWAITING_PAYMENT,
+                status: TrialStatus.AWAITING_PAYMENT,
               },
               data: {
-                status: TrialSessionStatus.SCHEDULED,
+                status: TrialStatus.SCHEDULED,
                 paymentId: payment.id,
                 pendingPaymentUrl: null,
                 paymentDueAt: null,

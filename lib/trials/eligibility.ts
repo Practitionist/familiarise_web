@@ -1,9 +1,9 @@
-import type { TrialSessionStatus } from "@prisma/client";
+import type { TrialStatus } from "@prisma/client";
 
 /**
  * Which existing trial statuses block a fresh trial request.
  *
- * `TrialSession` is `@@unique([consulteeProfileId, consultantProfileId])`, so
+ * `Trial` is `@@unique([consulteeProfileId, consultantProfileId])`, so
  * exactly one row can exist per learner–consultant pair. Eligibility used to be
  * "no row at all", which meant ANY prior trial — including one the consultant
  * declined, one the learner cancelled, or (once paid trials landed) one that
@@ -22,7 +22,7 @@ import type { TrialSessionStatus } from "@prisma/client";
  * CANCELLED (slot-holding) back into the blocking set — that single change
  * restores the old one-shot behaviour without touching any call site.
  */
-export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialSessionStatus[] = [
+export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialStatus[] = [
   "PENDING", // awaiting the consultant
   "AWAITING_PAYMENT", // accepted, pay-link live and not yet lapsed
   "SCHEDULED", // confirmed, upcoming
@@ -31,12 +31,12 @@ export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialSessionStatus[] = [
 ];
 
 /** Terminal outcomes where the learner never received a trial. */
-export const TRIAL_REQUEST_FREEING_STATUSES: TrialSessionStatus[] = [
+export const TRIAL_REQUEST_FREEING_STATUSES: TrialStatus[] = [
   "CANCELLED", // withdrawn by the learner, or lapsed unpaid
   "REJECTED", // declined by the consultant
 ];
 
-export function blocksNewTrialRequest(status: TrialSessionStatus): boolean {
+export function blocksNewTrialRequest(status: TrialStatus): boolean {
   return TRIAL_REQUEST_BLOCKING_STATUSES.includes(status);
 }
 

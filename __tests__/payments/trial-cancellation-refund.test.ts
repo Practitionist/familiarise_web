@@ -249,7 +249,7 @@ describe("refundCancelledTrial", () => {
   });
 
   it("falls back to the appointment's payment when the trial link is unwritten", async () => {
-    // The capture webhook writes TrialSession.paymentId after the Payment row;
+    // The capture webhook writes Trial.paymentId after the Payment row;
     // a cancellation racing that write must still find the money.
     mockPaymentFindFirst.mockResolvedValue(paidTrial);
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));

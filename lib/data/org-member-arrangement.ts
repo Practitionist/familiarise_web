@@ -117,7 +117,7 @@ export async function getMyArrangementData(params: {
             },
             { webinar: { webinarPlan: { consultantProfileId } } },
             { class: { classPlan: { consultantProfileId } } },
-            { trialSession: { consultantProfileId } },
+            { trial: { consultantProfileId } },
           ],
         },
         select: {
@@ -145,7 +145,7 @@ export async function getMyArrangementData(params: {
               requestedBy: { select: { user: { select: { name: true } } } },
             },
           },
-          trialSession: {
+          trial: {
             select: {
               consulteeProfile: {
                 select: { user: { select: { name: true } } },
@@ -167,7 +167,7 @@ export async function getMyArrangementData(params: {
       const learner =
         a.consultation?.requestedBy?.user?.name ??
         a.subscription?.requestedBy?.user?.name ??
-        a.trialSession?.consulteeProfile?.user?.name ??
+        a.trial?.consulteeProfile?.user?.name ??
         "—";
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();

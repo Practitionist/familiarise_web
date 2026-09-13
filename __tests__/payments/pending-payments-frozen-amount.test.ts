@@ -33,7 +33,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findMany: jest.fn() },
     subscription: { findMany: jest.fn() },
     payment: { findMany: jest.fn() },
-    trialSession: { findMany: jest.fn() },
+    trial: { findMany: jest.fn() },
   },
 }));
 
@@ -41,7 +41,7 @@ const mockedAuth = requireApiAuth as jest.Mock;
 const mockedConsultations = prisma.consultation.findMany as jest.Mock;
 const mockedSubscriptions = prisma.subscription.findMany as jest.Mock;
 const mockedGatewayPayments = prisma.payment.findMany as jest.Mock;
-const mockedTrials = prisma.trialSession.findMany as jest.Mock;
+const mockedTrials = prisma.trial.findMany as jest.Mock;
 
 function frozenPayment(amount: number, currency = "INR") {
   return [{ amount, currency }];

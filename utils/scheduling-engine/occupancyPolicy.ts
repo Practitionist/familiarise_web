@@ -13,7 +13,7 @@ import {
   AppointmentStatus,
   BookingSource,
   PaymentStatus,
-  TrialSessionStatus,
+  TrialStatus,
   Prisma,
 } from "@prisma/client";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -93,13 +93,13 @@ export function buildOccupiedAppointmentFilter(
   // double-booked slot. The expiry job releases it by moving the trial to
   // CANCELLED, which drops out of this filter automatically.
   const OCCUPYING_TRIAL_STATUSES = [
-    TrialSessionStatus.SCHEDULED,
-    TrialSessionStatus.AWAITING_PAYMENT,
+    TrialStatus.SCHEDULED,
+    TrialStatus.AWAITING_PAYMENT,
   ];
 
   if (consultantProfileId) {
     filters.push({
-      trialSession: {
+      trial: {
         is: {
           consultantProfileId,
           status: { in: OCCUPYING_TRIAL_STATUSES },
@@ -108,7 +108,7 @@ export function buildOccupiedAppointmentFilter(
     });
   } else {
     filters.push({
-      trialSession: {
+      trial: {
         is: {
           status: { in: OCCUPYING_TRIAL_STATUSES },
         },

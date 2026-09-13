@@ -42,7 +42,7 @@ describe("hygiene", () => {
     "Subscription",
     "Webinar",
     "Class",
-    "TrialSession",
+    "Trial",
     "RescheduleRequest",
     "RescheduleProposedTime",
     "AvailabilityWindowWeekly",
@@ -56,8 +56,8 @@ describe("hygiene", () => {
     expect(model(name)).toMatch(/deletedAt\s+DateTime\?\s+@db\.Timestamptz/);
   });
 
-  it("TrialSession, Webinar and BookingUtilization have no naive DateTime column", () => {
-    for (const name of ["TrialSession", "Webinar", "BookingUtilization"]) {
+  it("Trial, Webinar and BookingUtilization have no naive DateTime column", () => {
+    for (const name of ["Trial", "Webinar", "BookingUtilization"]) {
       const naive = model(name)
         .split("\n")
         .filter(

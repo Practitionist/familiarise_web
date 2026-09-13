@@ -1062,12 +1062,12 @@ model Organization {
   // Per-org credit-note counters (#776) — independent CN sequence (Rule 53).
   creditNoteCounters OrgCreditNoteCounter[]
 
-  // Trial attribution — TrialSession.organizationId is optional. Set
+  // Trial attribution — Trial.organizationId is optional. Set
   // only when the trial booker is a LEARNER of an active org. Used for
   // conversion analytics ("what % of Wipro trials convert to paid?")
   // without coupling trials to the Program/BookingUtilization ledger
   // (that's a Programs v2 item in epic #703).
-  trialsByOrg TrialSession[] @relation("TrialsByOrg")
+  trialsByOrg Trial[] @relation("TrialsByOrg")
 
   // Referral attribution (#727) — same contract as TrialsByOrg.
   referralsByOrg Referral[] @relation("ReferralsByOrg")
@@ -3017,9 +3017,9 @@ model ConsultantProfile {
   collaborations        Collaborator[] @relation("Collaborator")
   invitedCollaborations Collaborator[] @relation("CollaboratorInvitedBy")
 
-  // Trial sessions and activity logs
-  trialSessions TrialSession[]
-  activityLogs  ActivityLog[]
+  // Trials and activity logs
+  trials       Trial[]
+  activityLogs ActivityLog[]
 
   // ADR 18 — program curated-panel stub (unenforced)
   programAllowlists ProgramConsultantAllowlist[]
@@ -3298,7 +3298,7 @@ model ConsulteeProfile {
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
   consultantReviews    ConsultantReview[]
-  trialSessions        TrialSession[]
+  trials               Trial[]
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -3725,7 +3725,7 @@ model SubscriptionPlan {
   slug                   String?                @unique
   topics                 Topic[]                @relation("TopicToSubscriptionPlan")
 
-  // Trial session offer. Free by default ONLY until paid-trial checkout is
+  // Trial offer. Free by default ONLY until paid-trial checkout is
   // wired (booking rejects paid trials today); the wiring PR flips the
   // default to 10000 (₹100) and removes that gate together. ₹0 stays
   // allowed after the flip but the UI adds friction. Admin floor lives in
@@ -3749,7 +3749,7 @@ model SubscriptionPlan {
 
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
-  trialSessions        TrialSession[]
+  trials               Trial[]
   materials            PlanMaterial[]
   faqs                 PlanFaq[]
 
@@ -3800,7 +3800,7 @@ model Subscription {
   subscriptionPlanId String
 
   appointment        Appointment?
-  convertedFromTrial TrialSession?
+  convertedFromTrial Trial?
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -3831,12 +3831,12 @@ enum AppointmentStatus {
   @@map("RequestStatus")
 }
 
-// Trial session tracking for subscriptions
+// Trials: the free or paid first call that precedes a subscription
 
-model TrialSession {
-  id     String             @id @default(cuid())
-  status TrialSessionStatus @default(PENDING)
-  notes  String?            @db.Text // Consultee's questions/goals
+model Trial {
+  id     String      @id @default(cuid())
+  status TrialStatus @default(PENDING)
+  notes  String?     @db.Text // Consultee's questions/goals
 
   // One trial per consultant per consultee
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id])
@@ -3848,7 +3848,7 @@ model TrialSession {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
   subscriptionPlanId String
 
-  // Session scheduling
+  // The held call, once the consultant has picked a time.
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
@@ -3859,7 +3859,7 @@ model TrialSession {
 
   // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
   // checkout hand-off). Frozen with the wiring follow-up, same as above.
-  payment   Payment? @relation("TrialSessionPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  payment   Payment? @relation("TrialPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   paymentId String?  @unique
 
   // Outcome tracking
@@ -3902,11 +3902,11 @@ model TrialSession {
   @@index([status, paymentDueAt])
 }
 
-enum TrialSessionStatus {
+enum TrialStatus {
   PENDING // Requested, awaiting consultant action
   AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
   SCHEDULED // Time slot confirmed
-  COMPLETED // Trial session completed
+  COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
   CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
   REJECTED // Declined by consultant
@@ -3934,7 +3934,7 @@ model ActivityLog {
   subscriptionId String?
   webinarId      String?
   classId        String?
-  trialSessionId String?
+  trialId        String?
 
   createdAt DateTime @default(now())
 
@@ -4366,7 +4366,7 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String? @unique
 
-  trialSession TrialSession?
+  trial Trial?
 
   payment           Payment[]
   documents         AppointmentDocument[]
@@ -5340,7 +5340,7 @@ model Payment {
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?     @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
-  trialSessionPaid           TrialSession?            @relation("TrialSessionPayment") // back-relation for TrialSession.payment
+  trialPaid                  Trial?                   @relation("TrialPayment") // back-relation for Trial.payment
   appointmentParticipants    AppointmentParticipant[]
   bookingUtilization         BookingUtilization?      @relation("PaymentBookingUtilization") // Program entitlement usage
   invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
@@ -6222,7 +6222,7 @@ model Referral {
   qualifiedAt          DateTime?
   qualifyingAction     String?
 
-  // #727 — attribution-only org tag, mirroring TrialSession.organizationId.
+  // #727 — attribution-only org tag, mirroring Trial.organizationId.
   // Set when the referrer is a member of an active org; no money coupling
   // (org-funded payments still block credit application per #766).
   organization   Organization? @relation("ReferralsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)

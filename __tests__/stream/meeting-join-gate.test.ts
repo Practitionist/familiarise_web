@@ -351,7 +351,7 @@ const consultation = (status: string) => ({
   subscription: null,
   webinar: null,
   class: null,
-  trialSession: null,
+  trial: null,
 });
 
 const trial = (status: string) => ({
@@ -359,7 +359,7 @@ const trial = (status: string) => ({
   subscription: null,
   webinar: null,
   class: null,
-  trialSession: { consultantProfileId: "cp-1", status },
+  trial: { consultantProfileId: "cp-1", status },
 });
 
 const webinar = (status: string) => ({
@@ -374,7 +374,7 @@ const webinar = (status: string) => ({
     },
   },
   class: null,
-  trialSession: null,
+  trial: null,
 });
 
 describe("resolveMeetingAccess refuses a booking that is not joinable", () => {

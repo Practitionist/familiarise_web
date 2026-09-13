@@ -131,7 +131,7 @@ const trialInclude = {
   appointment: {
     include: slotsWithRecordings,
   },
-} satisfies Prisma.TrialSessionInclude;
+} satisfies Prisma.TrialInclude;
 
 // Derived via the extended client — raw GetPayload would re-introduce
 // bigint money/fileSize fields (#780).
@@ -156,7 +156,7 @@ type ClassWithResources = Prisma.Result<
   "findFirstOrThrow"
 >;
 type TrialWithResources = Prisma.Result<
-  typeof prisma.trialSession,
+  typeof prisma.trial,
   { include: typeof trialInclude },
   "findFirstOrThrow"
 >;
@@ -323,7 +323,7 @@ export async function GET(
           orderBy: { createdAt: "desc" },
         }),
 
-        prisma.trialSession.findMany({
+        prisma.trial.findMany({
           where: { consulteeProfileId: consulteeId },
           include: trialInclude,
           orderBy: { requestedAt: "desc" },

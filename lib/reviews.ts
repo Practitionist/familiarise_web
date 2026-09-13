@@ -353,7 +353,7 @@ function loadReviewableAppointments(
           occurrences: { some: heldOccurrence(userId) },
         },
         {
-          trialSession: {
+          trial: {
             consulteeProfileId,
             status: { in: ["COMPLETED", "CONVERTED"] },
             ...(consultantProfileId ? { consultantProfileId } : {}),
@@ -435,7 +435,7 @@ function loadReviewableAppointments(
           },
         },
       },
-      trialSession: {
+      trial: {
         select: {
           consultantProfileId: true,
           consultantProfile: { select: { user: { select: { name: true } } } },
@@ -504,7 +504,7 @@ function describe(
   const consultantProfileId =
     row.consultation?.consultationPlan?.consultantProfileId ??
     row.subscription?.subscriptionPlan?.consultantProfileId ??
-    row.trialSession?.consultantProfileId ??
+    row.trial?.consultantProfileId ??
     row.webinar?.webinarPlan?.consultantProfileId ??
     row.class?.classPlan?.consultantProfileId ??
     null;
@@ -526,7 +526,7 @@ function describe(
     consultantName:
       row.consultation?.consultationPlan?.consultantProfile?.user?.name ??
       row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-      row.trialSession?.consultantProfile?.user?.name ??
+      row.trial?.consultantProfile?.user?.name ??
       row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
       row.class?.classPlan?.consultantProfile?.user?.name ??
       null,

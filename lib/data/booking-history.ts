@@ -143,7 +143,7 @@ export async function getBookingTimeline(
       subscriptionId: true,
       webinarId: true,
       classId: true,
-      trialSession: { select: { id: true } },
+      trial: { select: { id: true } },
       // Every slot, including the CANCELLED and RESCHEDULED tombstones: a
       // released slot is exactly what the operator came here to see.
       occurrences: { select: { id: true } },
@@ -178,7 +178,7 @@ export async function getBookingTimeline(
     { entity: "SUBSCRIPTION", ids: [appointment.subscriptionId] },
     { entity: "WEBINAR", ids: [appointment.webinarId] },
     { entity: "CLASS", ids: [appointment.classId] },
-    { entity: "TRIAL", ids: [appointment.trialSession?.id] },
+    { entity: "TRIAL", ids: [appointment.trial?.id] },
     {
       entity: "OCCURRENCE",
       ids: appointment.occurrences.map((slot) => slot.id),

@@ -55,7 +55,7 @@ function consultationDetail(
       subscription: null,
       webinar: null,
       class: null,
-      trialSession: null,
+      trial: null,
     },
     siblings: [],
   } as unknown as TAppointmentDetail;
@@ -98,7 +98,7 @@ function subscriptionDetail(): TAppointmentDetail {
       },
       webinar: null,
       class: null,
-      trialSession: null,
+      trial: null,
     },
     siblings: [],
   } as unknown as TAppointmentDetail;

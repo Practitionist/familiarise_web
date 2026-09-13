@@ -128,7 +128,7 @@ const appointmentAccessSelect = (userId: string) =>
         },
       },
     },
-    trialSession: {
+    trial: {
       select: {
         subscriptionPlan: {
           select: { title: true, consultantProfile: ownerProfileSelect },
@@ -335,7 +335,7 @@ export async function resolveSessionCallProfile(
     remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
     remember(appointment.webinar?.webinarPlan?.consultantProfile);
     remember(appointment.class?.classPlan?.consultantProfile);
-    remember(appointment.trialSession?.subscriptionPlan?.consultantProfile);
+    remember(appointment.trial?.subscriptionPlan?.consultantProfile);
     for (const collaborator of [
       ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
       ...(appointment.class?.classPlan?.collaborators ?? []),
@@ -363,7 +363,7 @@ export async function resolveSessionCallProfile(
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ??
       appointment.webinar?.webinarPlan?.consultantProfile?.id ??
       appointment.class?.classPlan?.consultantProfile?.id ??
-      appointment.trialSession?.subscriptionPlan?.consultantProfile?.id ??
+      appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
       null;
     const hostControlUserIds = [
       ...new Set(
@@ -396,7 +396,7 @@ export async function resolveSessionCallProfile(
       appointment.subscription?.subscriptionPlan?.title ??
       appointment.webinar?.webinarPlan?.title ??
       appointment.class?.classPlan?.title ??
-      appointment.trialSession?.subscriptionPlan?.title ??
+      appointment.trial?.subscriptionPlan?.title ??
       null;
 
     // #1270 — Stream rejects the whole GetOrCreateCall when `members` names a
@@ -578,7 +578,7 @@ async function refuseMeetingCreation(
           subscription: { select: { status: true } },
           webinar: { select: { status: true } },
           class: { select: { status: true } },
-          trialSession: { select: { status: true } },
+          trial: { select: { status: true } },
         },
       },
     },
@@ -609,8 +609,7 @@ async function refuseMeetingCreation(
     appt.subscription?.status ??
     appt.webinar?.status ??
     appt.class?.status ??
-    (appt.trialSession?.status === "CANCELLED" ||
-    appt.trialSession?.status === "REJECTED"
+    (appt.trial?.status === "CANCELLED" || appt.trial?.status === "REJECTED"
       ? "CANCELLED"
       : null);
   if (

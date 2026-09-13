@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
-import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
+import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import {
   requireApiAuth,
   isPrivileged,
@@ -186,10 +186,10 @@ export async function GET(
       // Source 4: Paid trials the consultant accepted but the learner hasn't
       // paid for yet. Unlike the sources above these carry a real deadline
       // (paymentDueAt) rather than an assumed 48h window.
-      prisma.trialSession.findMany({
+      prisma.trial.findMany({
         where: {
           consulteeProfileId: consulteeId,
-          status: TrialSessionStatus.AWAITING_PAYMENT,
+          status: TrialStatus.AWAITING_PAYMENT,
         },
         include: {
           subscriptionPlan: {
@@ -200,7 +200,7 @@ export async function GET(
             },
           },
           appointment: { select: { id: true } },
-          // A paid trial owns its Payment directly (TrialSession.paymentId);
+          // A paid trial owns its Payment directly (Trial.paymentId);
           // it holds the frozen charge the same way (#1182). Free trials
           // have none and keep quoting the plan's trial price.
           payment: { select: { amount: true, currency: true } },

@@ -78,11 +78,11 @@ export function buildWhere(
         // Consultee side — self-funded bookings.
         { consultation: { requestedBy: { userId: uid } } },
         { subscription: { requestedBy: { userId: uid } } },
-        { trialSession: { consulteeProfile: { userId: uid } } },
+        { trial: { consulteeProfile: { userId: uid } } },
         // Consultant side — sessions the user delivers B2C.
         { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
-        { trialSession: { consultantProfile: { userId: uid } } },
+        { trial: { consultantProfile: { userId: uid } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
@@ -254,7 +254,7 @@ export async function listAppointmentsScoped(
             },
           },
         },
-        trialSession: {
+        trial: {
           select: {
             consulteeProfile: {
               select: { user: { select: { id: true, name: true, email: true } } },

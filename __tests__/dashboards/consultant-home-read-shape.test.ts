@@ -31,7 +31,7 @@ jest.mock("../../lib/prisma", () => ({
     activityLog: { findMany: jest.fn() },
     consultantEarnings: { aggregate: jest.fn() },
     consultantReview: { aggregate: jest.fn() },
-    trialSession: { groupBy: jest.fn() },
+    trial: { groupBy: jest.fn() },
     membership: { findMany: jest.fn() },
   },
 }));
@@ -52,7 +52,7 @@ describe("consultant Home read shape (#1101)", () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.activityLog.findMany as jest.Mock).mockResolvedValue([]);
-    (prisma.trialSession.groupBy as jest.Mock).mockResolvedValue([]);
+    (prisma.trial.groupBy as jest.Mock).mockResolvedValue([]);
     (prisma.membership.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.consultantEarnings.aggregate as jest.Mock).mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },

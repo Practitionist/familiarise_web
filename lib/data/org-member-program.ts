@@ -89,7 +89,7 @@ export async function getMyProgramData(params: {
           ? [
               { consultation: { requestedById: consulteeProfileId } },
               { subscription: { requestedById: consulteeProfileId } },
-              { trialSession: { consulteeProfileId } },
+              { trial: { consulteeProfileId } },
             ]
           : []),
         { participants: { some: liveParticipant(userId) } },

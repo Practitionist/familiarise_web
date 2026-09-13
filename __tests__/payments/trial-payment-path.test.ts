@@ -17,7 +17,7 @@
  *    is mid-payment
  */
 
-import { AppointmentsType, TrialSessionStatus } from "@prisma/client";
+import { AppointmentsType, TrialStatus } from "@prisma/client";
 
 import {
   blocksNewTrialRequest,
@@ -62,16 +62,16 @@ describe("trial payment deadline", () => {
 
 describe("trial re-request eligibility", () => {
   it.each([
-    TrialSessionStatus.PENDING,
-    TrialSessionStatus.AWAITING_PAYMENT,
-    TrialSessionStatus.SCHEDULED,
-    TrialSessionStatus.COMPLETED,
-    TrialSessionStatus.CONVERTED,
+    TrialStatus.PENDING,
+    TrialStatus.AWAITING_PAYMENT,
+    TrialStatus.SCHEDULED,
+    TrialStatus.COMPLETED,
+    TrialStatus.CONVERTED,
   ])("blocks a new request while %s", (status) => {
     expect(blocksNewTrialRequest(status)).toBe(true);
   });
 
-  it.each([TrialSessionStatus.CANCELLED, TrialSessionStatus.REJECTED])(
+  it.each([TrialStatus.CANCELLED, TrialStatus.REJECTED])(
     "frees the pair after %s",
     (status) => {
       // The learner never received a trial, so their one shot isn't spent.
@@ -121,14 +121,14 @@ describe("slot occupancy while awaiting payment", () => {
     // window and the capture webhook would confirm into a double booking.
     const filters = buildOccupiedAppointmentFilter("consultant-1");
 
-    const trialFilter = filters.find((f) => "trialSession" in f) as {
-      trialSession: { is: { status: { in: TrialSessionStatus[] } } };
+    const trialFilter = filters.find((f) => "trial" in f) as {
+      trial: { is: { status: { in: TrialStatus[] } } };
     };
 
-    expect(trialFilter.trialSession.is.status.in).toEqual(
+    expect(trialFilter.trial.is.status.in).toEqual(
       expect.arrayContaining([
-        TrialSessionStatus.SCHEDULED,
-        TrialSessionStatus.AWAITING_PAYMENT,
+        TrialStatus.SCHEDULED,
+        TrialStatus.AWAITING_PAYMENT,
       ]),
     );
   });

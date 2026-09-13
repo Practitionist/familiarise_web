@@ -139,7 +139,7 @@ const MEETING_SESSION_INCLUDE = {
               },
             },
           },
-          trialSession: {
+          trial: {
             select: { consultantProfileId: true, status: true },
           },
         },
@@ -364,7 +364,7 @@ export async function resolveMeetingAccess(
     appointment.subscription?.subscriptionPlan?.consultantProfileId ??
     appointment.webinar?.webinarPlan?.consultantProfileId ??
     appointment.class?.classPlan?.consultantProfileId ??
-    appointment.trialSession?.consultantProfileId ??
+    appointment.trial?.consultantProfileId ??
     null;
 
   /**
@@ -386,7 +386,7 @@ export async function resolveMeetingAccess(
       appointment.subscription?.status ??
       appointment.webinar?.status ??
       appointment.class?.status ??
-      appointment.trialSession?.status ??
+      appointment.trial?.status ??
       null;
     const statusRefusal = bookingStatusRefusal(bookingStatus);
     if (statusRefusal || appointment.deletedAt) {

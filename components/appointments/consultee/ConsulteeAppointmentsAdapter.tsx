@@ -69,7 +69,7 @@ function sourceId(vm: AppointmentVM): string | null {
         classId?: string | null;
         consultationId?: string | null;
         subscriptionId?: string | null;
-        trialSession?: { id?: string } | null;
+        trial?: { id?: string } | null;
       }
     | undefined;
   if (!appt) return null;
@@ -80,7 +80,7 @@ function sourceId(vm: AppointmentVM): string | null {
     case "CLASS":
       return appt.classId ?? null;
     case "TRIAL":
-      return appt.trialSession?.id ?? null;
+      return appt.trial?.id ?? null;
     case "CONSULTATION":
       return appt.consultationId ?? null;
     case "SUBSCRIPTION":

@@ -35,9 +35,9 @@ describe("group-event status writes go through the CAS helpers", () => {
     const src = read("scripts/appointments/auto-complete-appointments.ts");
     expect(src).not.toMatch(/prisma\.webinar\.update\(/);
     expect(src).not.toMatch(/prisma\.class\.update\(/);
-    expect(src).not.toMatch(/prisma\.trialSession\.update\(/);
+    expect(src).not.toMatch(/prisma\.trial\.update\(/);
     expect(src).toContain("EVENT_ALLOWED_FROM.COMPLETED");
-    expect(src).toContain("transitionTrialSession(");
+    expect(src).toContain("transitionTrial(");
   });
 });
 
@@ -85,21 +85,21 @@ describe("slot completion writers use transitionOccurrenceCompletion", () => {
   }
 });
 
-describe("trial status writers use transitionTrialSession", () => {
+describe("trial status writers use transitionTrial", () => {
   it("the trial route never writes status with a bare update", () => {
     const src = read("app/api/trials/[trialId]/route.ts");
     expect(src).not.toMatch(
-      /trialSession\.update\(\{\s*where: \{ id: trialId \},\s*data: \{\s*status:/,
+      /trial\.update\(\{\s*where: \{ id: trialId \},\s*data: \{\s*status:/,
     );
     expect(
-      (src.match(/transitionTrialSession\(/g) ?? []).length,
+      (src.match(/transitionTrial\(/g) ?? []).length,
     ).toBeGreaterThanOrEqual(3);
   });
 
   it("checkout converts a trial through the helper", () => {
     const src = read("lib/payments/operations/checkout.ts");
-    expect(src).not.toMatch(/status: TrialSessionStatus\.CONVERTED/);
-    expect(src).toContain("to: TrialSessionStatus.CONVERTED");
+    expect(src).not.toMatch(/status: TrialStatus\.CONVERTED/);
+    expect(src).toContain("to: TrialStatus.CONVERTED");
   });
 });
 

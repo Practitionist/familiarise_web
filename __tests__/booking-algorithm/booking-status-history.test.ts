@@ -14,7 +14,7 @@ import {
   transitionClassEvent,
   transitionRescheduleRequest,
   transitionOccurrenceCompletion,
-  transitionTrialSession,
+  transitionTrial,
 } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
@@ -96,11 +96,10 @@ const cases: Array<{
   },
   {
     name: "trial session",
-    model: "trialSession",
+    model: "trial",
     entity: "TRIAL",
     to: "CANCELLED",
-    run: (tx) =>
-      transitionTrialSession(tx, { where: { id: "t1" }, to: "CANCELLED" }),
+    run: (tx) => transitionTrial(tx, { where: { id: "t1" }, to: "CANCELLED" }),
   },
 ];
 

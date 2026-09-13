@@ -129,7 +129,7 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      trialSession: {
+      trial: {
         include: {
           consulteeProfile: consulteeProfileSelect,
           subscriptionPlan: {
@@ -291,7 +291,7 @@ function participantUserIds(detail: TAppointmentDetail) {
   const consulteeUserIds = [
     appointment.consultation?.requestedBy?.userId,
     appointment.subscription?.requestedBy?.userId,
-    appointment.trialSession?.consulteeProfile?.userId,
+    appointment.trial?.consulteeProfile?.userId,
     ...appointment.participants.map((seat) => seat.userId),
   ];
   const consultantUserIds = [
@@ -299,7 +299,7 @@ function participantUserIds(detail: TAppointmentDetail) {
     appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
     appointment.webinar?.webinarPlan?.consultantProfile?.userId,
     appointment.class?.classPlan?.consultantProfile?.userId,
-    appointment.trialSession?.subscriptionPlan?.consultantProfile?.userId,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.userId,
     ),

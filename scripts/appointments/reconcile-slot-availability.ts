@@ -304,7 +304,7 @@ async function detectDoubleBookings(): Promise<{
                 },
               },
             },
-            trialSession: {
+            trial: {
               include: {
                 consultantProfile: {
                   include: {
@@ -338,7 +338,7 @@ async function detectDoubleBookings(): Promise<{
         subscription,
         webinar,
         class: classEvent,
-        trialSession,
+        trial,
       } = slot.appointment;
 
       const consultantProfile =
@@ -346,7 +346,7 @@ async function detectDoubleBookings(): Promise<{
         subscription?.subscriptionPlan.consultantProfile ||
         webinar?.webinarPlan.consultantProfile ||
         classEvent?.classPlan.consultantProfile ||
-        trialSession?.consultantProfile;
+        trial?.consultantProfile;
 
       if (!consultantProfile) continue;
 

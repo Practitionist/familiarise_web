@@ -16,7 +16,7 @@
  * still escalates.
  */
 
-import { Prisma, TrialSessionStatus } from "@prisma/client";
+import { Prisma, TrialStatus } from "@prisma/client";
 
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
@@ -36,13 +36,13 @@ jest.mock("../../lib/activity/log-activity", () => ({
 
 jest.mock("../../lib/novu", () => ({
   __esModule: true,
-  notifyTrialSessionRequested: jest.fn(async () => undefined),
+  notifyTrialRequested: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    trialSession: {
+    trial: {
       findUnique: jest.fn(),
       deleteMany: jest.fn(),
       create: jest.fn(),
@@ -62,9 +62,9 @@ const CONSULTANT = "consultant-1";
 const PLAN = "plan-1";
 
 const mockedSession = getSession as jest.Mock;
-const mockedFindUnique = prisma.trialSession.findUnique as jest.Mock;
-const mockedCreate = prisma.trialSession.create as jest.Mock;
-const mockedDeleteMany = prisma.trialSession.deleteMany as jest.Mock;
+const mockedFindUnique = prisma.trial.findUnique as jest.Mock;
+const mockedCreate = prisma.trial.create as jest.Mock;
+const mockedDeleteMany = prisma.trial.deleteMany as jest.Mock;
 
 function uniqueViolation() {
   return new Prisma.PrismaClientKnownRequestError(
@@ -115,7 +115,7 @@ beforeEach(() => {
   });
   mockedCreate.mockResolvedValue({
     id: "trial-1",
-    status: TrialSessionStatus.PENDING,
+    status: TrialStatus.PENDING,
     consulteeProfile: { user: { id: "user-1", name: "Learner" } },
     consultantProfile: { user: { id: "expert-1", name: "Expert" } },
   });
@@ -138,7 +138,7 @@ describe("duplicate trial requests (defect 7)", () => {
     // A live trial already exists — no race, the read-side gate catches it.
     mockedFindUnique.mockResolvedValue({
       id: "trial-existing",
-      status: TrialSessionStatus.PENDING,
+      status: TrialStatus.PENDING,
     });
 
     const res = await POST(request());
@@ -165,7 +165,7 @@ describe("duplicate trial requests (defect 7)", () => {
     // instead, and the insert stays the arbiter.
     mockedFindUnique.mockResolvedValue({
       id: "trial-freed",
-      status: TrialSessionStatus.REJECTED,
+      status: TrialStatus.REJECTED,
     });
     mockedDeleteMany.mockResolvedValue({ count: 0 });
     mockedCreate.mockRejectedValue(uniqueViolation());

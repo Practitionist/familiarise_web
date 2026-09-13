@@ -59,7 +59,7 @@ import {
   SelectedSlot,
 } from "./components/TrialScheduleCalendar";
 
-interface TrialSession {
+interface Trial {
   id: string;
   status: string;
   notes: string | null;
@@ -142,9 +142,9 @@ export function TrialsTab() {
   const { toast } = useToast();
   const joinMeeting = useLazyJoinMeeting();
 
-  const [trials, setTrials] = useState<TrialSession[]>([]);
+  const [trials, setTrials] = useState<Trial[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTrial, setSelectedTrial] = useState<TrialSession | null>(null);
+  const [selectedTrial, setSelectedTrial] = useState<Trial | null>(null);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isJoining, setIsJoining] = useState<string | null>(null);
@@ -273,7 +273,7 @@ export function TrialsTab() {
     fetchPlans();
   }, [fetchStats, fetchPlans]);
 
-  const handleApprove = async (trial: TrialSession) => {
+  const handleApprove = async (trial: Trial) => {
     setSelectedTrial(trial);
     setShowScheduleDialog(true);
   };
@@ -421,7 +421,7 @@ export function TrialsTab() {
    * the whole session, so a longer trial stopped being joinable half an hour
    * in (#1061). The shared session helper answers both.
    */
-  const isTrialJoinable = (trial: TrialSession): boolean => {
+  const isTrialJoinable = (trial: Trial): boolean => {
     if (trial.status !== "SCHEDULED") return false;
     const appointment = trial.appointment;
     if (!appointment) return false;
@@ -432,7 +432,7 @@ export function TrialsTab() {
     );
   };
 
-  const handleJoinMeeting = async (trial: TrialSession) => {
+  const handleJoinMeeting = async (trial: Trial) => {
     if (!trial.appointment?.occurrences?.[0]) {
       toast({
         title: "Unable to join",

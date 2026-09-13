@@ -4,7 +4,7 @@
 
 /**
  * #1319 — the two lifecycles that had no CAS helper: AppointmentOccurrence
- * completion and TrialSession status. The maps are pinned exactly so a silent
+ * completion and Trial status. The maps are pinned exactly so a silent
  * widening (e.g. letting COMPLETED come from CANCELLED) fails review here.
  */
 
@@ -12,12 +12,12 @@ import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   TRIAL_ALLOWED_FROM,
   transitionOccurrenceCompletion,
-  transitionTrialSession,
+  transitionTrial,
 } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
 type SlotTx = Parameters<typeof transitionOccurrenceCompletion>[0];
-type TrialTx = Parameters<typeof transitionTrialSession>[0];
+type TrialTx = Parameters<typeof transitionTrial>[0];
 
 // #1319 A12 — both helpers pre-read the from-status and append one
 // BookingStatusHistory row per moved row, so the mock tx carries the read and
@@ -50,7 +50,7 @@ function trialTx(count: number, from: string = "SCHEDULED") {
   const create = jest.fn().mockResolvedValue({});
   return {
     tx: {
-      trialSession: { updateMany, findUnique },
+      trial: { updateMany, findUnique },
       bookingStatusHistory: { create },
     } as unknown as TrialTx,
     updateMany,
@@ -166,17 +166,17 @@ describe("TRIAL_ALLOWED_FROM", () => {
   });
 });
 
-describe("transitionTrialSession", () => {
+describe("transitionTrial", () => {
   it("throws IllegalTransitionError on zero rows", async () => {
     const { tx } = trialTx(0);
     await expect(
-      transitionTrialSession(tx, { where: { id: "trial_1" }, to: "COMPLETED" }),
+      transitionTrial(tx, { where: { id: "trial_1" }, to: "COMPLETED" }),
     ).rejects.toBeInstanceOf(IllegalTransitionError);
   });
 
   it("carries extra data and the default from-set", async () => {
     const { tx, updateMany } = trialTx(1);
-    await transitionTrialSession(tx, {
+    await transitionTrial(tx, {
       where: { id: "trial_1" },
       to: "CONVERTED",
       data: { convertedToSubscriptionId: "sub_1" },

@@ -143,7 +143,7 @@ export async function readManageTimingsTarget(
   return {
     // Narrowed shape only: the guard above already ruled out TRIAL, but Prisma's
     // enum comparison doesn't narrow `appointment.appointmentType` for TS, and
-    // this also keeps payment/organization/trialSession off a type this route
+    // this also keeps payment/organization/trial off a type this route
     // never reads.
     appointment: {
       appointmentType: appointment.appointmentType as

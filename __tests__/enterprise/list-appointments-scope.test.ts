@@ -85,7 +85,7 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     const s = JSON.stringify(w.OR);
     expect(s).toContain('"requestedBy":{"userId":"u1"}'); // consultee side
     expect(s).toContain('"consultantProfile":{"userId":"u1"}'); // consultant side
-    expect(s).not.toContain("trialSession"); // trials stay B2C/personal
+    expect(s).not.toContain("trial"); // trials stay B2C/personal
     // No arm re-pins organizationId: null (that's personal scope, not this).
     expect(w.OR.every((arm) => !("organizationId" in arm))).toBe(true);
   });

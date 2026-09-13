@@ -39,7 +39,7 @@ describe("org appointment detail binds both ids", () => {
     // Requester, trial consultee, or a live seat holder (#1554) — the same
     // test the consultee detail page applies.
     expect(src).toContain("requestedBy?.id === profile.id");
-    expect(src).toContain("trialSession?.consulteeProfile?.id === profile.id");
+    expect(src).toContain("trial?.consulteeProfile?.id === profile.id");
     expect(src).toContain("participants.some");
   });
 

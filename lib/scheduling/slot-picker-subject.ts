@@ -166,13 +166,13 @@ export function buildRescheduleSubject(
         };
       }
       case "TRIAL": {
-        const plan = appointment.trialSession?.subscriptionPlan;
+        const plan = appointment.trial?.subscriptionPlan;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
-          consulteeProfileId: appointment.trialSession?.consulteeProfile?.id,
-          consulteeUserId: appointment.trialSession?.consulteeProfile?.userId,
+          consulteeProfileId: appointment.trial?.consulteeProfile?.id,
+          consulteeUserId: appointment.trial?.consulteeProfile?.userId,
           consultantName: plan?.consultantProfile?.user?.name,
-          consulteeName: appointment.trialSession?.consulteeProfile?.user?.name,
+          consulteeName: appointment.trial?.consulteeProfile?.user?.name,
           title: plan?.title ?? "Trial session",
           typeLabel: "Trial",
           sessionDurationInHours: plan?.sessionDurationInHours,

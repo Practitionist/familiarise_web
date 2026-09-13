@@ -89,7 +89,7 @@ export async function refundCancelledTrial(args: {
 }): Promise<TrialRefundOutcome | null> {
   const { trialId, appointmentId, paymentId, initiatedByUserId } = args;
 
-  // TrialSession.paymentId is ledger truth once a paid trial settles, but the
+  // Trial.paymentId is ledger truth once a paid trial settles, but the
   // webhook writes it after capture — fall back to the appointment's payment so
   // a cancellation racing that write still refunds.
   const payment = await prisma.payment.findFirst({

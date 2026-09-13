@@ -140,7 +140,7 @@ export async function readAvailabilityGridMarker(
             JOIN reach r ON r.id = a.id
           UNION ALL
           SELECT max(ts."updatedAt")
-            FROM "TrialSession" ts
+            FROM "Trial" ts
             JOIN reach r ON r.id = ts."appointmentId"
           UNION ALL
           SELECT max(c."updatedAt")
@@ -164,7 +164,7 @@ export async function readAvailabilityGridMarker(
            WHERE clp."consultantProfileId" = ${consultantId}
           UNION ALL
           SELECT max(ts."updatedAt")
-            FROM "TrialSession" ts
+            FROM "Trial" ts
            WHERE ts."consultantProfileId" = ${consultantId}
        ) b) AS "requestsUpdatedAt",
       (SELECT min(p."expiresAt")

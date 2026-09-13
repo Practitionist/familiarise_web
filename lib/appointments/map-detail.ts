@@ -57,7 +57,7 @@ function eventOf(appointment: TDetailAppointment): {
   const subscription = appointment.subscription;
   const webinar = appointment.webinar;
   const cls = appointment.class;
-  const trial = appointment.trialSession;
+  const trial = appointment.trial;
 
   if (trial) {
     return {
@@ -165,11 +165,10 @@ export function mapAppointmentDetail(
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: isGroup ? { total: occurrences.length, completed } : null,
-    meta: appointment.trialSession
+    meta: appointment.trial
       ? trialMeta(
-          appointment.trialSession.subscriptionPlan?.trialPriceInPaise ?? null,
-          appointment.trialSession.subscriptionPlan?.trialDurationMinutes ??
-            null,
+          appointment.trial.subscriptionPlan?.trialPriceInPaise ?? null,
+          appointment.trial.subscriptionPlan?.trialDurationMinutes ?? null,
         )
       : null,
     organizationId: appointment.organizationId ?? null,

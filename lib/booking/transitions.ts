@@ -20,7 +20,7 @@ import type {
   AppointmentStatus,
   RescheduleRequestStatus,
   OccurrenceCompletionStatus,
-  TrialSessionStatus,
+  TrialStatus,
   WebinarStatus,
 } from "@prisma/client";
 
@@ -411,16 +411,13 @@ export async function transitionOccurrenceCompletion(
   return moved.length;
 }
 
-//////////////////////////////////////////////// TrialSession ////////////////////////////////////////////////
+//////////////////////////////////////////////// Trial ////////////////////////////////////////////////
 
 // #1319 — trials were the one lifecycle with no helper: accept, reject, cancel,
 // auto-complete and convert all wrote `status` bare. The capture webhook and
 // the unpaid-expiry sweep already narrowed their updateMany by status; this
 // makes the rest match. PENDING is entry-only. Keyed by TARGET.
-export const TRIAL_ALLOWED_FROM: Record<
-  TrialSessionStatus,
-  TrialSessionStatus[]
-> = {
+export const TRIAL_ALLOWED_FROM: Record<TrialStatus, TrialStatus[]> = {
   PENDING: [],
   AWAITING_PAYMENT: ["PENDING"],
   SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
@@ -430,28 +427,27 @@ export const TRIAL_ALLOWED_FROM: Record<
   REJECTED: ["PENDING"],
 };
 
-export async function transitionTrialSession(
-  tx: Pick<Tx, "trialSession" | "bookingStatusHistory">,
+export async function transitionTrial(
+  tx: Pick<Tx, "trial" | "bookingStatusHistory">,
   args: HistoryMeta & {
     where: { id: string };
-    to: TrialSessionStatus;
-    data?: Omit<Prisma.TrialSessionUncheckedUpdateManyInput, "status">;
-    fromIn?: TrialSessionStatus[];
+    to: TrialStatus;
+    data?: Omit<Prisma.TrialUncheckedUpdateManyInput, "status">;
+    fromIn?: TrialStatus[];
   },
 ): Promise<void> {
-  const before = await tx.trialSession.findUnique({
+  const before = await tx.trial.findUnique({
     where: { id: args.where.id },
     select: { status: true, appointmentId: true },
   });
-  const res = await tx.trialSession.updateMany({
+  const res = await tx.trial.updateMany({
     where: {
       ...args.where,
       status: { in: args.fromIn ?? TRIAL_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0)
-    throw new IllegalTransitionError("TrialSession", args.to);
+  if (res.count === 0) throw new IllegalTransitionError("Trial", args.to);
   // A PENDING trial has no appointment yet, so the id is null until acceptance
   // places the session — the scalar is nullable for exactly that reason.
   await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {

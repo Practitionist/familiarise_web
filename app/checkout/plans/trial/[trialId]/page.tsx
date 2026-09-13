@@ -17,7 +17,7 @@ import { ViewerLocalTime } from "./ViewerLocalTime";
  *
  * LINKED as of #1167 from the surfaces that hold a trial id — the consultee
  * dashboard's pending-payments widget and the appointment sheet's "Pay now".
- * `TrialSession.pendingPaymentUrl` still stores the gateway pay-link (the
+ * `Trial.pendingPaymentUrl` still stores the gateway pay-link (the
  * approval email opens it directly), and this page hands off to it; what
  * changed is that the buyer now sees the amount, the duration and the
  * deadline on our own surface before leaving for the gateway.
@@ -47,7 +47,7 @@ export default async function TrialCheckoutPage({
 
   if (!session?.user?.id) notFound();
 
-  const trial = await prisma.trialSession.findUnique({
+  const trial = await prisma.trial.findUnique({
     where: { id: trialId },
     select: {
       id: true,

@@ -206,7 +206,7 @@ export default function AppointmentsPageClient({
                 // "Trial requests", not "Trials": the type chip one row below
                 // is already labelled "Trials" and filters the current bucket
                 // to TRIAL appointments. This tab is a different thing — the
-                // TrialSession queue, with its own status filter and a
+                // Trial queue, with its own status filter and a
                 // schedule action. One word for two results, a row apart.
                 // The VALUE stays "trials" so ?tab=trials deep-links survive.
                 label: "Trial requests",

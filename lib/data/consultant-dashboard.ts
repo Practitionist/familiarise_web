@@ -570,7 +570,7 @@ export async function getConsultantDashboard(
       },
     }),
     // 4. Trial conversion rate (90-day window)
-    prisma.trialSession.groupBy({
+    prisma.trial.groupBy({
       by: ["status"],
       _count: true,
       where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },

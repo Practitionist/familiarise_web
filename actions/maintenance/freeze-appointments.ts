@@ -141,7 +141,7 @@ async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
               },
             },
           },
-          trialSession: {
+          trial: {
             include: {
               subscriptionPlan: {
                 select: {
@@ -388,12 +388,12 @@ async function freezeTrial(
   tx: Tx,
   ctx: FreezeContext,
 ): Promise<FreezeStepResult> {
-  const trial = ctx.appointment.trialSession;
+  const trial = ctx.appointment.trial;
   if (!trial) return noEffects();
 
   // Status-guarded (the trial state table is local to the trials route);
   // zero rows means already terminal — skip, never resurrect.
-  const moved = await tx.trialSession.updateMany({
+  const moved = await tx.trial.updateMany({
     where: {
       id: trial.id,
       status: { in: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"] },
@@ -456,7 +456,7 @@ function refundablePayments(
  * post-tx instead.
  */
 async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
-  if (ctx.appointment.trialSession) return;
+  if (ctx.appointment.trial) return;
   await tx.appointmentOccurrence.updateMany({
     where: {
       id: { in: ctx.slots.map((s) => s.id) },
