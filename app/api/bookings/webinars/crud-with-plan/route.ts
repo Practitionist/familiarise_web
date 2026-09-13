@@ -1,7 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -343,6 +346,18 @@ export async function POST(request: NextRequest) {
               },
             },
           });
+
+          // #1554 — the roster is AppointmentParticipant; the planner seats the
+          // consultant on the wrapper exactly as the allocator does, or the
+          // reconcile sweep reads every planner-scheduled webinar as drift.
+          if (webinar.appointment) {
+            await recordParticipants(
+              tx,
+              webinar.appointment.id,
+              [{ userId: session.user.id, role: "CONSULTANT" }],
+              { status: "CONFIRMED" },
+            );
+          }
 
           console.log("Created webinar instance:", {
             id: webinar.id,
@@ -888,7 +903,7 @@ export async function PATCH(request: NextRequest) {
               } else {
                 console.log("Creating new appointment + occurrence");
 
-                await tx.appointment.create({
+                const created = await tx.appointment.create({
                   data: {
                     webinar: { connect: { id: updatedWebinar.id } },
                     appointmentType: "WEBINAR",
@@ -901,7 +916,21 @@ export async function PATCH(request: NextRequest) {
                       }),
                     },
                   },
+                  select: { id: true },
                 });
+                // #1554 — seat the (possibly transferred) owner as CONSULTANT.
+                const owner = await tx.consultantProfile.findUnique({
+                  where: { id: ownerProfileId },
+                  select: { userId: true },
+                });
+                if (owner) {
+                  await recordParticipants(
+                    tx,
+                    created.id,
+                    [{ userId: owner.userId, role: "CONSULTANT" }],
+                    { status: "CONFIRMED" },
+                  );
+                }
               }
             }
 

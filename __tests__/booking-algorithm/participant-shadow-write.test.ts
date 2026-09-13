@@ -109,6 +109,16 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
       "app/api/scheduling/request-for-approval/route.ts",
       /recordParticipants\(/,
     ],
+    // #1554 — the planner mints the wrapper itself for a webinar or class and
+    // must seat the consultant, or the reconcile sweep reads it as drift.
+    [
+      "app/api/bookings/webinars/crud-with-plan/route.ts",
+      /recordParticipants\(/,
+    ],
+    [
+      "app/api/bookings/classes/crud-with-plan/route.ts",
+      /recordParticipants\(/,
+    ],
     [
       "lib/payments/webhooks/handlers.ts",
       /setParticipantStatus\(|participants: \{/,

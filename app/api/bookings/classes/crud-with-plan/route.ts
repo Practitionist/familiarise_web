@@ -1,6 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import {
   curriculumCreateNested,
   faqCreateNested,
@@ -343,6 +346,18 @@ export async function POST(request: NextRequest) {
               },
             },
           });
+
+          // #1554 — the roster is AppointmentParticipant; the planner seats the
+          // consultant on the wrapper exactly as the allocator does, or the
+          // reconcile sweep reads every planner-scheduled class as drift.
+          if (classEvent.appointment) {
+            await recordParticipants(
+              tx,
+              classEvent.appointment.id,
+              [{ userId: session.user.id, role: "CONSULTANT" }],
+              { status: "CONFIRMED" },
+            );
+          }
 
           return { classPlan, classEvent };
         },
