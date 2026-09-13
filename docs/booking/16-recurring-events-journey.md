@@ -72,7 +72,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 
 1. Validates input with Zod schema
 2. Finds or creates `Topic` records
-3. Calculates `totalSessions` using `SlotCalculationService.countWeeks()`:
+3. Calculates `totalSessions` using `ScheduleCalculationService.countWeeks()`:
    - `totalSessions = sessionsPerWeek x countWeeks(schedulingStart, schedulingEnd)`
    - Where `countWeeks()` counts Sunday-start weeks in the date range
 4. Calculates `totalHours = totalSessions x sessionDurationInHours`
@@ -193,7 +193,7 @@ This is the core scheduling engine that converts a purchased plan into concrete 
 ### 4a. Architecture
 
 ```
-Frontend (useSlotAllocation hook)
+Frontend (useScheduling hook)
     |
     v
 Validation: POST /api/bookings/{subscriptions|classes}/[id]/validate
@@ -202,28 +202,28 @@ Validation: POST /api/bookings/{subscriptions|classes}/[id]/validate
 Allocation: PATCH /api/bookings/{subscriptions|classes}/[id]/allocate
     |
     v
-SlotValidationService (business rules)
+ScheduleValidationService (business rules)
     |
     v
-SlotAllocationService (Prisma transaction, 60s timeout)
+SchedulingService (Prisma transaction, 60s timeout)
     |
     v
-Database: Appointment + SlotOfAppointment records created
+Database: Appointment + AppointmentOccurrence records created
 ```
 
 **Core services:**
 
-- `utils/slotAllocation/SlotCalculationService.ts` -- Pure math, no DB. Counts weeks, calculates required slots, groups by day/week.
-- `utils/slotAllocation/SlotValidationService.ts` -- Business rule validation. Checks conflicts, availability match, consecutive slots, weekly limits.
-- `utils/slotAllocation/SlotAllocationService.ts` -- Main engine. Creates appointments in Prisma transactions with distributed locks.
+- `utils/scheduling-engine/ScheduleCalculationService.ts` -- Pure math, no DB. Counts weeks, calculates required slots, groups by day/week.
+- `utils/scheduling-engine/ScheduleValidationService.ts` -- Business rule validation. Checks conflicts, availability match, consecutive slots, weekly limits.
+- `utils/scheduling-engine/SchedulingService.ts` -- Main engine. Creates appointments in Prisma transactions with distributed locks.
 
-**Frontend hook:** `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useSlotAllocation.ts`
+**Frontend hook:** `app/dashboard/consultant/[consultantId]/(features)/shared/hooks/useScheduling.ts`
 
 ### 4b. The Three Allocation Modes
 
 | Mode                                      | Trigger                                       | How It Works                                                                                                                                                                                                                    |
 | ----------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Auto** (`isAuto: true`)                 | Consultant clicks "Auto-allocate"             | System searches consultant's `SlotOfAvailabilityWeekly` for first-fit consecutive blocks. Uses Redis distributed lock (`lockAutoAllocate`) to prevent concurrent allocations. Searches forward from `schedulingPeriodStartsAt`. |
+| **Auto** (`isAuto: true`)                 | Consultant clicks "Auto-allocate"             | System searches consultant's `AvailabilityWindowWeekly` for first-fit consecutive blocks. Uses Redis distributed lock (`lockAutoAllocate`) to prevent concurrent allocations. Searches forward from `schedulingPeriodStartsAt`. |
 | **Manual** (`slots: string[]`)            | Consultant selects specific times on calendar | Consultant provides exact ISO datetime strings for each slot. Must pass all validation checks (no conflicts, within availability, within scheduling period).                                                                    |
 | **Requested** (`useRequestedSlots: true`) | Consultee proposed times during checkout      | Uses slots pre-proposed by consultee in the booking request. Consultant approves by triggering allocation with this flag.                                                                                                       |
 
@@ -244,13 +244,13 @@ Database: Appointment + SlotOfAppointment records created
 
 Consultants set their availability in two ways:
 
-1. **Weekly recurring** (`SlotOfAvailabilityWeekly`):
+1. **Weekly recurring** (`AvailabilityWindowWeekly`):
    - `startDay/endDay`: Day of week enum (MONDAY-SUNDAY)
    - `startTimeUtc/endTimeUtc`: Minutes since midnight UTC (0-1439, stored as `Int @db.SmallInt`)
    - `utcOffsetMinutes`: Timezone offset for display
    - Can span overnight (e.g., Friday 22:00 UTC to Saturday 02:00 UTC)
 
-2. **Custom one-off** (`SlotOfAvailabilityCustom`):
+2. **Custom one-off** (`AvailabilityWindowCustom`):
    - `startsAt/endsAt`: Full ISO timestamps
    - For special availability dates
 
@@ -258,7 +258,7 @@ Consultants set their availability in two ways:
 
 ### 4e. Validation Pipeline
 
-Before allocation, `SlotValidationService` checks:
+Before allocation, `ScheduleValidationService` checks:
 
 1. All slots are in the future
 2. No conflicts with existing non-tentative appointments
@@ -276,17 +276,17 @@ For a subscription with 8 sessions, 2 slots per session:
 Subscription (id: "sub_123", status: SCHEDULED)
   |
   +-- Appointment #1 (appointmentType: SUBSCRIPTION, subscriptionId: "sub_123")
-  |     +-- SlotOfAppointment (startsAt: Mon 10:00, endsAt: Mon 10:30, completionStatus: SCHEDULED)
-  |     +-- SlotOfAppointment (startsAt: Mon 10:30, endsAt: Mon 11:00, completionStatus: SCHEDULED)
+  |     +-- AppointmentOccurrence (startsAt: Mon 10:00, endsAt: Mon 10:30, completionStatus: SCHEDULED)
+  |     +-- AppointmentOccurrence (startsAt: Mon 10:30, endsAt: Mon 11:00, completionStatus: SCHEDULED)
   |
   +-- Appointment #2
-  |     +-- SlotOfAppointment (Wed 14:00 - 14:30)
-  |     +-- SlotOfAppointment (Wed 14:30 - 15:00)
+  |     +-- AppointmentOccurrence (Wed 14:00 - 14:30)
+  |     +-- AppointmentOccurrence (Wed 14:30 - 15:00)
   |
   ... (8 appointments total, each with 2 slots)
 ```
 
-For a class, the same appointment structure is created during allocation (1 appointment per session). When new consultees enroll via checkout, `handleClassCheckout()` links them to ALL existing `SlotOfAppointment` records via the M2M `user` relation -- no new Appointments are created per enrollee. All participants (consultant + all consultees) share the same slots.
+For a class, the same appointment structure is created during allocation (1 appointment per session). When new consultees enroll via checkout, `handleClassCheckout()` links them to ALL existing `AppointmentOccurrence` records via the M2M `user` relation -- no new Appointments are created per enrollee. All participants (consultant + all consultees) share the same slots.
 
 ---
 
@@ -300,7 +300,7 @@ For a class, the same appointment structure is created during allocation (1 appo
 
 ### 5b. During the Session
 
-- Consultant starts the session -> Stream.io video call via `MeetingSession` with `streamCallId`
+- Consultant starts the session -> Stream.io video call via `Meeting` with `streamCallId`
 - Both parties join via `app/meetings/` pages
 - **For classes:** All enrolled consultees + collaborators join the same call
 - **Recording:** If `recordingEnabled = true` on the plan, consultant can start/stop recording
@@ -309,21 +309,21 @@ For a class, the same appointment structure is created during allocation (1 appo
 
 ### 5c. After the Session
 
-**Completion tracking** (`SlotOfAppointment.completionStatus`):
+**Completion tracking** (`AppointmentOccurrence.completionStatus`):
 
 | Status        | Meaning                                                                     |
 | ------------- | --------------------------------------------------------------------------- |
 | `SCHEDULED`   | Future session, not yet held                                                |
-| `COMPLETED`   | Session held -- `MeetingSession` record exists OR manually marked           |
-| `UNVERIFIED`  | Past the end time but no `MeetingSession` record (possible offline session) |
+| `COMPLETED`   | Session held -- `Meeting` record exists OR manually marked           |
+| `UNVERIFIED`  | Past the end time but no `Meeting` record (possible offline session) |
 | `CANCELLED`   | Explicitly cancelled                                                        |
 | `RESCHEDULED` | Replaced via reallocation                                                   |
 
 **Auto-complete cron** (`scripts/appointments/auto-complete-appointments.ts`, runs hourly):
 
 - Finds slots where `endsAt < now()` and `completionStatus = SCHEDULED`
-- If `MeetingSession` exists for that appointment -> mark `COMPLETED`
-- If no `MeetingSession` -> mark `UNVERIFIED`
+- If `Meeting` exists for that appointment -> mark `COMPLETED`
+- If no `Meeting` -> mark `UNVERIFIED`
 
 ---
 
@@ -449,7 +449,7 @@ See `docs/booking/08-cancellation-flow.md` for full details.
 
 - `Subscription.status` -> `CANCELLED` with `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`
 - `Class.status` -> `CANCELLED`
-- All future `SlotOfAppointment` records -> `completionStatus: CANCELLED`
+- All future `AppointmentOccurrence` records -> `completionStatus: CANCELLED`
 - Completed sessions remain marked as `COMPLETED`
 
 ### 8b. Refund Policy
@@ -474,7 +474,7 @@ Recurring events depend on these automated jobs:
 | Job                            | Schedule      | Purpose                                                                        | Source                                               |
 | ------------------------------ | ------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `auto-complete-appointments`   | Hourly        | Mark past sessions COMPLETED/UNVERIFIED                                        | `scripts/appointments/auto-complete-appointments.ts` |
-| `tentative-slots`              | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-slots/`                   |
+| `tentative-occurrences`              | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-occurrences/`                   |
 | `expire-stale-requests`        | Daily         | Mark PENDING requests as EXPIRED (> 30 days)                                   | `app/api/cleanup/`                                   |
 | `release-earnings`             | Hourly        | PENDING -> READY when hold expires                                             | `jobs/earnings/release-earnings.ts`                  |
 | `create-payout-batch`          | Weekly Mon    | Collect READY earnings into batches                                            | `jobs/payouts/create-payout-batch.ts`                |
@@ -496,7 +496,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Appointments**      | 1 Appointment per session, each has N slots              | 1 Appointment per session (shared by all participants via M2M user relation on slots)                     |
 | **Slot sharing**      | Slots connected to consultant + 1 consultee              | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
 | **Collaborators**     | Not supported                                            | `Collaborator[]` (`collaboratorType: CLASS`) with `revenueShareBps` shares                                |
-| **Trial**             | Yes (`TrialSession` model)                               | No                                                                                                        |
+| **Trial**             | Yes (`Trial` model)                               | No                                                                                                        |
 | **Recording**         | No                                                       | Optional                                                                                                  |
 | **Certificate**       | No                                                       | Optional                                                                                                  |
 | **Capacity**          | No (1:1)                                                 | Yes (per-instance `maxParticipants`; full means sold out)                                                 |

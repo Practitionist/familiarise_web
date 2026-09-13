@@ -8,14 +8,14 @@ Key characteristics:
 
 - Priced per plan via `trialPriceInPaise` (free by default until paid-trial checkout is wired, after which the default flips to ₹100; the consultant can always set it to ₹0 for a genuinely free trial)
 - A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it. The floor defaults to 0, which keeps free trials allowed.
-- Booking a trial whose price is above 0 is rejected with a "Paid trials are not yet available" error until the payment wiring ships. The schema is already shaped for it: `TrialSession.pendingPaymentUrl` carries the checkout hand-off and `TrialSession.paymentId` links the settled `Payment`.
+- Booking a trial whose price is above 0 is rejected with a "Paid trials are not yet available" error until the payment wiring ships. The schema is already shaped for it: `Trial.pendingPaymentUrl` carries the checkout hand-off and `Trial.paymentId` links the settled `Payment`.
 - Duration configured per plan via `trialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
 - Successful trials can convert into a full subscription
 
 **Source files:**
 
-- Model: `prisma/schema.prisma` (TrialSession, TrialSessionStatus)
+- Model: `prisma/schema.prisma` (Trial, TrialStatus)
 - API: `app/api/trials/route.ts`, `app/api/trials/[trialId]/route.ts`, `app/api/trials/check-eligibility/route.ts`
 - Locking: `utils/appointmentlock.ts` (lockSlotBooking, unlockSlotBooking — the shared slot-interval lock)
 - Auto-completion: `scripts/appointments/auto-complete-appointments.ts`
@@ -25,12 +25,12 @@ Key characteristics:
 
 ## Data Model
 
-### TrialSession
+### Trial
 
 | Field                       | Type                 | Default   | Description                                      |
 | --------------------------- | -------------------- | --------- | ------------------------------------------------ |
 | `id`                        | `String` (cuid)      | auto      | Primary key                                      |
-| `status`                    | `TrialSessionStatus` | `PENDING` | Current lifecycle status                         |
+| `status`                    | `TrialStatus` | `PENDING` | Current lifecycle status                         |
 | `notes`                     | `String?` (Text)     | null      | Consultee's questions or goals for the trial     |
 | `consulteeProfileId`        | `String`             | required  | FK to ConsulteeProfile                           |
 | `consultantProfileId`       | `String`             | required  | FK to ConsultantProfile                          |
@@ -57,7 +57,7 @@ Key characteristics:
 | `consultantProfileId` | Filter trials by consultant |
 | `subscriptionPlanId`  | Filter trials by plan       |
 
-### TrialSessionStatus Enum
+### TrialStatus Enum
 
 | Value       | Description                           |
 | ----------- | ------------------------------------- |
@@ -101,7 +101,7 @@ Valid transitions (enforced in `app/api/trials/[trialId]/route.ts`):
 
 Both `PATCH` (with `status: CANCELLED`) and `DELETE` now exhibit identical cleanup behavior:
 
-- **Appointment/slot cleanup**: If the trial has a linked appointment, the associated `SlotOfAppointment` records and the `Appointment` record are deleted inside a transaction.
+- **Appointment/slot cleanup**: If the trial has a linked appointment, the associated `AppointmentOccurrence` records and the `Appointment` record are deleted inside a transaction.
 - **Notifications**: Both paths send cancellation notifications to both parties via Novu (`trial-session-cancelled`).
 - **Transaction wrapping**: All database operations (status update, appointment deletion, slot deletion) are wrapped in a Prisma `$transaction` to ensure atomicity.
 
@@ -138,7 +138,7 @@ sequenceDiagram
     Consultee->>API: POST /api/trials (request trial)
     API->>DB: Check unique constraint (one trial per pair)
     API->>DB: Verify plan has trialEnabled
-    API->>DB: Create TrialSession (PENDING)
+    API->>DB: Create Trial (PENDING)
     API->>Novu: trial-session-requested (to consultant)
     API-->>Consultee: 201 Created
 
@@ -146,7 +146,7 @@ sequenceDiagram
 
     Consultee->>API: PATCH /api/trials/id with status SCHEDULED and slotData
     API->>Redis: lockSlotBooking(consultantProfileId, startsAt, endsAt)
-    API->>DB: $transaction: validate availability (both participants) + create Appointment (TRIAL) + update TrialSession
+    API->>DB: $transaction: validate availability (both participants) + create Appointment (TRIAL) + update Trial
     API->>Redis: unlockSlotBooking()
     API->>Novu: trial-session-scheduled (to consultee)
     API-->>Consultee: 200 OK
@@ -164,7 +164,7 @@ sequenceDiagram
 
 1. **Request** -- Consultee calls `POST /api/trials` with `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, and optional `notes`. The API checks the unique constraint and verifies `trialEnabled` on the plan.
 2. **Eligibility check** -- `GET /api/trials/check-eligibility` can be called beforehand to verify the consultee has not already used their trial with this consultant.
-3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `SlotOfAppointment` inside a Prisma transaction.
+3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `AppointmentOccurrence` inside a Prisma transaction.
 4. **Session** -- Both parties join the meeting via Stream video call.
 5. **Auto-complete** -- The hourly cron marks `SCHEDULED` trials as `COMPLETED` once all appointment slots have ended (with a 1-hour buffer).
 6. **Conversion** -- If the consultee subscribes, the trial status transitions to `CONVERTED` and `convertedToSubscriptionId` is set.
@@ -174,7 +174,7 @@ sequenceDiagram
 A priced trial is paid for on our own checkout page at
 `/checkout/plans/trial/[trialId]`, and every "Pay Now" affordance in the product
 has to land there. The page exists because the gateway pay-link on
-`TrialSession.pendingPaymentUrl` opens straight into Razorpay with none of the
+`Trial.pendingPaymentUrl` opens straight into Razorpay with none of the
 context a buyer needs: the branded page names the amount, shows the held session
 in the viewer's own timezone, states the deadline the hold expires at, and only
 then hands off (#1167).
@@ -182,7 +182,7 @@ then hands off (#1167).
 The one place that decision is made is `trialCheckoutHref` in
 `lib/appointments/trial-checkout-href.ts`. It returns the branded href for a
 trial row and `null` for everything else, and a caller that gets `null` falls
-back to opening `vm.pendingPaymentUrl` in a new tab. The `TrialSession` id only
+back to opening `vm.pendingPaymentUrl` in a new tab. The `Trial` id only
 survives in the synthetic view-model id the mappers mint (`trial-<id>`), which
 is why the helper parses that prefix rather than reading a field. Both Pay Now
 buttons on the appointment detail page and the one in the appointment sheet call
@@ -205,7 +205,7 @@ directly.
 | **Lock type**         | `lockSlotBooking()` -- shared `slot-booking:` atom keys           | `lockSlotBooking()` -- shared `slot-booking:` atom keys       |
 | **Uniqueness**        | One per consultee-consultant pair                                 | Multiple allowed                                              |
 | **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`)               | Standalone                                                    |
-| **Status field**      | `status` (TrialSessionStatus enum)                                | `status` (AppointmentStatus enum)                          |
+| **Status field**      | `status` (TrialStatus enum)                                | `status` (AppointmentStatus enum)                          |
 | **Appointment type**  | `TRIAL`                                                           | `CONSULTATION`                                                |
 | **Booking flow**      | Request -> consultant schedules                                   | Direct checkout or request-based                              |
 | **Scheduling period** | None                                                              | None                                                          |
@@ -245,7 +245,7 @@ Slot validation inside the lock checks for overlaps across all appointment types
 
 The `completeTrials()` function:
 
-1. Queries `TrialSession` records where `status = SCHEDULED` and all linked `SlotOfAppointment.endsAt < (now - 1 hour)`
+1. Queries `Trial` records where `status = SCHEDULED` and all linked `AppointmentOccurrence.endsAt < (now - 1 hour)`
 2. Updates each to `status = COMPLETED` with `completedAt = now()`
 3. Creates an `ActivityLog` entry with `activityType = TRIAL_COMPLETED` and `metadata: { autoCompleted: true }`
 
@@ -258,8 +258,8 @@ Additionally, the `GET /api/trials` endpoint performs an inline auto-complete ch
 When a consultee decides to subscribe after a trial, the trial status transitions from `COMPLETED` to `CONVERTED`:
 
 ```
-TrialSession.convertedToSubscriptionId --> Subscription.id
-Subscription.convertedFromTrial --> TrialSession
+Trial.convertedToSubscriptionId --> Subscription.id
+Subscription.convertedFromTrial --> Trial
 ```
 
 This is a one-to-one relationship (both FKs carry `@unique`). The conversion is triggered by a `PATCH` to `/api/trials/[trialId]` with `status: "CONVERTED"` and a `subscriptionId` in the body. The handler:
@@ -279,7 +279,7 @@ The link enables:
 
 ## Notifications
 
-Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialSessionPayload` type.
+Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialPayload` type.
 
 | Workflow ID               | Trigger                     | Recipients   |
 | ------------------------- | --------------------------- | ------------ |
@@ -288,7 +288,7 @@ Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All tria
 | `trial-session-completed` | Trial session ends          | Both parties |
 | `trial-session-cancelled` | Trial cancelled or rejected | Both parties |
 
-**Payload type** (`TrialSessionPayload`):
+**Payload type** (`TrialPayload`):
 
 | Field            | Type      | Description                     |
 | ---------------- | --------- | ------------------------------- |

@@ -39,8 +39,8 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - Timestamps → `timestamptz` columns, stored as UTC
 - `priceCurrency` (not `currency`) on `ConsultationPlan` / `SubscriptionPlan`
 - `ConsulteeProfile` requires `userId` (NOT NULL) — create User first
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
-- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off availability
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `AvailabilityWindowCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off availability
 
 ### Step 0.1 — Domain + SubDomain
 
@@ -134,7 +134,7 @@ WHERE u.email = 'testconsultee002@familiarise.com';
 -- Conversion: 09:30-12:30 IST = 04:00-07:00 UTC = 240-420 min
 --             14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
 
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -155,7 +155,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Custom slot: next Saturday 10:00–16:00 IST (04:30–10:30 UTC)
 -- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
-INSERT INTO "SlotOfAvailabilityCustom" (
+INSERT INTO "AvailabilityWindowCustom" (
   id, "startsAt", "endsAt",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -280,13 +280,13 @@ SELECT id, title FROM "WebinarPlan"       WHERE id = 'test-webinar-plan-002';
 SELECT id, title FROM "ClassPlan"         WHERE id = 'test-class-plan-002';
 SELECT id, status FROM "Webinar"          WHERE id = 'test-webinar-002';
 SELECT id, status FROM "Class"            WHERE id = 'test-class-002';
-SELECT COUNT(*) as slot_count FROM "SlotOfAvailabilityWeekly"
+SELECT COUNT(*) as slot_count FROM "AvailabilityWindowWeekly"
   WHERE "consultantProfileId" = 'test-consultant-profile-002';
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-  FROM "SlotOfAvailabilityWeekly"
+  FROM "AvailabilityWindowWeekly"
   WHERE "consultantProfileId" = 'test-consultant-profile-002';
 SELECT id, "startsAt", "endsAt"
-  FROM "SlotOfAvailabilityCustom"
+  FROM "AvailabilityWindowCustom"
   WHERE "consultantProfileId" = 'test-consultant-profile-002';
 ```
 
@@ -414,7 +414,7 @@ SELECT COUNT(*) as session_count,
        COUNT(DISTINCT s."appointmentId") as appointment_count,
        MIN(s."startsAt") as first_session,
        MAX(s."startsAt") as last_session
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 JOIN "Subscription" sub ON sub.id = a."subscriptionId"
 WHERE sub."subscriptionPlanId" = 'test-subscription-plan-002';
@@ -434,7 +434,7 @@ After 3.1, get a slot ID from an appointment >24h away:
 
 ```sql
 SELECT a.id as apt_id, s.id as slot_id, s."startsAt"
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 JOIN "Subscription" sub ON sub.id = a."subscriptionId"
 WHERE sub."subscriptionPlanId" = 'test-subscription-plan-002'
@@ -455,7 +455,7 @@ DB verify:
 -- ALL slots of that appointment → isTentative=true
 -- Slots of OTHER appointments in the same subscription → isTentative=false
 SELECT s."isTentative", a.id, s."startsAt"
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 JOIN "Subscription" sub ON sub.id = a."subscriptionId"
 WHERE sub."subscriptionPlanId" = 'test-subscription-plan-002'
@@ -499,7 +499,7 @@ DB verify:
 ```sql
 SELECT a.id, COUNT(s.id) as slot_count, MIN(s."isTentative") as any_tentative
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 WHERE a."webinarId" = 'test-webinar-002'
 GROUP BY a.id;
 ```
@@ -675,7 +675,7 @@ INSERT INTO "Appointment" (id, "appointmentType", "consultationId", "createdAt",
 VALUES ('test-24h-apt-002', 'CONSULTATION', 'test-24h-cons-002', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO "SlotOfAppointment"
+INSERT INTO "AppointmentOccurrence"
   (id, "appointmentId", "startsAt", "endsAt", "isTentative", "createdAt", "updatedAt")
 VALUES (
   'test-24h-slot-002', 'test-24h-apt-002',
@@ -701,14 +701,14 @@ Expected: 200 { success: true, cancellationReason: "CONSULTANT_UNAVAILABLE" }
 DB verify. Cancelling **never** deletes a row: `Payment.appointment` cascades on
 delete, so removing the Appointment would take the payment, refund and dispute
 trail with it (the #1074 class). The cancel route moves
-`SlotOfAppointment.completionStatus` from `SLOT_RESCHEDULABLE_FROM`
+`AppointmentOccurrence.completionStatus` from `SLOT_RESCHEDULABLE_FROM`
 (`SCHEDULED`, `RESCHEDULED`) to `CANCELLED` and leaves the rows in place.
 
 ```sql
 SELECT c."requestStatus", c."cancellationReason",
-       (SELECT COUNT(*) FROM "SlotOfAppointment"
+       (SELECT COUNT(*) FROM "AppointmentOccurrence"
          WHERE "appointmentId" = 'test-24h-apt-002') AS slots,
-       (SELECT COUNT(*) FROM "SlotOfAppointment"
+       (SELECT COUNT(*) FROM "AppointmentOccurrence"
          WHERE "appointmentId" = 'test-24h-apt-002'
            AND "completionStatus" = 'CANCELLED') AS cancelled_slots,
        (SELECT COUNT(*) FROM "Appointment" WHERE id = 'test-24h-apt-002') AS apts
@@ -758,7 +758,7 @@ Test the weekly availability slot management endpoints. Log in as consultant.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -777,7 +777,7 @@ Expected: 201, slot created. Verify via DB:
 
 ```sql
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-002'
   AND "startDay" = 'SATURDAY';
 ```
@@ -786,7 +786,7 @@ WHERE "consultantProfileId" = 'test-consultant-profile-002'
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -808,7 +808,7 @@ Expected: 400
 ```javascript
 async () => {
   // Overlaps with Monday AM (240-420)
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -831,20 +831,26 @@ Expected: 400 — overlap detected
 async () => {
   const satSlotId = "<SATURDAY_SLOT_ID_FROM_6.9a>";
 
-  const putResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "SATURDAY",
-      startTimeUtc: 420,
-      endDay: "SATURDAY",
-      endTimeUtc: 600,
-    }),
-  });
+  const putResp = await fetch(
+    `/api/scheduling/availability/weekly/${satSlotId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "SATURDAY",
+        startTimeUtc: 420,
+        endDay: "SATURDAY",
+        endTimeUtc: 600,
+      }),
+    },
+  );
 
-  const delResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
-    method: "DELETE",
-  });
+  const delResp = await fetch(
+    `/api/scheduling/availability/weekly/${satSlotId}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   return { put: putResp.status, del: delResp.status };
 };
@@ -934,7 +940,7 @@ Use `evaluate_script` for these GET calls:
 ```javascript
 const nextMon = /* compute next Monday's ISO date */;
 const nextSat = /* compute next Saturday's ISO date */;
-fetch(`/api/slots/availability-with-allocation/test-consultant-profile-002?startDate=${nextMon}&endDate=${nextSat}`)
+fetch(`/api/scheduling/availability-with-allocation/test-consultant-profile-002?startDate=${nextMon}&endDate=${nextSat}`)
 ```
 
 Verify: slots that are already "Booked" (`isTentative=false`) do NOT appear in the response.
@@ -943,7 +949,7 @@ Verify: slots that are already "Booked" (`isTentative=false`) do NOT appear in t
 
 ```javascript
 fetch(
-  "/api/slots/unallocated/weekly?consultantProfileId=test-consultant-profile-002",
+  "/api/scheduling/unallocated/weekly?consultantProfileId=test-consultant-profile-002",
 );
 ```
 
@@ -999,7 +1005,7 @@ UNION ALL
 SELECT
   'Total Slots',
   COUNT(*), 0, 0
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-002')
    OR a."subscriptionId" IN (SELECT id FROM "Subscription"  WHERE "subscriptionPlanId" = 'test-subscription-plan-002')
@@ -1015,7 +1021,7 @@ Run cleanup in dependency order ONLY after all tests pass:
 
 ```sql
 -- Slots
-DELETE FROM "SlotOfAppointment"
+DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" IN ('test-consultation-plan-002','test-403-plan-002'))
@@ -1055,8 +1061,8 @@ DELETE FROM "WebinarPlan"      WHERE id = 'test-webinar-plan-002';
 DELETE FROM "ClassPlan"        WHERE id = 'test-class-plan-002';
 
 -- Availability
-DELETE FROM "SlotOfAvailabilityWeekly"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
-DELETE FROM "SlotOfAvailabilityCustom"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+DELETE FROM "AvailabilityWindowWeekly"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
+DELETE FROM "AvailabilityWindowCustom"  WHERE "consultantProfileId" = 'test-consultant-profile-002';
 
 -- Profiles + Users
 UPDATE users SET "consultantProfileId" = NULL WHERE email = 'testconsultant002@familiarise.com';

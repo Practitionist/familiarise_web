@@ -31,7 +31,7 @@ flowchart TB
     S1["STEP 1  price derivation, no lock<br/>list → discount → +18% GST → −referral credits<br/>derive-checkout-amount.ts"]
     S2["STEP 2  Redis locks<br/>consultee lock → slot 30-min atoms / event lock"]
     S3["STEP 3  revalidateInsideLock<br/>plan, slot, double-book, allowlist, exclusivity"]
-    S5["STEP 5  ONE Serializable transaction (withSerializableRetry)<br/>Appointment + SlotOfAppointment (isTentative = hold)<br/>Payment + PaymentLeg[]  —  Σ funding legs == amount checked at COMMIT<br/>(non-reversal, non-REFERRAL_CREDIT legs; LICENSE-only exempt — §1.2)"]
+    S5["STEP 5  ONE Serializable transaction (withSerializableRetry)<br/>Appointment + AppointmentOccurrence (isTentative = hold)<br/>Payment + PaymentLeg[]  —  Σ funding legs == amount checked at COMMIT<br/>(non-reversal, non-REFERRAL_CREDIT legs; LICENSE-only exempt — §1.2)"]
     S1 --> S2 --> S3 --> S5
   end
 
@@ -85,7 +85,7 @@ erDiagram
   ConsultantEarnings }o--o| ConsultantPayout : "batched into"
   ConsultantPayout ||--o{ TDSRecord : "withholds"
 
-  Appointment ||--o{ SlotOfAppointment : "holds (isTentative)"
+  Appointment ||--o{ AppointmentOccurrence : "holds (isTentative)"
   Appointment ||--o{ AppointmentParticipant : "HELD → CONFIRMED"
   Appointment }o--o| CancellationPolicy : "versioned terms"
   CancellationPolicy ||--o{ CancellationPolicyTier : "hoursBefore → refundBps"
@@ -208,7 +208,7 @@ sequenceDiagram
     RZ-->>H: order_…
   end
   H->>DB: BEGIN (withSerializableRetry, timeout 25 s)
-  DB->>DB: Consultation PENDING + Appointment + SlotOfAppointment(isTentative=true)
+  DB->>DB: Consultation PENDING + Appointment + AppointmentOccurrence(isTentative=true)
   DB->>DB: Payment PENDING (amount, originalAmount, taxAmount, paymentIntent=order_…, expiresAt=+30 min)
   DB->>DB: PaymentLeg CARD = amount · REFERRAL_CREDIT leg if credits applied
   DB->>DB: discount currentUses++, credits consumed
@@ -272,7 +272,7 @@ sequenceDiagram
   SW-->>WH: sweep-stuck-webhook-events replays a dead after()
 ```
 
-There is no `CONFIRMED` appointment status. "Confirmed" means `Consultation.status = APPROVED` ∧ `SlotOfAppointment.isTentative = false` ∧ participants `CONFIRMED`; `SCHEDULED` is stamped later by slot allocation.
+There is no `CONFIRMED` appointment status. "Confirmed" means `Consultation.status = APPROVED` ∧ `AppointmentOccurrence.isTentative = false` ∧ participants `CONFIRMED`; `SCHEDULED` is stamped later by slot allocation.
 
 ### 2.3 State machines
 

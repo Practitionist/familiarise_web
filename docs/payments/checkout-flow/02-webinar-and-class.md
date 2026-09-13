@@ -29,7 +29,7 @@ Webinars are **group live sessions** with one presenter and multiple participant
 - Consultant creates: "Introduction to React" webinar on Jan 15, 2025 at 2:00 PM
 - Max 50 participants
 - 1 Appointment record created when webinar is created
-- Each user registration adds 1 SlotOfAppointment to that appointment
+- Each user registration adds 1 AppointmentOccurrence to that appointment
 - All 50 participants share the same Appointment record
 
 ### Entry Points
@@ -85,7 +85,7 @@ Appointment {
   webinarId: "webinar_abc",
 }
   ↓
-SlotOfAppointment {  // Initial empty slot (template)
+AppointmentOccurrence {  // Initial empty slot (template)
   id: "slot_template",
   appointmentId: "appt_xyz",
   startsAt: "2025-01-15T14:00:00Z",
@@ -102,7 +102,7 @@ Appointment {
   id: "appt_xyz",
   appointmentType: "WEBINAR",
   webinarId: "webinar_abc",
-  slotsOfAppointment: [
+  appointmentOccurrences: [
     {
       id: "slot_template",  // Original template slot
       user: [],
@@ -138,7 +138,7 @@ const webinar = await tx.webinar.findUnique({
     webinarPlan: true,
     appointment: {
       include: {
-        slotsOfAppointment: true,
+        appointmentOccurrences: true,
       },
     },
   },
@@ -161,12 +161,12 @@ const plan = webinar.webinarPlan;
 
 ```typescript
 const currentParticipants =
-  webinar.appointment?.slotsOfAppointment?.length || 0;
+  webinar.appointment?.appointmentOccurrences?.length || 0;
 ```
 
 **Counting Logic:**
 
-- Each SlotOfAppointment = 1 participant
+- Each AppointmentOccurrence = 1 participant
 - Includes both tentative (pending payment) and confirmed
 - Template slot (no user) also counted → May cause off-by-one error!
 
@@ -218,12 +218,12 @@ if (!appointment) {
 #### Step 5: Add User to Webinar
 
 ```typescript
-// Create SlotOfAppointment for user
-await tx.slotOfAppointment.create({
+// Create AppointmentOccurrence for user
+await tx.appointmentOccurrence.create({
   data: {
     appointmentId: appointment.id,
-    startsAt: webinar.appointment?.slotsOfAppointment[0]?.startsAt,
-    endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt,
+    startsAt: webinar.appointment?.appointmentOccurrences[0]?.startsAt,
+    endsAt: webinar.appointment?.appointmentOccurrences[0]?.endsAt,
     isTentative: !skipPayment,
     user: {
       connect: { id: userId },
@@ -260,7 +260,7 @@ return { appointment, plan, amount: plan.price };
          │
          ▼
 ┌──────────────────────────┐
-│  SlotOfAppointment       │
+│  AppointmentOccurrence       │
 ├──────────────────────────┤
 │  User 1's slot           │
 │  User 2's slot           │
@@ -286,10 +286,10 @@ return { appointment, plan, amount: plan.price };
 **Schema Definition:**
 
 ```prisma
-model SlotOfAppointment {
+model AppointmentOccurrence {
   id String @id @default(uuid())
 
-  user User[] @relation("SlotOfAppointmentToUser")  // Many-to-many!
+  user User[] @relation("AppointmentParticipant")  // Many-to-many!
 
   appointment   Appointment @relation(...)
   appointmentId String
@@ -327,7 +327,7 @@ sequenceDiagram
 
     API->>CO: handleWebinarCheckout()
     CO->>DB: Get Webinar with<br/>appointment + slots
-    DB-->>CO: Webinar {<br/>  appointment: {<br/>    slotsOfAppointment: [15 slots]<br/>  },<br/>  maxParticipants: 50<br/>}
+    DB-->>CO: Webinar {<br/>  appointment: {<br/>    appointmentOccurrences: [15 slots]<br/>  },<br/>  maxParticipants: 50<br/>}
 
     CO->>CO: Count participants<br/>currentParticipants = 15
 
@@ -339,7 +339,7 @@ sequenceDiagram
         end
     else Spots Available
         CO->>DB: Get existing Appointment<br/>(shared by all users)
-        CO->>DB: Create SlotOfAppointment<br/>{ appointmentId, userId,<br/>  isTentative: true }
+        CO->>DB: Create AppointmentOccurrence<br/>{ appointmentId, userId,<br/>  isTentative: true }
 
         CO->>PG: createPaymentIntent()
         PG-->>CO: Payment intent
@@ -351,7 +351,7 @@ sequenceDiagram
 
         PG->>WH: POST /webhooks<br/>(payment_intent.succeeded)
         WH->>DB: Update Payment<br/>(status: SUCCEEDED)
-        WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false<br/>WHERE id = userSlotId
+        WH->>DB: UPDATE AppointmentOccurrence<br/>SET isTentative = false<br/>WHERE id = userSlotId
         WH->>DB: UPDATE Webinar<br/>SET status = SCHEDULED
         WH-->>PG: 200 OK
         PG->>U: Success: "Registered for webinar!"
@@ -365,12 +365,12 @@ sequenceDiagram
    ├─ WebinarPlan defined (price, capacity, description)
    ├─ Webinar instance created (specific date/time)
    ├─ Appointment created (shared container)
-   └─ Template SlotOfAppointment created (timing info)
+   └─ Template AppointmentOccurrence created (timing info)
 
 2. Users Register (0 to maxParticipants)
    ├─ Each user: POST /api/checkout
    ├─ Capacity check: currentParticipants < maxParticipants
-   ├─ Create SlotOfAppointment (isTentative: true)
+   ├─ Create AppointmentOccurrence (isTentative: true)
    ├─ Create Payment (status: PENDING)
    └─ Redirect to payment gateway
 
@@ -407,7 +407,7 @@ sequenceDiagram
 ```typescript
 // Should filter out slots without users
 const currentParticipants =
-  webinar.appointment?.slotsOfAppointment?.filter(
+  webinar.appointment?.appointmentOccurrences?.filter(
     (slot) => slot.user && slot.user.length > 0,
   ).length || 0;
 ```
@@ -426,7 +426,7 @@ const currentParticipants =
 
 ```typescript
 // Before creating slot, check if user already registered
-const existingSlot = await tx.slotOfAppointment.findFirst({
+const existingSlot = await tx.appointmentOccurrence.findFirst({
   where: {
     appointmentId: appointment.id,
     user: {
@@ -484,7 +484,7 @@ Classes are **multi-session group courses** taught by a consultant to multiple s
 - Consultant creates: "Python Bootcamp" - 10 weeks, 1 session/week
 - Max 20 students
 - 10 Appointment records created upfront (one per session)
-- Each student enrollment creates 10 SlotOfAppointment records (one per session)
+- Each student enrollment creates 10 AppointmentOccurrence records (one per session)
 - All students share the same 10 Appointments
 
 ### Entry Points
@@ -537,7 +537,7 @@ Appointments [  // All created during class creation
     id: "appt_week1",
     appointmentType: "CLASS",
     classId: "class_abc",
-    slotsOfAppointment: [
+    appointmentOccurrences: [
       { id: "slot_template_w1", user: [], ... }
     ]
   },
@@ -545,7 +545,7 @@ Appointments [  // All created during class creation
     id: "appt_week2",
     appointmentType: "CLASS",
     classId: "class_abc",
-    slotsOfAppointment: [
+    appointmentOccurrences: [
       { id: "slot_template_w2", user: [], ... }
     ]
   },
@@ -561,7 +561,7 @@ Class {
   appointments: [
     Appointment {  // Week 1 session
       id: "appt_week1",
-      slotsOfAppointment: [
+      appointmentOccurrences: [
         { id: "slot_template_w1", user: [] },  // Template
         { id: "slot_student1_w1", user: [student1], isTentative: true },
         { id: "slot_student2_w1", user: [student2], isTentative: true },
@@ -570,7 +570,7 @@ Class {
     },
     Appointment {  // Week 2 session
       id: "appt_week2",
-      slotsOfAppointment: [
+      appointmentOccurrences: [
         { id: "slot_template_w2", user: [] },  // Template
         { id: "slot_student1_w2", user: [student1], isTentative: true },
         { id: "slot_student2_w2", user: [student2], isTentative: true },
@@ -594,7 +594,7 @@ const classInstance = await tx.class.findUnique({
     classPlan: true,
     appointments: {
       include: {
-        slotsOfAppointment: {
+        appointmentOccurrences: {
           include: {
             user: true, // Include user info for counting
           },
@@ -627,7 +627,7 @@ const plan = classInstance.classPlan;
 const uniqueUserIds = new Set<string>();
 
 for (const apt of classInstance.appointments) {
-  for (const slot of apt.slotsOfAppointment) {
+  for (const slot of apt.appointmentOccurrences) {
     if (slot.user && Array.isArray(slot.user)) {
       slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
     }
@@ -706,9 +706,9 @@ const createdSlots = [];
 
 for (const appointment of classInstance.appointments) {
   // Get timing from the first existing slot (template slot)
-  const existingSlot = appointment.slotsOfAppointment[0];
+  const existingSlot = appointment.appointmentOccurrences[0];
 
-  const slot = await tx.slotOfAppointment.create({
+  const slot = await tx.appointmentOccurrence.create({
     data: {
       appointmentId: appointment.id,
       startsAt: existingSlot?.startsAt || new Date(),
@@ -729,7 +729,7 @@ for (const appointment of classInstance.appointments) {
 1. Loop through all 10 appointments (sessions)
 2. For each session:
    - Copy timing from template slot
-   - Create new SlotOfAppointment
+   - Create new AppointmentOccurrence
    - Link to user
    - Mark as tentative
 3. Result: 10 new slots created (one per session)
@@ -738,15 +738,15 @@ for (const appointment of classInstance.appointments) {
 
 ```sql
 -- Before enrollment
-SELECT * FROM SlotOfAppointment WHERE appointmentId IN (appt_week1, appt_week2, ...);
+SELECT * FROM AppointmentOccurrence WHERE appointmentId IN (appt_week1, appt_week2, ...);
 -- Returns: 10 template slots (no users)
 
 -- After enrollment (before payment)
-SELECT * FROM SlotOfAppointment WHERE appointmentId IN (appt_week1, appt_week2, ...);
+SELECT * FROM AppointmentOccurrence WHERE appointmentId IN (appt_week1, appt_week2, ...);
 -- Returns: 20 slots (10 template + 10 for new student)
 
 -- After payment success
-UPDATE SlotOfAppointment
+UPDATE AppointmentOccurrence
 SET isTentative = false
 WHERE user.id = 'student_xyz'
 AND appointmentId IN (appt_week1, appt_week2, ...);
@@ -815,7 +815,7 @@ sequenceDiagram
             Note over CO,DB: Enroll user in ALL sessions
             loop For each session (10 times)
                 CO->>DB: Get existing Appointment
-                CO->>DB: Create SlotOfAppointment<br/>{ appointmentId,<br/>  userId,<br/>  isTentative: true }
+                CO->>DB: Create AppointmentOccurrence<br/>{ appointmentId,<br/>  userId,<br/>  isTentative: true }
             end
         end
 
@@ -832,7 +832,7 @@ sequenceDiagram
 
         rect rgb(220, 250, 220)
             Note over WH,DB: Confirm ALL 10 slots at once
-            WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false<br/>WHERE userId = currentUserId<br/>AND appointmentId IN<br/>  (all 10 class sessions)
+            WH->>DB: UPDATE AppointmentOccurrence<br/>SET isTentative = false<br/>WHERE userId = currentUserId<br/>AND appointmentId IN<br/>  (all 10 class sessions)
         end
 
         WH->>DB: UPDATE Class<br/>SET status = SCHEDULED
@@ -1014,10 +1014,10 @@ Class (10 weeks, 20 students):
 
 ```typescript
 // During checkout
-SlotOfAppointment { isTentative: true }
+AppointmentOccurrence { isTentative: true }
 
 // After payment success (webhook)
-UPDATE SlotOfAppointment SET isTentative = false WHERE id = slotId
+UPDATE AppointmentOccurrence SET isTentative = false WHERE id = slotId
 ```
 
 **Benefits:**

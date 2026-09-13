@@ -44,8 +44,8 @@ Seed all test data using Supabase MCP `execute_sql`. Run each SQL block in order
 - DateTime fields with `@db.Timestamptz()` store as `timestamptz` in Postgres
 - BetterAuth uses `accounts` table with `providerId = 'credential'` for email/password login
 - Passwords are hashed with bcrypt — use a pre-hashed password
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 270 = 04:30 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
-- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off date-specific availability
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 270 = 04:30 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `AvailabilityWindowCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off date-specific availability
 
 ### Step 0.1: Create Domain & SubDomain
 
@@ -234,7 +234,7 @@ Create weekly availability for the consultant: Monday-Friday, 10:00-17:00 IST (0
 -- Times stored as Int minutes since midnight UTC (0-1439)
 -- Conversion: 10:00-13:00 IST = 04:30-07:30 UTC = 270-450 min
 --             14:00-17:00 IST = 08:30-11:30 UTC = 510-690 min
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId",
   "createdAt", "updatedAt"
@@ -264,7 +264,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Also create one custom availability slot (for a specific date, e.g., next Saturday)
 -- Custom slots use actual timestamps (DateTime @db.Timestamptz), not minutes
-INSERT INTO "SlotOfAvailabilityCustom" (
+INSERT INTO "AvailabilityWindowCustom" (
   id, "startsAt", "endsAt",
   "consultantProfileId",
   "createdAt", "updatedAt"
@@ -425,8 +425,8 @@ SELECT id, "aboutMe", goals, "careerStage", "userId" FROM "ConsulteeProfile" WHE
 -- profile predates this seed and later booking assertions run on stale data.
 
 -- Verify availability (weekly uses Int minutes 0-1439, custom uses timestamptz)
-SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc" FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
-SELECT id, "startsAt", "endsAt" FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc" FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+SELECT id, "startsAt", "endsAt" FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
 
 -- Verify plans
 SELECT id, title, price, "durationInHours" FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';
@@ -511,7 +511,7 @@ LIMIT 1;
 SELECT a.id as "appointmentId", a."appointmentType",
        soa.id as "slotId", soa."startsAt", soa."endsAt", soa."isTentative"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+JOIN "AppointmentOccurrence" soa ON soa."appointmentId" = a.id
 WHERE a."consultationId" = (
   SELECT id FROM "Consultation"
   WHERE "requestedById" = 'test-consultee-profile-001'
@@ -523,7 +523,7 @@ WHERE a."consultationId" = (
 
 - Consultation `requestStatus` = `PENDING`
 - Appointment `appointmentType` = `CONSULTATION`
-- SlotOfAppointment `isTentative` = `true`
+- AppointmentOccurrence `isTentative` = `true`
 
 ### Test 1.3: Consultant Login & Review Request
 
@@ -573,7 +573,7 @@ LIMIT 1;
 
 -- Slots should no longer be tentative
 SELECT soa.id, soa."startsAt", soa."endsAt", soa."isTentative"
-FROM "SlotOfAppointment" soa
+FROM "AppointmentOccurrence" soa
 JOIN "Appointment" a ON soa."appointmentId" = a.id
 WHERE a."consultationId" = (
   SELECT id FROM "Consultation"
@@ -750,7 +750,7 @@ LIMIT 1;
 SELECT a.id, a."appointmentType",
        soa.id as "slotId", soa."startsAt", soa."endsAt", soa."isTentative"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+JOIN "AppointmentOccurrence" soa ON soa."appointmentId" = a.id
 WHERE a."subscriptionId" = (
   SELECT id FROM "Subscription"
   WHERE "requestedById" = 'test-consultee-profile-001'
@@ -832,7 +832,7 @@ async () => {
 
 ```sql
 SELECT soa.id as "slotId", soa."startsAt", soa."endsAt", a.id as "appointmentId"
-FROM "SlotOfAppointment" soa
+FROM "AppointmentOccurrence" soa
 JOIN "Appointment" a ON soa."appointmentId" = a.id
 WHERE a."subscriptionId" = (
   SELECT id FROM "Subscription"
@@ -937,7 +937,7 @@ async () => {
 ```sql
 SELECT a.id, soa."startsAt", soa."endsAt", soa."isTentative"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+JOIN "AppointmentOccurrence" soa ON soa."appointmentId" = a.id
 WHERE a."webinarId" = 'test-webinar-001';
 ```
 
@@ -988,7 +988,7 @@ This requires multiple consultee accounts. If testing capacity:
 async () => {
   // Get the appointment ID first
   const apptQuery = await fetch(
-    "/api/slots/appointments?webinarId=test-webinar-001",
+    "/api/scheduling/appointments?webinarId=test-webinar-001",
   );
   const apptData = await apptQuery.json();
   const appointmentId = apptData.data?.[0]?.id;
@@ -1067,7 +1067,7 @@ async () => {
 ```sql
 SELECT a.id, soa."startsAt", soa."endsAt"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" soa ON soa."appointmentId" = a.id
+JOIN "AppointmentOccurrence" soa ON soa."appointmentId" = a.id
 WHERE a."classId" = 'test-class-001'
 ORDER BY soa."startsAt" ASC;
 ```
@@ -1159,7 +1159,7 @@ VALUES ('test-soon-consultation', 'test-consultation-plan-001', 'SCHEDULED', 'te
 INSERT INTO "Appointment" (id, "appointmentType", "consultationId", "createdAt", "updatedAt")
 VALUES ('test-soon-appointment', 'CONSULTATION', 'test-soon-consultation', NOW(), NOW());
 
-INSERT INTO "SlotOfAppointment" (id, "startsAt", "endsAt", "isTentative", "appointmentId", "createdAt", "updatedAt")
+INSERT INTO "AppointmentOccurrence" (id, "startsAt", "endsAt", "isTentative", "appointmentId", "createdAt", "updatedAt")
 VALUES (
   'test-soon-slot',
   NOW() + INTERVAL '12 hours',
@@ -1305,7 +1305,7 @@ WHERE id = '<CONSULTATION_ID>';
 -- moves completionStatus from SCHEDULED/RESCHEDULED to CANCELLED.
 SELECT COUNT(*) AS "remainingSlots",
        COUNT(*) FILTER (WHERE "completionStatus" = 'CANCELLED') AS "cancelledSlots"
-FROM "SlotOfAppointment"
+FROM "AppointmentOccurrence"
 WHERE "appointmentId" = '<APPOINTMENT_ID>';
 -- Expected: remainingSlots unchanged from before the cancel, and every one of
 -- them CANCELLED. Zero rows means someone reintroduced the delete.
@@ -1356,7 +1356,7 @@ Test the weekly availability slot management endpoints. Log in as consultant.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1377,7 +1377,7 @@ async () => {
 
 ```sql
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-001'
   AND "startDay" = 'SATURDAY';
 ```
@@ -1386,7 +1386,7 @@ WHERE "consultantProfileId" = 'test-consultant-profile-001'
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1408,7 +1408,7 @@ async () => {
 ```javascript
 async () => {
   // Try to create a slot that overlaps with Monday AM (270-450)
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1433,21 +1433,27 @@ async () => {
   const satSlotId = "<SATURDAY_SLOT_ID>";
 
   // UPDATE the slot
-  const putResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "SATURDAY",
-      startTimeUtc: 420, // 07:00 UTC
-      endDay: "SATURDAY",
-      endTimeUtc: 600, // 10:00 UTC
-    }),
-  });
+  const putResp = await fetch(
+    `/api/scheduling/availability/weekly/${satSlotId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "SATURDAY",
+        startTimeUtc: 420, // 07:00 UTC
+        endDay: "SATURDAY",
+        endTimeUtc: 600, // 10:00 UTC
+      }),
+    },
+  );
 
   // DELETE the slot
-  const delResp = await fetch(`/api/slots/availability/weekly/${satSlotId}`, {
-    method: "DELETE",
-  });
+  const delResp = await fetch(
+    `/api/scheduling/availability/weekly/${satSlotId}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   return {
     put: { status: putResp.status },
@@ -1590,7 +1596,7 @@ Check that the availability endpoint correctly reflects occupied slots:
 ```sql
 -- First, note what slots are occupied
 SELECT soa."startsAt", soa."endsAt"
-FROM "SlotOfAppointment" soa
+FROM "AppointmentOccurrence" soa
 JOIN "Appointment" a ON soa."appointmentId" = a.id
 JOIN "Consultation" c ON a."consultationId" = c.id
 WHERE c."consultationPlanId" = 'test-consultation-plan-001'
@@ -1611,7 +1617,7 @@ async () => {
   weekEnd.setUTCHours(23, 59, 59, 999);
 
   const response = await fetch(
-    `/api/slots/availability-with-allocation/test-consultant-profile-001?startDate=${weekStart.toISOString()}&endDate=${weekEnd.toISOString()}`,
+    `/api/scheduling/availability-with-allocation/test-consultant-profile-001?startDate=${weekStart.toISOString()}&endDate=${weekEnd.toISOString()}`,
   );
   return await response.json();
 };
@@ -1631,10 +1637,10 @@ async () => {
 
   const [weekly, custom] = await Promise.all([
     fetch(
-      `/api/slots/unallocated/weekly?consultantProfileId=test-consultant-profile-001&startDateInUtc=${weekStart.toISOString()}&endDateInUtc=${weekEnd.toISOString()}`,
+      `/api/scheduling/unallocated/weekly?consultantProfileId=test-consultant-profile-001&startDateInUtc=${weekStart.toISOString()}&endDateInUtc=${weekEnd.toISOString()}`,
     ).then((r) => r.json()),
     fetch(
-      `/api/slots/unallocated/custom?consultantProfileId=test-consultant-profile-001&startDateInUtc=${weekStart.toISOString()}&endDateInUtc=${weekEnd.toISOString()}`,
+      `/api/scheduling/unallocated/custom?consultantProfileId=test-consultant-profile-001&startDateInUtc=${weekStart.toISOString()}&endDateInUtc=${weekEnd.toISOString()}`,
     ).then((r) => r.json()),
   ]);
 
@@ -1707,7 +1713,7 @@ SELECT 'Subscriptions', COUNT(*) FROM "Subscription" WHERE "subscriptionPlanId" 
 UNION ALL
 SELECT 'Appointments', COUNT(*) FROM "Appointment" WHERE id LIKE 'test-%' OR "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001')
 UNION ALL
-SELECT 'SlotOfAppointment', COUNT(*) FROM "SlotOfAppointment" WHERE "appointmentId" IN (
+SELECT 'AppointmentOccurrence', COUNT(*) FROM "AppointmentOccurrence" WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   LEFT JOIN "Consultation" c ON a."consultationId" = c.id
   LEFT JOIN "Subscription" s ON a."subscriptionId" = s.id
@@ -1719,7 +1725,7 @@ SELECT 'SlotOfAppointment', COUNT(*) FROM "SlotOfAppointment" WHERE "appointment
 UNION ALL
 SELECT 'Payments', COUNT(*) FROM "Payment" WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001')
 UNION ALL
-SELECT 'Tentative Slots', COUNT(*) FROM "SlotOfAppointment" WHERE "isTentative" = true;
+SELECT 'Tentative Slots', COUNT(*) FROM "AppointmentOccurrence" WHERE "isTentative" = true;
 ```
 
 ### Checklist
@@ -1762,7 +1768,7 @@ After all testing is complete, clean up test data:
 
 ```sql
 -- Delete in reverse dependency order
-DELETE FROM "SlotOfAppointment" WHERE "appointmentId" IN (
+DELETE FROM "AppointmentOccurrence" WHERE "appointmentId" IN (
   SELECT id FROM "Appointment" WHERE id LIKE 'test-%'
   OR "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001')
   OR "subscriptionId" IN (SELECT id FROM "Subscription" WHERE "subscriptionPlanId" = 'test-subscription-plan-001')
@@ -1783,8 +1789,8 @@ DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';
 DELETE FROM "SubscriptionPlan" WHERE id = 'test-subscription-plan-001';
 DELETE FROM "WebinarPlan" WHERE id = 'test-webinar-plan-001';
 DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-001';
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
-DELETE FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
+DELETE FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
 DELETE FROM sessions WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001');
 DELETE FROM accounts WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001');
 DELETE FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-001';
@@ -1806,12 +1812,12 @@ declared on `Consultation.status` and `Subscription.status`, both of which are
 ```
 AppointmentStatus: PENDING | APPROVED | APPROVED_PENDING_PAYMENT | SCHEDULED | COMPLETED | REJECTED | CANCELLED | EXPIRED
 AppointmentsType: CONSULTATION | SUBSCRIPTION | WEBINAR | CLASS | TRIAL
-SlotCompletionStatus: SCHEDULED | COMPLETED | UNVERIFIED | CANCELLED | RESCHEDULED
+OccurrenceCompletionStatus: SCHEDULED | COMPLETED | UNVERIFIED | CANCELLED | RESCHEDULED
 PaymentStatus: PENDING | SUCCEEDED | FAILED | EXPIRED
 PaymentGateway: STRIPE | RAZORPAY | DODO_PAYMENTS | CARD
 WebinarStatus: DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
 ClassStatus: DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
-TrialSessionStatus: PENDING | AWAITING_PAYMENT | SCHEDULED | COMPLETED | CONVERTED | CANCELLED | REJECTED
+TrialStatus: PENDING | AWAITING_PAYMENT | SCHEDULED | COMPLETED | CONVERTED | CANCELLED | REJECTED
 BookingSource: DIRECT_CHECKOUT | REQUEST_SUBMITTED
 CancellationReason: SCHEDULE_CONFLICT | FOUND_ALTERNATIVE | FINANCIAL_REASONS | PERSONAL_EMERGENCY | NO_LONGER_NEEDED | CONSULTANT_UNAVAILABLE | CONSULTANT_EMERGENCY | PAYMENT_FAILED | EXPIRED | CONSULTANT_ISSUE | TECHNICAL_ISSUE | MODERATION | OTHER
 DayOfWeek: MONDAY | TUESDAY | WEDNESDAY | THURSDAY | FRIDAY | SATURDAY | SUNDAY
@@ -1832,48 +1838,48 @@ answers `code: "DELETE_NOT_SUPPORTED"` and names the cancel route in its message
 which a bare framework 405 would not, and it is what replaced the raw
 `prisma.consultation.delete` that used to cascade Payment rows away.
 
-| Route                                                    | Methods exported        | Purpose                                                     |
-| -------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
-| `/api/checkout`                                          | POST                    | Create a booking with payment                               |
-| `/api/checkout/pending/[paymentId]`                      | DELETE                  | Release your own pending hold early                         |
-| `/api/checkout/verify`                                   | GET                     | Verify a payment intent                                     |
-| `/api/slots/request-for-approval`                        | POST                    | Consultee requests a booking                                |
-| `/api/bookings/consultations`                            | GET, PATCH              | List consultations / update one status                      |
-| `/api/bookings/consultations/[consultationId]`           | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
-| `/api/bookings/consultations/[consultationId]/allocate`  | PATCH                   | Allocate consultation slots                                 |
-| `/api/bookings/consultations/[consultationId]/validate`  | POST                    | Validate proposed slots                                     |
-| `/api/bookings/subscriptions`                            | GET, PATCH              | List subscriptions / update one status                      |
-| `/api/bookings/subscriptions/[subscriptionId]`           | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
-| `/api/bookings/subscriptions/[subscriptionId]/allocate`  | PATCH                   | Allocate subscription slots                                 |
-| `/api/bookings/subscriptions/[subscriptionId]/validate`  | POST                    | Validate proposed slots                                     |
-| `/api/bookings/webinars`                                 | GET, POST               | List / create a webinar                                     |
-| `/api/bookings/webinars/[webinarId]`                     | GET, PUT, DELETE        | Single webinar                                              |
-| `/api/bookings/webinars/[webinarId]/allocate`            | PATCH                   | Allocate the webinar's time slot                            |
-| `/api/bookings/webinars/[webinarId]/validate`            | POST                    | Validate webinar slots                                      |
-| `/api/bookings/webinars/crud-with-plan`                  | POST, PATCH             | Create/update webinar plus its plan                         |
-| `/api/bookings/classes`                                  | GET                     | List classes                                                |
-| `/api/bookings/classes/[classId]`                        | GET, PUT, DELETE        | Single class                                                |
-| `/api/bookings/classes/[classId]/allocate`               | PATCH                   | Allocate class sessions                                     |
-| `/api/bookings/classes/[classId]/validate`               | POST                    | Validate class slots                                        |
-| `/api/bookings/classes/crud-with-plan`                   | POST, PATCH             | Create/update class plus its plan                           |
-| `/api/appointments`                                      | GET                     | Scoped appointment list (`?orgScope=`, `?appointmentType=`) |
-| `/api/appointments/[appointmentId]`                      | GET                     | Single appointment detail                                   |
-| `/api/appointments/[appointmentId]/cancel`               | POST                    | Cancel an appointment                                       |
-| `/api/appointments/[appointmentId]/cancel/preview`       | GET                     | Quote the refund before cancelling                          |
-| `/api/appointments/[appointmentId]/reschedule`           | POST                    | Open a reschedule proposal                                  |
-| `/api/appointments/[appointmentId]/reschedule/respond`   | POST                    | Counterparty accepts or declines                            |
-| `/api/appointments/[appointmentId]/reschedule/withdraw`  | POST                    | Initiator takes their proposal back                         |
-| `/api/trials`                                            | GET, POST               | List / request a trial                                      |
-| `/api/trials/[trialId]`                                  | GET, PATCH, DELETE      | Read, schedule/accept/reject, delete                        |
-| `/api/slots/availability-with-allocation/[consultantId]` | GET                     | Grid of available and occupied slots                        |
-| `/api/slots/availability/weekly`                         | GET, POST               | List / create weekly availability rows                      |
-| `/api/slots/availability/weekly/[id]`                    | GET, PUT, PATCH, DELETE | One weekly row                                              |
-| `/api/slots/availability/custom`                         | GET, POST               | List / create custom availability rows                      |
-| `/api/slots/availability/custom/[id]`                    | GET, PUT, PATCH, DELETE | One custom row                                              |
-| `/api/slots/unallocated/weekly`                          | GET                     | Unallocated weekly slots                                    |
-| `/api/slots/unallocated/custom`                          | GET                     | Unallocated custom slots                                    |
-| `/api/slots/unallocated/[consultantId]`                  | GET                     | Unallocated slots for one consultant                        |
-| `/api/slots/appointments`                                | GET                     | List appointments with filters                              |
+| Route                                                         | Methods exported        | Purpose                                                     |
+| ------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
+| `/api/checkout`                                               | POST                    | Create a booking with payment                               |
+| `/api/checkout/pending/[paymentId]`                           | DELETE                  | Release your own pending hold early                         |
+| `/api/checkout/verify`                                        | GET                     | Verify a payment intent                                     |
+| `/api/scheduling/request-for-approval`                        | POST                    | Consultee requests a booking                                |
+| `/api/bookings/consultations`                                 | GET, PATCH              | List consultations / update one status                      |
+| `/api/bookings/consultations/[consultationId]`                | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
+| `/api/bookings/consultations/[consultationId]/allocate`       | PATCH                   | Allocate consultation slots                                 |
+| `/api/bookings/consultations/[consultationId]/validate`       | POST                    | Validate proposed slots                                     |
+| `/api/bookings/subscriptions`                                 | GET, PATCH              | List subscriptions / update one status                      |
+| `/api/bookings/subscriptions/[subscriptionId]`                | GET, PUT, PATCH, DELETE | Read, edit, transition; DELETE answers 405                  |
+| `/api/bookings/subscriptions/[subscriptionId]/allocate`       | PATCH                   | Allocate subscription slots                                 |
+| `/api/bookings/subscriptions/[subscriptionId]/validate`       | POST                    | Validate proposed slots                                     |
+| `/api/bookings/webinars`                                      | GET, POST               | List / create a webinar                                     |
+| `/api/bookings/webinars/[webinarId]`                          | GET, PUT, DELETE        | Single webinar                                              |
+| `/api/bookings/webinars/[webinarId]/allocate`                 | PATCH                   | Allocate the webinar's time slot                            |
+| `/api/bookings/webinars/[webinarId]/validate`                 | POST                    | Validate webinar slots                                      |
+| `/api/bookings/webinars/crud-with-plan`                       | POST, PATCH             | Create/update webinar plus its plan                         |
+| `/api/bookings/classes`                                       | GET                     | List classes                                                |
+| `/api/bookings/classes/[classId]`                             | GET, PUT, DELETE        | Single class                                                |
+| `/api/bookings/classes/[classId]/allocate`                    | PATCH                   | Allocate class sessions                                     |
+| `/api/bookings/classes/[classId]/validate`                    | POST                    | Validate class slots                                        |
+| `/api/bookings/classes/crud-with-plan`                        | POST, PATCH             | Create/update class plus its plan                           |
+| `/api/appointments`                                           | GET                     | Scoped appointment list (`?orgScope=`, `?appointmentType=`) |
+| `/api/appointments/[appointmentId]`                           | GET                     | Single appointment detail                                   |
+| `/api/appointments/[appointmentId]/cancel`                    | POST                    | Cancel an appointment                                       |
+| `/api/appointments/[appointmentId]/cancel/preview`            | GET                     | Quote the refund before cancelling                          |
+| `/api/appointments/[appointmentId]/reschedule`                | POST                    | Open a reschedule proposal                                  |
+| `/api/appointments/[appointmentId]/reschedule/respond`        | POST                    | Counterparty accepts or declines                            |
+| `/api/appointments/[appointmentId]/reschedule/withdraw`       | POST                    | Initiator takes their proposal back                         |
+| `/api/trials`                                                 | GET, POST               | List / request a trial                                      |
+| `/api/trials/[trialId]`                                       | GET, PATCH, DELETE      | Read, schedule/accept/reject, delete                        |
+| `/api/scheduling/availability-with-allocation/[consultantId]` | GET                     | Grid of available and occupied slots                        |
+| `/api/scheduling/availability/weekly`                         | GET, POST               | List / create weekly availability rows                      |
+| `/api/scheduling/availability/weekly/[id]`                    | GET, PUT, PATCH, DELETE | One weekly row                                              |
+| `/api/scheduling/availability/custom`                         | GET, POST               | List / create custom availability rows                      |
+| `/api/scheduling/availability/custom/[id]`                    | GET, PUT, PATCH, DELETE | One custom row                                              |
+| `/api/scheduling/unallocated/weekly`                          | GET                     | Unallocated weekly slots                                    |
+| `/api/scheduling/unallocated/custom`                          | GET                     | Unallocated custom slots                                    |
+| `/api/scheduling/unallocated/[consultantId]`                  | GET                     | Unallocated slots for one consultant                        |
+| `/api/scheduling/appointments`                                | GET                     | List appointments with filters                              |
 
 ## APPENDIX C: Key Dashboard Routes
 

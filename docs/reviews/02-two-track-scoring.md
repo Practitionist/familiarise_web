@@ -54,9 +54,9 @@ The constants live in `lib/reviews.ts`. The table below lists each one with its 
 
 They are code constants, not columns and not environment variables. A per-consultant column would invite tuning, which is exactly the gaming vector the thresholds exist to close, and an environment variable lets a preview deployment and production disagree about a number users can see. The same argument is made for the organisation's cohort floor in `lib/enterprise/quality-thresholds.ts`. A change to any of them is a code commit plus `npm run db:recompute-ratings`, and the change should be dated in this page's history, Steam-style.
 
-## The session's clock: `ratedSessionAt`
+## The session's clock: `ratedOccurrenceAt`
 
-`ratedSessionAt` is provenance: the end of the session the review followed, stamped from the run anchor's `endsAt` at write time. It no longer feeds a weight (#1566), and it is kept because it is the one column that dates the engagement rather than the row. On an edit it moves _with_ `appointmentId`, because they are one fact; it is skipped when unknown, so an offline session with no bounds does not erase a clock the row already had. `NULL` means legacy, or an offline session with no bounds. #1554 renames it `ratedOccurrenceAt`.
+`ratedOccurrenceAt` is provenance: the end of the session the review followed, stamped from the run anchor's `endsAt` at write time. It no longer feeds a weight (#1566), and it is kept because it is the one column that dates the engagement rather than the row. On an edit it moves _with_ `appointmentId`, because they are one fact; it is skipped when unknown, so an offline session with no bounds does not erase a clock the row already had. `NULL` means legacy, or an offline session with no bounds. #1554 renames it `ratedOccurrenceAt`.
 
 ## What the recompute writes
 
@@ -86,7 +86,7 @@ With no recency term, recompute-on-mutation is sufficient: a consultant who rece
 
 ## What the seed produces
 
-The review seed writes one review per held (consultant, consultee) pair on the track the session was, with `ratedSessionAt`, `ratingUnitId` for group events, a spread of anonymous reviews, replies, low-score causes and a few revisions, plus one private `AppointmentFeedback` row for about half the held calls. In `small` mode the appointment seed holds at most five past one-to-one clients and two past group events per consultant, so three consultants publish a one-to-one score and none publishes a group score; the group threshold of five events with five responses each needs the appointment volumes raised, not the constants lowered.
+The review seed writes one review per held (consultant, consultee) pair on the track the session was, with `ratedOccurrenceAt`, `ratingUnitId` for group events, a spread of anonymous reviews, replies, low-score causes and a few revisions, plus one private `AppointmentFeedback` row for about half the held calls. In `small` mode the appointment seed holds at most five past one-to-one clients and two past group events per consultant, so three consultants publish a one-to-one score and none publishes a group score; the group threshold of five events with five responses each needs the appointment volumes raised, not the constants lowered.
 
 ## Displaying one number
 

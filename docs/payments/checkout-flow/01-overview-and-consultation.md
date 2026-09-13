@@ -68,14 +68,14 @@ All bookings start as "tentative" (`isTentative: true`) until payment succeeds:
 
 ```typescript
 // During checkout
-SlotOfAppointment {
+AppointmentOccurrence {
   isTentative: true,  // Protects time slot during payment
   startsAt: appointmentTime,
   endsAt: appointmentTime + duration,
 }
 
 // After payment success (via webhook)
-UPDATE SlotOfAppointment
+UPDATE AppointmentOccurrence
 SET isTentative = false
 WHERE id = slotId
 ```
@@ -165,7 +165,7 @@ A checkout that is remounted, reopened in a new tab, or retried after the buyer 
 
 A candidate is adopted only when it is for the same booking as the current request. A consultation candidate must cover exactly the requested slot window, a subscription candidate must carry exactly the requested scheduling period, and every candidate's frozen amount must equal the total this request computed, so a changed coupon or credit balance can never be charged at a stale price. When a candidate is adopted, checkout returns the existing order id, amount and currency with `reused: true` and creates no second appointment and no second payment.
 
-Candidates that fail those gates are **superseded** rather than left open. Superseding runs in one transaction: the payment moves `PENDING` → `EXPIRED` through a compare-and-set that carries the old status in its `WHERE` clause, the appointment's tentative slots are cancelled through `transitionSlotCompletion()`, and the parent consultation or subscription is cancelled through its own guarded transition. Releasing the hold is not optional bookkeeping. If the payment were expired while its appointment kept occupying the calendar, the buyer's very next attempt would be rejected by the occupancy check above, which is the wall #1463 describes. Group events are excluded from the release because their slot rows are shared between attendees, so giving back a seat is a disconnect rather than a status move and belongs to the cancel-pending front door.
+Candidates that fail those gates are **superseded** rather than left open. Superseding runs in one transaction: the payment moves `PENDING` → `EXPIRED` through a compare-and-set that carries the old status in its `WHERE` clause, the appointment's tentative slots are cancelled through `transitionOccurrenceCompletion()`, and the parent consultation or subscription is cancelled through its own guarded transition. Releasing the hold is not optional bookkeeping. If the payment were expired while its appointment kept occupying the calendar, the buyer's very next attempt would be rejected by the occupancy check above, which is the wall #1463 describes. Group events are excluded from the release because their slot rows are shared between attendees, so giving back a seat is a disconnect rather than a status move and belongs to the cancel-pending front door.
 
 ---
 
@@ -312,7 +312,7 @@ This is the most critical part - **three-layer protection** against race conditi
 
 ```typescript
 // Lines 279-305
-const overlappingConfirmed = await tx.slotOfAppointment.findFirst({
+const overlappingConfirmed = await tx.appointmentOccurrence.findFirst({
   where: {
     AND: [
       { isTentative: false }, // Only confirmed bookings
@@ -366,7 +366,7 @@ Overlap if:
 const now = new Date();
 const fiveMinutesFromNow = new Date(now.getTime() + 5 * 60 * 1000);
 
-const userTentativeBookings = await tx.slotOfAppointment.findMany({
+const userTentativeBookings = await tx.appointmentOccurrence.findMany({
   where: {
     isTentative: true,
     user: {
@@ -436,7 +436,7 @@ for (const booking of userTentativeBookings) {
 // Lines 368-423
 const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
 
-const pendingAttempts = await tx.slotOfAppointment.count({
+const pendingAttempts = await tx.appointmentOccurrence.count({
   where: {
     isTentative: true,
     AND: [
@@ -518,7 +518,7 @@ const appointment = await tx.appointment.create({
   data: {
     appointmentType: AppointmentsType.CONSULTATION,
     consultationId: consultation.id,
-    slotsOfAppointment: {
+    appointmentOccurrences: {
       create: {
         startsAt: new Date(data.startsAt!),
         endsAt: new Date(data.endsAt!),
@@ -530,7 +530,7 @@ const appointment = await tx.appointment.create({
     },
   },
   include: {
-    slotsOfAppointment: true,
+    appointmentOccurrences: true,
   },
 });
 ```
@@ -542,7 +542,7 @@ Consultation (1)
   ↓
 Appointment (1)
   ↓
-SlotOfAppointment (1)
+AppointmentOccurrence (1)
   ↓
 User (1)
 ```
@@ -609,7 +609,7 @@ sequenceDiagram
         WH->>WH: createAppointmentFromWebhook()
         Note over WH: Appointment already exists<br/>(created during checkout)
         WH->>DB: Link Payment.appointmentId = appointment.id
-        WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false
+        WH->>DB: UPDATE AppointmentOccurrence<br/>SET isTentative = false
         WH->>DB: UPDATE Consultation<br/>SET status = APPROVED
         WH-->>PG: 200 OK
         PG->>U: Redirect to success page
@@ -618,11 +618,11 @@ sequenceDiagram
         WH->>DB: Update Payment (status: FAILED)
         WH->>DB: Count confirmed slots<br/>WHERE appointmentId = X<br/>AND isTentative = false
         alt No confirmed slots
-            WH->>DB: DELETE SlotOfAppointment (all)
+            WH->>DB: DELETE AppointmentOccurrence (all)
             WH->>DB: DELETE Consultation
             WH->>DB: DELETE Appointment
         else Has confirmed slots
-            WH->>DB: DELETE SlotOfAppointment<br/>WHERE isTentative = true
+            WH->>DB: DELETE AppointmentOccurrence<br/>WHERE isTentative = true
         end
         WH-->>PG: 200 OK
         PG->>U: Redirect to failure page
@@ -633,7 +633,7 @@ sequenceDiagram
 
 ✅ **Consultation = 1:1 relationship** at all levels
 
-- 1 Consultation → 1 Appointment → 1 SlotOfAppointment → 1 User
+- 1 Consultation → 1 Appointment → 1 AppointmentOccurrence → 1 User
 
 ✅ **Three-layer protection** prevents race conditions and double-booking
 
@@ -808,7 +808,7 @@ for (let i = 0; i < totalSessions; i++) {
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
-      slotsOfAppointment: {
+      appointmentOccurrences: {
         create: {
           startsAt: sessionStart,
           endsAt: sessionEnd,
@@ -872,22 +872,22 @@ Subscription
 ├─ Appointment 1 (Week 1, Session 1)
 │  ├─ appointmentType: SUBSCRIPTION
 │  ├─ subscriptionId: sub_123
-│  └─ SlotOfAppointment
+│  └─ AppointmentOccurrence
 │     ├─ startsAt: 2025-01-15 10:00
 │     ├─ endsAt: 2025-01-15 11:00
 │     ├─ isTentative: true
 │     └─ userId: user_abc
 │
 ├─ Appointment 2 (Week 1, Session 2)
-│  └─ SlotOfAppointment { ... isTentative: true }
+│  └─ AppointmentOccurrence { ... isTentative: true }
 │
 ├─ Appointment 3 (Week 2, Session 1)
-│  └─ SlotOfAppointment { ... isTentative: true }
+│  └─ AppointmentOccurrence { ... isTentative: true }
 │
 ├─ ... (continues for all 26 sessions)
 │
 └─ Appointment 26 (Week 13, Session 2)
-   └─ SlotOfAppointment { ... isTentative: true }
+   └─ AppointmentOccurrence { ... isTentative: true }
 ```
 
 ### Payment Success Impact
@@ -896,7 +896,7 @@ When payment succeeds, **ALL appointments** are confirmed together:
 
 ```typescript
 // Webhook handler
-UPDATE SlotOfAppointment
+UPDATE AppointmentOccurrence
 SET isTentative = false
 WHERE appointmentId IN (
   SELECT id FROM Appointment WHERE subscriptionId = 'sub_123'
@@ -909,7 +909,7 @@ WHERE id = 'sub_123'
 
 **Result:**
 
-- 26 SlotOfAppointment records: isTentative `true` → `false`
+- 26 AppointmentOccurrence records: isTentative `true` → `false`
 - Subscription: `status` `PENDING` → `APPROVED` (enum `AppointmentStatus`)
 - User immediately sees all 26 sessions in their dashboard
 
@@ -943,7 +943,7 @@ sequenceDiagram
         Note over CO,DB: Loop 26 times (once per session)
         loop For each session (0 to 25)
             CO->>CO: Calculate session date<br/>weekOffset = floor(i / 2)<br/>date = firstDate + (weekOffset * 7)
-            CO->>DB: Create Appointment<br/>+ SlotOfAppointment<br/>(isTentative: true)
+            CO->>DB: Create Appointment<br/>+ AppointmentOccurrence<br/>(isTentative: true)
         end
     end
 
@@ -964,7 +964,7 @@ sequenceDiagram
 
     rect rgb(250, 220, 200)
         Note over WH,DB: Confirm ALL 26 sessions at once
-        WH->>DB: UPDATE SlotOfAppointment<br/>SET isTentative = false<br/>WHERE appointmentId IN<br/>  (SELECT id FROM Appointment<br/>   WHERE subscriptionId = 'sub_123')
+        WH->>DB: UPDATE AppointmentOccurrence<br/>SET isTentative = false<br/>WHERE appointmentId IN<br/>  (SELECT id FROM Appointment<br/>   WHERE subscriptionId = 'sub_123')
     end
 
     WH->>DB: UPDATE Subscription<br/>SET status = APPROVED
@@ -994,7 +994,7 @@ sequenceDiagram
 
 - User should be able to mark session as "skipped"
 - Consultant may allow rescheduling
-- Would need additional status field on SlotOfAppointment
+- Would need additional status field on AppointmentOccurrence
 
 #### What if user cancels mid-subscription?
 

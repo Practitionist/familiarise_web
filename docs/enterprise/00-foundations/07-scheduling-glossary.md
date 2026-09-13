@@ -1,86 +1,104 @@
 ---
-title: Slots and sessions — the canonical glossary
+title: The scheduling glossary
 band: 00-foundations
 audience: sde3
 status: live
-last-reviewed: 2026-07-31
+last-reviewed: 2026-09-14
 ---
 
-# Slots and sessions — the canonical glossary
+# The scheduling glossary
 
-Eight distinct concepts hide behind the words "slot" and "session" in this
-codebase, and the June 2026 domain audit confirmed that the blur has caused
-real bugs and real review confusion. This glossary fixes one true name per
-concept. The convention going forward: the chain is **availability window →
-bookable slot → booked slot → appointment → engagement → meeting**, with
-trials and auth sessions as separate things. The bare word "session" names no
-concept in that chain — see "The colloquial traps" for the one place the
-`session*` prefix is deliberate.
+Eight distinct concepts used to hide behind the words "slot" and "session" in
+this codebase, and the June 2026 domain audit found that the blur had caused
+real bugs and real review confusion. Issue #1554 finished the fix that audit
+started: the two words are now retired as identifiers everywhere except
+Better Auth's own `Session` model, and `scripts/ci/check-terminology.ts`
+fails the build if either word comes back. The chain going forward is
+**availability window → bookable interval → appointment occurrence →
+appointment → engagement → meeting**, with trials and auth sessions as
+separate things.
 
 ## The eight concepts
 
 **Availability window.** The hours a consultant offers, never booked
-directly. Implemented by `SlotOfAvailabilityWeekly` (recurring, with a frozen
+directly. Implemented by `AvailabilityWindowWeekly` (recurring, with a frozen
 `utcOffsetMinutes` — the #503 DST fragility lives here) and
-`SlotOfAvailabilityCustom` (one-off). Consultants create and edit these; the
-slot computation pipeline only reads them.
+`AvailabilityWindowCustom` (one-off). Consultants create and edit these; the
+scheduling engine only reads them.
 
-**Bookable slot** (transient). A computed, plan-duration-sized cut of
+**Bookable interval** (transient). A computed, plan-duration-sized cut of
 availability shown in the picker. It exists only between the availability
-fetch and the checkout submit, implemented by the `ProcessedSlot`/`TimeSlot`
-shapes in `utils/timeSlotsProcessing.ts` and `TSlotTiming` in
-`types/slots.ts`. It carries the `slotOfAvailabilityId` binding that the
-#788 merge guard protects.
+fetch and the checkout submit, implemented by the `AvailabilityInterval` shape
+in `utils/scheduling-engine/intervals.ts` and the `TIntervalTiming` type the
+picker receives it as. It carries the `availabilityId` binding that the #788
+merge guard protects.
 
-**Booked slot.** One concrete reserved time instance inside an appointment —
-the atomic scheduling unit. Implemented by `SlotOfAppointment`:
-`isTentative` flips false at webhook confirmation, `completionStatus` walks
-SCHEDULED → COMPLETED/UNVERIFIED/CANCELLED/RESCHEDULED, and the m:n `user` relation
-links booker and consultant (load-bearing for the #827 double-booking
-guard — never treat it as dead code).
+**Appointment occurrence.** One row per held call — the atomic scheduling
+unit, and the unit an engagement or a review is ultimately about.
+Implemented by `AppointmentOccurrence`: `ordinal` is its 1-based position
+within the appointment and a rescheduled call keeps its number rather than
+being renumbered; `isTentative` flips false at webhook confirmation;
+`completionStatus` (`OccurrenceCompletionStatus`) walks SCHEDULED →
+COMPLETED/UNVERIFIED/CANCELLED/RESCHEDULED. There are no 30-minute atom rows
+underneath it — the reset deleted that layer. `AppointmentParticipant` is the
+only participant list; the old implicit slot↔user join table is gone.
 
-**Appointment.** The polymorphic wrapper grouping one or more booked slots
-under exactly one of consultation, subscription, webinar, class, or trial.
-Tentative-created at checkout, confirmed by the payment webhook,
-auto-completed by cron.
+**Appointment.** The polymorphic wrapper grouping one or more appointment
+occurrences under exactly one of consultation, subscription, webinar, class,
+or trial, and — since the 2026-09-12 decision — exactly one purchase per
+appointment (`Appointment.subscriptionId` and `Appointment.classId` are
+`@unique`; the old multi-purchase "siblings" payload is gone). Tentative-
+created at checkout, confirmed by the payment webhook, auto-completed by
+cron.
 
-**Engagement.** The enterprise consumption unit: one appointment booked
-under an org program, metered by `engagementsUsed` on the program
-assignment. This is the billing meter — when enterprise code says
-"engagement," it means money. Consumption is currently hardcoded to one per
-booking regardless of session count (#710).
+**Engagement.** The enterprise consumption unit: one appointment booked under
+an org program, metered by `engagementsUsed` on the program assignment. This
+is the billing meter — when enterprise code says "engagement," it means
+money. Consumption is currently hardcoded to one per booking regardless of
+occurrence count (#710).
 
-**Meeting.** The Stream.io video call record for one booked slot
-(`MeetingSession`, created lazily at "Start Call," not at confirmation). A
-confirmed slot without a meeting is a valid state.
+**Meeting.** The Stream.io video call record for one appointment occurrence
+(`Meeting`, created lazily at "Start Call," not at confirmation, with the
+Stream call id `occurrence-<id>` or `occurrence-<id>-r<suffix>` after a
+rebuild). A confirmed occurrence without a meeting is a valid state.
+`MeetingAttendance` is keyed to the occurrence itself
+(`appointmentOccurrenceId`), so the "were you there" gate does not have to
+join through `Meeting`.
 
-**Trial.** A trial booking (`TrialSession`), optionally org-attributed
-via `organizationId` — pure attribution for conversion analytics. The org
-attribution itself carries no referral or money logic; a paid trial
-charges the consultee directly, never the org.
+**Trial.** A trial booking (`Trial`, `TrialStatus`), optionally
+org-attributed via `organizationId` — pure attribution for conversion
+analytics. The org attribution itself carries no referral or money logic; a
+paid trial charges the consultee directly, never the org.
 
-**Auth session.** BetterAuth's `Session` model. Nothing to do with
-scheduling; never rename anything else to "Session."
+**Auth session.** Better Auth's `Session` model and the `useSession` hook.
+Nothing to do with scheduling, untouched by #1554, and nothing else may ever
+be renamed to "Session."
 
-## The colloquial traps
+## The customer-facing word
 
-The plan fields `sessionDurationInHours`, `totalSessions` and `sessionsPerWeek`
-mean *meeting occurrences per plan* — they are appointment-adjacent counts, not
-video calls and not auth sessions. The first two predate this glossary and are
-kept under the schema freeze; `sessionsPerWeek` joined them via ADR 24, which
-unified `SubscriptionPlan.callsPerWeek` and `ClassPlan.meetingsPerWeek` under one
-name (#1011). This document is their disambiguation.
+Customer-facing copy is still allowed to say "session" for one occurrence of
+a call — that word choice is a product decision, not a code identifier, and
+`scripts/ci/check-terminology.ts` only scans identifiers and known routes,
+never prose the customer reads. In code, "session" as a concept maps to
+`AppointmentOccurrence`; none of the pre-#1554 "slot of appointment,"
+"meeting session," "trial session," "session type," or "session view-model"
+names remain anywhere in this repository, and a pull request that
+reintroduces one of them is a bug report against itself — the guard fails
+the build on the retired identifier list it carries.
 
-So "session" is barred as a *concept or model name* — there is no `Session` in
-the scheduling chain, and nothing else may be renamed to it — while the
-`session*` prefix on these plan-side counts is deliberate and settled. User-facing
-copy should say "session" for one occurrence of a recurring plan, never "call"
-(which means the Stream video record) or "meeting".
+The plan fields `sessionDurationInHours`, `totalSessions` and
+`sessionsPerWeek` mean *occurrences per plan* — they are appointment-adjacent
+counts, not video calls and not auth sessions. The first two predate this
+glossary and are kept under the schema freeze; `sessionsPerWeek` joined them
+via ADR 24, which unified `SubscriptionPlan.callsPerWeek` and
+`ClassPlan.meetingsPerWeek` under one name (#1011). This document is their
+disambiguation, and they are not renamed by #1554 because they are plan-shape
+fields, not the retired scheduling identifiers.
 
-"Enterprise referrals" is not a feature. The phrase has been used loosely
-for three unrelated real things: trial attribution
-(`TrialSession.organizationId`), the deliberate rule that personal referral
-credits are force-disabled on org-funded bookings (`fundingSource !==
-"PERSONAL"`), and B2C consultant qualification events. The June 2026
-decision: retire the phrase; org-level acquisition incentives, if ever
-wanted, are a new post-launch-schema subsystem.
+"Enterprise referrals" is not a feature. The phrase has been used loosely for
+three unrelated real things: trial attribution (`Trial.organizationId`), the
+deliberate rule that personal referral credits are force-disabled on
+org-funded bookings (`fundingSource !== "PERSONAL"`), and B2C consultant
+qualification events. The June 2026 decision: retire the phrase; org-level
+acquisition incentives, if ever wanted, are a new post-launch-schema
+subsystem.

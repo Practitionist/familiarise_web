@@ -1,12 +1,12 @@
 # Slot Math & Calculations
 
-All slot math lives in `utils/slotAllocation/SlotCalculationService.ts`.
+All slot math lives in `utils/scheduling-engine/ScheduleCalculationService.ts`.
 
 ## Fundamentals
 
 Every time slot in the system is a **30-minute atomic unit**.
 
-- `SLOT_DURATION_MS = 30 * 60 * 1000` (1,800,000 ms)
+- `SCHEDULING_INTERVAL_MS = 30 * 60 * 1000` (1,800,000 ms)
 - 48 intervals per day (24h / 0.5h)
 - `slotsPerSession = Math.ceil(sessionDurationInHours / 0.5)`
 
@@ -30,7 +30,7 @@ A one-hour consultation is two rows, a four-hour consultation is eight, and in b
 
 ### `groupSlotsIntoRuns` Is the Single Definition
 
-`groupSlotsIntoRuns` in `lib/appointments/slots.ts` is the one place that decides what counts as a session. Any surface that needs to answer "which rows make up this session?" must call it rather than walking the rows itself. It encodes four rules, in this order.
+`groupSlotsIntoRuns` in `lib/appointments/occurrences.ts` is the one place that decides what counts as a session. Any surface that needs to answer "which rows make up this session?" must call it rather than walking the rows itself. It encodes four rules, in this order.
 
 1. Bucket the rows by `appointmentId`, so two different bookings can never merge. A row with no appointment becomes its own bucket rather than pooling with every other orphan.
 2. Sort each bucket by start time, because the rows arrive from Prisma and from API payloads in no guaranteed order.
@@ -43,9 +43,9 @@ The run's first row is its **anchor**, and it is the only row anything may be ke
 
 ### Why the Walk Exists Rather Than Keying on `appointmentId`
 
-One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it was historically violated in two places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment (seed-only). The planner webinar/class path used to write one long slot or move only `slotsOfAppointment[0]` (#1071).
+One appointment per session is the designed model, and the allocator enforces it on every path that creates a booking. It is not, however, enforced by the schema, and it was historically violated in two places. `prisma/seedFiles/6a-create-appointments.ts:368` attaches weeks-apart sessions to a single appointment (seed-only). The planner webinar/class path used to write one long slot or move only `appointmentOccurrences[0]` (#1071).
 
-**Planner create** for both webinars and classes now goes through `lib/appointments/contiguous-slot-run.ts` (`buildContiguousSlotAtoms`) and writes a contiguous N×30min run. **Planner PATCH** differs by type: webinar `crud-with-plan` rewrites the live run via `replaceContiguousSlotRun` (in-place reconcile — update overlapping ids, create the delta, soft-retire surplus as `RESCHEDULED` — so `MeetingSession` / `Recording` cascades are not tripped). Class `crud-with-plan` PATCH does **not** rewrite slot times when `sessionDurationInHours` changes; allocated class sessions keep their existing run length until a future allocator/reschedule path moves them.
+**Planner create** for both webinars and classes now goes through `lib/appointments/occurrences.ts` (`buildContiguousSlotAtoms`) and writes a contiguous N×30min run. **Planner PATCH** differs by type: webinar `crud-with-plan` rewrites the live run via `replaceContiguousSlotRun` (in-place reconcile — update overlapping ids, create the delta, soft-retire surplus as `RESCHEDULED` — so `Meeting` / `Recording` cascades are not tripped). Class `crud-with-plan` PATCH does **not** rewrite slot times when `sessionDurationInHours` changes; allocated class sessions keep their existing run length until a future allocator/reschedule path moves them.
 
 If sessions were keyed on `appointmentId` alone, both of those cases would collapse unrelated sessions into one shared video room. That is a cross-session privacy leak rather than a cosmetic defect, so the contiguity walk is load-bearing and must not be simplified away.
 
@@ -59,7 +59,7 @@ Three things derive from runs and never from individual rows.
 
 ## The Join Gate
 
-Whether a person may open the video room for a booking is decided by three independent questions, and every surface that renders a Join affordance must ask all three. They live in `lib/appointments/slots.ts` and `lib/appointments/status.ts` so that no page has to answer them for itself.
+Whether a person may open the video room for a booking is decided by three independent questions, and every surface that renders a Join affordance must ask all three. They live in `lib/appointments/occurrences.ts` and `lib/appointments/status.ts` so that no page has to answer them for itself.
 
 ### Is the session inside its window?
 
@@ -70,9 +70,9 @@ Whether a person may open the video room for a booking is decided by three indep
 | `CONSULTEE_JOIN_WINDOW_MS`  | 10 minutes | Learners, on every consultee and organization-member surface.             |
 | `CONSULTANT_JOIN_WINDOW_MS` | 15 minutes | Hosts, so that they can be in the room before the first attendee arrives. |
 
-Both constants are exported from `lib/appointments/slots.ts` and every caller imports one of them. Declaring the value locally is what #1270 removed: six surfaces had each written their own, landing on four different answers, so the same booking opened at four different times depending on which page the user happened to be looking at. The planner in particular gave a host a ten-minute window while the appointments list beside it gave the same host fifteen.
+Both constants are exported from `lib/appointments/occurrences.ts` and every caller imports one of them. Declaring the value locally is what #1270 removed: six surfaces had each written their own, landing on four different answers, so the same booking opened at four different times depending on which page the user happened to be looking at. The planner in particular gave a host a ten-minute window while the appointments list beside it gave the same host fifteen.
 
-An `ended` session is not merely one whose clock has run out. When the host closes the call, the `MeetingSession` row records `endedAt`, and from that moment the session is over even though its slot rows still run for another forty minutes. Any surface that compares only `startsAt` and `endsAt` will keep offering Join for the rest of the booked hour and will drop whoever clicks it into a fresh, empty room. That is the defect `getSessionVMJoinState` exists to prevent for the mapper-emitted `SessionVM` rows that the session timeline renders.
+An `ended` session is not merely one whose clock has run out. When the host closes the call, the `Meeting` row records `endedAt`, and from that moment the session is over even though its slot rows still run for another forty minutes. Any surface that compares only `startsAt` and `endsAt` will keep offering Join for the rest of the booked hour and will drop whoever clicks it into a fresh, empty room. That is the defect `getOccurrenceVMJoinState` exists to prevent for the mapper-emitted `OccurrenceVM` rows that the session timeline renders.
 
 ### Is the booking confirmed?
 
@@ -149,7 +149,7 @@ The hardcoded `* 4` approximation is wrong for anything beyond short durations:
 | 6 months  | 24 weeks     | 26-27 weeks           | 2-3   |
 | 12 months | 48 weeks     | 52-53 weeks           | 4-5   |
 
-Always use `SlotCalculationService.countWeeks()`.
+Always use `ScheduleCalculationService.countWeeks()`.
 
 ## Total Slots Required
 
@@ -164,7 +164,7 @@ Always use `SlotCalculationService.countWeeks()`.
 
 ## Consecutive Slot Validation
 
-**`validateConsecutiveSlots(slots)`** in `SlotValidationService`:
+**`validateConsecutiveSlots(slots)`** in `ScheduleValidationService`:
 
 1. Sort slots by time
 2. For each adjacent pair: check `|current.time - (prev.time + 30min)| <= 1 second`
@@ -193,7 +193,7 @@ flowchart LR
 
 ### `dayKey(date, timeZone?)` and `weekKey(date, timeZone?)`
 
-These two helpers are the canonical bucketing keys for every daily and weekly limit (ADR B9). Both return `YYYY-MM-DD` calendar dates evaluated in the event's scheduling timezone — `dayKey` the date containing the instant, `weekKey` the date of the Sunday that starts its week. The timezone defaults to `SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE` (Asia/Kolkata) and is overridden by the event's `schedulingTimezone` column. The client's interactive guards, the auto-allocation algorithm, and the server validators all bucket with these keys, so their verdicts cannot diverge by machine timezone. `startOfWeekSundayInTz(date, timeZone?)` returns the same week boundary as a UTC instant for code that needs Date ranges (the weekly-info generator).
+These two helpers are the canonical bucketing keys for every daily and weekly limit (ADR B9). Both return `YYYY-MM-DD` calendar dates evaluated in the event's scheduling timezone — `dayKey` the date containing the instant, `weekKey` the date of the Sunday that starts its week. The timezone defaults to `ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE` (Asia/Kolkata) and is overridden by the event's `schedulingTimezone` column. The client's interactive guards, the auto-allocation algorithm, and the server validators all bucket with these keys, so their verdicts cannot diverge by machine timezone. `startOfWeekSundayInTz(date, timeZone?)` returns the same week boundary as a UTC instant for code that needs Date ranges (the weekly-info generator).
 
 ### `groupSlotsByDay(slots, timeZone?)`
 
@@ -243,7 +243,7 @@ flowchart TD
     E -->|No| G[Select only clicked slot, show warning]
 ```
 
-This feature applies to all event types where `slotsPerSession > 1`. Implementation is in `useSlotAllocation.ts` within the `toggleSlot()` function.
+This feature applies to all event types where `slotsPerSession > 1`. Implementation is in `useScheduling.ts` within the `toggleSlot()` function.
 
 ## Duration Validation
 
@@ -260,7 +260,7 @@ This prevents division-by-zero, infinite loops, and negative slot counts in `cal
 
 ## Availability windows are contiguous, and validation is a union (#1320)
 
-A consultant's published availability is stored as one `SlotOfAvailabilityWeekly` row per contiguous window, up to the twelve-hour bound that `isValidTimeRange` enforces on a single row, beyond which the fold starts a new row and the booking still spans both through the union check described below. Every save path merges exactly-adjacent same-day rows before writing, so an entry of "3:30–4:30" followed by "4:30–5:30" lands as one "3:30–5:30" row, and a one-off script folds rows that already exist. The booking generator merges consecutive available atoms regardless of which row produced them, and checkout validates a booking window by requiring that every thirty-minute atom of the window falls inside some published row, weekly or custom, rather than inside the single row the client named. The named row id still proves ownership and catches a soft-deleted profile, but it is no longer the boundary of what can be booked. This is what makes a two-hour plan bookable inside a two-hour block that the expert page draws as one, which was not the case while the generator and checkout were row-bound.
+A consultant's published availability is stored as one `AvailabilityWindowWeekly` row per contiguous window, up to the twelve-hour bound that `isValidTimeRange` enforces on a single row, beyond which the fold starts a new row and the booking still spans both through the union check described below. Every save path merges exactly-adjacent same-day rows before writing, so an entry of "3:30–4:30" followed by "4:30–5:30" lands as one "3:30–5:30" row, and a one-off script folds rows that already exist. The booking generator merges consecutive available atoms regardless of which row produced them, and checkout validates a booking window by requiring that every thirty-minute atom of the window falls inside some published row, weekly or custom, rather than inside the single row the client named. The named row id still proves ownership and catches a soft-deleted profile, but it is no longer the boundary of what can be booked. This is what makes a two-hour plan bookable inside a two-hour block that the expert page draws as one, which was not the case while the generator and checkout were row-bound.
 
 ## Projecting a weekly row onto real dates (#1342, #1343)
 
@@ -274,7 +274,7 @@ An Asia/Kolkata row published for Monday 01:00–05:00 stores `startDay = MONDAY
 
 `utils/schedule/weekly-projection.ts` is that one place. It exports `utcStartDayIndex` for the weekday, `weeklyRowDurationMinutes` for the overnight-aware length (`1440 − start + end` when the row crosses midnight in UTC, `end − start` otherwise), and `weeklyRowOccurrencesInRange(row, rangeStartUtc, rangeEndUtc)`, which walks the range one UTC day at a time and emits every occurrence as a half-open `[start, end)` pair. The walk begins one UTC day before the range so that an overnight occurrence which started before the window keeps the part of its tail that falls inside it, and each candidate is kept only when it genuinely overlaps. The module holds a type-only Prisma import and no Sentry, Prisma or date-fns dependency, so the grid, the allocator, the jsdom tests and the client bundle can all share the same generator.
 
-Two surfaces consume it and they must never diverge. `processWeeklySlots` (`utils/timeSlotsProcessing.ts`) generates the calendar grid, and `SlotAllocationService.findAvailableSlots` generates the allocator's candidates; checkout then re-checks each atom through `isMinuteWithinWeeklySlot`, which derives the weekday through the very same helper. The rule to hold onto when changing any of them is that the grid must offer only atoms the validator accepts, and `__tests__/booking-algorithm/weekly-day-semantics.test.ts` asserts exactly that for the IST pre-dawn row that broke it, for an `Asia/Kolkata` and an `America/New_York` viewer alike.
+Two surfaces consume it and they must never diverge. `processWeeklySlots` (`utils/timeSlotsProcessing.ts`) generates the calendar grid, and `SchedulingService.findAvailableSlots` generates the allocator's candidates; checkout then re-checks each atom through `isMinuteWithinWeeklySlot`, which derives the weekday through the very same helper. The rule to hold onto when changing any of them is that the grid must offer only atoms the validator accepts, and `__tests__/booking-algorithm/weekly-day-semantics.test.ts` asserts exactly that for the IST pre-dawn row that broke it, for an `Asia/Kolkata` and an `America/New_York` viewer alike.
 
 Segmenting those occurrences for display is a separate step with its own boundary rule. `splitSlotsByDay` cuts a generated window at each local calendar-day boundary, and the segments are **half-open**: a segment ends at the next day's local midnight, not at 23:59:59.999. The earlier closed bound cost a millisecond at the end of every block that ran to midnight, and a 23:30–23:59:59.999 remainder is not a thirty-minute atom, so a consultant who published up to local midnight silently lost their final bookable slot on every surface (#1415).
 

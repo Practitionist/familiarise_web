@@ -934,7 +934,7 @@ export async function checkRedisHealth(): Promise<boolean> {
 ### Issue #11: Hardcoded Slot Duration
 
 **Severity:** Medium
-**Location:** `utils/slotAllocation/SlotValidationService.ts`
+**Location:** `utils/scheduling-engine/ScheduleValidationService.ts`
 
 #### Problem Description
 
@@ -976,7 +976,7 @@ private async validateNoConflicts(
 | #8    | High     | FIXED      | `lib/payments/webhooks/handlers.ts`             |
 | #10   | High     | FIXED      | `jobs/cleanup-abandoned-payments.ts`            |
 | #12   | High     | FIXED      | `lib/redis.ts`                                  |
-| #11   | Medium   | FIXED      | `utils/slotAllocation/SlotValidationService.ts` |
+| #11   | Medium   | FIXED      | `utils/scheduling-engine/ScheduleValidationService.ts` |
 
 ---
 

@@ -537,7 +537,7 @@ Problem: Both payments created because validation doesn't see pending payments!
 
 **Why it fails:**
 
-- Validation checks `SlotOfAppointment` table
+- Validation checks `AppointmentOccurrence` table
 - Payments are in `Payment` table
 - No connection until webhook fires
 - Race window between payment creation and appointment creation
@@ -569,7 +569,7 @@ const appointment = await tx.appointment.create({
   data: {
     appointmentType: "CONSULTATION",
     consultationId: consultation.id,
-    slotsOfAppointment: {
+    appointmentOccurrences: {
       create: {
         startsAt: slotStart,
         endsAt: slotEnd,
@@ -580,7 +580,7 @@ const appointment = await tx.appointment.create({
 });
 
 // Validation sees tentative appointments
-const existingBooking = await tx.slotOfAppointment.findFirst({
+const existingBooking = await tx.appointmentOccurrence.findFirst({
   where: {
     startsAt: { lte: slotStart },
     endsAt: { gt: slotStart },
@@ -736,7 +736,7 @@ describe("Concurrent Checkout", () => {
     expect(failures).toHaveLength(1);
 
     // Database should have exactly one booking
-    const bookings = await db.slotOfAppointment.findMany({
+    const bookings = await db.appointmentOccurrence.findMany({
       where: { startsAt: new Date(slotTime) },
     });
     expect(bookings).toHaveLength(1);

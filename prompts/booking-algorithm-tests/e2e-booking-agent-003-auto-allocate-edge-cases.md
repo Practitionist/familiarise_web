@@ -28,7 +28,7 @@ All test data uses the `-003` suffix to avoid collisions with existing `-001` / 
 
 ## Background: What Auto Allocate Does
 
-`SlotAllocationService.autoAllocate()` picks slots on behalf of the consultant without
+`SchedulingService.autoAllocate()` picks slots on behalf of the consultant without
 them manually choosing times.
 
 | Behaviour                    | Webinar                                                                                                             | Class                                                      |
@@ -43,7 +43,7 @@ them manually choosing times.
 
 **Critical source files:**
 
-- `utils/slotAllocation/SlotAllocationService.ts` — `autoAllocate()`, reached through the public `allocate()` entry point via `dispatch`
+- `utils/scheduling-engine/SchedulingService.ts` — `autoAllocate()`, reached through the public `allocate()` entry point via `dispatch`
 - `app/api/bookings/webinars/[webinarId]/allocate/route.ts`
 - `app/api/bookings/classes/[classId]/allocate/route.ts`
 - `schemas/slotAllocation/validationSchemas.ts`
@@ -64,7 +64,7 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - Timestamps → `timestamptz` columns, stored as UTC
 - `priceCurrency` (not `currency`) on `WebinarPlan` / `ClassPlan`
 - `ConsulteeProfile` requires `userId` (NOT NULL) — create User first
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
 
 ### Step 0.1 — Domain + SubDomain
 
@@ -163,7 +163,7 @@ WHERE u.email = 'testconsultee003@familiarise.com';
 --             17:00 IST = 11:30 UTC = 690 min
 -- This gives a 7.5h window = 15 × 30-min slots per day
 
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -177,7 +177,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Verify: should return 5 rows, each with startTimeUtc=240, endTimeUtc=690
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-003'
 ORDER BY "startDay";
 ```
@@ -293,7 +293,7 @@ Run these SELECT queries and confirm all rows exist before proceeding:
 
 ```sql
 SELECT
-  (SELECT COUNT(*) FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-003') AS weekly_avail,
+  (SELECT COUNT(*) FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-003') AS weekly_avail,
   (SELECT COUNT(*) FROM "Webinar" WHERE id IN ('test-webinar-003', 'test-webinar-003b'))                        AS webinars,
   (SELECT COUNT(*) FROM "Class"   WHERE id IN ('test-class-003', 'test-class-003b'))                            AS classes;
 -- Expected: weekly_avail=5, webinars=2, classes=2
@@ -344,17 +344,17 @@ async () => {
 ```
 
 **Expected:** HTTP 200, response body has `data` array with exactly 1 appointment,
-`data[0].slotsOfAppointment.length === 4`, all slots have `isTentative: false`.
+`data[0].appointmentOccurrences.length === 4`, all slots have `isTentative: false`.
 
 **Verify consecutiveness in response:** For i = 0, 1, 2:
-`data[0].slotsOfAppointment[i].endsAt === data[0].slotsOfAppointment[i+1].startsAt`
+`data[0].appointmentOccurrences[i].endsAt === data[0].appointmentOccurrences[i+1].startsAt`
 
 **DB verify:**
 
 ```sql
 SELECT a.id, COUNT(s.id) AS slot_count, BOOL_AND(NOT s."isTentative") AS all_confirmed
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 WHERE a."webinarId" = 'test-webinar-003'
 GROUP BY a.id;
 -- Expected: 1 row, slot_count=4, all_confirmed=true
@@ -368,7 +368,7 @@ SELECT
   s."endsAt",
   LEAD(s."startsAt") OVER (ORDER BY s."startsAt") AS next_slot_starts,
   s."endsAt" = LEAD(s."startsAt") OVER (ORDER BY s."startsAt") AS is_consecutive
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."webinarId" = 'test-webinar-003'
 ORDER BY s."startsAt";
@@ -407,7 +407,7 @@ SELECT COUNT(DISTINCT a.id) AS apt_count, SUM(slot_count) AS total_slots
 FROM (
   SELECT a.id, COUNT(s.id) AS slot_count
   FROM "Appointment" a
-  JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+  JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
   WHERE a."webinarId" = 'test-webinar-003'
   GROUP BY a.id
 ) sub;
@@ -451,8 +451,8 @@ WHERE a."webinarId" = 'test-webinar-003';
 ```sql
 SELECT a.id AS apt_id, COUNT(DISTINCT sou."B") AS linked_users
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
-JOIN "_SlotOfAppointmentToUser" sou ON sou."A" = s.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
+JOIN "_AppointmentParticipant" sou ON sou."A" = s.id
 JOIN users u ON u.id = sou."B"
 WHERE a."webinarId" = 'test-webinar-003'
   AND u.email = 'testconsultee003@familiarise.com'
@@ -490,7 +490,7 @@ all slots `isTentative: false`.
 ```sql
 SELECT a.id, COUNT(s.id) AS slot_count, BOOL_AND(NOT s."isTentative") AS all_confirmed
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 WHERE a."classId" = 'test-class-003'
 GROUP BY a.id
 ORDER BY MIN(s."startsAt");
@@ -503,12 +503,12 @@ ORDER BY MIN(s."startsAt");
 SELECT
   date_trunc('week', s."startsAt") AS week_start,
   COUNT(DISTINCT a.id)              AS sessions_this_week
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."classId" = 'test-class-003'
   AND s."startsAt" = (
     SELECT MIN(s2."startsAt")
-    FROM "SlotOfAppointment" s2
+    FROM "AppointmentOccurrence" s2
     WHERE s2."appointmentId" = a.id
   )
 GROUP BY 1
@@ -516,7 +516,7 @@ ORDER BY 1;
 -- Expected: all sessions_this_week values ≤ 2
 ```
 
-**If any week shows > 2 sessions, this is a bug — fix `autoAllocate()` in `SlotAllocationService.ts` immediately.**
+**If any week shows > 2 sessions, this is a bug — fix `autoAllocate()` in `SchedulingService.ts` immediately.**
 
 ### Test 3.3 — UI Verify (Appointments Page)
 
@@ -557,8 +557,8 @@ async () => {
 ```sql
 SELECT a.id, COUNT(DISTINCT sou."B") AS linked_users
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
-JOIN "_SlotOfAppointmentToUser" sou ON sou."A" = s.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
+JOIN "_AppointmentParticipant" sou ON sou."A" = s.id
 WHERE a."classId" = 'test-class-003'
 GROUP BY a.id
 ORDER BY a.id;
@@ -651,7 +651,7 @@ async () => {
 disregarded. The system finds its own consecutive block and returns valid allocation data.
 
 **Confirm the returned slots are NOT `2020-01-01T04:00:00.000Z`:**
-Check `data[0].slotsOfAppointment[0].startsAt > "2026-01-01T00:00:00.000Z"` in the response.
+Check `data[0].appointmentOccurrences[0].startsAt > "2026-01-01T00:00:00.000Z"` in the response.
 
 **DB verify — still only 1 appointment (re-allocation replaced the previous one):**
 
@@ -674,7 +674,7 @@ SELECT
 FROM "Appointment" WHERE "webinarId" = 'test-webinar-003'
 UNION ALL
 SELECT 'Webinar A slots',   COUNT(*)
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."webinarId" = 'test-webinar-003'
 UNION ALL
@@ -685,7 +685,7 @@ SELECT 'Class A appointments', COUNT(*)
 FROM "Appointment" WHERE "classId" = 'test-class-003'
 UNION ALL
 SELECT 'Class A slots',     COUNT(*)
-FROM "SlotOfAppointment" s
+FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."classId" = 'test-class-003'
 UNION ALL
@@ -701,16 +701,16 @@ Run cleanup in strict reverse-dependency order ONLY after all tests pass.
 
 ```sql
 -- 1. User-slot M2M links
-DELETE FROM "_SlotOfAppointmentToUser"
+DELETE FROM "_AppointmentParticipant"
 WHERE "A" IN (
-  SELECT s.id FROM "SlotOfAppointment" s
+  SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."webinarId" IN ('test-webinar-003','test-webinar-003b')
      OR a."classId"   IN ('test-class-003','test-class-003b')
 );
 
 -- 2. Slots
-DELETE FROM "SlotOfAppointment"
+DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT id FROM "Appointment"
   WHERE "webinarId" IN ('test-webinar-003','test-webinar-003b')
@@ -739,7 +739,7 @@ DELETE FROM "WebinarPlan" WHERE id IN ('test-webinar-plan-003','test-webinar-pla
 DELETE FROM "ClassPlan"   WHERE id IN ('test-class-plan-003','test-class-plan-003b');
 
 -- 7. Availability
-DELETE FROM "SlotOfAvailabilityWeekly"
+DELETE FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-003';
 
 -- 8. Profiles + Users
@@ -790,7 +790,7 @@ SELECT
 | --- | -------------------------------------------------- | -------------------------------------------------------------- | ----------------- |
 | 1   | Webinar auto-alloc creates exactly 1 appointment   | `COUNT(*) FROM Appointment WHERE webinarId='test-webinar-003'` | 1                 |
 | 2   | Webinar slots are consecutive                      | `slot[i].endsAt === slot[i+1].startsAt` for all i in response  | True for all i    |
-| 3   | Webinar slot count matches 2h ÷ 30min              | `COUNT(*) of slotsOfAppointment` in response                   | 4                 |
+| 3   | Webinar slot count matches 2h ÷ 30min              | `COUNT(*) of appointmentOccurrences` in response               | 4                 |
 | 4   | Re-auto-allocate doesn't double appointments       | Count after 2nd call                                           | Still 1           |
 | 5   | Class auto-alloc creates correct appointment count | `COUNT(*) FROM Appointment WHERE classId='test-class-003'`     | 4                 |
 | 6   | Each class appointment has 2 slots (1h)            | Per-appointment slot count in DB                               | 2 for each        |

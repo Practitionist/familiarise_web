@@ -116,7 +116,7 @@ rule 1 for the helpers and the maps.
 The final backstops are not in `schema.prisma`. They live in `prisma/sql/`
 (`check-constraints.sql`, `ledger-triggers.sql`, `payment-legs-triggers.sql`),
 applied after a schema push. The one that matters most here is
-`slot_no_confirmed_overlap` on `SlotOfAppointment`: `EXCLUDE USING gist
+`slot_no_confirmed_overlap` on `AppointmentOccurrence`: `EXCLUDE USING gist
 ("consultantProfileId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE
 ("consultantProfileId" IS NOT NULL AND NOT "isTentative")`. That predicate has
 two consequences — tentative rows and rows with a null `consultantProfileId`

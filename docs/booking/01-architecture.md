@@ -2,9 +2,9 @@
 
 ## Service Layer
 
-### SlotCalculationService
+### ScheduleCalculationService
 
-**File**: `utils/slotAllocation/SlotCalculationService.ts`
+**File**: `utils/scheduling-engine/ScheduleCalculationService.ts`
 
 Pure-function service with no database access. Single source of truth for all slot math.
 
@@ -20,9 +20,9 @@ Pure-function service with no database access. Single source of truth for all sl
 | `groupSlotsByDay(slots)`                              | Map\<dateString, slots[]\>                              |
 | `groupSlotsByWeek(slots)`                             | Map\<sundayISO, slots[]\>                               |
 
-### SlotValidationService
+### ScheduleValidationService
 
-**File**: `utils/slotAllocation/SlotValidationService.ts`
+**File**: `utils/scheduling-engine/ScheduleValidationService.ts`
 
 Unified validation for all 4 event types. Takes a `PrismaClient` or transaction in the constructor.
 
@@ -52,7 +52,7 @@ Unified validation for all 4 event types. Takes a `PrismaClient` or transaction 
 sequenceDiagram
     participant API as API Route
     participant ZOD as Zod Schema
-    participant VS as SlotValidationService
+    participant VS as ScheduleValidationService
     participant DB as Database
 
     API->>ZOD: Parse request body
@@ -67,9 +67,9 @@ sequenceDiagram
     VS-->>API: ValidationResult {isValid, errors, warnings}
 ```
 
-### SlotAllocationService
+### SchedulingService
 
-**File**: `utils/slotAllocation/SlotAllocationService.ts`
+**File**: `utils/scheduling-engine/SchedulingService.ts`
 
 Main allocation engine. All operations run inside a Prisma transaction with 60-second timeout.
 
@@ -123,7 +123,7 @@ flowchart TD
 
 ```
 1 Appointment record = 1 call/session
-  N SlotOfAppointment records (N = slotsPerCall)
+  N AppointmentOccurrence records (N = slotsPerCall)
     Each: [startsAt, endsAt] = 30-min interval, isTentative flag
     Connected to: consultant user + consultee user
 ```
@@ -132,9 +132,9 @@ flowchart TD
 
 ## Frontend Hooks
 
-### useSlotAllocation
+### useScheduling
 
-**File**: `hooks/scheduling/useSlotAllocation.ts`
+**File**: `hooks/scheduling/useScheduling.ts`
 
 Central React hook (exported as `useEventSlotAllocation`) managing slot selection state for all event types.
 
@@ -159,11 +159,11 @@ Unified calendar data synchronization. Fetches availability, appointments, and e
 
 Uses server-calculated `bookingStatus` (available / partially-booked / fully-booked) as source of truth.
 
-There is no `useSubscriptionValidation` hook in this repo today — no file of that name exists, and the API it would imply (`validateSlots()`, `getAvailableWeeks()`, `canScheduleInWeek()`) has no matching functions anywhere. The subscription-specific week math it would have covered lives server-side in `utils/subscriptionValidation.ts` (`getSubscriptionWeek`, `getSubscriptionType`), which `SlotValidationService`, `lib/scheduling/allocationService.ts`, and `useSlotAllocation.ts` all call directly.
+There is no `useSubscriptionValidation` hook in this repo today — no file of that name exists, and the API it would imply (`validateSlots()`, `getAvailableWeeks()`, `canScheduleInWeek()`) has no matching functions anywhere. The subscription-specific week math it would have covered lives server-side in `utils/subscriptionValidation.ts` (`getSubscriptionWeek`, `getSubscriptionType`), which `ScheduleValidationService`, `lib/scheduling/allocationService.ts`, and `useScheduling.ts` all call directly.
 
 ### Where allocation happens
 
-There is one allocator and it lives on the server. The client engine that used to pick slots for auto mode — strategies, time-of-day and day-of-week scoring, weekly distribution, same-day spacing — was deleted in PR #1178 along with the tests that could only have exercised it, because product code has submitted `isAuto: true` and left the picking to `SlotAllocationService`, under its Redis locks and timezone-aware caps, since #997 Phase 1. Auto-mode preference scoring now lives server-side in `utils/slotAllocation/preferenceScoring.ts`, which orders candidate slots but never filters them (#1065). `lib/scheduling/allocationAlgorithms.ts` was not deleted along with the auto engine: the file and class still exist, still export `manualAllocate()` and `allocateRequestedSlots()`, and are still imported — by `hooks/scheduling/useSlotAllocation.ts` alone, which `UnifiedCalendar.tsx` and `RequestSlotAllocationTab.tsx` both consume through that hook rather than importing the file directly — they now do pre-submission validation and submission for the manual and requested modes only, so nothing on the client can any longer be mistaken for a second auto-allocation engine. The hooks above are correspondingly a selection and display layer: `useSlotAllocation` guards selection and submits, while `useCalendarData` polls date-dependent availability every 60 seconds whenever the tab is visible (#1164), so the heatmap reflects slots other people have taken instead of staying green until allocation rejects the choice.
+There is one allocator and it lives on the server. The client engine that used to pick slots for auto mode — strategies, time-of-day and day-of-week scoring, weekly distribution, same-day spacing — was deleted in PR #1178 along with the tests that could only have exercised it, because product code has submitted `isAuto: true` and left the picking to `SchedulingService`, under its Redis locks and timezone-aware caps, since #997 Phase 1. Auto-mode preference scoring now lives server-side in `utils/scheduling-engine/preferenceScoring.ts`, which orders candidate slots but never filters them (#1065). `lib/scheduling/allocationAlgorithms.ts` was not deleted along with the auto engine: the file and class still exist, still export `manualAllocate()` and `allocateRequestedSlots()`, and are still imported — by `hooks/scheduling/useScheduling.ts` alone, which `UnifiedCalendar.tsx` and `RequestRequestSchedulingTab.tsx` both consume through that hook rather than importing the file directly — they now do pre-submission validation and submission for the manual and requested modes only, so nothing on the client can any longer be mistaken for a second auto-allocation engine. The hooks above are correspondingly a selection and display layer: `useScheduling` guards selection and submits, while `useCalendarData` polls date-dependent availability every 60 seconds whenever the tab is visible (#1164), so the heatmap reflects slots other people have taken instead of staying green until allocation rejects the choice.
 
 ---
 
@@ -171,8 +171,8 @@ There is one allocator and it lives on the server. The client engine that used t
 
 ```mermaid
 erDiagram
-    ConsultantProfile ||--o{ SlotOfAvailabilityWeekly : has
-    ConsultantProfile ||--o{ SlotOfAvailabilityCustom : has
+    ConsultantProfile ||--o{ AvailabilityWindowWeekly : has
+    ConsultantProfile ||--o{ AvailabilityWindowCustom : has
 
     ConsultationPlan ||--o{ Consultation : creates
     SubscriptionPlan ||--o{ Subscription : creates
@@ -184,9 +184,9 @@ erDiagram
     Webinar ||--o| Appointment : "has one"
     ClassEvent ||--o{ Appointment : "has many"
 
-    Appointment ||--|{ SlotOfAppointment : contains
+    Appointment ||--|{ AppointmentOccurrence : contains
 
-    SlotOfAvailabilityWeekly {
+    AvailabilityWindowWeekly {
         string id PK
         DayOfWeek startDay
         Int startTimeUtc
@@ -203,7 +203,7 @@ erDiagram
         string classId FK
     }
 
-    SlotOfAppointment {
+    AppointmentOccurrence {
         string id PK
         DateTime startsAt
         DateTime endsAt
@@ -232,8 +232,8 @@ sequenceDiagram
     participant UI as Frontend
     participant VA as POST /validate
     participant AL as PATCH /allocate
-    participant SV as SlotValidationService
-    participant SA as SlotAllocationService
+    participant SV as ScheduleValidationService
+    participant SA as SchedulingService
     participant DB as Database
 
     UI->>VA: {slots: ["2025-01-15T10:00:00Z", ...]}
@@ -246,7 +246,7 @@ sequenceDiagram
     AL->>SA: manualAllocate(eventType, eventId, slots)
     SA->>SV: validate() again inside transaction
     SA->>DB: Delete old appointments
-    SA->>DB: Create Appointment + SlotOfAppointment records
+    SA->>DB: Create Appointment + AppointmentOccurrence records
     SA->>DB: Update event status to APPROVED/SCHEDULED
     SA-->>AL: {success: true, appointments: [...]}
     AL-->>UI: Allocation result
@@ -258,8 +258,8 @@ sequenceDiagram
 sequenceDiagram
     participant UI as Frontend
     participant AL as PATCH /allocate
-    participant SA as SlotAllocationService
-    participant SC as SlotCalculationService
+    participant SA as SchedulingService
+    participant SC as ScheduleCalculationService
     participant DB as Database
 
     UI->>AL: {isAuto: true}

@@ -233,7 +233,7 @@ sequenceDiagram
     else Call not found
         VideoClient->>StreamCloud: Create call
         StreamCloud-->>VideoClient: New call created
-        Hook->>Database: Save MeetingSession
+        Hook->>Database: Save Meeting
     end
 
     VideoClient-->>Hook: Call object
@@ -319,14 +319,14 @@ await chatClient.upsertUser({
 **Meeting Sessions:**
 
 ```prisma
-model MeetingSession {
+model Meeting {
   id           String   @id @default(cuid())
   streamCallId String   @unique  // Maps to Stream Video call ID
   platform     Platform @default(STREAM)
   passcode     String?
   hostKeys     String[]
   recordings   Recording[]
-  slotOfAppointment SlotOfAppointment @relation(...)
+  appointmentOccurrence AppointmentOccurrence @relation(...)
 }
 ```
 

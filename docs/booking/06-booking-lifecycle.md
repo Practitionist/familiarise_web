@@ -46,13 +46,13 @@ The reason the system is organized this way is to solve a fundamental distribute
 
 | Type             | Model             | Who Attends                 | Sessions   | Appointment Structure                                   | Payment Required |
 | ---------------- | ----------------- | --------------------------- | ---------- | ------------------------------------------------------- | ---------------- |
-| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N SlotOfAppointment                  | Yes              |
+| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N AppointmentOccurrence                  | Yes              |
 | **Subscription** | 1:1, recurring    | 1 consultee + 1 consultant  | M sessions | M Appointments (one per session), slots allocated later | Yes              |
-| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment, per-user SlotOfAppointment        | Yes              |
+| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment, per-user AppointmentOccurrence        | Yes              |
 | **Class**        | 1:many, recurring | N consultees + 1 consultant | M sessions | M shared Appointments (one per session), per-user slots | Yes              |
-| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N SlotOfAppointment                  | No (free)        |
+| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with N AppointmentOccurrence                  | No (free)        |
 
-A common mistake is thinking that "Appointment" means "a single meeting." In this system, an Appointment is a database record that acts as a container for time slots. Webinars and classes use shared Appointments where multiple users each get their own SlotOfAppointment within the same Appointment record. This matters because it determines how the webhook handler knows which slots to confirm.
+A common mistake is thinking that "Appointment" means "a single meeting." In this system, an Appointment is a database record that acts as a container for time slots. Webinars and classes use shared Appointments where multiple users each get their own AppointmentOccurrence within the same Appointment record. This matters because it determines how the webhook handler knows which slots to confirm.
 
 ---
 
@@ -84,11 +84,11 @@ flowchart LR
 | Stage                    | What Happens                                                                                                                                                                                              | Database Changes                                                                                                               | Key Source File                                      |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                        | None                                                                                                                           | Frontend routes                                      |
-| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                               | Creates: event record (PENDING status), Appointment, tentative SlotOfAppointment(s)                                            | `lib/payments/operations/checkout.ts`                |
+| **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                               | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/operations/checkout.ts`                |
 | **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (no payment).             | Updates: event record status                                                                                                   | Requests tab API routes                              |
 | **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                       | Creates: Payment record (PENDING)                                                                                              | `lib/payments/operations/checkout.ts`                |
 | **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                | None (gateway-side only)                                                                                                       | Payment gateway client-side SDK                      |
-| **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications. | Updates: Payment status to SUCCEEDED, SlotOfAppointment.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
+| **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications. | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
 | **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                               | None (managed by video/meeting integration)                                                                                    | External integrations                                |
 | **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                      | Updates: event record status to COMPLETED                                                                                      | `scripts/appointments/auto-complete-appointments.ts` |
 
@@ -102,7 +102,7 @@ Understanding how the database records relate to each other is essential before 
 erDiagram
     ConsultationPlan ||--o{ Consultation : "has many"
     SubscriptionPlan ||--o{ Subscription : "has many"
-    SubscriptionPlan ||--o{ TrialSession : "has many"
+    SubscriptionPlan ||--o{ Trial : "has many"
     WebinarPlan ||--|| Webinar : "has one"
     ClassPlan ||--|| Class : "has one"
 
@@ -110,18 +110,18 @@ erDiagram
     Subscription ||--o{ Appointment : "has many (1 placeholder + M sessions)"
     Webinar ||--o| Appointment : "has one (shared)"
     Class ||--o{ Appointment : "has many (1 per session)"
-    TrialSession ||--o| Appointment : "has one"
+    Trial ||--o| Appointment : "has one"
 
-    Appointment ||--o{ SlotOfAppointment : "has many"
-    SlotOfAppointment }o--o{ User : "many-to-many"
+    Appointment ||--o{ AppointmentOccurrence : "has many"
+    AppointmentOccurrence }o--o{ User : "many-to-many"
 
     Payment }o--o| Appointment : "links to"
     Payment }o--|| User : "belongs to"
 
     Consultation }o--|| ConsulteeProfile : "requested by"
     Subscription }o--|| ConsulteeProfile : "requested by"
-    TrialSession }o--|| ConsulteeProfile : "requested by"
-    TrialSession }o--o| Subscription : "converts to"
+    Trial }o--|| ConsulteeProfile : "requested by"
+    Trial }o--o| Subscription : "converts to"
 
 
     Appointment ||--o{ Earnings : "generates"
@@ -132,13 +132,13 @@ erDiagram
 
 **Consultation and Subscription** use a 1:1 model. Each has its own dedicated Appointment(s) with the consultee as the sole participant. The reason for this is straightforward: these are private sessions.
 
-**Webinar** uses a shared-appointment model. There is ONE Appointment record for the entire webinar. Each participant gets their own SlotOfAppointment within that shared appointment. This matters because when the webhook confirms a payment, it must only confirm THAT user's slot, not everyone else's.
+**Webinar** uses a shared-appointment model. There is ONE Appointment record for the entire webinar. Each participant gets their own AppointmentOccurrence within that shared appointment. This matters because when the webhook confirms a payment, it must only confirm THAT user's slot, not everyone else's.
 
-**Class** extends the webinar pattern across multiple sessions. Each session is a separate Appointment, but all sessions belong to the same Class. When a user enrolls, they get a SlotOfAppointment in EVERY session's Appointment. When the webhook confirms, it must find and confirm ALL of that user's slots across ALL sessions.
+**Class** extends the webinar pattern across multiple sessions. Each session is a separate Appointment, but all sessions belong to the same Class. When a user enrolls, they get a AppointmentOccurrence in EVERY session's Appointment. When the webhook confirms, it must find and confirm ALL of that user's slots across ALL sessions.
 
 **Subscription placeholder**: When a consultee checks out a subscription, the system creates a placeholder Appointment with NO slots. The reason is that the consultant has not allocated session times yet. The consultant does this later via the Requests tab. This placeholder exists so the webhook handler can use the "new flow" (confirm existing appointment) rather than falling back to the legacy flow.
 
-**Trial-to-Subscription conversion**: A TrialSession has an optional `convertedToSubscriptionId` field. When a consultee who previously completed a trial purchases a subscription from the same consultant, the system automatically links them by setting the trial's status to CONVERTED.
+**Trial-to-Subscription conversion**: A Trial has an optional `convertedToSubscriptionId` field. When a consultee who previously completed a trial purchases a subscription from the same consultant, the system automatically links them by setting the trial's status to CONVERTED.
 
 ---
 
@@ -157,10 +157,10 @@ flowchart TD
     CHECK_TYPE -->|TRIAL| TRIAL[Trial Flow - No Checkout Handler]
     CHECK_TYPE -->|Other| ERR[Throw: Invalid appointment type]
 
-    CONSULT --> CONSULT_DB["Creates:<br/>1 Consultation record<br/>1 Appointment<br/>1 SlotOfAppointment (tentative)"]
+    CONSULT --> CONSULT_DB["Creates:<br/>1 Consultation record<br/>1 Appointment<br/>1 AppointmentOccurrence (tentative)"]
     SUB --> SUB_DB["Creates:<br/>1 Subscription record<br/>1 placeholder Appointment (no slots)<br/>Links trial if exists"]
-    WEB --> WEB_DB["Creates:<br/>1 SlotOfAppointment (tentative)<br/>in shared Appointment"]
-    CLS --> CLS_DB["Creates:<br/>N SlotOfAppointment (tentative)<br/>one per session Appointment"]
+    WEB --> WEB_DB["Creates:<br/>1 AppointmentOccurrence (tentative)<br/>in shared Appointment"]
+    CLS --> CLS_DB["Creates:<br/>N AppointmentOccurrence (tentative)<br/>one per session Appointment"]
     TRIAL --> TRIAL_DB["No checkout handler.<br/>Consultant approves directly.<br/>No payment involved."]
 
     style START fill:#e8f4fd
@@ -212,7 +212,7 @@ sequenceDiagram
         API->>DB: validateSlotAvailability(consulteeId, consultantUserId)
         API->>DB: CREATE Consultation (status=PENDING, bookingSource=DIRECT_CHECKOUT)
         API->>DB: CREATE Appointment (type=CONSULTATION, consultationId)
-        API->>DB: CREATE SlotOfAppointment (startsAt, endsAt, isTentative=true)
+        API->>DB: CREATE AppointmentOccurrence (startsAt, endsAt, isTentative=true)
     end
 
     API->>GW: Create payment intent (amount from plan.price)
@@ -229,7 +229,7 @@ sequenceDiagram
         WH->>DB: UPDATE Payment status = SUCCEEDED
         WH->>DB: Find existing Appointment by payment.appointmentId
         WH->>DB: confirmExistingAppointment (L924)
-        Note over WH,DB: For CONSULTATION: updateMany SlotOfAppointment SET isTentative=false WHERE appointmentId
+        Note over WH,DB: For CONSULTATION: updateMany AppointmentOccurrence SET isTentative=false WHERE appointmentId
         WH->>DB: confirmApprovalStatus (L855)
         Note over WH,DB: Consultation: APPROVED_PENDING_PAYMENT -> APPROVED, or any non-APPROVED -> APPROVED
     end
@@ -258,7 +258,7 @@ sequenceDiagram
 | ------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | `Consultation`      | `status=PENDING` (or `APPROVED` for mock), `bookingSource=DIRECT_CHECKOUT`, `requestedById=consulteeProfileId` | The source record for the event                                |
 | `Appointment`       | `appointmentType=CONSULTATION`, `consultationId`                                                                      | Container for time slots                                       |
-| `SlotOfAppointment` | `startsAt`, `endsAt`, `isTentative=true` (or `false` for mock)                                                        | The actual time reservation. Tentative until payment confirmed |
+| `AppointmentOccurrence` | `startsAt`, `endsAt`, `isTentative=true` (or `false` for mock)                                                        | The actual time reservation. Tentative until payment confirmed |
 
 #### Status Transitions
 
@@ -312,7 +312,7 @@ sequenceDiagram
         API->>DB: CREATE Subscription (status=PENDING, bookingSource=DIRECT_CHECKOUT)
         API->>DB: Check for completed trial from same consultee for same consultant
         opt Completed trial found
-            API->>DB: UPDATE TrialSession status=CONVERTED, link convertedToSubscriptionId
+            API->>DB: UPDATE Trial status=CONVERTED, link convertedToSubscriptionId
         end
         API->>DB: CREATE placeholder Appointment (type=SUBSCRIPTION, NO slots)
     end
@@ -341,8 +341,8 @@ sequenceDiagram
     Note over CT: Consultant sees new subscription request in Requests tab
 
     CT->>API: Allocate session slots (auto or manual)
-    API->>DB: CREATE M Appointments with N SlotOfAppointment each
-    API->>DB: UPDATE Subscription status = APPROVED (via SlotAllocationService)
+    API->>DB: CREATE M Appointments with N AppointmentOccurrence each
+    API->>DB: UPDATE Subscription status = APPROVED (via SchedulingService)
     API->>CE: Novu: appointment-booked
 
     Note over CE,CT: Recurring sessions take place over weeks/months
@@ -359,8 +359,8 @@ sequenceDiagram
 | Record                              | Key Fields                                                                                                     | Notes                                                                                          |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `Subscription`                      | `status=PENDING`, `bookingSource=DIRECT_CHECKOUT`, `schedulingPeriodStartsAt`, `schedulingPeriodEndsAt` | Always PENDING regardless of skipPayment flag. Stays PENDING until consultant allocates.       |
-| `Appointment` (placeholder)         | `appointmentType=SUBSCRIPTION`, `subscriptionId`, NO `slotsOfAppointment`                                      | A placeholder so the webhook can use the NEW flow. Consultant creates real appointments later. |
-| `TrialSession` (updated, if exists) | `status=CONVERTED`, `convertedToSubscriptionId=subscription.id`                                                | Only if a completed trial exists for the same consultee+consultant pair.                       |
+| `Appointment` (placeholder)         | `appointmentType=SUBSCRIPTION`, `subscriptionId`, NO `appointmentOccurrences`                                      | A placeholder so the webhook can use the NEW flow. Consultant creates real appointments later. |
+| `Trial` (updated, if exists) | `status=CONVERTED`, `convertedToSubscriptionId=subscription.id`                                                | Only if a completed trial exists for the same consultee+consultant pair.                       |
 
 #### Subscription-Specific Status Behavior
 
@@ -369,7 +369,7 @@ This is a critical subtlety. When the webhook calls `confirmApprovalStatus` for 
 - `APPROVED_PENDING_PAYMENT` --> `APPROVED` (this is the approval flow path)
 - `PENDING` --> **stays PENDING** (this is the direct checkout path)
 
-The reason `PENDING` does not transition to `APPROVED` in the webhook is that payment alone does not mean the subscription is ready. The consultant must still allocate session slots. The `SlotAllocationService.allocate()` method is what ultimately sets the status to `APPROVED`.
+The reason `PENDING` does not transition to `APPROVED` in the webhook is that payment alone does not mean the subscription is ready. The consultant must still allocate session slots. The `SchedulingService.allocate()` method is what ultimately sets the status to `APPROVED`.
 
 A common mistake is assuming that after payment, the subscription is "active." It is not. It is paid but awaiting slot allocation. The consultee's dashboard will show "Awaiting scheduling" until the consultant allocates.
 
@@ -393,17 +393,17 @@ If found, it marks that trial as `CONVERTED` and links it to the new subscriptio
 - Trial conversion: `lib/payments/operations/checkout.ts` line 1073
 - Placeholder appointment creation: `lib/payments/operations/checkout.ts` line 1109
 - `confirmApprovalStatus()` subscription branch: `lib/payments/webhooks/handlers.ts` line 886
-- Slot allocation: `utils/slotAllocation/SlotAllocationService.ts`
+- Slot allocation: `utils/scheduling-engine/SchedulingService.ts`
 
 ---
 
 ### 5c. Webinar
 
-A webinar is a one-time, 1:many event. The consultant creates and schedules it; consultees enroll by paying. The key architectural decision is that all participants share a single Appointment record, with each participant getting their own SlotOfAppointment.
+A webinar is a one-time, 1:many event. The consultant creates and schedules it; consultees enroll by paying. The key architectural decision is that all participants share a single Appointment record, with each participant getting their own AppointmentOccurrence.
 
 #### Why One Shared Appointment?
 
-The reason webinars use a shared appointment is that all participants attend at the same time. Creating separate Appointment records per participant would be wasteful and make queries like "how many people are in this webinar?" unnecessarily complex. Instead, you count the SlotOfAppointment entries within the shared appointment (excluding the consultant's slot).
+The reason webinars use a shared appointment is that all participants attend at the same time. Creating separate Appointment records per participant would be wasteful and make queries like "how many people are in this webinar?" unnecessarily complex. Instead, you count the AppointmentOccurrence entries within the shared appointment (excluding the consultant's slot).
 
 #### Sequence Diagram
 
@@ -417,7 +417,7 @@ sequenceDiagram
     participant WH as Webhook Handler
 
     CT->>SYS: Create webinar plan + schedule time
-    SYS->>DB: CREATE Webinar + Appointment + master SlotOfAppointment
+    SYS->>DB: CREATE Webinar + Appointment + master AppointmentOccurrence
 
     CE->>SYS: Browse webinar listing, click "Enroll"
 
@@ -440,7 +440,7 @@ sequenceDiagram
         SYS->>SYS: Validate user is not already registered
 
         SYS->>DB: Get or create shared Appointment (reuse existing)
-        SYS->>DB: CREATE SlotOfAppointment for this user<br/>(copies startsAt/endsAt from master slot, isTentative=true)
+        SYS->>DB: CREATE AppointmentOccurrence for this user<br/>(copies startsAt/endsAt from master slot, isTentative=true)
     end
 
     SYS->>GW: Create payment intent
@@ -452,7 +452,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For WEBINAR: updateMany SlotOfAppointment<br/>WHERE appointmentId AND user.some(id=userId)<br/>SET isTentative=false
+        Note over WH,DB: For WEBINAR: updateMany AppointmentOccurrence<br/>WHERE appointmentId AND user.some(id=userId)<br/>SET isTentative=false
         Note over WH,DB: Only THIS user's slot is confirmed, not others'
         WH->>DB: UPDATE Webinar status = SCHEDULED
     end
@@ -476,13 +476,13 @@ sequenceDiagram
 
 | Record              | Key Fields                                                                                                          | Notes                                                                   |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `SlotOfAppointment` | `appointmentId` (shared), `startsAt` (from master), `endsAt` (from master), `isTentative=true`, connected to `User` | One per participant. All have the same times (copied from master slot). |
+| `AppointmentOccurrence` | `appointmentId` (shared), `startsAt` (from master), `endsAt` (from master), `isTentative=true`, connected to `User` | One per participant. All have the same times (copied from master slot). |
 
-The webinar itself, its Appointment, and the master SlotOfAppointment already exist (created by the consultant during scheduling). The checkout handler only adds a new SlotOfAppointment for the enrolling user.
+The webinar itself, its Appointment, and the master AppointmentOccurrence already exist (created by the consultant during scheduling). The checkout handler only adds a new AppointmentOccurrence for the enrolling user.
 
 #### Capacity Check Details
 
-The `countWebinarParticipants()` function counts unique users connected to SlotOfAppointment records within the webinar's shared appointment, excluding the consultant's user ID. This matters because the consultant also has a slot in the appointment (the master slot) but should not count toward the participant cap.
+The `countWebinarParticipants()` function counts unique users connected to AppointmentOccurrence records within the webinar's shared appointment, excluding the consultant's user ID. This matters because the consultant also has a slot in the appointment (the master slot) but should not count toward the participant cap.
 
 #### Webinar-Specific Confirmation Behavior
 
@@ -510,7 +510,7 @@ A class is a recurring, 1:many event with multiple sessions. It combines the mul
 
 #### Key Difference from Webinars
 
-A class has M sessions. Each session is a separate Appointment record. When a user enrolls, they get a SlotOfAppointment in EVERY session -- not just one. The checkout handler iterates over all the class's appointments and creates a slot in each.
+A class has M sessions. Each session is a separate Appointment record. When a user enrolls, they get a AppointmentOccurrence in EVERY session -- not just one. The checkout handler iterates over all the class's appointments and creates a slot in each.
 
 The reason this matters at the database level is the webhook confirmation. When confirming a class enrollment, the system cannot just filter by `appointmentId` (that would only confirm one session). Instead, it filters by `classId + userId` to find and confirm ALL of that user's slots across ALL sessions.
 
@@ -551,8 +551,8 @@ sequenceDiagram
         SYS->>SYS: Validate user not already enrolled (isUserEnrolled)
 
         loop For EACH session (appointment)
-            SYS->>DB: Step 1: CREATE SlotOfAppointment WITHOUT user (startsAt/endsAt from master, isTentative=true)
-            SYS->>DB: Step 2: UPDATE SlotOfAppointment to CONNECT user
+            SYS->>DB: Step 1: CREATE AppointmentOccurrence WITHOUT user (startsAt/endsAt from master, isTentative=true)
+            SYS->>DB: Step 2: UPDATE AppointmentOccurrence to CONNECT user
         end
     end
 
@@ -565,7 +565,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For CLASS: updateMany SlotOfAppointment<br/>WHERE appointment.classId = classId AND user.some(id=userId)<br/>SET isTentative=false across ALL sessions
+        Note over WH,DB: For CLASS: updateMany AppointmentOccurrence<br/>WHERE appointment.classId = classId AND user.some(id=userId)<br/>SET isTentative=false across ALL sessions
         WH->>DB: UPDATE Class status = SCHEDULED
     end
 
@@ -586,22 +586,22 @@ sequenceDiagram
 
 #### Why the Two-Step Slot Creation?
 
-Notice that class slot creation uses a two-step process: first create the SlotOfAppointment without a user, then update it to connect the user:
+Notice that class slot creation uses a two-step process: first create the AppointmentOccurrence without a user, then update it to connect the user:
 
 ```typescript
 // Step 1: Create without user
-const slot = await tx.slotOfAppointment.create({
+const slot = await tx.appointmentOccurrence.create({
   data: { appointmentId, startsAt, endsAt, isTentative: !skipPayment },
 });
 
 // Step 2: Connect user separately
-await tx.slotOfAppointment.update({
+await tx.appointmentOccurrence.update({
   where: { id: slot.id },
   data: { user: { connect: { id: userId } } },
 });
 ```
 
-The reason for this is a foreign key constraint issue in Prisma. When creating a SlotOfAppointment and connecting a User in the same operation, Prisma may attempt to create the many-to-many relation record before the SlotOfAppointment row is committed, causing a FK violation. The two-step approach guarantees the slot exists before the relation is created.
+The reason for this is a foreign key constraint issue in Prisma. When creating a AppointmentOccurrence and connecting a User in the same operation, Prisma may attempt to create the many-to-many relation record before the AppointmentOccurrence row is committed, causing a FK violation. The two-step approach guarantees the slot exists before the relation is created.
 
 This two-step pattern is NOT needed for webinars because webinar slots use a single `create` with `user: { connect: ... }` and do not hit the same FK issue (likely due to a simpler relation path).
 
@@ -609,7 +609,7 @@ This two-step pattern is NOT needed for webinars because webinar slots use a sin
 
 ```sql
 -- confirmExistingAppointment for CLASS:
-UPDATE SlotOfAppointment
+UPDATE AppointmentOccurrence
 SET isTentative = false
 WHERE appointment.classId = ? AND user IN (userId)
 ```
@@ -634,7 +634,7 @@ A trial is a free 1:1 session tied to a subscription plan. It is the only event 
 
 Trials bypass the entire checkout/payment pipeline. Instead:
 
-1. The consultee requests a trial (creates a PENDING TrialSession record)
+1. The consultee requests a trial (creates a PENDING Trial record)
 2. The consultant approves and schedules a specific time slot (PENDING --> SCHEDULED)
 3. The session takes place
 4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`, creates ActivityLog)
@@ -651,18 +651,18 @@ sequenceDiagram
     participant CRON as Auto-Complete Cron
 
     CE->>SYS: Request trial session for a subscription plan
-    SYS->>DB: CREATE TrialSession (status=PENDING, consulteeProfileId, consultantProfileId)
+    SYS->>DB: CREATE Trial (status=PENDING, consulteeProfileId, consultantProfileId)
     SYS->>CT: Novu: trial-session-requested
 
     CT->>SYS: Review request, approve + pick time slot
-    SYS->>DB: CREATE Appointment (type=TRIAL) + SlotOfAppointment (isTentative=false)
-    SYS->>DB: UPDATE TrialSession status = SCHEDULED
+    SYS->>DB: CREATE Appointment (type=TRIAL) + AppointmentOccurrence (isTentative=false)
+    SYS->>DB: UPDATE Trial status = SCHEDULED
     SYS->>CE: Novu: trial-session-scheduled
 
     Note over CE,CT: Trial session takes place
 
     CRON->>DB: Find SCHEDULED trials where slot ended > 1hr ago
-    CRON->>DB: UPDATE TrialSession status = COMPLETED, completedAt = now()
+    CRON->>DB: UPDATE Trial status = COMPLETED, completedAt = now()
     CRON->>DB: CREATE ActivityLog (activityType=TRIAL_COMPLETED)
     CRON->>CE: Novu: trial-session-completed
     CRON->>CT: Novu: trial-session-completed
@@ -671,7 +671,7 @@ sequenceDiagram
         CE->>SYS: Purchase subscription from same consultant
         Note over SYS,DB: Inside handleSubscriptionCheckout
         SYS->>DB: Find completed trial (same consultee + consultant, status=COMPLETED, not yet converted)
-        SYS->>DB: UPDATE TrialSession status = CONVERTED, convertedToSubscriptionId = new subscription ID
+        SYS->>DB: UPDATE Trial status = CONVERTED, convertedToSubscriptionId = new subscription ID
     end
 ```
 
@@ -783,7 +783,7 @@ This is a real-world failure mode. The payment gateway charged the user but the 
 
 1. The payment record stays `PENDING` in the database
 2. The slot stays `isTentative = true`
-3. After 24 hours, the `cleanup-tentative-slots` cron job deletes the tentative slot
+3. After 24 hours, the `cleanup-tentative-occurrences` cron job deletes the tentative slot
 4. The payment gateway's dashboard shows the charge succeeded
 
 Resolution: The admin must manually reconcile. The system provides a `sync-payment-earnings` background job and admin dashboard for this purpose. In the future, a webhook retry mechanism from the gateway should handle most cases.
@@ -894,11 +894,11 @@ stateDiagram-v2
 
 **Enum values** (from `prisma/schema.prisma`): `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`, `SCHEDULED`, `COMPLETED`, `REJECTED`, `CANCELLED`, `EXPIRED`.
 
-**Important nuance for subscriptions**: After direct checkout with payment, a subscription's status stays at `PENDING` (NOT `APPROVED`). The webhook's `confirmApprovalStatus` only transitions `APPROVED_PENDING_PAYMENT` to `APPROVED` for subscriptions. The transition from `PENDING` to `APPROVED` happens later, when the consultant allocates slots via `SlotAllocationService.allocate()`.
+**Important nuance for subscriptions**: After direct checkout with payment, a subscription's status stays at `PENDING` (NOT `APPROVED`). The webhook's `confirmApprovalStatus` only transitions `APPROVED_PENDING_PAYMENT` to `APPROVED` for subscriptions. The transition from `PENDING` to `APPROVED` happens later, when the consultant allocates slots via `SchedulingService.allocate()`.
 
-### 8b. TrialSessionStatus
+### 8b. TrialStatus
 
-Used by `TrialSession.status`.
+Used by `Trial.status`.
 
 ```mermaid
 stateDiagram-v2
@@ -972,7 +972,7 @@ stateDiagram-v2
 - If payment is already `FAILED`, the failure handler returns early (idempotency)
 - If payment is already `SUCCEEDED`, the failure handler will NOT override it to FAILED (protects against late failure webhooks)
 
-### 8e. SlotOfAppointment.isTentative
+### 8e. AppointmentOccurrence.isTentative
 
 This is a boolean field, not an enum, but it follows a clear lifecycle:
 
@@ -996,7 +996,7 @@ This section covers what happens when things go wrong. Understanding these scena
 
 ### 9a. Payment Fails After Tentative Slot Created
 
-**Scenario**: The checkout handler created a tentative SlotOfAppointment, but the payment fails (card declined, insufficient funds, etc.).
+**Scenario**: The checkout handler created a tentative AppointmentOccurrence, but the payment fails (card declined, insufficient funds, etc.).
 
 **What happens**:
 
@@ -1007,7 +1007,7 @@ This section covers what happens when things go wrong. Understanding these scena
 5. Calls `cleanupFailedPaymentAppointment()` which deletes the tentative slots
 6. Sends failure notification to consultee
 
-**Safety net**: Even if the failure webhook is missed, the `cleanup-tentative-slots` cron runs every 2 hours and removes tentative slots with no successful payment after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`).
+**Safety net**: Even if the failure webhook is missed, the `cleanup-tentative-occurrences` cron runs every 2 hours and removes tentative slots with no successful payment after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`).
 
 **Source**: `handlePaymentFailure()` at `lib/payments/webhooks/handlers.ts` line 486.
 
@@ -1021,7 +1021,7 @@ This section covers what happens when things go wrong. Understanding these scena
 2. User B's checkout handler runs, checks capacity (10/10), gets "Webinar is full" error
 3. User A's payment may or may not succeed -- but the slot was reserved tentatively
 
-The reason this works is that tentative slots ARE counted in capacity checks. The `countWebinarParticipants()` function counts ALL SlotOfAppointment records in the shared appointment, including tentative ones. Additionally, a distributed lock is acquired during checkout to serialize concurrent requests.
+The reason this works is that tentative slots ARE counted in capacity checks. The `countWebinarParticipants()` function counts ALL AppointmentOccurrence records in the shared appointment, including tentative ones. Additionally, a distributed lock is acquired during checkout to serialize concurrent requests.
 
 If User A's payment fails, the abandoned-checkout cleanup disconnects them from the event's slots and the seat is free again.
 
@@ -1075,7 +1075,7 @@ The reason the system marks the payment as SUCCEEDED (not FAILED) is truthfulnes
 
 **Scenario**: A consultant adds a new session (Appointment) to a class after users have already enrolled.
 
-**What happens**: Existing users will NOT automatically get a SlotOfAppointment for the new session. Their enrollment only covers sessions that existed at checkout time. The consultant must handle this manually or the system needs a separate "sync enrollment" operation.
+**What happens**: Existing users will NOT automatically get a AppointmentOccurrence for the new session. Their enrollment only covers sessions that existed at checkout time. The consultant must handle this manually or the system needs a separate "sync enrollment" operation.
 
 ### 9g. Late Failure Webhook After Success
 
@@ -1117,7 +1117,7 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 | Lifecycle Event        | Novu Workflow ID         | Recipients             | Trigger Point             | Source                  |
 | ---------------------- | ------------------------ | ---------------------- | ------------------------- | ----------------------- |
-| Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SlotAllocationService` |
+| Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SchedulingService` |
 | Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes     |
 | Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts         |
 
@@ -1151,8 +1151,8 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 
 | Action                                     | Schedule      | What It Does                                                                                          | Criteria                                                   | Source                                                        |
 | ------------------------------------------ | ------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
-| **Auto-complete appointments**             | Hourly        | Marks events as COMPLETED when all sessions have ended                                                | All SlotOfAppointment.endsAt < (now - 1 hour)              | `scripts/appointments/auto-complete-appointments.ts`          |
-| **Cleanup tentative slots**                | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                           | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-slots.ts`             |
+| **Auto-complete appointments**             | Hourly        | Marks events as COMPLETED when all sessions have ended                                                | All AppointmentOccurrence.endsAt < (now - 1 hour)              | `scripts/appointments/auto-complete-appointments.ts`          |
+| **Cleanup tentative slots**                | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                           | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts`             |
 | **Expire stale requests**                  | Daily         | Sets PENDING requests to EXPIRED after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                               | `scripts/appointments/expire-stale-requests.ts`               |
 | **Cleanup stale pending consultations**    | Hourly        | Cancels APPROVED/APPROVED_PENDING_PAYMENT consultations with no payment activity after 7 days         | No payment record or payment stuck in PENDING              | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
 | **Sync payment earnings**                  | Periodic      | Safety net: finds payments with SUCCEEDED status but no earnings record, creates missing earnings     | Payment.status=SUCCEEDED AND no Earnings linked            | `scripts/payments/sync-payment-earnings.ts`                   |
@@ -1214,7 +1214,7 @@ T+0 seconds     Consultee clicks "Pay" on checkout page
                  --> handleConsultationCheckout runs
                  --> Consultation created (PENDING)
                  --> Appointment created (CONSULTATION)
-                 --> SlotOfAppointment created (isTentative=true)
+                 --> AppointmentOccurrence created (isTentative=true)
                  --> Payment intent created (PENDING)
                  --> clientSecret returned to frontend
 
@@ -1225,7 +1225,7 @@ T+15 seconds    Gateway sends webhook to /api/webhooks/...
                  --> handlePaymentSuccess Phase 1 starts
                  --> Payment marked SUCCEEDED
                  --> Appointment found by payment.appointmentId
-                 --> SlotOfAppointment.isTentative set to false
+                 --> AppointmentOccurrence.isTentative set to false
                  --> Consultation status: PENDING -> APPROVED
                  --> Payment success email sent
 
@@ -1239,7 +1239,7 @@ T+30 minutes    (If payment had not completed) Payment intent expires at gateway
                  Gateway may send a payment_intent.expired webhook
 
 T+24 hours      (If payment failed or was abandoned)
-                 cleanup-tentative-slots cron deletes orphaned tentative slot
+                 cleanup-tentative-occurrences cron deletes orphaned tentative slot
 
 T+0 to T+weeks  Session takes place at scheduled time
                  (No database changes during the session itself)
