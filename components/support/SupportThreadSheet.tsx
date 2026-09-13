@@ -9,7 +9,7 @@
  * separate server-validated surface, never fired from here.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, LifeBuoy, Send } from "lucide-react";
@@ -184,6 +184,7 @@ export function SupportThreadSheet({
   onOpenChange,
   trigger,
   appointmentHref,
+  seedCategory,
 }: {
   appointmentId: string;
   isOrgContext?: boolean;
@@ -195,6 +196,13 @@ export function SupportThreadSheet({
   /** When provided, the header carries a "Go to appointment" link. Deliberately
    *  omitted on org surfaces (ADR 20: no per-session drill-in for org roles). */
   appointmentHref?: string;
+  /**
+   * A door that already knows what it is about — "Problem with this charge"
+   * opens on PAYMENT_STATUS. Pressed on the user's behalf once per opening,
+   * exactly as the chip would be; ignored while the thread is with a human
+   * (the transcript is the door then) or when the intent is gated out.
+   */
+  seedCategory?: string;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -423,11 +431,16 @@ export function SupportThreadSheet({
   // before it leaves the browser — which also spares a pool where
   // PG_POOL_MAX=1 serialises everything an entirely wasted round trip.
   const inFlight = useRef(false);
-  const submitTurn = (vars: TurnVars) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    turn.mutate(vars, { onSettled: () => (inFlight.current = false) });
-  };
+  const { mutate: mutateTurn } = turn;
+  const submitTurn = useCallback(
+    (vars: TurnVars): boolean => {
+      if (inFlight.current) return false;
+      inFlight.current = true;
+      mutateTurn(vars, { onSettled: () => (inFlight.current = false) });
+      return true;
+    },
+    [mutateTurn],
+  );
   // The hand-off sits immediately before the first AGENT message. A thread that
   // has escalated but whose staff reply has not landed yet still gets the
   // marker, at the end — otherwise the drawer looks like the bot simply gave
@@ -442,6 +455,27 @@ export function SupportThreadSheet({
     setFailedTurns(({ [id]: _gone, ...rest }) => rest);
     submitTurn(failed.vars);
   };
+
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      seeded.current = false;
+      return;
+    }
+    if (!seedCategory || seeded.current || !data) return;
+    const t = data.thread;
+    const intent = data.intents.find((i) => i.category === seedCategory);
+    if ((t?.activeChannel === "HUMAN" && t.status !== "RESOLVED") || !intent) {
+      seeded.current = true;
+      return;
+    }
+    // A turn still in flight from before the sheet was closed refuses this
+    // one; its settlement refetches the thread, and the new `data` re-runs
+    // the effect with the seed still pending.
+    if (submitTurn({ category: intent.category, chosenLabel: intent.title })) {
+      seeded.current = true;
+    }
+  }, [open, seedCategory, data, submitTurn]);
 
   const waitingLine = describeWait(thread?.supportTicket?.ackDueAt);
 

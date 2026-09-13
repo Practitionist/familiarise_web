@@ -9,14 +9,11 @@ Netlify's official server is `@netlify/mcp` (version 1.15.1 at the time of writi
 ```json
 "netlify": {
   "command": "npx",
-  "args": ["-y", "@netlify/mcp@latest"],
-  "env": {
-    "NETLIFY_PERSONAL_ACCESS_TOKEN": "<NETLIFY_PERSONAL_ACCESS_TOKEN>"
-  }
+  "args": ["-y", "@netlify/mcp@1.15.1"]
 }
 ```
 
-Authentication comes from the logged-in Netlify CLI session (`netlify status` shows the user and the linked project); the token variable is a documented fallback for machines with no CLI session and can be omitted when the CLI is logged in. `netlify login` is interactive and must be run by a person.
+Authentication comes from the logged-in Netlify CLI session (`netlify status` shows the user and the linked project); `netlify login` is interactive and must be run by a person. On a machine with no CLI session, set `NETLIFY_PERSONAL_ACCESS_TOKEN` in the block's `env`. Do not ship a placeholder for it: the server returns that variable as the bearer token before it ever consults the CLI session (`getNetlifyAccessToken` in `dist/netlify-mcp.js`), so an unchanged placeholder breaks authentication that would otherwise have worked. The version is pinned because the process inherits write-capable credentials and a mutable `@latest` would let the same config run different code; bump it deliberately.
 
 ### The first-connect trap
 

@@ -62,5 +62,19 @@ attendee's own rows through the same route.
 What stays open: the header can say "Cancelled" while a session row says
 "COMPLETED" on seed data whose slot status was never reconciled with the
 booking status; that is a seed defect, not a rendering one, and the reset
-clears it. A receipt or invoice link on the attendee's own payment row
-belongs with the consumer-invoice work (#438).
+clears it.
+
+## Narrowed the same day: a sponsored booking shows no amount
+
+The attendee's own row was restored above for the sponsored 1:1, amount
+included. The owner's 2026-09-13 UI-lift decision narrows that: the member
+did not pay a sponsored booking, so their page says "Sponsored by `<Org>`" and
+no amount, and only a charge the member paid themselves (the CHARGE_MEMBER
+overage side-charge, #775) renders as a line of its own. Sponsorship is
+decided by the payment's funding legs, not by `Appointment.organizationId`:
+checkout stamps that on a PERSONAL-funded booking too, and that member paid
+their own card. The attendee's money line carries the rail and a receipt
+link — the tax invoice PDF when one exists, else the gateway receipt — and a
+"Problem with this charge" door into the page's one support sheet, opened on
+`PAYMENT_STATUS`. Receipt pointers travel only on rows the viewer paid, or
+to staff.

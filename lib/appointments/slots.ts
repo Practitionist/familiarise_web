@@ -285,12 +285,14 @@ export function groupSlotsIntoRuns<T extends SessionSlotLike>(
  *
  * #1270 — every gate used to read `endedAt` alone, and `endedAt` is written by
  * four different things. Stream fires `call.session_ended` after
- * `inactivity_timeout_seconds` (30s on the live call type) once the LAST
+ * `inactivity_timeout_seconds` (900s on the live call type) once the LAST
  * participant leaves, which stamps `session_timeout`. So both people in a 1:1
- * losing signal for half a minute — a wifi handoff, a tunnel, a closed lid —
+ * losing signal for that long — a wifi handoff, a tunnel, a closed lid —
  * ended their paid consultation permanently, for both of them, mid-session.
  * The reconciler's guesses (`reconciled_no_end`, `stream_not_found`) had the
- * same effect.
+ * same effect, and so did a host pressing "End for everyone" during the
+ * pre-start device check — now stamped `ended_early`, which is not deliberate:
+ * the next participant join clears it (#1607).
  *
  * A deliberate end is the host closing the room, or maintenance draining it.
  * Everything else means "nobody is in there right now", which is a very
