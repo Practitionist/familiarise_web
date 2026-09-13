@@ -39,69 +39,124 @@ function bearerMatches(header: string | null, secret: string): boolean {
   return timingSafeEqual(sha(header), sha(`Bearer ${secret}`));
 }
 
-/** Same resolution as lib/url.ts: a preview must drive its own twin, not production's. */
+/**
+ * `CONTEXT` is not visible at function runtime (serverless-gotchas.md), so the
+ * preview-vs-production choice is DEPLOY_PRIME_URL: this deploy's own origin
+ * on a preview, and the site's netlify.app origin on production.
+ */
 function resolveBaseUrl(): string {
-  const preview =
-    process.env.CONTEXT && process.env.CONTEXT !== "production"
-      ? process.env.DEPLOY_PRIME_URL
-      : undefined;
   let baseUrl =
-    process.env.CRON_TICK_BASE_URL || preview || process.env.URL || "";
+    process.env.CRON_TICK_BASE_URL ||
+    process.env.DEPLOY_PRIME_URL ||
+    process.env.URL ||
+    "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   return baseUrl;
+}
+
+function log(record: Record<string, unknown>): void {
+  console.log(JSON.stringify({ event: "reconcile-driver", ...record }));
+}
+
+interface KickParams {
+  runId?: string;
+  limit?: number;
+  triggeredById?: string;
+}
+
+/** The kick's parameters, from the JSON body with the query string as a fallback. */
+async function readKick(req: Request): Promise<KickParams & { from: string }> {
+  const query = new URL(req.url).searchParams;
+  const body = (await req.json().catch(() => ({}))) as KickParams;
+  const runId = body.runId ?? query.get("runId") ?? undefined;
+  const limitRaw = body.limit ?? Number(query.get("limit"));
+  const limit =
+    Number.isInteger(limitRaw) && (limitRaw as number) > 0
+      ? (limitRaw as number)
+      : undefined;
+  return {
+    runId,
+    limit,
+    triggeredById:
+      body.triggeredById ?? query.get("triggeredById") ?? undefined,
+    from: body.runId ? "body" : query.get("runId") ? "query" : "none",
+  };
 }
 
 export default async function reconcileLedgersBackground(
   req: Request,
 ): Promise<Response> {
   const secret = process.env.CRON_SECRET;
+  const baseUrl = resolveBaseUrl();
+  const kick = await readKick(req);
+  const authHeader = req.headers.get("authorization");
+  log({
+    phase: "start",
+    runId: kick.runId ?? null,
+    limit: kick.limit ?? null,
+    paramsFrom: kick.from,
+    baseUrl,
+    hasSecret: Boolean(secret),
+    hasAuthHeader: authHeader !== null,
+    method: req.method,
+  });
   if (!secret) {
     const error = "CRON_SECRET is not set — the driver cannot authenticate";
     console.error(JSON.stringify({ event: "reconcile-driver", error }));
     return jsonResponse({ error }, 500);
   }
-  if (!bearerMatches(req.headers.get("authorization"), secret)) {
+  if (!bearerMatches(authHeader, secret)) {
+    log({ phase: "end", outcome: "UNAUTHORIZED" });
     return jsonResponse({ error: "Unauthorized" }, 401);
   }
-
-  const body = (await req.json().catch(() => ({}))) as {
-    runId?: string;
-    limit?: number;
-    triggeredById?: string;
-  };
-  if (typeof body.runId !== "string" || body.runId.length === 0) {
+  if (!kick.runId) {
+    log({ phase: "end", outcome: "NO_RUN_ID" });
     return jsonResponse({ error: "runId is required" }, 400);
   }
   const envLimit = Number(process.env.RECONCILE_DRIVER_LIMIT);
   const limit =
-    Number.isInteger(body.limit) && (body.limit as number) > 0
-      ? (body.limit as number)
-      : Number.isInteger(envLimit) && envLimit > 0
-        ? envLimit
-        : DEFAULT_LIMIT;
+    kick.limit ??
+    (Number.isInteger(envLimit) && envLimit > 0 ? envLimit : DEFAULT_LIMIT);
 
   const result = await driveReconcileRun({
     fetchImpl: (url, init) => fetch(url, init),
     sleep,
-    baseUrl: resolveBaseUrl(),
+    baseUrl,
     secret,
-    runId: body.runId,
+    runId: kick.runId,
     limit,
-    triggeredById: body.triggeredById,
+    triggeredById: kick.triggeredById,
     budgetMs: BUDGET_MS,
     maxCalls: MAX_CALLS,
     perCallTimeoutMs: PER_CALL_TIMEOUT_MS,
     maxConsecutiveRetries: MAX_CONSECUTIVE_RETRIES,
     retryDelayMs: RETRY_DELAY_MS,
   });
-  console.log(JSON.stringify({ event: "reconcile-driver", limit, ...result }));
+  log({ phase: "end", limit, ...result });
 
-  // Anything short of a terminal row state is a failed invocation: throwing is
-  // what makes Netlify retry (after 1 min, then 2), and the retry resumes.
-  if (result.outcome !== "COMPLETED" && result.outcome !== "FAILED") {
-    throw new Error(
-      `reconcile run ${result.runId} not finished: ${result.outcome} after ${result.calls} calls (last status ${result.lastStatus})`,
-    );
+  if (result.outcome === "COMPLETED" || result.outcome === "FAILED") {
+    return jsonResponse(result, 200);
   }
-  return jsonResponse(result, 200);
+  // A non-retryable answer from the twin (404, 500, ...) will not heal on a
+  // retry, so the row is closed as FAILED with the reason instead of sitting
+  // RUNNING until the stale window. The twin does the write; the driver has
+  // no Prisma.
+  if (result.outcome === "ERROR") {
+    const reason = `driver gave up: ${result.outcome} after ${result.calls} calls (last status ${result.lastStatus})`;
+    const abandon = await fetch(
+      `${baseUrl}/api/cleanup/reconcile-ledgers?runId=${encodeURIComponent(result.runId)}&abandon=${encodeURIComponent(reason)}`,
+      { method: "POST", headers: { Authorization: `Bearer ${secret}` } },
+    ).catch(() => null);
+    log({
+      phase: "abandon",
+      runId: result.runId,
+      status: abandon?.status ?? 0,
+    });
+    return jsonResponse(result, 200);
+  }
+  // Budget, call cap or transient answers exhausted: throwing is what makes
+  // Netlify retry (after 1 min, then 2), and the retry resumes from the row.
+  throw new Error(
+    `reconcile run ${result.runId} not finished: ${result.outcome} after ${result.calls} calls (last status ${result.lastStatus})`,
+  );
 }

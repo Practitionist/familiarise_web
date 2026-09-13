@@ -55,15 +55,22 @@ async function kickReconcileDriver(args: {
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   const secret = process.env.CRON_SECRET;
   if (!secret) return { ok: false, reason: "CRON_SECRET is not set" };
+  // The parameters ride in the query as well as the body, so the kick still
+  // names its run if the background invocation is handed the URL alone.
+  const params = new URLSearchParams({ runId: args.runId });
+  if (args.triggeredById) params.set("triggeredById", args.triggeredById);
   try {
-    const res = await fetch(`${getAppUrl()}${RECONCILE_DRIVER_PATH}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "content-type": "application/json",
+    const res = await fetch(
+      `${getAppUrl()}${RECONCILE_DRIVER_PATH}?${params}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secret}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(args),
       },
-      body: JSON.stringify(args),
-    });
+    );
     return res.status === 202
       ? { ok: true }
       : { ok: false, reason: `driver answered ${res.status}` };

@@ -82,7 +82,7 @@ describe("POST /api/admin/reconcile-ledgers", () => {
       body.data.reportId,
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://deploy-preview-1--site.netlify.app/.netlify/functions/reconcile-ledgers-background",
+      `https://deploy-preview-1--site.netlify.app/.netlify/functions/reconcile-ledgers-background?runId=${body.data.reportId}&triggeredById=admin_1`,
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ Authorization: "Bearer s3cret" }),

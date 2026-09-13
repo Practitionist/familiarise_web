@@ -4,7 +4,8 @@
  * One call advances one run by a bounded chunk and answers with the run's
  * state; the background driver loops it until `status` is COMPLETED. With no
  * `?runId=` it opens a fresh full-scope run and advances that, so a manual
- * `curl` can drive a run too. `?limit=` caps the rows a chunk walks (shared
+ * `curl` can drive a run too; `?runId=&abandon=<reason>` closes a run as
+ * FAILED instead. `?limit=` caps the rows a chunk walks (shared
  * `parseLimitParam` rules); the soft RECONCILE_CHUNK_BUDGET_MS deadline is the
  * real bound, because the cost per row is a few serialised queries, not one.
  * The nightly GitHub Actions job keeps the unbounded single-process path.
@@ -17,11 +18,16 @@ import {
   parseLimitParam,
   statusFor,
 } from "@/lib/cron/cleanup-route";
-import { advanceReconcileRun } from "@/scripts/reconcile/reconcile-ledgers";
+import {
+  advanceReconcileRun,
+  markReconcileRunFailed,
+} from "@/scripts/reconcile/reconcile-ledgers";
 
 const QuerySchema = z.object({
   runId: z.string().uuid().optional(),
   triggeredById: z.string().min(1).max(64).optional(),
+  /** Close `runId` as FAILED with this reason instead of advancing it. */
+  abandon: z.string().min(1).max(500).optional(),
 });
 
 export const { GET, POST } = cleanupRoute({
@@ -31,7 +37,21 @@ export const { GET, POST } = cleanupRoute({
     const q = QuerySchema.parse({
       runId: req.nextUrl.searchParams.get("runId") ?? undefined,
       triggeredById: req.nextUrl.searchParams.get("triggeredById") ?? undefined,
+      abandon: req.nextUrl.searchParams.get("abandon") ?? undefined,
     });
+    // The driver has no Prisma; this is how it closes a run it gave up on.
+    if (q.abandon && q.runId) {
+      await markReconcileRunFailed(q.runId, q.abandon);
+      return {
+        success: true as const,
+        runId: q.runId,
+        scope: "full",
+        status: "FAILED" as const,
+        progress: null,
+        report: null,
+        error: q.abandon,
+      };
+    }
     const snap = await advanceReconcileRun({
       runId: q.runId ?? randomUUID(),
       ...(limit === undefined ? {} : { limit }),
