@@ -1,9 +1,11 @@
-# Netlify Pro support ticket — DRAFT (for kaustav to file)
+# Netlify Pro support ticket — FINAL, ready to paste (prepared 2026-09-13)
+
+Paste everything from the Subject line to the end of the Impact section into the Netlify support form as the account owner; the ticket needs the owner's session. Record the ticket number on #1124 once filed.
 
 > Subject: Next.js server handler (`___netlify-server-handler`): brand-new instances block their event loop ~24s on first invocation when created concurrently — is this expected scale-out behavior?
 >
 > Site: familiarise.netlify.app (site id `1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c`)
-> Plan: Pro (Credit-based) · Region: `ap-southeast-1` functions · Adapter: `@netlify/plugin-nextjs@5.15.13` (runtime API v2, single consolidated SSR+ISR function) · Next.js 15.5.15, Node 22
+> Plan: Pro · Region: `ap-southeast-1` (`sin`) functions · Adapter: `@netlify/plugin-nextjs@5.15.13` (runtime API v2, single consolidated SSR+ISR function) · Next.js 15.5.15, Node 22
 
 ## Summary
 
@@ -43,17 +45,16 @@ No improvement (possibly worse). We reverted.
 
 **5. Observability gap:** this function emits no `Init Duration:` log line (only `Duration:`/`Memory Usage:`), so cold starts can't be discriminated from logs; we had to build an in-app instance-age probe. A forum report from May 2025 describes the same absence.
 
+**6. Unchanged on the current runtime, and now inconsistent with the documented limit.** The ten cold invocations after our 2026-09-12 14:28 UTC production publish (deploy `6aa55feffc312e0008f33d62`, `@netlify/plugin-nextjs@5.15.13`, `nodejs22.x`, region `sin`) reported `Duration` 28.0–32.3 s and `Memory Usage` 892–1012 MB, against p50 219 ms and 116 MB warm. Your functions configuration page now lists the synchronous execution limit as 60 seconds and not configurable; the bare platform 500s we recorded at ~39 s (item 3) were therefore returned under the documented limit, which we would like explained separately. We also observe the edge returning a 504 at roughly 26 seconds to responses that have not started streaming, while the function runs to completion and its database write lands; that timeout's value and configurability are not documented anywhere we can find. On 2026-09-13 a burst of only three concurrent unique-key requests to `https://familiarisenow.com/explore/experts` on the published production deploy reproduced the pattern again: two at 1.06–1.14 s TTFB, one at 30.35 s.
+
 ## Questions
 
 1. Is concurrent instance-creation contention (e.g., simultaneous sandbox provisioning, deployment-artifact fetch, or shared-host CPU scheduling during burst scale-out) a known cause of multi-second stalls on runtime-API-v2 handlers? Is there a known incident or fix in flight since mid-2026?
 2. Does Netlify have, or plan, anything equivalent to provisioned concurrency / minimum instances for framework-generated functions like `___netlify-server-handler`? Scheduled keep-warm pings keep at most one instance warm and cannot protect bursts.
 3. Why does the server handler not emit AWS-style `Init Duration` in its logs, and are there plans to expose it? It makes cold-start SLO work impractical.
 4. Any guidance on reducing burst-time instance-creation latency from within the deployment (bundle shape, esbuild vs default bundling, region placement), given memory/vcpu scaling showed no effect?
+5. What is the edge's inactivity timeout for a response that has not started streaming (we observe ~26 s), is it configurable on Pro, and why did invocations at ~39 s receive platform 500s when the documented synchronous limit is 60 s?
 
 ## Impact
 
 User-visible: landing-page/explore clicks stall 20–30s then render (the "site is down" perception), worst right after deploys and during traffic bursts from a cold pool. We ship ISR-first architecture and deploy-warming workflows, but the tail persists whenever concurrency forces new instances.
-
-## Addendum, 2026-09-12 (not yet sent)
-
-Three facts to add before filing. First, Netlify's functions configuration page now lists the synchronous execution limit as 60 seconds and not configurable (the 2026-06-25 redesign); the "bare platform 500s at ~39 s" recorded above are therefore under the documented limit, which is a separate defect to report. Second, the ten cold invocations after the 2026-09-12 14:28 UTC production publish (deploy `6aa55feffc312e0008f33d62`, `@netlify/plugin-nextjs@5.15.13`, `nodejs22.x`, region `sin`) reported Duration 28.0–32.3 s and Memory Usage 892–1012 MB, against p50 219 ms and 116 MB warm, so the stall is unchanged on the latest runtime. Third, the edge returns a 504 at roughly 26 seconds to a response that has not started streaming while the function runs to completion (#1454); the value and configurability of that timeout are undocumented and should be asked in the same ticket. The full verification is in `.claude/skills/deployment/netlify/platform-limits.md`.

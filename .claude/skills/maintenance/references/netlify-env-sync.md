@@ -58,6 +58,18 @@ Never put a live secret on the command line. A shell argument is visible to ever
 
 Quote values carefully (URLs with `&`, JSON blobs). Skip everything in the flag-only bucket.
 
+## Step 4b — Per-context presence for runtime secrets
+
+A variable can exist on Netlify and still be absent where the code runs, because values are per context. On 2026-09-13 `CRON_SECRET` was present only in `deploy-preview`, so production's scheduled ticker failed to authenticate for nine days while every keys-only comparison passed (#1634). For each secret that a function or route reads at runtime, check every context that serves traffic:
+
+```sh
+for k in CRON_SECRET; do for c in production branch-deploy deploy-preview; do
+  printf "%-24s %-15s " "$k" "$c"; netlify env:get "$k" --context "$c" 2>/dev/null | tail -1 | grep -q "No value set" && echo UNSET || echo set
+done; done
+```
+
+Set a missing context with `netlify env:set KEY VALUE --context production --secret` (the `--secret` flag requires an explicit non-development context), then redeploy: functions read their environment at deploy time, so the change is inert until the next build of that context. Scheduled functions run only on the published production deploy, so production is the context that matters for the ticker.
+
 ## Step 5 — Verify
 
 Re-run `npx netlify-cli env:list --context production --plain` and confirm every approved change landed. Report: actions taken, warnings still open (test keys, empty OAuth), anything that couldn't be fixed and why. Remind the user that env changes only take effect on the **next deploy** — offer to trigger one (`npx netlify-cli deploy --build --prod`) but don't do it unasked.
