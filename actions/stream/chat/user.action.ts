@@ -7,6 +7,7 @@ import {
   getStreamChatClient,
   withStreamCircuitBreaker,
   StreamUnavailableError,
+  isExpectedStreamError,
 } from "@/lib/stream-client";
 import { forEachChunk } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
@@ -139,6 +140,19 @@ export const upsertUserToStream = async (userId: string) => {
     // an infra failure — rethrow without an error-level log so it doesn't
     // pollute error-monitoring dashboards with false positives.
     if (error instanceof ConsentRequiredError) {
+      throw error;
+    }
+    // Code 16 / 404 on an upsert is the account itself — deactivated by a
+    // moderation ban, or missing — not an outage. The client classifies the
+    // connect that follows and reports it once; capturing here too made three
+    // Sentry error shapes per page load for one disabled account.
+    if (isExpectedStreamError(error)) {
+      streamLogger.warn(
+        "Stream refused the upsert — account deactivated or missing",
+        {
+          userId: validatedUserId,
+        },
+      );
       throw error;
     }
     Sentry.captureException(

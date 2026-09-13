@@ -24,6 +24,11 @@ import { useSession } from "@/lib/auth-client";
 import { mapRoleToStream } from "@/lib/user";
 import { streamLogger } from "@/lib/stream-logger";
 import { setStreamConnection } from "@/lib/stream/connection-store";
+import {
+  classifyConnectFailure,
+  type ConnectFailure,
+} from "@/lib/stream/connect-failure";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * The connector takes no `children`. It renders nothing and publishes the
@@ -100,6 +105,7 @@ const StreamProviderImpl = ({
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ConnectFailure | null>(null);
   // We need BOTH a ref and state for retry count: the ref (connectionAttemptsRef)
   // is used inside setTimeout/async closures where state would be stale, while
   // this state variable drives re-renders so the UI shows the correct attempt count.
@@ -464,7 +470,9 @@ const StreamProviderImpl = ({
       });
       return client;
     } catch (error) {
-      streamLogger.error("Video connection failed", error, {
+      // Warn, not error: the outer catch reports once per outcome. Capturing
+      // here as well sent an event per backoff attempt.
+      streamLogger.warn("Video connection failed", {
         userId: userDetails.id,
       });
       setVideoConnected(false);
@@ -506,14 +514,41 @@ const StreamProviderImpl = ({
       connectionAttemptsRef.current = 0; // Reset on success
       setRetryCount(0);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Connection failed";
-      setError(errorMessage);
+      const classified = classifyConnectFailure(error);
+      setError(classified.detail || "Connection failed");
+      setFailure(classified);
 
       // Implement exponential backoff retry using ref
       connectionAttemptsRef.current += 1;
       setRetryCount(connectionAttemptsRef.current); // Sync state for UI display
       const currentAttempts = connectionAttemptsRef.current;
+
+      if (classified.kind !== "retryable") {
+        // Stream said this cannot succeed as-is (deactivated user, bad token,
+        // suspended app). Report once with a stable fingerprint and stop: the
+        // five backoff retries per client per page were the Sentry noise.
+        if (!signedOutRef.current && process.env.NODE_ENV !== "development") {
+          Sentry.captureException(
+            error instanceof Error ? error : new Error(classified.detail),
+            {
+              level:
+                classified.kind === "account-disabled" ? "warning" : "error",
+              fingerprint: [
+                "stream-connect",
+                classified.kind,
+                String(classified.code ?? "none"),
+              ],
+              tags: {
+                subsystem: "stream",
+                "stream.failure": classified.kind,
+                "stream.code": String(classified.code ?? ""),
+              },
+              contexts: { stream: { operation: "connect" } },
+            },
+          );
+        }
+        return;
+      }
 
       if (currentAttempts < 5 && !signedOutRef.current) {
         // Max 5 attempts
@@ -545,6 +580,7 @@ const StreamProviderImpl = ({
   const retryConnection = useCallback(() => {
     connectionAttemptsRef.current = 0;
     setError(null);
+    setFailure(null);
     connectServices();
   }, [connectServices]);
 
@@ -670,8 +706,9 @@ const StreamProviderImpl = ({
       videoConnected,
       isConnecting,
       error,
+      failure,
     });
-  }, [clients, chatConnected, videoConnected, isConnecting, error]);
+  }, [clients, chatConnected, videoConnected, isConnecting, error, failure]);
 
   // The shell exposes `retryConnection` without importing the SDK bundle, so it
   // asks for a retry by event rather than by calling into here directly.
