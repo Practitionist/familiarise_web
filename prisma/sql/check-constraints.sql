@@ -625,12 +625,16 @@ CREATE TRIGGER review_revision_immutable
 -- Each of these could fail against pre-reset data, so they shipped commented
 -- until the reset gave them a clean schema.
 
--- 1. #1093 §3 — the idempotency guarantees are structural once no nulls exist
---    (writers mint since #1169 PR 9, so no new nulls are created):
-ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
--- SPLIT
-ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
--- SPLIT
+-- 1. #1093 §3 — DEFERRED again at the #1554 reset rehearsal (2026-09-14). The
+--    premise "writers mint since #1169 PR 9" is false: the seed (8b), the
+--    overage side charge (lib/payments/billing/overage-settlement.ts) and the
+--    approval payment (lib/payments/operations/approval-payment.ts) never write
+--    Payment.clientIdempotencyKey, checkout writes `?? null`, and the Zod key
+--    is optional. A sidecar NOT NULL also disagrees with the nullable Prisma
+--    column, so the next `db push` would drop it. Do it as schema (`String
+--    @unique`) once every writer mints a key — its own money PR.
+--    ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
+--    ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
 -- 2. #1093 §5 — overlapping ACTIVE program assignments double-bill a seat; the
 --    (programId, membershipId, periodStart) unique cannot see different starts:
 ALTER TABLE "ProgramAssignment" DROP CONSTRAINT IF EXISTS "program_assignment_no_active_overlap";
