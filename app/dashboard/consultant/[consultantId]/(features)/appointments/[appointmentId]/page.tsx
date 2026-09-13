@@ -4,7 +4,10 @@ import {
   QueryClient,
   dehydrate,
 } from "@tanstack/react-query";
-import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import {
+  readAppointmentDetail,
+  scopeAppointmentDetail,
+} from "@/lib/data/appointment-detail";
 import DetailPageClient from "./DetailPageClient";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 
@@ -19,7 +22,7 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultant", consultantId);
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
 
   const detail = await readAppointmentDetail(appointmentId);
   if (!detail) notFound();
@@ -46,7 +49,12 @@ export default async function AppointmentDetailPage({
   if (!planOwnerIds.includes(consultantId)) notFound();
 
   const queryClient = new QueryClient();
-  queryClient.setQueryData(["appointment-detail", appointmentId], detail);
+  // The same shape the API route answers: the host reads every seat, but a
+  // receipt pointer travels only on rows the viewer paid (or to staff).
+  queryClient.setQueryData(
+    ["appointment-detail", appointmentId],
+    scopeAppointmentDetail(detail, access.userId, access.isInspecting),
+  );
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
