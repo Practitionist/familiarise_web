@@ -183,7 +183,7 @@ flowchart TD
 
 **Data model**: `Trial` links to `ConsulteeProfile`, `ConsultantProfile`, `SubscriptionPlan`, and optionally to `Appointment` (when scheduled) and `Subscription` (when converted via `convertedToSubscriptionId`).
 
-For full details see [09-trial-sessions.md](./09-trial-sessions.md).
+For full details see [09-trials.md](./09-trials.md).
 
 ---
 

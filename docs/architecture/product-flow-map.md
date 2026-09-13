@@ -632,8 +632,8 @@ flowchart TD
 | Schema | `prisma/schema.prisma` |
 | Booking architecture | `docs/booking/01-architecture.md` |
 | Booking lifecycle | `docs/booking/06-booking-lifecycle.md` |
-| Slot math | `docs/booking/03-slot-math-and-calculations.md` |
-| Trial sessions | `docs/booking/09-trial-sessions.md` |
+| Slot math | `docs/booking/03-interval-math-and-calculations.md` |
+| Trial sessions | `docs/booking/09-trials.md` |
 | Waitlist system | `docs/booking/11-waitlist-system.md` |
 | Checkout + payment | `docs/booking/10-checkout-payment-integration.md` |
 | Enterprise overview | `docs/enterprise/00-foundations/01-overview.md` |

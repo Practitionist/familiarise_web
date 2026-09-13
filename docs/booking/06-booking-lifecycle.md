@@ -1260,7 +1260,7 @@ T+30 days       (If request was never acted on)
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                                             |
 | Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                                 |
-| Slot math (30-min intervals, weekly distribution)               | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)                                                 |
+| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                                 |
 | Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                                           |
 | Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                                           |
 | Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                                   |

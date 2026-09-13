@@ -51,6 +51,9 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress |
 | `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules  |
 | `SchedulingService.ts`  | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation             |
+| `intervals.ts`               | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange` |
+| `interval-validation.ts`     | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
+| `interval-meta.ts`           | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta` |
 | `types.ts`                  | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.             |
 
 ### Zod Schemas (`schemas/slotAllocation/`)
@@ -111,12 +114,12 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | See why the system is built this way   | [00-architecture-decisions.md](./00-architecture-decisions.md)                 |
 | Understand the system architecture     | [01-architecture.md](./01-architecture.md)                                     |
 | Learn event type rules and validation  | [02-event-types-and-validation.md](./02-event-types-and-validation.md)         |
-| Understand slot math and calculations  | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |
+| Understand slot math and calculations  | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)         |
 | Look up API endpoints                  | [04-api-reference.md](./04-api-reference.md)                                   |
 | Debug an error or see recent fixes     | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)   |
 | Understand rescheduling                | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                           |
 | Understand cancellation                | [08-cancellation-flow.md](./08-cancellation-flow.md)                           |
-| Learn about trial sessions             | [09-trial-sessions.md](./09-trial-sessions.md)                                 |
+| Learn about trial sessions             | [09-trials.md](./09-trials.md)                                 |
 | See how checkout connects to booking   | [10-checkout-payment-integration.md](./10-checkout-payment-integration.md)     |
 | Learn about concurrency and locking    | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
 | See all cron jobs and background tasks | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
@@ -127,6 +130,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
 | **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
 | Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
+| Look up booking table columns and indexes | [21-schema-reference.md](./21-schema-reference.md)                       |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 
@@ -137,7 +141,7 @@ For new developers, read in this order:
 1. **[06-booking-lifecycle.md](./06-booking-lifecycle.md)** -- End-to-end overview of how bookings flow from browse to completion
 2. **[02-event-types-and-validation.md](./02-event-types-and-validation.md)** -- The 5 event types and their rules
 3. **[01-architecture.md](./01-architecture.md)** -- Service layer, data model, data flows
-4. **[03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)** -- How 30-minute slot math works
+4. **[03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)** -- How 30-minute slot math works
 5. **[04-api-reference.md](./04-api-reference.md)** -- API endpoints and schemas
 6. **[10-checkout-payment-integration.md](./10-checkout-payment-integration.md)** -- How bookings connect to payments
 7. **[12-concurrency-and-locking.md](./12-concurrency-and-locking.md)** -- Race condition prevention
@@ -147,7 +151,7 @@ For new developers, read in this order:
 Then reference these as needed:
 
 - [07-rescheduling-flow.md](./07-rescheduling-flow.md), [08-cancellation-flow.md](./08-cancellation-flow.md) -- Modify existing bookings
-- [09-trial-sessions.md](./09-trial-sessions.md) -- Trial session specifics
+- [09-trials.md](./09-trials.md) -- Trial session specifics
 - [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md) -- Debug errors
 
 ## Related Documentation

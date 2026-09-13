@@ -512,12 +512,12 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | Topic                                    | Document                                            |
 | ---------------------------------------- | --------------------------------------------------- |
 | Full booking lifecycle (all event types) | `docs/booking/06-booking-lifecycle.md`              |
-| Slot math and calculations               | `docs/booking/03-slot-math-and-calculations.md`     |
+| Slot math and calculations               | `docs/booking/03-interval-math-and-calculations.md`     |
 | API reference for allocation/validation  | `docs/booking/04-api-reference.md`                  |
 | Concurrency and distributed locking      | `docs/booking/12-concurrency-and-locking.md`        |
 | Checkout and payment integration         | `docs/booking/10-checkout-payment-integration.md`   |
 | Cancellation flow                        | `docs/booking/08-cancellation-flow.md`              |
-| Trial sessions (subscription-only)       | `docs/booking/09-trial-sessions.md`                 |
+| Trial sessions (subscription-only)       | `docs/booking/09-trials.md`                 |
 | Event capacity (class/webinar-only)      | `docs/booking/02-event-types-and-validation.md`     |
 | Payout architecture                      | `docs/payments/payouts/01-architecture.md`          |
 | Earnings lifecycle                       | `docs/payments/payouts/02-earnings-lifecycle.md`    |
