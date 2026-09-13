@@ -248,6 +248,8 @@ async function createAppointmentFeedback(held: HeldSlot[]): Promise<number> {
       appointmentOccurrenceId: h.slotId,
       appointmentId: h.appointmentId,
       organizationId: h.organizationId,
+      // #1550 — the org rollup groups by this column.
+      consultantProfileId: h.consultantProfileId,
       userId: h.userId,
       rating,
       comment: faker.datatype.boolean({ probability: 0.6 })

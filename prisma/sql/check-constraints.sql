@@ -22,6 +22,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_occurrence_live_ordinal_key"
   ON "AppointmentOccurrence" ("appointmentId", "ordinal")
   WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL;
 -- SPLIT
+-- #1554 / #1550 — a rating is about one call (appointmentOccurrenceId set) or
+-- the whole appointment (NULL). One row per person per level: NULLS NOT
+-- DISTINCT (PG 15) makes two whole-appointment rows collide.
+DROP INDEX IF EXISTS "appointment_feedback_level_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
+  ON "AppointmentFeedback" ("appointmentId", "appointmentOccurrenceId", "userId") NULLS NOT DISTINCT;
+-- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative" CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0);

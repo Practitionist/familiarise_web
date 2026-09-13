@@ -26,6 +26,31 @@
 export const ORG_QUALITY_MIN_RESPONDENTS = 5;
 
 /**
+ * #1554 — which rows the org quality signal is built from. A rating is about one
+ * CALL (`appointmentOccurrenceId` set) or the WHOLE BOOKING (NULL); the two are
+ * different questions and are never averaged together.
+ */
+export type OrgQualityLevel = "occurrence" | "appointment";
+
+/**
+ * The attendee-rating rows one organisation's quality signal may see, at one
+ * level. #705 — CONSULTEE only, so a consultant's rating of their own session
+ * never lands in the average and an unattributed row fails closed. #1300 — and
+ * only rows that still count: a moderated-away comment's rating goes with it.
+ */
+export function orgQualitySignalWhere(
+  organizationId: string,
+  level: OrgQualityLevel = "occurrence",
+) {
+  return {
+    organizationId,
+    raterRole: "CONSULTEE" as const,
+    excludedFromAggregateAt: null,
+    appointmentOccurrenceId: level === "occurrence" ? { not: null } : null,
+  };
+}
+
+/**
  * Respondents needed before free-text would be reported.
  *
  * Nothing reaches this threshold today, because no organisation surface returns a

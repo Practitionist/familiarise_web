@@ -1,16 +1,19 @@
 /**
- * #appt-support — private per-participant CSAT for ONE VIDEO CALL (1–5 + note),
- * distinct from the public ConsultantReview. Upsert, so re-submitting edits.
+ * #appt-support — private per-participant CSAT (1–5 + note), distinct from the
+ * public ConsultantReview. Re-submitting edits.
  *
- * Per call, not per appointment: an appointment is not a session. A subscription
- * booking holds up to 24 of them, so one rating per appointment meant a single
- * score for a three-month package, arriving months after the sessions it
- * described. GET returns every call of this booking the caller has rated.
+ * #1554 — a rating is about ONE CALL (`slotId` names the occurrence) or about
+ * the WHOLE BOOKING (no `slotId`; the row's occurrence is NULL). A subscription
+ * holds up to 24 calls, so one rating per appointment alone meant a single score
+ * for a three-month package; both levels now coexist, one row per person per
+ * level, guarded by the `appointment_feedback_level_key` sidecar unique.
+ * GET returns every row of this booking the caller has written.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
 import { heldOccurrence } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
@@ -31,8 +34,8 @@ const scopeSchema = z.enum(["appointment", "booking"]).default("appointment");
 const feedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
   comment: z.string().trim().max(2000).optional(),
-  /** Which call of this booking is being rated. */
-  slotId: z.string().min(1).max(64),
+  /** Which call of this booking is being rated; absent = the whole booking. */
+  slotId: z.string().min(1).max(64).optional(),
 });
 
 export async function GET(
@@ -173,9 +176,11 @@ export async function POST(
 
     // The slot must belong to THIS appointment: without the check a caller
     // could rate a call from a booking they merely have access to the id of.
+    // Without a slot the rating is about the whole booking, which still needs
+    // at least one held call to rate at all.
     const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
-        id: body.data.slotId,
+        ...(body.data.slotId ? { id: body.data.slotId } : {}),
         appointmentId,
         // You may rate a call you ATTENDED, or one nobody could have recorded
         // (an offline session). A COMPLETED slot the caller never joined does
@@ -184,7 +189,7 @@ export async function POST(
         // calls, which never happened at all.
         ...heldOccurrence(auth.userId),
       },
-      select: { id: true },
+      select: { id: true, consultantProfileId: true },
     });
     if (!slot) {
       return supportError({
@@ -197,9 +202,8 @@ export async function POST(
     }
 
     // #1554 — the rating belongs to the MEETING, and the occurrence IS the
-    // meeting: one row per held call, so there is no run anchor to normalise
-    // to and one in-person call can only ever take one rating per user.
-    const ratedSlotId = slot.id;
+    // meeting: one row per held call; NULL is the whole-booking level.
+    const ratedSlotId = body.data.slotId ? slot.id : null;
 
     // `updatedAt` is stamped HERE, not by `@updatedAt`. Prisma populates that
     // attribute on create as well as on update, so the column could never be NULL
@@ -207,46 +211,66 @@ export async function POST(
     // written. Only a changed OPINION counts, the same rule the review upsert
     // applies to `editedAt`: re-submitting identical stars is idempotent and must
     // not read to a moderator as somebody who keeps changing their mind.
-    const previous = await prisma.appointmentFeedback.findUnique({
+    //
+    // findFirst + update/create rather than an upsert: the per-level unique is
+    // a NULLS NOT DISTINCT sidecar Prisma cannot name as a compound key, so a
+    // racing second create surfaces as P2002 and answers 409.
+    const previous = await prisma.appointmentFeedback.findFirst({
       where: {
-        appointmentOccurrenceId_userId: {
-          appointmentOccurrenceId: ratedSlotId,
-          userId: auth.userId,
-        },
+        appointmentId,
+        appointmentOccurrenceId: ratedSlotId,
+        userId: auth.userId,
       },
-      select: { rating: true, comment: true },
+      select: { id: true, rating: true, comment: true },
     });
     const opinionChanged =
       previous !== null &&
       (previous.rating !== body.data.rating ||
-        // An absent `comment` is "not supplied", which the upsert already treats
+        // An absent `comment` is "not supplied", which the update already treats
         // as leaving the stored note alone — so it is not an edit either.
         (body.data.comment !== undefined &&
           (previous.comment ?? "") !== body.data.comment));
 
-    const feedback = await prisma.appointmentFeedback.upsert({
-      where: {
-        appointmentOccurrenceId_userId: {
-          appointmentOccurrenceId: ratedSlotId,
-          userId: auth.userId,
-        },
-      },
-      create: {
-        appointmentOccurrenceId: ratedSlotId,
-        appointmentId,
-        userId: auth.userId,
-        organizationId: auth.organizationId,
-        rating: body.data.rating,
-        comment: body.data.comment,
-        raterRole,
-      },
-      update: {
-        rating: body.data.rating,
-        comment: body.data.comment,
-        raterRole,
-        ...(opinionChanged ? { updatedAt: new Date() } : {}),
-      },
-    });
+    let feedback;
+    try {
+      feedback = previous
+        ? await prisma.appointmentFeedback.update({
+            where: { id: previous.id },
+            data: {
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+              ...(opinionChanged ? { updatedAt: new Date() } : {}),
+            },
+          })
+        : await prisma.appointmentFeedback.create({
+            data: {
+              appointmentOccurrenceId: ratedSlotId,
+              appointmentId,
+              userId: auth.userId,
+              organizationId: auth.organizationId,
+              // #1550 — the consultant on the rated call (or on the booking's
+              // held call, for a whole-booking rating).
+              consultantProfileId: slot.consultantProfileId,
+              // #1580 — set once Collaborator carries `tier`; a PRESENTER on
+              // the rated call's plan is what belongs here.
+              coPresenterProfileId: null,
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+            },
+          });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return supportError({
+          status: 409,
+          code: "CONFLICT",
+          message: "You have already rated this; reload and edit it instead",
+          context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+        });
+      }
+      throw error;
+    }
     return NextResponse.json({ data: feedback });
   } catch (cause) {
     return supportError({

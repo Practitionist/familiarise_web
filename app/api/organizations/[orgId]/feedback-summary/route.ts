@@ -22,9 +22,11 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parseRouteParams } from "@/lib/api/support-http";
 import { OrgIdParams } from "@/schemas/support";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import {
   ORG_QUALITY_MIN_RESPONDENTS,
   applyCohortSuppression,
+  orgQualitySignalWhere,
   suppressNarrowerWindow,
 } from "@/lib/enterprise/quality-thresholds";
 
@@ -50,79 +52,56 @@ export async function GET(
 
   const since30d = new Date(Date.now() - 30 * 24 * 3_600_000);
 
-  // #705 — attendee ratings only. The POST authorizes any participant, so a
-  // consultant could rate their OWN session into this average. Filtering on
-  // CONSULTEE rather than excluding PROVIDER means rows written before the
-  // column existed (raterRole NULL, provenance unknown) fail closed instead of
-  // being assumed innocent.
-  //
-  // #1300 — and only rows that still count: a moderated-away comment's rating
-  // goes with it, and a rating we adjudicated as caused by our own outage must
-  // not read to an organisation as a bad consultant either.
-  const attendeeRatings = {
-    organizationId: orgId,
-    raterRole: "CONSULTEE" as const,
-    excludedFromAggregateAt: null,
-  };
-
-  // One read, aggregated in application code, and the ceiling stated out loud.
-  //
-  // `AppointmentFeedback` carries no consultant column — the consultant is on the
-  // slot — and Prisma cannot `groupBy` a relation's scalar, so the per-consultant
-  // breakdown has to see rows. Moving only the two WINDOW figures back to
-  // `aggregate` + `groupBy(["userId"])` would not help: this findMany still has to
-  // run for the breakdown, so peak memory is unchanged, and under `PG_POOL_MAX=1`
-  // the four extra statements serialise behind it rather than running alongside.
-  //
-  // What bounds it is the WHERE: one organisation's own attendee feedback, one row
-  // per rated call, and no page of this response is public. The realistic ceiling
-  // is members × sessions-per-member, and three ints per row. A denormalised
-  // `consultantProfileId` on this table is what would turn the last pass into a
-  // `groupBy`, and that is a schema change for the pre-MVP reset — #1550.
-  const rows = await prisma.appointmentFeedback.findMany({
-    where: attendeeRatings,
-    select: {
-      userId: true,
-      rating: true,
-      createdAt: true,
-      // `AppointmentOccurrence.consultantProfileId` is a denormalised bare string
-      // with no relation — it exists to feed the btree_gist overlap constraint —
-      // so the name is resolved in one follow-up query below rather than joined.
-      occurrence: { select: { consultantProfileId: true } },
-    },
-  });
+  // #1554 / #1550 — per-call ratings only, and grouped in the database by the
+  // consultant column the feedback row now carries: no row leaves Postgres. The
+  // group key includes the rater because the floors are counted in PEOPLE, so
+  // each (consultant, rater) pair comes back once with its count and sum.
+  const attendeeRatings = orgQualitySignalWhere(orgId, "occurrence");
+  const grouped = (where: Prisma.AppointmentFeedbackWhereInput) =>
+    prisma.appointmentFeedback.groupBy({
+      by: ["consultantProfileId", "userId"],
+      where,
+      _count: { _all: true },
+      _sum: { rating: true },
+    });
+  const [allTime, recent, older] = await Promise.all([
+    grouped(attendeeRatings),
+    grouped({ ...attendeeRatings, createdAt: { gte: since30d } }),
+    grouped({ ...attendeeRatings, createdAt: { lt: since30d } }),
+  ]);
+  type Pair = (typeof allTime)[number];
 
   const round1 = (n: number) => Math.round(n * 10) / 10;
 
   /** Respondents are PEOPLE, never rows. Feedback is one row per CALL, so a single
    *  member rating three sessions of one subscription would clear a row-counted
    *  floor alone — and the "average" handed back would be their own rating. */
-  const summarise = (subset: typeof rows) => {
-    const raters = new Set(subset.map((r) => r.userId));
+  const summarise = (pairs: Pair[]) => {
+    const raters = new Set(pairs.map((p) => p.userId));
+    const responses = pairs.reduce((n, p) => n + p._count._all, 0);
+    const total = pairs.reduce((n, p) => n + (p._sum.rating ?? 0), 0);
     return {
       respondentIds: raters as ReadonlySet<string>,
       respondents: raters.size,
-      responses: subset.length,
-      average: subset.length
-        ? round1(subset.reduce((sum, r) => sum + r.rating, 0) / subset.length)
-        : null,
+      responses,
+      average: responses ? round1(total / responses) : null,
     };
   };
 
-  const overall = summarise(rows);
-  const last30 = summarise(rows.filter((r) => r.createdAt >= since30d));
+  const overall = summarise(allTime);
+  const last30 = summarise(recent);
 
-  // Per consultant. Rows whose slot carries no consultant (a group plan with no
+  // Per consultant. Rows whose call carries no consultant (a group plan with no
   // named expert) form their own cohort under a sentinel key: never a line in
   // the breakdown, but in the suppression arithmetic, because they are exactly
   // what "total minus the published lines" would otherwise isolate.
   const UNATTRIBUTED = "";
-  const byConsultant = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const id = row.occurrence?.consultantProfileId ?? UNATTRIBUTED;
+  const byConsultant = new Map<string, Pair[]>();
+  for (const pair of allTime) {
+    const id = pair.consultantProfileId ?? UNATTRIBUTED;
     const entry = byConsultant.get(id);
-    if (entry) entry.push(row);
-    else byConsultant.set(id, [row]);
+    if (entry) entry.push(pair);
+    else byConsultant.set(id, [pair]);
   }
 
   // One query for the names, keyed by the ids we actually have. A name is
@@ -189,8 +168,7 @@ export async function GET(
   // The people with a response OUTSIDE the window, counted from the rows rather
   // than subtracted: somebody who answered both before and inside it belongs to
   // both cohorts, so a subtraction only lower-bounds this.
-  const older = summarise(rows.filter((r) => r.createdAt < since30d));
-  const last30Reported = suppressNarrowerWindow(older)
+  const last30Reported = suppressNarrowerWindow(summarise(older))
     ? { average: null, responses: null, respondents: null }
     : reportable(last30);
 

@@ -568,10 +568,16 @@ enum SupportFlowOutcomeKind {
 model AppointmentFeedback {
   id String @id @default(uuid())
 
-  // The held call being rated. Nullable only for rows written before feedback moved
-  // to the per-call unit; the API requires it.
+  // #1554 — the held call being rated; NULL means the rating is about the
+  // whole appointment (a subscription or class as a purchase).
   occurrence              AppointmentOccurrence? @relation(fields: [appointmentOccurrenceId], references: [id], onDelete: Cascade)
   appointmentOccurrenceId String?
+
+  // #1550 — the consultant on the rated call (or the plan's, for a whole-
+  // appointment rating), so the org rollup groups without a join.
+  consultantProfileId  String?
+  // #1580 — the PRESENTER collaborator on the rated call's plan, if any.
+  coPresenterProfileId String?
 
   // Kept alongside the occurrence: the org quality aggregate and every appointment-
   // scoped read filter on this, and denormalizing it avoids a join on the
@@ -606,14 +612,17 @@ model AppointmentFeedback {
   excludedFromAggregateAt DateTime?          @db.Timestamptz
   moderationActions       ModerationAction[]
 
-  // One rating per person per CALL. Rows predating the column carry a NULL
-  // occurrence and Postgres treats a NULL key as distinct, so they coexist.
-  @@unique([appointmentOccurrenceId, userId])
+  // One rating per person per call AND one per person per whole appointment:
+  // the NULLS NOT DISTINCT unique appointment_feedback_level_key in prisma/sql
+  // on (appointmentId, appointmentOccurrenceId, userId). No @@unique/@@index
+  // on that triple here (#1268).
   // Still the unit for "show me this booking's feedback".
   @@index([appointmentId, userId])
   // The org aggregate filters raterRole before the date range, so
   // (organizationId, createdAt) is no longer a usable prefix for it.
   @@index([organizationId, raterRole, createdAt])
+  // #1550 — the org rollup groups attendee ratings by consultant.
+  @@index([organizationId, raterRole, consultantProfileId])
 }
 
 enum AppointmentFeedbackRole {
