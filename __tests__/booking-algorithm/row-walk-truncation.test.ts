@@ -110,6 +110,8 @@ const mockTx = {
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   appointment: {
+    // #1569 — the earnings-hold recompute reads the wrapper; none paid here.
+    findUnique: jest.fn().mockResolvedValue(null),
     findMany: jest.fn().mockResolvedValue([]),
     // #1499 — createAppointments reads the originating appointment to
     // inherit the policy version the booking was sold under. Null here:

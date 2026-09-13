@@ -155,6 +155,8 @@ function makeNoDeleteTx() {
       findFirst: jest.fn().mockResolvedValue({ id: "consultant-profile-1" }),
     },
     appointment: {
+      // #1569 — the earnings-hold recompute reads the wrapper; none paid here.
+      findUnique: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       // #1554 — createAppointments finds the purchase wrapper and attaches
       // the new rows to it (the #1499 policy read shares the same mock).

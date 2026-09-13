@@ -3691,10 +3691,9 @@ export class SchedulingService {
             include: { occurrences: true },
           });
       appointments = [wrapper];
-      // #1569 — a replacement after a reschedule moves the earnings hold with it.
-      if (inheritedOrdinals.length > 0) {
-        await recomputeEarningsHold(tx, wrapper.id);
-      }
+      // #1569 — the hold anchors on the last live call, and this write just
+      // changed the live set (first allocation, top-up or reschedule alike).
+      await recomputeEarningsHold(tx, wrapper.id);
       const written = new Set(occurrencesToCreate.map((row) => row.ordinal));
       newOccurrenceIds = (
         wrapper.occurrences as { id: string; ordinal: number }[]

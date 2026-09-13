@@ -93,8 +93,15 @@ export async function resolveEarningsAnchor(
 
 /**
  * Re-anchor every unreleased earning of the appointment's payments after its
- * occurrences moved. PENDING rows only: a READY or PAID row has already left
- * the hold, and a dispute-held row keeps the hold the dispute imposed.
+ * live occurrences changed (first allocation, top-up, reschedule). PENDING rows
+ * only: a READY or PAID row has already left the hold, and a dispute-held row
+ * keeps the hold the dispute imposed.
+ *
+ * The capture instant is the earnings row's own `createdAt` — Payment carries
+ * no capture timestamp and its `createdAt` is order creation, which can sit
+ * days earlier — and a hold is never moved EARLIER than it already is: a
+ * recompute may only extend the wait, never shorten a release the capture
+ * already promised.
  */
 export async function recomputeEarningsHold(
   db: PrismaLike,
@@ -106,7 +113,7 @@ export async function recomputeEarningsHold(
       appointmentType: true,
       payment: {
         where: { paymentStatus: "SUCCEEDED", deletedAt: null },
-        select: { id: true, createdAt: true },
+        select: { id: true },
       },
     },
   });
@@ -116,19 +123,26 @@ export async function recomputeEarningsHold(
   const holdHours = holdHoursFor(
     appointment.appointmentType as AppointmentType,
   );
+  const pending = await db.consultantEarnings.findMany({
+    where: {
+      paymentId: { in: appointment.payment.map((p) => p.id) },
+      status: "PENDING",
+    },
+    select: { id: true, createdAt: true, holdUntil: true },
+  });
   let moved = 0;
-  for (const payment of appointment.payment) {
-    const result = await db.consultantEarnings.updateMany({
-      where: { paymentId: payment.id, status: "PENDING" },
-      data: {
-        holdUntil: computeHoldUntil({
-          capturedAt: payment.createdAt,
-          lastOccurrenceEndsAt: lastEnd,
-          holdHours,
-        }),
-      },
+  for (const earning of pending) {
+    const computed = computeHoldUntil({
+      capturedAt: earning.createdAt,
+      lastOccurrenceEndsAt: lastEnd,
+      holdHours,
     });
-    moved += result.count;
+    if (computed.getTime() <= earning.holdUntil.getTime()) continue;
+    await db.consultantEarnings.update({
+      where: { id: earning.id },
+      data: { holdUntil: computed },
+    });
+    moved += 1;
   }
   return moved;
 }

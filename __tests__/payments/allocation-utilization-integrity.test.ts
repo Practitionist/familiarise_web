@@ -158,6 +158,8 @@ const mockTx = {
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   appointment: {
     findMany: jest.fn().mockResolvedValue([]),
+    // #1569 — the earnings-hold recompute reads the wrapper; none paid here.
+    findUnique: jest.fn().mockResolvedValue(null),
     // #1554 — createAppointments attaches to the purchase wrapper checkout
     // minted (the #1499 policy read shares this mock).
     findFirst: jest
