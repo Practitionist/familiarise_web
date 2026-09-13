@@ -15,7 +15,7 @@ import { driveReconcileRun } from "../../lib/reconcile/drive-reconcile-run";
 
 function twin(statuses: Array<"RUNNING" | "COMPLETED">) {
   const calls: string[] = [];
-  const fetchImpl = jest.fn(async (url: string) => {
+  const fetchImpl = jest.fn(async (url: string, _init?: RequestInit) => {
     calls.push(url);
     const status = statuses[Math.min(calls.length - 1, statuses.length - 1)];
     return new Response(JSON.stringify({ status }), { status: 200 });

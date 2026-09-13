@@ -25,7 +25,7 @@ jest.mock("../../lib/url", () => ({
   getAppUrl: () => "https://deploy-preview-1--site.netlify.app",
 }));
 
-const findMany = jest.fn(async () => []);
+const findMany = jest.fn(async (..._args: unknown[]) => []);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -36,7 +36,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 const createReconcileRun = jest.fn(async (_opts: unknown, id: string) => id);
-const runReconcileLedgers = jest.fn(async () => ({ id: "rep_org", ok: true }));
+const runReconcileLedgers = jest.fn(async (..._args: unknown[]) => ({
+  id: "rep_org",
+  ok: true,
+}));
 jest.mock("../../scripts/reconcile/reconcile-ledgers", () => ({
   createReconcileRun: (...args: [unknown, string]) =>
     createReconcileRun(...args),
