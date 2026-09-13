@@ -14,6 +14,11 @@ import {
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
+import {
+  paymentFunding,
+  paymentRailLabel,
+  receiptHref,
+} from "@/lib/appointments/payment-display";
 
 const HOST = "u-host";
 const A = "u-a";
@@ -43,6 +48,11 @@ const detail = {
         currency: "INR",
         createdAt: "2026-09-12T00:00:00Z",
         expiresAt: null,
+        receiptUrl: null,
+        consumerInvoice: { id: "inv-a" },
+        childPayments: [
+          { id: "p-a-overage", userId: A, consumerInvoice: { id: "inv-a2" } },
+        ],
       },
       {
         id: "p-b",
@@ -52,6 +62,9 @@ const detail = {
         currency: "INR",
         createdAt: "2026-09-10T00:00:00Z",
         expiresAt: null,
+        receiptUrl: null,
+        consumerInvoice: null,
+        childPayments: [],
       },
     ],
   },
@@ -87,6 +100,7 @@ describe("scopeAppointmentDetail", () => {
             currency: "INR",
             createdAt: "2026-09-12T00:00:00Z",
             expiresAt: null,
+            childPayments: [],
           },
         ],
       },
@@ -104,6 +118,74 @@ describe("scopeAppointmentDetail", () => {
     expect(
       scopeAppointmentDetail(detail, "u-staff", true).appointment.payment,
     ).toHaveLength(2);
+  });
+
+  it("keeps a receipt only on the payer's own rows, and on staff's", () => {
+    const host = scopeAppointmentDetail(detail, HOST).appointment.payment[0];
+    expect(host.consumerInvoice).toBeNull();
+    expect(host.childPayments[0].consumerInvoice).toBeNull();
+    const own = scopeAppointmentDetail(detail, A).appointment.payment[0];
+    expect(own.consumerInvoice).toEqual({ id: "inv-a" });
+    const staff = scopeAppointmentDetail(detail, "u-staff", true).appointment
+      .payment[0];
+    expect(staff.consumerInvoice).toEqual({ id: "inv-a" });
+  });
+});
+
+describe("payment display", () => {
+  const row = {
+    id: "p",
+    paymentStatus: "SUCCEEDED",
+    paymentMethod: "CARD",
+    paymentGateway: "RAZORPAY",
+    receiptUrl: null,
+    consumerInvoice: null,
+  };
+
+  it("reads sponsorship off the funding legs, then off the method", () => {
+    expect(paymentFunding({ ...row, legs: [{ source: "WALLET" }] })).toBe(
+      "ORG",
+    );
+    expect(paymentFunding({ ...row, legs: [{ source: "CARD" }] })).toBe("SELF");
+    expect(
+      paymentFunding({
+        ...row,
+        legs: [{ source: "CARD" }, { source: "REFERRAL_CREDIT" }],
+      }),
+    ).toBe("SELF");
+    expect(paymentFunding({ ...row, paymentMethod: "INVOICE" })).toBe("ORG");
+    // An org-tagged PERSONAL booking: the member paid their own card.
+    expect(paymentFunding({ ...row, legs: [] })).toBe("SELF");
+    expect(paymentFunding({ ...row, paymentMethod: "credit_card" })).toBe(
+      "SELF",
+    );
+  });
+
+  it("names the gateway, not an instrument it never recorded", () => {
+    expect(paymentRailLabel(row)).toBe("Razorpay");
+    expect(paymentRailLabel({ ...row, paymentMethod: "LICENSE" })).toBe(
+      "organisation licence",
+    );
+    expect(paymentRailLabel({ ...row, paymentGateway: "CARD" })).toBeNull();
+  });
+
+  it("links the tax invoice first, the gateway receipt second, nothing unpaid", () => {
+    expect(receiptHref({ ...row, consumerInvoice: { id: "i" } })).toBe(
+      "/api/payments/p/invoice/pdf",
+    );
+    expect(receiptHref({ ...row, receiptUrl: "https://rzp.io/r/x" })).toBe(
+      "https://rzp.io/r/x",
+    );
+    expect(
+      receiptHref({ ...row, receiptUrl: "javascript:alert(1)" }),
+    ).toBeNull();
+    expect(
+      receiptHref({
+        ...row,
+        paymentStatus: "PENDING",
+        consumerInvoice: { id: "i" },
+      }),
+    ).toBeNull();
   });
 });
 
