@@ -68,7 +68,7 @@ clears it.
 
 The attendee's own row was restored above for the sponsored 1:1, amount
 included. The owner's 2026-09-13 UI-lift decision narrows that: the member
-did not pay a sponsored booking, so their page says "Sponsored by <Org>" and
+did not pay a sponsored booking, so their page says "Sponsored by `<Org>`" and
 no amount, and only a charge the member paid themselves (the CHARGE_MEMBER
 overage side-charge, #775) renders as a line of its own. Sponsorship is
 decided by the payment's funding legs, not by `Appointment.organizationId`:

@@ -433,10 +433,11 @@ export function SupportThreadSheet({
   const inFlight = useRef(false);
   const { mutate: mutateTurn } = turn;
   const submitTurn = useCallback(
-    (vars: TurnVars) => {
-      if (inFlight.current) return;
+    (vars: TurnVars): boolean => {
+      if (inFlight.current) return false;
       inFlight.current = true;
       mutateTurn(vars, { onSettled: () => (inFlight.current = false) });
+      return true;
     },
     [mutateTurn],
   );
@@ -462,12 +463,18 @@ export function SupportThreadSheet({
       return;
     }
     if (!seedCategory || seeded.current || !data) return;
-    seeded.current = true;
     const t = data.thread;
-    if (t?.activeChannel === "HUMAN" && t.status !== "RESOLVED") return;
     const intent = data.intents.find((i) => i.category === seedCategory);
-    if (intent)
-      submitTurn({ category: intent.category, chosenLabel: intent.title });
+    if ((t?.activeChannel === "HUMAN" && t.status !== "RESOLVED") || !intent) {
+      seeded.current = true;
+      return;
+    }
+    // A turn still in flight from before the sheet was closed refuses this
+    // one; its settlement refetches the thread, and the new `data` re-runs
+    // the effect with the seed still pending.
+    if (submitTurn({ category: intent.category, chosenLabel: intent.title })) {
+      seeded.current = true;
+    }
   }, [open, seedCategory, data, submitTurn]);
 
   const waitingLine = describeWait(thread?.supportTicket?.ackDueAt);
