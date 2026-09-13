@@ -2667,10 +2667,13 @@ export async function handleClassCheckout(
       },
       appointment: {
         include: {
+          // A RESCHEDULED row is a planned session awaiting its new time, so
+          // it still counts toward "fully scheduled" and the engagement
+          // meter; only a cancelled or deleted one is gone (#1554).
           occurrences: {
             where: {
               deletedAt: null,
-              completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+              completionStatus: { not: "CANCELLED" },
             },
             orderBy: { startsAt: "asc" },
           },

@@ -12,7 +12,11 @@ import type {
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { getAnchorTime, isOccurrenceOver } from "./occurrences";
+import {
+  getAnchorTime,
+  isOccurrenceOver,
+  liveOccurrences,
+} from "./occurrences";
 import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
@@ -134,7 +138,10 @@ export function mapAppointmentDetail(
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
-  const completed = occurrences.filter((s) => isOccurrenceOver(s, now)).length;
+  // #1554 — progress counts LIVE rows, exactly as map-consultee's
+  // groupProgress does, so "2 of 10" reads the same on the list and here.
+  const live = liveOccurrences(occurrences);
+  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
 
   const counterpart =
     role === "consultee"
@@ -164,7 +171,7 @@ export function mapAppointmentDetail(
     ...deriveBucket({ status: facts.status, occurrences, now }),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: isGroup ? { total: occurrences.length, completed } : null,
+    group: isGroup ? { total: live.length, completed } : null,
     meta: appointment.trial
       ? trialMeta(
           appointment.trial.subscriptionPlan?.trialPriceInPaise ?? null,
