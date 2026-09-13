@@ -2529,20 +2529,18 @@ describe("deleteExistingAppointments", () => {
 
     // A sibling appointment with a completed (past) session → in-progress
     // reallocation; plus the paid zero-slot placeholder that must survive.
+    // #1554 — the held hour is ONE 10:00–11:00 row. The plan owes 4 intervals
+    // (2 weeks × 1 call × 2), the past row covers 2, so exactly 2 future
+    // intervals are expected: a row-counted guard would demand 3.
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "past-session-apt",
         occurrences: [
           {
             id: "past-1",
+            ordinal: 1,
             isTentative: false,
             startsAt: new Date("2024-12-30T10:00:00Z"),
-            endsAt: new Date("2024-12-30T10:30:00Z"),
-          },
-          {
-            id: "past-2",
-            isTentative: false,
-            startsAt: new Date("2024-12-30T10:30:00Z"),
             endsAt: new Date("2024-12-30T11:00:00Z"),
           },
         ],
@@ -2564,6 +2562,7 @@ describe("deleteExistingAppointments", () => {
       slots: ["2025-01-13T10:00:00Z", "2025-01-13T10:30:00Z"],
     });
 
+    expect(result.error).toBeUndefined();
     expect(result.success).toBe(true);
     // The paid placeholder reaches preservePastSlots with no slots left, but the
     // guard keeps it (an unconditional delete would FK-rollback the tx).

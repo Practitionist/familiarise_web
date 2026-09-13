@@ -996,6 +996,26 @@ export class SchedulingService {
    * tentative slots (request-for-approval and unpaid checkout both create them
    * that way), and those were never released by anybody.
    */
+  /**
+   * #1554 — confirmed coverage in 30-minute intervals. One row is one whole
+   * call, so the guards that compare against calculateRequiredSlots (which
+   * counts intervals) must not count rows.
+   */
+  private static confirmedIntervalsOf(
+    appointments: AppointmentWithSlots[],
+    also: (slot: AppointmentWithSlots["occurrences"][number]) => boolean = () =>
+      true,
+  ): number {
+    return appointments.reduce(
+      (count, appointment) =>
+        count +
+        appointment.occurrences
+          .filter((slot) => !slot.isTentative && also(slot))
+          .reduce((n, slot) => n + intervalCountOf(slot), 0),
+      0,
+    );
+  }
+
   private static releasedOccurrenceIdsOf(
     appointments: AppointmentWithSlots[],
   ): string[] {
@@ -1252,13 +1272,12 @@ export class SchedulingService {
           include: { occurrences: true },
         });
 
-      // Count existing slots by tentative status
-      const existingNonTentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => !slot.isTentative).length,
-        0,
-      );
+      // Confirmed coverage in 30-minute INTERVALS: the guards below compare
+      // it with calculateRequiredSlots, which counts intervals, while a row is
+      // one whole call since #1554. The tentative count stays in rows — that
+      // is what the page's expectedTentativeSlotCount is measured in.
+      const existingNonTentativeSlotCount =
+        this.confirmedIntervalsOf(existingAppointments);
       const tentativeSlotCount = existingAppointments.reduce(
         (count, appointment) =>
           count +
@@ -1289,13 +1308,9 @@ export class SchedulingService {
       const now = new Date();
       const pastConfirmedSlotCount = isReschedule
         ? 0
-        : existingAppointments.reduce(
-            (count, appt) =>
-              count +
-              appt.occurrences.filter(
-                (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
-              ).length,
-            0,
+        : this.confirmedIntervalsOf(
+            existingAppointments,
+            (slot) => new Date(slot.endsAt) <= now,
           );
       const isInProgressReallocation =
         !isReschedule &&
@@ -1925,12 +1940,9 @@ export class SchedulingService {
       );
       const isReschedule = tentativeSlotCount > 0;
 
-      const existingNonTentativeSlotCount = existingAppointments.reduce(
-        (count, appointment) =>
-          count +
-          appointment.occurrences.filter((slot) => !slot.isTentative).length,
-        0,
-      );
+      // Intervals, not rows — see autoAllocate.
+      const existingNonTentativeSlotCount =
+        this.confirmedIntervalsOf(existingAppointments);
 
       // ADR B10, derived rather than trusted. The client set initialAllocation
       // only when tentativeSlotCount === 0, but EVERY pending request already
@@ -1948,13 +1960,9 @@ export class SchedulingService {
       const now = new Date();
       const pastConfirmedSlotCount = isReschedule
         ? 0
-        : existingAppointments.reduce(
-            (count, appt) =>
-              count +
-              appt.occurrences.filter(
-                (slot) => !slot.isTentative && new Date(slot.endsAt) <= now,
-              ).length,
-            0,
+        : this.confirmedIntervalsOf(
+            existingAppointments,
+            (slot) => new Date(slot.endsAt) <= now,
           );
       const isInProgressReallocation =
         !isReschedule &&
