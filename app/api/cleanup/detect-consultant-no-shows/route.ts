@@ -1,14 +1,11 @@
 /**
  * Consultant No-Show Detection API Endpoint (#1517)
  *
- * Thin wrapper around scripts/appointments/detect-consultant-no-shows.ts, the
- * same core the GitHub Actions job (jobs/appointments/detect-consultant-no-shows.ts)
- * runs. Gives the Netlify ticker / CRON_SECRET the same access every other
- * cleanup twin has (#1459's `?limit=` parsing was never wired here, and it is
- * a money job — see FINANCIAL_JOB_NAMES in lib/maintenance-cron.ts).
+ * Thin wrapper around scripts/appointments/detect-consultant-no-shows.ts, the same
+ * core the GitHub Actions job runs; gives the Netlify ticker and CRON_SECRET the
+ * access every other cleanup twin has. It is a money job (FINANCIAL_JOB_NAMES).
  *
- * Schedule: hourly via GitHub Actions; not on the five-minute Netlify ticker
- * yet (see docs/maintenance/04-cron-jobs-reference.md).
+ * Schedule: hourly via GitHub Actions; not on the five-minute ticker (see docs/maintenance/04-cron-jobs-reference.md)
  */
 
 import { cleanupRoute } from "@/lib/cron/cleanup-route";
