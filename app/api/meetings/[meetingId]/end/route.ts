@@ -26,8 +26,8 @@ import { reportSentryError } from "@/lib/observability/report";
  * database and requires the caller to be on the hosting side, so revoking
  * `end-call` from `call_member` in scripts/stream/ensure-call-type-grants.ts
  * becomes possible without taking the host's own control down with it. That
- * revocation is deliberately NOT part of this change: the button has to be
- * pointing here, in production, first.
+ * revocation has since been applied on the live type (#1607): `call_member`
+ * keeps `join-ended-call` and nothing else that ends or records.
  *
  * "Host" is `resolveMeetingAccess`'s host — the plan owner OR an accepted
  * collaborator on a webinar or class. Collaborators co-deliver those sessions,

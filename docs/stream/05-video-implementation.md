@@ -714,12 +714,14 @@ rendering for them, which is a React conditional over call data. Routing through
 the server makes the grant revocable: once the button is deployed and serving
 traffic, `scripts/stream/ensure-call-type-grants.ts` can strip `end-call` from
 `call_member` without taking the host's own control down with it. That revocation
-has deliberately not been applied yet.
+has since been applied on the live type: `call_member` keeps `join-ended-call`
+and nothing else that ends or records a call (#1607).
 
 The route does not write `MeetingSession.endedAt`. The `call.ended` webhook owns
-that column, and it also sets the slot's completion status and the session's
-actual duration — writing `endedAt` first would make the handler treat the event
-as a duplicate and skip all of it.
+that column, and it also sets the slot's completion status and logs the
+session's actual duration. Since #1607 the handler treats an end event as authoritative
+only when it is later than the recorded `endedAt`, so a route that wrote the
+column first would win the race and the webhook's own timestamp would be lost.
 
 ---
 
