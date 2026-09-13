@@ -167,19 +167,16 @@ export async function GET(request: NextRequest) {
     });
 
     // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes
-    // to a single subscription and states its per-call slot count (both
-    // already known client-side from the plan config — no extra DB read).
+    // to a single subscription and asks for it (`slotsPerCall` is the opt-in
+    // the client already sends; #1554 made one row one call, so its value is
+    // no longer needed to recognise a call).
     const slotsPerCallParam = searchParams.get("slotsPerCall");
     const slotsPerCall = slotsPerCallParam
       ? parseInt(slotsPerCallParam, 10)
       : NaN;
     const weeklyConfirmedCallCounts =
       subscriptionId && Number.isFinite(slotsPerCall) && slotsPerCall > 0
-        ? computeWeeklyConfirmedCallCounts(
-            appointments,
-            subscriptionId,
-            slotsPerCall,
-          )
+        ? computeWeeklyConfirmedCallCounts(appointments, subscriptionId)
         : undefined;
 
     return NextResponse.json({
