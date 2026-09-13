@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
       startsAt,
       endsAt,
       consultationPlanId,
-      slotOfAvailabilityWeeklyId,
-      slotOfAvailabilityCustomId,
+      availabilityWindowWeeklyId,
+      availabilityWindowCustomId,
       concurrentRequests = 2,
     } = body;
 
@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
                 startsAt,
                 endsAt,
                 consultationPlanId,
-                slotOfAvailabilityWeeklyId,
-                slotOfAvailabilityCustomId,
+                availabilityWindowWeeklyId,
+                availabilityWindowCustomId,
               }),
             },
           );

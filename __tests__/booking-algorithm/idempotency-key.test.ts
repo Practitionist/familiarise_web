@@ -12,12 +12,12 @@ import {
 } from "@/hooks/scheduling/useSlotAllocation";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
-import type { TimeSlot } from "@/lib/scheduling/calendarUtils";
+import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 
 const slots = makeConsecutiveTimeSlots(
   "2026-08-03T09:00:00.000Z",
   2,
-) as TimeSlot[];
+) as CalendarInterval[];
 
 describe("computeAttemptFingerprint", () => {
   it("is stable regardless of slot order", () => {
@@ -35,7 +35,10 @@ describe("computeAttemptFingerprint", () => {
       computeAttemptFingerprint(
         "manual",
         "e1",
-        makeConsecutiveTimeSlots("2026-08-04T09:00:00.000Z", 2) as TimeSlot[],
+        makeConsecutiveTimeSlots(
+          "2026-08-04T09:00:00.000Z",
+          2,
+        ) as CalendarInterval[],
       ),
     ).not.toBe(fp);
   });
@@ -61,7 +64,7 @@ describe("resolveAttemptKey", () => {
         ...(makeConsecutiveTimeSlots(
           "2026-08-05T09:00:00.000Z",
           2,
-        ) as TimeSlot[]),
+        ) as CalendarInterval[]),
       ]),
     );
     expect(changed.key).not.toBe(first.key);

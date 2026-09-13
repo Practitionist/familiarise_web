@@ -21,8 +21,8 @@
 
 import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
-import type { EventType } from "@/utils/slotAllocation/types";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import type { EventType } from "@/utils/scheduling-engine/types";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { notifyAppointmentRescheduled } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -74,7 +74,7 @@ export async function acceptProposal(args: {
     return { done: false, reason: "NO_PROPOSED_TIMES" };
   }
 
-  const result = await SlotAllocationService.allocate({
+  const result = await SchedulingService.allocate({
     eventType: args.eventType,
     eventId: args.eventId,
     mode: "manual",

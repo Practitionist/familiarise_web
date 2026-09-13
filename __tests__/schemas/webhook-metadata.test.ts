@@ -88,7 +88,7 @@ describe("validateWebhookMetadata — empty-string notes are absent fields", () 
       ...SUBSCRIPTION_BASE,
       startsAt: "",
       endsAt: "",
-      slotOfAvailabilityWeeklyId: "",
+      availabilityWindowWeeklyId: "",
       notes: "",
     });
 

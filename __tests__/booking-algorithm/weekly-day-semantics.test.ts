@@ -5,7 +5,7 @@
 /**
  * One rule, pinned from every side (#1343, #1342, #1326, #1348, #1415, #1416).
  *
- * `SlotOfAvailabilityWeekly.startDay` is the day the CONSULTANT published, in
+ * `AvailabilityWindowWeekly.startDay` is the day the CONSULTANT published, in
  * their own local calendar, and the UTC weekday is derived from it through the
  * row's own frozen `utcOffsetMinutes`. Four surfaces used to disagree about
  * that sentence — the settings save stored the UTC day, onboarding stored the
@@ -34,7 +34,7 @@ import {
 import {
   getTimezoneOffsetMinutes,
   isMinuteWithinWeeklySlot,
-} from "../../utils/slotAllocation/slotTimeUtils";
+} from "../../utils/scheduling-engine/slotTimeUtils";
 import {
   utcStartDayIndex,
   weeklyRowOccurrencesInRange,
@@ -44,10 +44,10 @@ import {
   processAvailabilitySlots,
   splitSlotsByDay,
   type WeeklySlot,
-} from "../../utils/timeSlotsProcessing";
+} from "../../utils/scheduling-engine/intervals";
 import { mergeConsecutiveSlotsForDisplay } from "../../app/explore/experts/[consultantId]/utils/mergeSlots";
-import type { ProcessedSlot as ExploreProcessedSlot } from "../../app/explore/experts/[consultantId]/types";
-import type { TSlotTiming } from "../../types/slots";
+import type { PickerInterval as ExplorePickerInterval } from "../../app/explore/experts/[consultantId]/types";
+import type { TIntervalTiming } from "../../types/slots";
 
 const IST = "Asia/Kolkata";
 const NEW_YORK = "America/New_York";
@@ -304,7 +304,7 @@ describe("the expert page merges slots exactly as booking does (#1416)", () => {
   const bookingAtom = (
     index: number,
     gapMs: number,
-  ): TSlotTiming & {
+  ): TIntervalTiming & {
     isAllocated: boolean;
   } => {
     const start = base + index * THIRTY_MIN_MS + (index > 0 ? gapMs : 0);
@@ -314,7 +314,7 @@ describe("the expert page merges slots exactly as booking does (#1416)", () => {
       dayOfWeek: "MONDAY",
       startsAt: new Date(start).toISOString(),
       endsAt: new Date(start + THIRTY_MIN_MS).toISOString(),
-      slotOfAvailabilityId: "row",
+      availabilityWindowId: "row",
       slotOfAppointmentId: "",
       localStartTime: "",
       localEndTime: "",
@@ -324,13 +324,13 @@ describe("the expert page merges slots exactly as booking does (#1416)", () => {
     };
   };
 
-  const displayAtom = (index: number, gapMs: number): ExploreProcessedSlot => {
+  const displayAtom = (index: number, gapMs: number): ExplorePickerInterval => {
     const atom = bookingAtom(index, gapMs);
     return {
       id: atom.slotId,
       localStartTime: "",
       localEndTime: "",
-      originalSlot: {} as ExploreProcessedSlot["originalSlot"],
+      originalSlot: {} as ExplorePickerInterval["originalSlot"],
       isAllocated: false,
       bookingStatus: "available",
       startsAt: atom.startsAt,

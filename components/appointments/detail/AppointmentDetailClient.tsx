@@ -76,7 +76,7 @@ const PARTICIPANTS_PREVIEW = 5;
  * hold right now", so the timeline row and the payment card cannot drift.
  *
  * Past `Payment.expiresAt` the hold is already DEAD for availability
- * (`buildDeadHoldFilter`, utils/slotAllocation/occupancyPolicy.ts counts a
+ * (`buildDeadHoldFilter`, utils/scheduling-engine/occupancyPolicy.ts counts a
  * PENDING payment with a lapsed window as free), so another buyer can take
  * the slot before any sweep runs. Checkout also refuses to resume a stale
  * order (`findReusablePendingOrderPayment` matches only `expiresAt > now`)

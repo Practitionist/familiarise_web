@@ -46,9 +46,11 @@ jest.mock("../../utils/appointmentlock", () => ({
 // validators are stubbed, as elsewhere in this folder.
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
@@ -56,7 +58,7 @@ jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
 
 import prisma from "@/lib/prisma";
 import { notifyAppointmentBooked } from "@/lib/novu";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 /** Mondays 09:00–11:00 UTC — room for one 1-hour session a week, forever. */
@@ -124,8 +126,8 @@ function makeSubscription(appointments: ReturnType<typeof confirmedSession>[]) {
       consultantProfile: {
         user: { id: "consultant-1", name: "Consultant", timezone: "UTC" },
         scheduleType: ScheduleType.WEEKLY,
-        slotsOfAvailabilityWeekly: [MONDAY_MORNINGS],
-        slotsOfAvailabilityCustom: [],
+        availabilityWindowsWeekly: [MONDAY_MORNINGS],
+        availabilityWindowsCustom: [],
       },
     },
     requestedBy: { user: { id: "consultee-1", name: "Consultee" } },
@@ -226,7 +228,7 @@ afterEach(() => {
 
 describe("#1206 top-up allocation", () => {
   it("places only the two missing sessions and deletes nothing", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",
@@ -259,7 +261,7 @@ describe("#1206 top-up allocation", () => {
     );
     mockPrisma.appointment.findMany.mockResolvedValue(complete);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",
@@ -287,7 +289,7 @@ describe("#1206 top-up allocation", () => {
     // paid sessions — and this transaction has no delete to give it.
     mockTx.appointment.findMany.mockResolvedValue([WEEK_1, WEEK_2]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",

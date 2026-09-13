@@ -99,10 +99,10 @@ const prismaRelationsSchema = z.object({
       set: z.array(z.object({ id: z.string() })).optional(),
     })
     .optional(),
-  slotsOfAvailabilityWeekly: z
+  availabilityWindowsWeekly: z
     .object({ create: z.array(WeeklySlotSchema).optional() })
     .optional(),
-  slotsOfAvailabilityCustom: z
+  availabilityWindowsCustom: z
     .object({ create: z.array(CustomSlotSchema).optional() })
     .optional(),
 });
@@ -511,10 +511,10 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
             .map((t) => ({ id: t.id })),
         }
       : undefined,
-    slotsOfAvailabilityWeekly: formData.weeklySlots?.length
+    availabilityWindowsWeekly: formData.weeklySlots?.length
       ? { create: formData.weeklySlots }
       : undefined,
-    slotsOfAvailabilityCustom: formData.customSlots?.length
+    availabilityWindowsCustom: formData.customSlots?.length
       ? {
           create: formData.customSlots.map((slot) => ({
             startsAt: new Date(slot.startsAt).toISOString(),
@@ -686,10 +686,10 @@ export function transformFrontendToServerData(
             tags: p.tags?.length
               ? { connect: p.tags.map((t) => ({ id: t.id })) }
               : undefined,
-            slotsOfAvailabilityWeekly: p.weeklySlots?.length
+            availabilityWindowsWeekly: p.weeklySlots?.length
               ? { create: p.weeklySlots }
               : undefined,
-            slotsOfAvailabilityCustom: p.customSlots?.length
+            availabilityWindowsCustom: p.customSlots?.length
               ? { create: p.customSlots }
               : undefined,
             websiteUrl: p.websiteUrl,

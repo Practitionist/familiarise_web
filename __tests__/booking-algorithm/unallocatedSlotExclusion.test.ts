@@ -19,7 +19,7 @@ import {
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
   OCCUPIED_EVENT_STATUSES,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -190,9 +190,9 @@ export interface AllocationResult {
 }
 
 /**
- * Time slot representation
+ * A computed, plan-length cut of availability shown in the picker; transient (#1554).
  */
-export interface TimeSlot {
+export interface BookableInterval {
   startTime: Date;
   endTime: Date;
   isAvailable: boolean;
@@ -216,7 +216,7 @@ export interface ProgressInfo {
 export interface ConsultantAllocationData {
   userId: string;
   scheduleType: "WEEKLY" | "CUSTOM";
-  slotsOfAvailabilityWeekly: Array<{
+  availabilityWindowsWeekly: Array<{
     id: string;
     startDay: string;
     startTimeUtc: number;
@@ -224,7 +224,7 @@ export interface ConsultantAllocationData {
     endTimeUtc: number;
     utcOffsetMinutes: number;
   }>;
-  slotsOfAvailabilityCustom: Array<{
+  availabilityWindowsCustom: Array<{
     id: string;
     startsAt: Date;
     endsAt: Date;

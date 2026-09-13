@@ -1,13 +1,13 @@
-import { TimeSlot, calculateRequiredSlots } from "./calendarUtils";
+import { CalendarInterval, calculateRequiredSlots } from "./calendarUtils";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /**
  * Pure client-side selection validation for the Allocate Slots calendar.
  * Extracted from useSlotAllocation so the rules are unit-testable and can
  * later move server-side (#997 Phase 3).
  *
- * All daily/weekly bucketing uses SlotCalculationService's day/week keys in
+ * All daily/weekly bucketing uses ScheduleCalculationService's day/week keys in
  * the event's scheduling timezone (default Asia/Kolkata, ADR B9) — the same
  * keys the server validates with. Browser-local bucketing here caused
  * client/server verdict divergence for slots near day boundaries.
@@ -70,10 +70,10 @@ export interface SlotLimits {
 }
 
 export const dayKey = (d: Date, timeZone?: string): string =>
-  SlotCalculationService.dayKey(d, timeZone);
+  ScheduleCalculationService.dayKey(d, timeZone);
 
 export const weekKey = (d: Date, timeZone?: string): string =>
-  SlotCalculationService.weekKey(d, timeZone);
+  ScheduleCalculationService.weekKey(d, timeZone);
 
 /**
  * Get event-specific constraints based on event type
@@ -226,10 +226,10 @@ export function getSlotLimits(
  * Groups an array of time slots by scheduling-timezone day.
  */
 export function groupSlotsByDay(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   timeZone?: string,
-): Map<string, TimeSlot[]> {
-  const slotsByDay = new Map<string, TimeSlot[]>();
+): Map<string, CalendarInterval[]> {
+  const slotsByDay = new Map<string, CalendarInterval[]>();
   slots.forEach((slot) => {
     const key = dayKey(slot.startTime, timeZone);
     if (!slotsByDay.has(key)) {
@@ -244,7 +244,7 @@ export function groupSlotsByDay(
  * Counts the number of complete calls from a map of day-grouped slots.
  */
 export function countCompleteCallsInMap(
-  slotsByDay: Map<string, TimeSlot[]>,
+  slotsByDay: Map<string, CalendarInterval[]>,
   slotsPerCall: number,
 ): number {
   let completeCalls = 0;
@@ -259,7 +259,7 @@ export function countCompleteCallsInMap(
 /**
  * Validate that slots are consecutive (for webinars/consultations)
  */
-export function validateConsecutiveSlots(slots: TimeSlot[]): boolean {
+export function validateConsecutiveSlots(slots: CalendarInterval[]): boolean {
   if (slots.length <= 1) return true;
 
   const sortedSlots = [...slots].sort(
@@ -283,7 +283,7 @@ export function validateConsecutiveSlots(slots: TimeSlot[]): boolean {
  * Adjacent sessions are allowed (e.g., 09:00-10:00 and 10:00-11:00 count as 2).
  */
 export function countSessionsForDay(
-  daySlots: TimeSlot[],
+  daySlots: CalendarInterval[],
   slotsPerSession: number,
 ): { sessions: number; leftoverSlots: number } {
   if (daySlots.length === 0) return { sessions: 0, leftoverSlots: 0 };
@@ -316,7 +316,7 @@ export function countSessionsForDay(
  * Validate max sessions per day for classes using slotsPerSession semantics.
  */
 export function validateClassSessionDistributionByCount(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   maxSessions: number,
   slotsPerSession: number,
   timeZone?: string,
@@ -333,13 +333,13 @@ export function validateClassSessionDistributionByCount(
  * Validate weekly distribution for classes using complete session count per week.
  */
 export function validateWeeklySessionsDistribution(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   sessionsPerWeek: number,
   slotsPerSession: number,
   timeZone?: string,
 ): boolean {
   if (slots.length === 0) return true;
-  const weeks = new Map<string, Map<string, TimeSlot[]>>();
+  const weeks = new Map<string, Map<string, CalendarInterval[]>>();
   for (const slot of slots) {
     const wk = weekKey(slot.startTime, timeZone);
     if (!weeks.has(wk)) weeks.set(wk, new Map());
@@ -362,7 +362,7 @@ export function validateWeeklySessionsDistribution(
  * Validate daily hours limit (for classes)
  */
 export function validateDailyHours(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   maxHours: number,
   timeZone?: string,
 ): boolean {
@@ -382,7 +382,7 @@ export function validateDailyHours(
  * Validate weekly distribution (for recurring events)
  */
 export function validateWeeklyDistribution(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   sessionsPerWeek: number,
   slotsPerSession?: number,
   timeZone?: string,
@@ -405,7 +405,7 @@ export function validateWeeklyDistribution(
  * Check if slots form a complete call (consecutive slots on same day)
  */
 export function isCompleteCall(
-  daySlots: TimeSlot[],
+  daySlots: CalendarInterval[],
   slotsPerCall: number,
 ): boolean {
   if (daySlots.length !== slotsPerCall) return false;
@@ -430,9 +430,9 @@ export function isCompleteCall(
  * entire session.
  */
 export function findConsecutiveGroupContaining(
-  targetSlot: TimeSlot,
-  sortedDaySlots: TimeSlot[],
-): TimeSlot[] {
+  targetSlot: CalendarInterval,
+  sortedDaySlots: CalendarInterval[],
+): CalendarInterval[] {
   if (sortedDaySlots.length === 0) return [targetSlot];
 
   const targetIndex = sortedDaySlots.findIndex(
@@ -477,7 +477,7 @@ export interface SubscriptionSlotValidation {
 }
 
 export function validateSubscriptionSlots(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   options: SlotValidationOptions,
   limits: SlotLimits,
 ): SubscriptionSlotValidation {
@@ -588,7 +588,7 @@ export function validateSubscriptionSlots(
  * complete calls; other types count raw slots.
  */
 function validateSelectionCounts(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   eventType: ClientEventType,
   limits: SlotLimits,
   result: ValidationResult,
@@ -631,7 +631,7 @@ function validateSelectionCounts(
 }
 
 function validateWebinarSelection(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   limits: SlotLimits,
   result: ValidationResult,
 ): void {
@@ -647,7 +647,7 @@ function validateWebinarSelection(
 }
 
 function validateClassSelection(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   constraints: EventConstraints,
   limits: SlotLimits,
   options: SlotValidationOptions,
@@ -717,7 +717,7 @@ function validateClassSelection(
 }
 
 function validateSubscriptionSelection(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   options: SlotValidationOptions,
   limits: SlotLimits,
   result: ValidationResult,
@@ -758,7 +758,7 @@ function validateSubscriptionSelection(
 }
 
 function validateConsultationSelection(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   result: ValidationResult,
   timeZone?: string,
 ): void {
@@ -788,7 +788,7 @@ function validateConsultationSelection(
 
 /** Soft weekly-spread warnings for recurring events. */
 function warnOnWeeklyDistribution(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   eventType: ClientEventType,
   limits: SlotLimits,
   options: SlotValidationOptions,
@@ -831,7 +831,7 @@ function warnOnWeeklyDistribution(
  * seam for the #997 server-side migration).
  */
 export function validateEventSlots(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   eventType: ClientEventType,
   constraints: EventConstraints,
   limits: SlotLimits,

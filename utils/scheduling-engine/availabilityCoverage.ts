@@ -87,8 +87,8 @@ export async function loadPublishedCoverage(
   db: Pick<
     Tx,
     | "consultantProfile"
-    | "slotOfAvailabilityWeekly"
-    | "slotOfAvailabilityCustom"
+    | "availabilityWindowWeekly"
+    | "availabilityWindowCustom"
   >,
   consultantProfileId: string,
   start: Date,
@@ -108,7 +108,7 @@ export async function loadPublishedCoverage(
   const scheduleType = profile.scheduleType;
   const weeklyRows =
     scheduleType === "WEEKLY"
-      ? await db.slotOfAvailabilityWeekly.findMany({
+      ? await db.availabilityWindowWeekly.findMany({
           where: { consultantProfileId },
           select: {
             startDay: true,
@@ -120,7 +120,7 @@ export async function loadPublishedCoverage(
       : [];
   const customRows =
     scheduleType === "CUSTOM"
-      ? await db.slotOfAvailabilityCustom.findMany({
+      ? await db.availabilityWindowCustom.findMany({
           where: {
             consultantProfileId,
             startsAt: { lt: end },

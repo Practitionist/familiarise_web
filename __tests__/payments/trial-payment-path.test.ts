@@ -25,7 +25,7 @@ import {
   TRIAL_PAYMENT_WINDOW_MS,
 } from "../../lib/trials/eligibility";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
-import { buildOccupiedAppointmentFilter } from "../../utils/slotAllocation/occupancyPolicy";
+import { buildOccupiedAppointmentFilter } from "../../utils/scheduling-engine/occupancyPolicy";
 
 const CUID = "clw0000000000000000000000";
 const PLAN_CUID = "clw1111111111111111111111";

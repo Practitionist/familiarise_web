@@ -19,9 +19,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { DAYS, INTERVALS } from "@/utils/timeSlotsMeta";
-import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/slotAllocation/slotTimeUtils";
-import { isRecurringEventType } from "@/utils/slotAllocation/types";
+import { DAYS, INTERVALS } from "@/utils/scheduling-engine/interval-meta";
+import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
+import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import {
   format,
   addDays,
@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
-  TimeSlot,
+  CalendarInterval,
   AppointmentDetail,
   calculateRequiredSlots,
   calculateCallProgress,
@@ -55,7 +55,7 @@ import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons"
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import { useEventSlotAllocation } from "@/hooks/scheduling/useSlotAllocation";
 import type { AllocationResponse } from "@/lib/scheduling/allocationService";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   outsideSchedulingWindow,
   weeklyLimitReached,
@@ -160,10 +160,13 @@ function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
 }
 
 /**
- * Compares two TimeSlot arrays by content (not reference).
+ * Compares two CalendarInterval arrays by content (not reference).
  * Used to prevent unnecessary state updates that cause infinite loops.
  */
-function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
+function areSlotsEqual(
+  slots1: CalendarInterval[],
+  slots2: CalendarInterval[],
+): boolean {
   if (slots1.length !== slots2.length) return false;
 
   // Sort both arrays by startTime for consistent comparison
@@ -185,7 +188,7 @@ function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
  * A completed call is exactly `slotsPerCall` consecutive 30-min slots on the same day.
  */
 function countCompletedSelectedCallsForWeek(
-  selectedSlots: TimeSlot[],
+  selectedSlots: CalendarInterval[],
   slotsPerCall: number,
   targetWeekKey: string,
   schedulingTimezone?: string,
@@ -193,15 +196,15 @@ function countCompletedSelectedCallsForWeek(
   if (!selectedSlots?.length) return 0;
 
   // Group selected slots by scheduling-timezone day within the target week
-  const byDay = new Map<string, TimeSlot[]>();
+  const byDay = new Map<string, CalendarInterval[]>();
   for (const s of selectedSlots) {
     const start = s.startTime;
     if (
-      SlotCalculationService.weekKey(start, schedulingTimezone) !==
+      ScheduleCalculationService.weekKey(start, schedulingTimezone) !==
       targetWeekKey
     )
       continue;
-    const key = SlotCalculationService.dayKey(start, schedulingTimezone);
+    const key = ScheduleCalculationService.dayKey(start, schedulingTimezone);
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(s);
   }
@@ -221,7 +224,7 @@ function countCompletedSelectedCallsForWeek(
  */
 function computeSubscriptionFooter(
   params: Readonly<{
-    selectedSlots: TimeSlot[];
+    selectedSlots: CalendarInterval[];
     allowedStart?: Date;
     allowedEnd?: Date;
     sessionsPerWeek?: number;
@@ -273,15 +276,18 @@ function computeSubscriptionFooter(
 
 /** Counts total completed class sessions across all selected slots. */
 function countCompletedSelectedClasses(
-  selectedSlots: TimeSlot[],
+  selectedSlots: CalendarInterval[],
   slotsPerSession: number,
   schedulingTimezone?: string,
 ): number {
   if (!selectedSlots?.length) return 0;
   // Group by scheduling-timezone day and count full consecutive runs
-  const byDay = new Map<string, TimeSlot[]>();
+  const byDay = new Map<string, CalendarInterval[]>();
   for (const s of selectedSlots) {
-    const key = SlotCalculationService.dayKey(s.startTime, schedulingTimezone);
+    const key = ScheduleCalculationService.dayKey(
+      s.startTime,
+      schedulingTimezone,
+    );
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key)!.push(s);
   }
@@ -310,7 +316,7 @@ function countCompletedSelectedClasses(
  * Shows user-facing duration (hours) not implementation details (slots)
  */
 function computeClassFooter(params: {
-  selectedSlots: TimeSlot[];
+  selectedSlots: CalendarInterval[];
   sessionDurationInHours?: number;
   totalSessions?: number;
   pastCompletedSessions?: number;
@@ -365,7 +371,7 @@ export interface UnifiedCalendarProps {
    * consultant — allocation rejects those, so showing them green is a lie. */
   consulteeUserId?: string;
   mode: "view" | "select" | "allocate";
-  onSlotsSelected?: (slots: TimeSlot[]) => void;
+  onSlotsSelected?: (slots: CalendarInterval[]) => void;
   onAllocationComplete?: (result: AllocationResponse) => void;
   /** Called when the server reports the event was already allocated in
    * another session (409) — host should close the dialog and refetch. */
@@ -377,8 +383,8 @@ export interface UnifiedCalendarProps {
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
-  preSelectedSlots?: TimeSlot[];
-  requestedSlots?: TimeSlot[];
+  preSelectedSlots?: CalendarInterval[];
+  requestedSlots?: CalendarInterval[];
   className?: string;
   // Optional hard boundaries to restrict interactive selection
   allowedStart?: Date;
@@ -644,7 +650,7 @@ export function UnifiedCalendar({
   }, [eventType, durationInHours, sessionDurationInHours]);
 
   // Week view dates. Deliberately LOCAL time: the grid renders in the
-  // consultant's timezone. Limit BUCKETING is UTC (SlotCalculationService) —
+  // consultant's timezone. Limit BUCKETING is UTC (ScheduleCalculationService) —
   // do not "unify" these; display and bucketing are different concerns.
   const weekDates = useMemo(() => {
     const startDate = startOfWeek(currentDate);
@@ -693,7 +699,7 @@ export function UnifiedCalendar({
    * Strategy: forward → backward → mixed → fallback to single slot.
    */
   const buildAutoExpandGroup = useCallback(
-    (clickedSlot: TimeSlot, clickedDate: Date): TimeSlot[] => {
+    (clickedSlot: CalendarInterval, clickedDate: Date): CalendarInterval[] => {
       const targetSize = slotLimits.slotsPerSession;
 
       // No expansion needed for single-slot sessions
@@ -702,15 +708,20 @@ export function UnifiedCalendar({
       const clickedLocalStart = new Date(clickedSlot.startTime);
 
       // Check if a candidate slot at a given offset is eligible for auto-expansion
-      const getEligibleSlot = (offsetSteps: number): TimeSlot | null => {
+      const getEligibleSlot = (
+        offsetSteps: number,
+      ): CalendarInterval | null => {
         const offsetMs = offsetSteps * 30 * 60 * 1000;
         const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
 
         // Same-day constraint in the event's scheduling timezone — a session
         // must not straddle the limit-bucket day boundary (ADR B9).
         if (
-          SlotCalculationService.dayKey(targetTime, schedulingTimezone) !==
-          SlotCalculationService.dayKey(clickedLocalStart, schedulingTimezone)
+          ScheduleCalculationService.dayKey(targetTime, schedulingTimezone) !==
+          ScheduleCalculationService.dayKey(
+            clickedLocalStart,
+            schedulingTimezone,
+          )
         )
           return null;
 
@@ -749,7 +760,7 @@ export function UnifiedCalendar({
       };
 
       // Try forward expansion: clicked + N-1 forward slots
-      const forwardGroup: TimeSlot[] = [clickedSlot];
+      const forwardGroup: CalendarInterval[] = [clickedSlot];
       for (let step = 1; step < targetSize; step++) {
         const eligible = getEligibleSlot(step);
         if (!eligible) break;
@@ -758,7 +769,7 @@ export function UnifiedCalendar({
       if (forwardGroup.length === targetSize) return forwardGroup;
 
       // Try backward expansion: N-1 backward slots + clicked
-      const backwardGroup: TimeSlot[] = [clickedSlot];
+      const backwardGroup: CalendarInterval[] = [clickedSlot];
       for (let step = 1; step < targetSize; step++) {
         const eligible = getEligibleSlot(-step);
         if (!eligible) break;
@@ -768,7 +779,7 @@ export function UnifiedCalendar({
 
       // Try mixed: use forward slots + fill remaining from backward
       if (forwardGroup.length > 1 || backwardGroup.length > 1) {
-        const mixedGroup: TimeSlot[] = [...forwardGroup];
+        const mixedGroup: CalendarInterval[] = [...forwardGroup];
         for (let step = 1; mixedGroup.length < targetSize; step++) {
           const eligible = getEligibleSlot(-step);
           if (!eligible) break;
@@ -797,7 +808,7 @@ export function UnifiedCalendar({
 
       const status = getSlotStatusForInterval(interval, date);
 
-      const slot: TimeSlot = {
+      const slot: CalendarInterval = {
         startTime: new Date(status.intervalStartUTCString),
         endTime: new Date(status.intervalEndUTCString),
         isAvailable: status.isAvailable,
@@ -835,24 +846,26 @@ export function UnifiedCalendar({
         sessionDurationInHours
       ) {
         const intervalStart = new Date(status.intervalStartUTCString);
-        const targetDayKey = SlotCalculationService.dayKey(
+        const targetDayKey = ScheduleCalculationService.dayKey(
           intervalStart,
           schedulingTimezone,
         );
         const isStartingNewDay = !selectedSlots.some(
           (s) =>
-            SlotCalculationService.dayKey(s.startTime, schedulingTimezone) ===
-            targetDayKey,
+            ScheduleCalculationService.dayKey(
+              s.startTime,
+              schedulingTimezone,
+            ) === targetDayKey,
         );
 
         if (isStartingNewDay) {
-          const targetWeekKey = SlotCalculationService.weekKey(
+          const targetWeekKey = ScheduleCalculationService.weekKey(
             intervalStart,
             schedulingTimezone,
           );
           const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
           // #997 Phase 3 — server-precomputed confirmed-call count for this
-          // week (bucketed with the SAME SlotCalculationService.weekKey the
+          // week (bucketed with the SAME ScheduleCalculationService.weekKey the
           // server validator uses), fetched alongside eventSlots. Replaces
           // re-deriving this from a separate whole-window appointment fetch
           // on every slot click.
@@ -978,7 +991,7 @@ export function UnifiedCalendar({
     (interval: { hour: number; minute: number }, date: Date) => {
       const status = getSlotStatusForInterval(interval, date);
 
-      const slot: TimeSlot = {
+      const slot: CalendarInterval = {
         startTime: new Date(status.intervalStartUTCString),
         endTime: new Date(status.intervalEndUTCString),
         isAvailable: status.isAvailable,

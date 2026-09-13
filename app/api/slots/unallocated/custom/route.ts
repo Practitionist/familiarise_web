@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
           }
         : {};
 
-    const allCustomSlots = await prisma.slotOfAvailabilityCustom.findMany({
+    const allCustomSlots = await prisma.availabilityWindowCustom.findMany({
       where: {
         consultantProfileId,
         ...dateFilter,

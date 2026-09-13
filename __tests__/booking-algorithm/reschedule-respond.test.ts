@@ -56,8 +56,8 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../utils/slotAllocation/SlotAllocationService", () => ({
-  SlotAllocationService: { allocate: (...a: unknown[]) => mockAllocate(...a) },
+jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
+  SchedulingService: { allocate: (...a: unknown[]) => mockAllocate(...a) },
 }));
 
 jest.mock("../../lib/auth-server", () => ({

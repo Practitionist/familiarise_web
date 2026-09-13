@@ -5,7 +5,7 @@
  * Handles week counting, slot requirements, progress tracking, and grouping logic.
  */
 
-import { EventType, EventConfig, TimeSlot, ProgressInfo } from "./types";
+import { EventType, EventConfig, BookableInterval, ProgressInfo } from "./types";
 
 /** Weekday name → index for Intl "short" weekday parts. */
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -21,7 +21,7 @@ const WEEKDAY_INDEX: Record<string, number> = {
 /**
  * Service for calculating slots, weeks, and progress
  */
-export class SlotCalculationService {
+export class ScheduleCalculationService {
   /**
    * Timezone that defines a "day" and a "week" for booking limits when the
    * event carries no explicit schedulingTimezone (ADR B9). Matches the
@@ -488,7 +488,7 @@ export class SlotCalculationService {
    * Returns user-friendly progress information
    */
   static calculateProgress(
-    selectedSlots: TimeSlot[],
+    selectedSlots: BookableInterval[],
     eventType: EventType,
     config: EventConfig,
   ): ProgressInfo {
@@ -561,7 +561,7 @@ export class SlotCalculationService {
    * A completed call is a set of consecutive slots on the same day
    */
   private static countCompletedCalls(
-    selectedSlots: TimeSlot[],
+    selectedSlots: BookableInterval[],
     slotsPerCall: number,
   ): number {
     if (!selectedSlots?.length) return 0;
@@ -601,10 +601,10 @@ export class SlotCalculationService {
    * Group time slots by scheduling-timezone day
    */
   static groupSlotsByDay(
-    slots: TimeSlot[],
+    slots: BookableInterval[],
     timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
-  ): Map<string, TimeSlot[]> {
-    const slotsByDay = new Map<string, TimeSlot[]>();
+  ): Map<string, BookableInterval[]> {
+    const slotsByDay = new Map<string, BookableInterval[]>();
 
     for (const slot of slots) {
       const dayKey = this.dayKey(slot.startTime, timeZone);
@@ -621,10 +621,10 @@ export class SlotCalculationService {
    * Group time slots by scheduling-timezone week (Sunday-Saturday)
    */
   static groupSlotsByWeek(
-    slots: TimeSlot[],
+    slots: BookableInterval[],
     timeZone: string = this.DEFAULT_SCHEDULING_TIMEZONE,
-  ): Map<string, TimeSlot[]> {
-    const slotsByWeek = new Map<string, TimeSlot[]>();
+  ): Map<string, BookableInterval[]> {
+    const slotsByWeek = new Map<string, BookableInterval[]>();
 
     for (const slot of slots) {
       const weekKey = this.weekKey(slot.startTime, timeZone);

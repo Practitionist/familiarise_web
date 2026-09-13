@@ -788,7 +788,7 @@ export function RequestSlotAllocationTab({
   // caused by data nobody asked for.
   //
   // Staleness is safe to leave. This grid is a hint; allocation re-validates
-  // server-side under a Redis lock against SlotValidationService and the
+  // server-side under a Redis lock against ScheduleValidationService and the
   // btree_gist exclusion constraint, so a stale view cannot double-book — at
   // worst a submit is rejected with a clear message. Refreshing bought no
   // correctness and cost a selection.

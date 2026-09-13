@@ -28,10 +28,10 @@ import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import {
   buildOccupiedAppointmentFilter,
   OCCUPIED_EVENT_STATUSES,
-} from "@/utils/slotAllocation/occupancyPolicy";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
-import type { EventConfig } from "@/utils/slotAllocation/types";
+} from "@/utils/scheduling-engine/occupancyPolicy";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import type { EventConfig } from "@/utils/scheduling-engine/types";
 
 export interface SlotReconciliationResult {
   success: boolean;
@@ -494,11 +494,11 @@ function requiredSessionsFor(
   config: EventConfig,
 ): number | null {
   try {
-    const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+    const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config.sessionDurationInHours || 1,
     );
     return Math.ceil(
-      SlotCalculationService.calculateRequiredSlots(eventType, config) /
+      ScheduleCalculationService.calculateRequiredSlots(eventType, config) /
         slotsPerCall,
     );
   } catch {
@@ -716,14 +716,14 @@ async function lastAvailabilityChangeByConsultant(
     if (!known || known < at) latest.set(id, at);
   };
 
-  const weekly = await prisma.slotOfAvailabilityWeekly.groupBy({
+  const weekly = await prisma.availabilityWindowWeekly.groupBy({
     by: ["consultantProfileId"],
     where: { consultantProfileId: { in: consultantProfileIds } },
     _max: { updatedAt: true },
   });
   for (const row of weekly) record(row.consultantProfileId, row._max.updatedAt);
 
-  const custom = await prisma.slotOfAvailabilityCustom.groupBy({
+  const custom = await prisma.availabilityWindowCustom.groupBy({
     by: ["consultantProfileId"],
     where: { consultantProfileId: { in: consultantProfileIds } },
     _max: { updatedAt: true },
@@ -799,7 +799,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
     }
     summary.attempted++;
     try {
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType: candidate.eventType,
         eventId: candidate.eventId,
         mode: "auto",

@@ -42,7 +42,7 @@ export function makeConsecutiveSlotISOs(
   return slots;
 }
 
-// ─── TimeSlot Factory (calendarUtils TimeSlot interface) ────────────────────
+// ─── CalendarInterval Factory (calendarUtils CalendarInterval interface) ────────────────────
 
 export interface MockTimeSlot {
   startTime: Date;
@@ -186,15 +186,15 @@ export function makeMockPrisma(
 export function makeConsultantData(overrides: Record<string, any> = {}): {
   userId: string;
   scheduleType: string;
-  slotsOfAvailabilityWeekly: any[];
-  slotsOfAvailabilityCustom: any[];
+  availabilityWindowsWeekly: any[];
+  availabilityWindowsCustom: any[];
   timezone?: string;
 } {
   return {
     userId: "consultant-user-1",
     scheduleType: ScheduleType.WEEKLY,
-    slotsOfAvailabilityWeekly: [],
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsWeekly: [],
+    availabilityWindowsCustom: [],
     ...overrides,
   };
 }

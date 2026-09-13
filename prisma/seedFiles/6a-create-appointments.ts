@@ -8,8 +8,8 @@ import {
   Platform,
   Prisma,
   AppointmentStatus,
-  SlotOfAvailabilityCustom,
-  SlotOfAvailabilityWeekly,
+  AvailabilityWindowCustom,
+  AvailabilityWindowWeekly,
   SubscriptionPlan,
   WebinarPlan,
   WebinarStatus,
@@ -139,11 +139,11 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
 type SlotData =
   | {
       type: "weekly";
-      slot: SlotOfAvailabilityWeekly;
+      slot: AvailabilityWindowWeekly;
     }
   | {
       type: "custom";
-      slot: SlotOfAvailabilityCustom;
+      slot: AvailabilityWindowCustom;
     };
 
 // --- Helper function to create MeetingSession data ---
@@ -242,7 +242,7 @@ const createConsultationAppointment = (
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
   subscriptionPlans: PlanRead<SubscriptionPlan>[],
-  consultantWeeklySlots: SlotOfAvailabilityWeekly[],
+  consultantWeeklySlots: AvailabilityWindowWeekly[],
   defaultStatus: AppointmentStatus,
   isPastAppointment: boolean,
   startDate: Date,
@@ -592,7 +592,7 @@ async function createAppointmentBatch(
   subscriptionPlans: PlanRead<SubscriptionPlan>[],
   webinarPlans: PlanRead<WebinarPlan>[],
   classPlans: PlanRead<ClassPlan>[],
-  weeklySlots: SlotOfAvailabilityWeekly[],
+  weeklySlots: AvailabilityWindowWeekly[],
   startIndex: number,
   batchSize: number,
   consultantUserMap: Record<string, string>,
@@ -796,10 +796,10 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   );
 
   // Fetch all required data upfront
-  const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+  const weeklySlots = await prisma.availabilityWindowWeekly.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
-  const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+  const customSlots = await prisma.availabilityWindowCustom.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
   const consultationPlans = await prisma.consultationPlan.findMany();

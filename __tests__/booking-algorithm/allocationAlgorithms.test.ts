@@ -9,7 +9,7 @@
  * The auto cases that used to live here exercised the client auto-allocator
  * (strategies, scoring, weekly distribution) deleted in #997/#1132 — product
  * code has picked slots server-side since #997 Phase 1. Auto is covered by
- * slotAllocationService.test.ts and preference-scored-allocation.test.ts.
+ * schedulingService.test.ts and preference-scored-allocation.test.ts.
  */
 
 import "./setup";

@@ -1,5 +1,5 @@
 import type { SlotPickerSubject } from "@/components/scheduling/slot-picker-policy";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /**
  * Where the slot picker should already be looking when it opens (#1073).
@@ -141,7 +141,7 @@ export function focusGridPosition(
   at: Date,
   timeZone: string,
 ): FocusGridPosition {
-  const { year, month, day, hour, minute } = SlotCalculationService.wallClock(
+  const { year, month, day, hour, minute } = ScheduleCalculationService.wallClock(
     at,
     timeZone,
   );

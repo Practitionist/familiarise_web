@@ -581,7 +581,7 @@ export async function PATCH(
                 });
 
                 // Confirm existing tentative appointments by setting slots to non-tentative.
-                // Appointment slots are created by SlotAllocationService during checkout/allocation,
+                // Appointment slots are created by SchedulingService during checkout/allocation,
                 // not by this status handler. If no appointments exist here, that's expected for
                 // approval-pending-payment flows where slots get allocated after payment succeeds.
                 if (

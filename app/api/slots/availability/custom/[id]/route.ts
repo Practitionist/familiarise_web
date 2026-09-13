@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { coalesceAndResolveCustom } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import { coalesceAndResolveCustom } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma } from "@prisma/client";
@@ -24,7 +24,7 @@ async function applyCustomSlotEdit(
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const overlappingSlot = await tx.slotOfAvailabilityCustom.findFirst({
+        const overlappingSlot = await tx.availabilityWindowCustom.findFirst({
           where: {
             id: { not: id },
             consultantProfileId,
@@ -54,7 +54,7 @@ async function applyCustomSlotEdit(
 
         // No `include`: the coalesce below can fold this row away, so the
         // covering row — not this one — is what the client is answered with.
-        const updatedSlot = await tx.slotOfAvailabilityCustom.update({
+        const updatedSlot = await tx.availabilityWindowCustom.update({
           where: { id },
           data: { startsAt: next.startsAt, endsAt: next.endsAt },
         });
@@ -83,7 +83,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const customSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+    const customSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id: id },
       include: {
         consultantProfile: true,
@@ -128,7 +128,7 @@ export async function PUT(
     }
 
     // Fetch existing slot for authoritative consultantProfileId and ownership
-    const currentSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+    const currentSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id },
       include: { consultantProfile: { select: { userId: true } } },
     });
@@ -229,7 +229,7 @@ export async function PATCH(
 
     const body = await req.json();
 
-    const currentSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+    const currentSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id: id },
       include: { consultantProfile: { select: { userId: true } } },
     });
@@ -320,7 +320,7 @@ export async function DELETE(
       );
     }
 
-    const customSlot = await prisma.slotOfAvailabilityCustom.findUnique({
+    const customSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id },
       include: { consultantProfile: { select: { userId: true } } },
     });
@@ -340,7 +340,7 @@ export async function DELETE(
       );
     }
 
-    const deletedSlot = await prisma.slotOfAvailabilityCustom.delete({
+    const deletedSlot = await prisma.availabilityWindowCustom.delete({
       where: { id: id },
       include: {
         consultantProfile: true,

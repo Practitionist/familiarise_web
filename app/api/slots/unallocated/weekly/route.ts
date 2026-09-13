@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 
 export async function GET(req: NextRequest) {
   try {
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
 
     // Fetch ALL weekly slots (no DB-level pagination) so we can filter out
     // allocated ones first, then paginate the filtered results accurately.
-    const allWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+    const allWeeklySlots = await prisma.availabilityWindowWeekly.findMany({
       where: {
         consultantProfileId,
       },

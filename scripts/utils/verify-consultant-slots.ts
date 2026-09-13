@@ -13,7 +13,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 
@@ -76,7 +76,7 @@ async function verifyConsultantSlots() {
 
     // 3. Get availability slots based on schedule type
     if (consultant.scheduleType === "WEEKLY") {
-      const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+      const weeklySlots = await prisma.availabilityWindowWeekly.findMany({
         where: { consultantProfileId: CONSULTANT_ID },
         orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
       });
@@ -98,7 +98,7 @@ async function verifyConsultantSlots() {
         );
       });
     } else {
-      const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+      const customSlots = await prisma.availabilityWindowCustom.findMany({
         where: {
           consultantProfileId: CONSULTANT_ID,
           startsAt: {

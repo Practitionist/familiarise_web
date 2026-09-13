@@ -21,7 +21,7 @@
  *         capture webhook confirmed them between the scan and the delete.
  */
 
-import { mergeConsecutiveSlots } from "@/utils/timeSlotsProcessing";
+import { mergeConsecutiveSlots } from "@/utils/scheduling-engine/intervals";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 
@@ -83,13 +83,13 @@ describe("#788 → #1320 — mergeConsecutiveSlots merges across rows and keeps 
   };
   const rowA = {
     ...base,
-    slotOfAvailabilityId: "row-A",
+    availabilityWindowId: "row-A",
     startsAt: "2026-06-26T14:00:00.000Z",
     endsAt: "2026-06-26T15:00:00.000Z",
   };
   const rowB = {
     ...base,
-    slotOfAvailabilityId: "row-B",
+    availabilityWindowId: "row-B",
     startsAt: "2026-06-26T15:00:00.000Z",
     endsAt: "2026-06-26T16:00:00.000Z",
   };
@@ -101,12 +101,12 @@ describe("#788 → #1320 — mergeConsecutiveSlots merges across rows and keeps 
     // The first row's id stays for compatibility; the mis-bind #788 feared is
     // harmless now that checkout validates the window against the union of
     // the consultant's rows, and the full set is available to any reader.
-    expect(merged[0].slotOfAvailabilityId).toBe("row-A");
-    expect(merged[0].slotOfAvailabilityIds).toEqual(["row-A", "row-B"]);
+    expect(merged[0].availabilityWindowId).toBe("row-A");
+    expect(merged[0].availabilityWindowIds).toEqual(["row-A", "row-B"]);
   });
 
   it("still merges adjacent sub-windows of the SAME row (the trial use case)", () => {
-    const sameRowB = { ...rowB, slotOfAvailabilityId: "row-A" };
+    const sameRowB = { ...rowB, availabilityWindowId: "row-A" };
     const merged = mergeConsecutiveSlots([rowA, sameRowB] as never);
     expect(merged).toHaveLength(1);
     expect(merged[0].endsAt).toBe("2026-06-26T16:00:00.000Z");

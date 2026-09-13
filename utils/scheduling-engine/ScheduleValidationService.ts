@@ -19,7 +19,7 @@ import {
   ConsultantAllocationData,
   EventConfig,
 } from "./types";
-import { SlotCalculationService } from "./SlotCalculationService";
+import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import {
@@ -109,7 +109,7 @@ export function isOccupiedByLiveAppointment(
 /**
  * Service for validating slot allocations
  */
-export class SlotValidationService {
+export class ScheduleValidationService {
   constructor(private readonly prismaClient: PrismaLike = prisma) {}
 
   /**
@@ -499,7 +499,7 @@ export class SlotValidationService {
         // Check if this slot matches any availability pattern
         // Delegates to isMinuteWithinWeeklySlot — single source of truth for
         // same-day, overnight, and timezone-compensated day matching
-        const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
+        const matchesAvailability = consultant.availabilityWindowsWeekly.some(
           (availSlot) =>
             isMinuteWithinWeeklySlot(
               slotDay,
@@ -543,7 +543,7 @@ export class SlotValidationService {
         const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
 
         // Check if this slot sits wholly inside ANY available custom slot
-        const isContained = consultant.slotsOfAvailabilityCustom.some(
+        const isContained = consultant.availabilityWindowsCustom.some(
           (availableSlot) => {
             const availableStart = new Date(availableSlot.startsAt);
             const availableEnd = new Date(availableSlot.endsAt);
@@ -558,7 +558,7 @@ export class SlotValidationService {
       }
 
       if (hasInvalidSlots) {
-        console.warn("[SlotValidationService] Invalid slots found:", {
+        console.warn("[ScheduleValidationService] Invalid slots found:", {
           invalidSlots: invalidSlotsList,
         });
 
@@ -568,7 +568,7 @@ export class SlotValidationService {
         // Check if this looks like a consecutive slot issue (some slots valid, some not)
         const validSlotCount = slots.filter((slot) => {
           const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
-          return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
+          return consultant.availabilityWindowsCustom.some((availableSlot) => {
             const availableStart = new Date(availableSlot.startsAt);
             const availableEnd = new Date(availableSlot.endsAt);
             return slot >= availableStart && slotEnd <= availableEnd;
@@ -687,14 +687,17 @@ export class SlotValidationService {
       return { isValid: true, errors: [], warnings: [] };
     }
 
-    const firstSlotDay = SlotCalculationService.dayKey(
+    const firstSlotDay = ScheduleCalculationService.dayKey(
       slots[0],
       schedulingTimezone,
     );
     const errors: string[] = [];
 
     for (const slot of slots) {
-      const slotDay = SlotCalculationService.dayKey(slot, schedulingTimezone);
+      const slotDay = ScheduleCalculationService.dayKey(
+        slot,
+        schedulingTimezone,
+      );
       if (slotDay !== firstSlotDay) {
         errors.push(
           `[VALIDATION] All slots must be on the same day. Found slots on ${firstSlotDay} and ${slotDay}`,
@@ -725,7 +728,7 @@ export class SlotValidationService {
 
     // FIX: Validate duration before use
     try {
-      SlotCalculationService.validateDuration(
+      ScheduleCalculationService.validateDuration(
         duration,
         "Consultation duration",
       );
@@ -748,7 +751,7 @@ export class SlotValidationService {
     }
 
     // After validation, duration is guaranteed to be a valid number
-    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration!);
+    const requiredSlots = ScheduleCalculationService.getSlotsPerCall(duration!);
 
     // Check slot count
     if (slots.length !== requiredSlots) {
@@ -803,7 +806,7 @@ export class SlotValidationService {
     // grouped into a single session, creating appointments with time gaps
     const sessionDuration = config.sessionDurationInHours || 1;
     const slotsPerSession =
-      SlotCalculationService.getSlotsPerCall(sessionDuration);
+      ScheduleCalculationService.getSlotsPerCall(sessionDuration);
 
     if (slotsPerSession > 1) {
       const sortedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
@@ -864,7 +867,7 @@ export class SlotValidationService {
     // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
     // SubscriptionValidationService enforces the weekly limit; the per-day cap
     // previously lived only in allocation selection + the client guard.
-    // Constant shared with the allocator (utils/slotAllocation/sessionCaps.ts)
+    // Constant shared with the allocator (utils/scheduling-engine/sessionCaps.ts)
     // so selection and validation can never disagree.
     const subscriptionAppointments =
       await this.prismaClient.appointment.findMany({
@@ -905,7 +908,7 @@ export class SlotValidationService {
 
     // FIX: Validate duration before use
     try {
-      SlotCalculationService.validateDuration(duration, "Webinar duration");
+      ScheduleCalculationService.validateDuration(duration, "Webinar duration");
     } catch (error) {
       // Same reasoning as validateConsultation's duration guard: a modelled
       // config-validation answer, reported at info.
@@ -925,7 +928,7 @@ export class SlotValidationService {
     }
 
     // After validation, duration is guaranteed to be a valid number
-    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration!);
+    const requiredSlots = ScheduleCalculationService.getSlotsPerCall(duration!);
 
     // Check slot count
     if (slots.length !== requiredSlots) {
@@ -996,7 +999,7 @@ export class SlotValidationService {
 
     // FIX: Validate duration before use
     try {
-      SlotCalculationService.validateDuration(
+      ScheduleCalculationService.validateDuration(
         config.sessionDurationInHours,
         "Session duration",
       );
@@ -1017,7 +1020,7 @@ export class SlotValidationService {
       };
     }
 
-    const slotsPerSession = SlotCalculationService.getSlotsPerCall(
+    const slotsPerSession = ScheduleCalculationService.getSlotsPerCall(
       config.sessionDurationInHours,
     );
 
@@ -1077,7 +1080,7 @@ export class SlotValidationService {
       const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
-      const weekKey = SlotCalculationService.weekKey(
+      const weekKey = ScheduleCalculationService.weekKey(
         new Date(firstSlot.startsAt),
         config.schedulingTimezone,
       );
@@ -1088,7 +1091,7 @@ export class SlotValidationService {
     }
 
     // Validate weekly limits
-    const slotsByWeek = SlotCalculationService.groupSlotsByWeek(
+    const slotsByWeek = ScheduleCalculationService.groupSlotsByWeek(
       slots.map((s) => ({
         startTime: s,
         endTime: new Date(s.getTime() + SLOT_DURATION_MS),
@@ -1096,7 +1099,7 @@ export class SlotValidationService {
         isBooked: false,
       })),
       config.schedulingTimezone ??
-        SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+        ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
     );
 
     slotsByWeek.forEach((weekSlots, weekKey) => {
@@ -1113,7 +1116,7 @@ export class SlotValidationService {
     // #898 follow-up — server-side per-DAY cap (class ≤2/day). Was only enforced
     // at allocation-selection time + the client guard, so a hand-crafted manual
     // allocate could stack same-day sessions. Constant shared with the
-    // allocator (utils/slotAllocation/sessionCaps.ts).
+    // allocator (utils/scheduling-engine/sessionCaps.ts).
     errors.push(
       ...this.validatePerDaySessionCap(
         classAppointments,
@@ -1135,7 +1138,7 @@ export class SlotValidationService {
   /**
    * #898 follow-up — server-side per-DAY session cap (subscription 1/day,
    * class 2/day). Keyed by the event's scheduling-timezone day via
-   * SlotCalculationService.dayKey (ADR B9) — the same key the client guards
+   * ScheduleCalculationService.dayKey (ADR B9) — the same key the client guards
    * and auto-allocate use. The old toDateString() key depended on the
    * server's local timezone, so verdicts could differ between environments
    * and from the client. One Appointment = one session, keyed by its first
@@ -1160,7 +1163,7 @@ export class SlotValidationService {
       const firstSlot = appt.slotsOfAppointment.reduce((earliest, s) =>
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
-      const dayKey = SlotCalculationService.dayKey(
+      const dayKey = ScheduleCalculationService.dayKey(
         new Date(firstSlot.startsAt),
         schedulingTimezone,
       );
@@ -1171,7 +1174,7 @@ export class SlotValidationService {
     const orderedSlots = [...slots].sort((a, b) => a.getTime() - b.getTime());
     const proposedPerDay = new Map<string, number>();
     for (let i = 0; i < orderedSlots.length; i += slotsPerSession) {
-      const dayKey = SlotCalculationService.dayKey(
+      const dayKey = ScheduleCalculationService.dayKey(
         orderedSlots[i],
         schedulingTimezone,
       );

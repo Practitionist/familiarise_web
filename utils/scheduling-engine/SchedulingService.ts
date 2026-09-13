@@ -34,7 +34,7 @@ import {
   EventConfig,
   isRecurringEventType,
 } from "./types";
-import { SlotCalculationService } from "./SlotCalculationService";
+import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import {
   countHalfHourAtoms,
   halfHourAtomStarts,
@@ -46,9 +46,9 @@ import {
   type AllocationPreference,
 } from "./preferenceScoring";
 import {
-  SlotValidationService,
+  ScheduleValidationService,
   isOccupiedByLiveAppointment,
-} from "./SlotValidationService";
+} from "./ScheduleValidationService";
 import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
@@ -142,7 +142,7 @@ interface AllocationWalkContext {
 /**
  * Main service for slot allocation operations
  */
-export class SlotAllocationService {
+export class SchedulingService {
   /**
    * Main entry point for slot allocation
    * Routes to appropriate allocation method based on mode
@@ -1288,7 +1288,7 @@ export class SlotAllocationService {
         pastConfirmedSlotCount > 0 &&
         isRecurringEventType(eventType);
 
-      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+      const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
         config.sessionDurationInHours || config.durationInHours || 1,
       );
 
@@ -1327,8 +1327,10 @@ export class SlotAllocationService {
       ).length;
       const topUpPlanSessions = isTopUp
         ? Math.ceil(
-            SlotCalculationService.calculateRequiredSlots(eventType, config) /
-              slotsPerCall,
+            ScheduleCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            ) / slotsPerCall,
           )
         : 0;
       /**
@@ -1368,7 +1370,10 @@ export class SlotAllocationService {
           }
         } else {
           const requiredForGuard =
-            SlotCalculationService.calculateRequiredSlots(eventType, config);
+            ScheduleCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
           const futureNonTentativeSlotCount =
             existingNonTentativeSlotCount - pastConfirmedSlotCount;
           if (
@@ -1420,7 +1425,7 @@ export class SlotAllocationService {
         ).length;
         requiredSlots = rescheduleSessions * slotsPerCall;
       } else {
-        const fullRequired = SlotCalculationService.calculateRequiredSlots(
+        const fullRequired = ScheduleCalculationService.calculateRequiredSlots(
           eventType,
           config,
         );
@@ -1490,7 +1495,7 @@ export class SlotAllocationService {
 
       // Validate (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
-      const validation = await new SlotValidationService(prisma).validate(
+      const validation = await new ScheduleValidationService(prisma).validate(
         eventType,
         eventId,
         selectedSlots,
@@ -1538,7 +1543,7 @@ export class SlotAllocationService {
           // allocate() flows no slot can shift; this catches a concurrent
           // non-allocate insert (e.g. checkout) and turns the common race into a
           // clean typed conflict before the #440 GiST constraint would raise.
-          const recheck = await new SlotValidationService(
+          const recheck = await new ScheduleValidationService(
             tx,
           ).revalidateConflicts(
             selectedSlots,
@@ -1555,7 +1560,7 @@ export class SlotAllocationService {
           // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
           // nothing else here can see their clash. Checked in-txn, next to the
           // conflict recheck, so the read matches the write that follows.
-          await SlotAllocationService.assertCollaboratorsFree(
+          await SchedulingService.assertCollaboratorsFree(
             tx,
             eventType,
             planId,
@@ -1568,7 +1573,7 @@ export class SlotAllocationService {
           // of 409ing (see guardInitialAllocationInTx).
           if (isFreshAllocation) {
             const lockedReplay =
-              await SlotAllocationService.guardInitialAllocationInTx(
+              await SchedulingService.guardInitialAllocationInTx(
                 tx,
                 eventType,
                 eventId,
@@ -1579,7 +1584,7 @@ export class SlotAllocationService {
 
           // #1012 — reschedule path is outside guardInitialAllocationInTx;
           // re-assert tentative count under the write txn before delete.
-          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+          await SchedulingService.assertExpectedTentativeSlotCountInTx(
             tx,
             eventType,
             eventId,
@@ -1604,7 +1609,7 @@ export class SlotAllocationService {
             // connected by createAppointments, so it needs no such read.
             if (eventType === "class") {
               enrolledUserIds =
-                await SlotAllocationService.collectEventParticipantIds(
+                await SchedulingService.collectEventParticipantIds(
                   tx,
                   eventType,
                   eventId,
@@ -1852,7 +1857,7 @@ export class SlotAllocationService {
 
       // CRITICAL FIX: Validate slot count matches session duration requirements
       // This prevents incomplete appointments from being created
-      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+      const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
         config.sessionDurationInHours || config.durationInHours || 1,
       );
 
@@ -1966,10 +1971,11 @@ export class SlotAllocationService {
           }
         } else if (isInProgressReallocation) {
           // In-progress: only future slots expected, past ones are preserved
-          const fullRequired = SlotCalculationService.calculateRequiredSlots(
-            eventType,
-            config,
-          );
+          const fullRequired =
+            ScheduleCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
           const expectedFutureSlots = fullRequired - pastConfirmedSlotCount;
           if (slots.length !== expectedFutureSlots) {
             throw new AllocationValidationError(
@@ -1981,10 +1987,11 @@ export class SlotAllocationService {
           config.schedulingPeriodStartsAt &&
           config.schedulingPeriodEndsAt
         ) {
-          const requiredSlots = SlotCalculationService.calculateRequiredSlots(
-            eventType,
-            config,
-          );
+          const requiredSlots =
+            ScheduleCalculationService.calculateRequiredSlots(
+              eventType,
+              config,
+            );
           if (slots.length !== requiredSlots) {
             throw new AllocationValidationError(
               `This ${eventType} requires exactly ${requiredSlots} slots ` +
@@ -1997,7 +2004,7 @@ export class SlotAllocationService {
 
       // Validate (read-only; runs out-of-txn under the locks)
       // Pass appointmentIdsToExclude so their slots don't trigger false conflicts
-      const validation = await new SlotValidationService(prisma).validate(
+      const validation = await new ScheduleValidationService(prisma).validate(
         eventType,
         eventId,
         slots,
@@ -2017,7 +2024,7 @@ export class SlotAllocationService {
       return await prisma.$transaction(
         async (tx) => {
           // Defense-in-depth conflict re-check inside the txn (see autoAllocate).
-          const recheck = await new SlotValidationService(
+          const recheck = await new ScheduleValidationService(
             tx,
           ).revalidateConflicts(
             slots,
@@ -2034,7 +2041,7 @@ export class SlotAllocationService {
           // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
           // nothing else here can see their clash. Checked in-txn, next to the
           // conflict recheck, so the read matches the write that follows.
-          await SlotAllocationService.assertCollaboratorsFree(
+          await SchedulingService.assertCollaboratorsFree(
             tx,
             eventType,
             planId,
@@ -2047,7 +2054,7 @@ export class SlotAllocationService {
           // of 409ing (see guardInitialAllocationInTx).
           if (isFreshAllocation) {
             const lockedReplay =
-              await SlotAllocationService.guardInitialAllocationInTx(
+              await SchedulingService.guardInitialAllocationInTx(
                 tx,
                 eventType,
                 eventId,
@@ -2058,7 +2065,7 @@ export class SlotAllocationService {
 
           // #1012 — reschedule path is outside guardInitialAllocationInTx;
           // re-assert tentative count under the write txn before delete.
-          await SlotAllocationService.assertExpectedTentativeSlotCountInTx(
+          await SchedulingService.assertExpectedTentativeSlotCountInTx(
             tx,
             eventType,
             eventId,
@@ -2226,7 +2233,7 @@ export class SlotAllocationService {
           // event that has not been allocated yet.
           {
             const lockedReplay =
-              await SlotAllocationService.guardInitialAllocationInTx(
+              await SchedulingService.guardInitialAllocationInTx(
                 tx,
                 eventType,
                 eventId,
@@ -2272,7 +2279,7 @@ export class SlotAllocationService {
             0,
           );
           // #1012 — stale-tab reschedule / approval precondition.
-          SlotAllocationService.assertExpectedTentativeSlotCount(
+          SchedulingService.assertExpectedTentativeSlotCount(
             tentativeSlotCount,
             expectedTentativeSlotCount,
           );
@@ -2339,7 +2346,7 @@ export class SlotAllocationService {
           // Validate requested slots still meet all requirements.
           // Pass existing appointment IDs so the event's own tentative slots
           // are not flagged as conflicts during self-validation.
-          const validator = new SlotValidationService(tx);
+          const validator = new ScheduleValidationService(tx);
           const existingAppointmentIds = existingAppointments.map((a) => a.id);
           const validation = await validator.validate(
             eventType,
@@ -2361,7 +2368,7 @@ export class SlotAllocationService {
           // commit like any other, so the co-host guard applies here too. This
           // path has no createAppointments; the isTentative flip below is the
           // write it protects.
-          await SlotAllocationService.assertCollaboratorsFree(
+          await SchedulingService.assertCollaboratorsFree(
             tx,
             eventType,
             planId,
@@ -2444,7 +2451,7 @@ export class SlotAllocationService {
    *
    * Handles overnight (cross-midnight) availability slots where
    * endTimeUtc <= startTimeUtc (e.g., 22:00→02:00 spanning two days).
-   * Mirrors the logic from SlotValidationService.validateMatchesSchedule().
+   * Mirrors the logic from ScheduleValidationService.validateMatchesSchedule().
    */
   private static isWithinAvailability(
     candidate: Date,
@@ -2455,7 +2462,7 @@ export class SlotAllocationService {
       const candidateMinutes =
         candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
 
-      return consultant.slotsOfAvailabilityWeekly.some((slot) =>
+      return consultant.availabilityWindowsWeekly.some((slot) =>
         isMinuteWithinWeeklySlot(
           candidateDay,
           candidateMinutes,
@@ -2469,7 +2476,7 @@ export class SlotAllocationService {
     } else {
       // CUSTOM schedule: candidate must fall within a specific date range
       const thirtyMinMs = 30 * 60 * 1000;
-      return consultant.slotsOfAvailabilityCustom.some((slot) => {
+      return consultant.availabilityWindowsCustom.some((slot) => {
         const slotStart = new Date(slot.startsAt);
         const slotEnd = new Date(slot.endsAt);
 
@@ -2651,7 +2658,7 @@ export class SlotAllocationService {
     walk?: AllocationWalkContext,
   ): { block: Date[]; score: number } | null {
     const { now, startDate, endDate, schedulingTimezone } = bounds;
-    const rowDayKey = SlotCalculationService.dayKey(
+    const rowDayKey = ScheduleCalculationService.dayKey(
       rowStart,
       schedulingTimezone,
     );
@@ -2675,8 +2682,10 @@ export class SlotAllocationService {
         candidateStart < now ||
         candidateStart < startDate ||
         candidateEnd > endDate ||
-        SlotCalculationService.dayKey(candidateStart, schedulingTimezone) !==
-          rowDayKey
+        ScheduleCalculationService.dayKey(
+          candidateStart,
+          schedulingTimezone,
+        ) !== rowDayKey
       ) {
         continue;
       }
@@ -2726,8 +2735,8 @@ export class SlotAllocationService {
     slotsPerCall: number,
     bookedSlots: Set<string>,
     now: Date,
-    sortedWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"],
-    sortedCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"],
+    sortedWeekly: ConsultantAllocationData["availabilityWindowsWeekly"],
+    sortedCustom: ConsultantAllocationData["availabilityWindowsCustom"],
     schedulingTimezone?: string,
     preference?: AllocationPreference,
     walk?: AllocationWalkContext,
@@ -2968,8 +2977,8 @@ export class SlotAllocationService {
     }
 
     // Validate availability exists
-    const hasWeeklySlots = consultant.slotsOfAvailabilityWeekly.length > 0;
-    const hasCustomSlots = consultant.slotsOfAvailabilityCustom.length > 0;
+    const hasWeeklySlots = consultant.availabilityWindowsWeekly.length > 0;
+    const hasCustomSlots = consultant.availabilityWindowsCustom.length > 0;
     if (
       (consultant.scheduleType === ScheduleType.WEEKLY && !hasWeeklySlots) ||
       (consultant.scheduleType === ScheduleType.CUSTOM && !hasCustomSlots)
@@ -2988,7 +2997,7 @@ export class SlotAllocationService {
     // Without this, Tue 08:00 (480min) would sort before Mon 09:00 (540min).
     const sortedWeekly =
       consultant.scheduleType === ScheduleType.WEEKLY
-        ? [...consultant.slotsOfAvailabilityWeekly]
+        ? [...consultant.availabilityWindowsWeekly]
             .map((slot) => ({
               slot,
               nextOccurrence: this.getNextOccurrenceWeekly(
@@ -3004,7 +3013,7 @@ export class SlotAllocationService {
         : [];
     const sortedCustom =
       consultant.scheduleType === ScheduleType.CUSTOM
-        ? [...consultant.slotsOfAvailabilityCustom].sort(
+        ? [...consultant.availabilityWindowsCustom].sort(
             (a, b) =>
               new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
           )
@@ -3068,7 +3077,7 @@ export class SlotAllocationService {
         new Date(s.startsAt) < new Date(earliest.startsAt) ? s : earliest,
       );
       // ADR B9 — weekly buckets in the event's scheduling timezone
-      const weekKey = SlotCalculationService.weekKey(
+      const weekKey = ScheduleCalculationService.weekKey(
         new Date(firstSlot.startsAt),
         config.schedulingTimezone,
       );
@@ -3076,7 +3085,7 @@ export class SlotAllocationService {
         weekKey,
         (existingSessionsPerWeek.get(weekKey) || 0) + 1,
       );
-      const dayKey = SlotCalculationService.dayKey(
+      const dayKey = ScheduleCalculationService.dayKey(
         new Date(firstSlot.startsAt),
         config.schedulingTimezone,
       );
@@ -3165,11 +3174,11 @@ export class SlotAllocationService {
       for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
         currentDay,
       )) {
-        const rowDayKey = SlotCalculationService.dayKey(
+        const rowDayKey = ScheduleCalculationService.dayKey(
           rowStart,
           config.schedulingTimezone,
         );
-        const rowWeekKey = SlotCalculationService.weekKey(
+        const rowWeekKey = ScheduleCalculationService.weekKey(
           rowStart,
           config.schedulingTimezone,
         );
@@ -3231,11 +3240,11 @@ export class SlotAllocationService {
 
       // Re-key on the slot actually placed rather than on the row it came
       // from, so the counters record where the session really landed.
-      const placedDayKey = SlotCalculationService.dayKey(
+      const placedDayKey = ScheduleCalculationService.dayKey(
         sessionSlots[0],
         config.schedulingTimezone,
       );
-      const placedWeekKey = SlotCalculationService.weekKey(
+      const placedWeekKey = ScheduleCalculationService.weekKey(
         sessionSlots[0],
         config.schedulingTimezone,
       );
@@ -3482,7 +3491,7 @@ export class SlotAllocationService {
     // pre-check. Nullable by design: only real keys dedupe.
     idempotencyKey?: string,
   ): Promise<any[]> {
-    const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+    const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
     );
 
@@ -4373,8 +4382,8 @@ export class SlotAllocationService {
       select: {
         user: true,
         scheduleType: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: true,
       },
     } as const;
 
@@ -4382,8 +4391,8 @@ export class SlotAllocationService {
       | {
           user: { id: string; timezone?: string | null };
           scheduleType: "WEEKLY" | "CUSTOM";
-          slotsOfAvailabilityWeekly: ConsultantAllocationData["slotsOfAvailabilityWeekly"];
-          slotsOfAvailabilityCustom: ConsultantAllocationData["slotsOfAvailabilityCustom"];
+          availabilityWindowsWeekly: ConsultantAllocationData["availabilityWindowsWeekly"];
+          availabilityWindowsCustom: ConsultantAllocationData["availabilityWindowsCustom"];
         }
       | null
       | undefined;
@@ -4552,8 +4561,8 @@ export class SlotAllocationService {
       consultant: {
         userId: consultantProfile.user.id,
         scheduleType: consultantProfile.scheduleType,
-        slotsOfAvailabilityWeekly: consultantProfile.slotsOfAvailabilityWeekly,
-        slotsOfAvailabilityCustom: consultantProfile.slotsOfAvailabilityCustom,
+        availabilityWindowsWeekly: consultantProfile.availabilityWindowsWeekly,
+        availabilityWindowsCustom: consultantProfile.availabilityWindowsCustom,
         timezone: consultantProfile.user.timezone ?? undefined,
       },
       config,

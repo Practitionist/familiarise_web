@@ -2,15 +2,15 @@ import "server-only";
 import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
-} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
-import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import {
   validateWeeklySlotTimeOrder,
   slotsOverlap,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
@@ -156,14 +156,14 @@ async function syncAvailabilitySlots(
   });
   const rowTimezone = resolveWeeklyTimezone(timezone);
   if (scheduleType === ScheduleType.WEEKLY) {
-    await tx.slotOfAvailabilityCustom.deleteMany({
+    await tx.availabilityWindowCustom.deleteMany({
       where: { consultantProfileId },
     });
-    await tx.slotOfAvailabilityWeekly.deleteMany({
+    await tx.availabilityWindowWeekly.deleteMany({
       where: { consultantProfileId },
     });
 
-    const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
+    const weeklySlotsToCreate = profileData.availabilityWindowsWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       // Reject invalid slots instead of silently filtering them
       for (let i = 0; i < weeklySlotsToCreate.length; i++) {
@@ -214,7 +214,7 @@ async function syncAvailabilitySlots(
         ...slot,
         utcOffsetMinutes,
       }));
-      await tx.slotOfAvailabilityWeekly.createMany({
+      await tx.availabilityWindowWeekly.createMany({
         data: mergeAdjacentWeeklyRows(rowsWithOffset).map((slot) => ({
           startDay: slot.startDay,
           startTimeUtc: slot.startTimeUtc,
@@ -227,14 +227,14 @@ async function syncAvailabilitySlots(
       });
     }
   } else if (scheduleType === ScheduleType.CUSTOM) {
-    await tx.slotOfAvailabilityWeekly.deleteMany({
+    await tx.availabilityWindowWeekly.deleteMany({
       where: { consultantProfileId },
     });
-    await tx.slotOfAvailabilityCustom.deleteMany({
+    await tx.availabilityWindowCustom.deleteMany({
       where: { consultantProfileId },
     });
 
-    const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
+    const customSlotsToCreate = profileData.availabilityWindowsCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       // Validate using UTC timestamps directly (no server-locale dependency)
       for (let i = 0; i < customSlotsToCreate.length; i++) {
@@ -271,7 +271,7 @@ async function syncAvailabilitySlots(
 
       // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
       // adjacent entries still has each entry checked on its own.
-      await tx.slotOfAvailabilityCustom.createMany({
+      await tx.availabilityWindowCustom.createMany({
         data: mergeAdjacentCustomRows(
           customSlotsToCreate.map((slot) => ({
             startsAt: new Date(slot.startsAt),
@@ -592,8 +592,8 @@ async function submitVerificationRequest(
 const onboardingUserInclude = {
   consultantProfile: {
     include: {
-      slotsOfAvailabilityWeekly: true,
-      slotsOfAvailabilityCustom: true,
+      availabilityWindowsWeekly: true,
+      availabilityWindowsCustom: true,
       domain: true,
       subDomains: true,
       tags: true,

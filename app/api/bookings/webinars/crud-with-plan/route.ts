@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
               appointment:
                 startTime && endTime
                   ? {
-                      // #1071 — N×30min atoms (same shape as SlotAllocationService),
+                      // #1071 — N×30min atoms (same shape as SchedulingService),
                       // never one long row spanning the full duration.
                       create: {
                         appointmentType: "WEBINAR",

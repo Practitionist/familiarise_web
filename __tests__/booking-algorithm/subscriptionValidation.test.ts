@@ -20,7 +20,7 @@ import {
   getSubscriptionWeek,
   getSubscriptionType,
 } from "@/utils/subscriptionValidation";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   makeSubscription,
   makeSubscriptionPlan,
@@ -116,7 +116,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
 
     // The week containing Jan 6 should show 1 existing call, not 2.
     // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
-    const expectedWeekStart = SlotCalculationService.startOfWeekSundayInTz(
+    const expectedWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
       new Date("2025-01-06T10:00:00.000Z"),
     );
     const weekOfJan5 = result.weeklyInfo.find(
@@ -195,7 +195,7 @@ describe("Bug B Fix: Appointment counting (1 appointment = 1 call)", () => {
     const result = await service.validateSubscriptionSlots("sub-1", []);
     // Should use 13:30 (earliest) to determine week.
     // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
-    const expectedWeekStart = SlotCalculationService.startOfWeekSundayInTz(
+    const expectedWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
       new Date("2025-01-06T13:30:00.000Z"),
     );
     const weekOfJan5 = result.weeklyInfo.find(
@@ -428,7 +428,7 @@ describe("Weekly info generation", () => {
     // weekStart is Sunday 00:00 in the SCHEDULING timezone (ADR B9) — assert
     // via Intl, not local getDay(), so the test passes on any CI timezone.
     const weekdayInSchedulingTz = new Intl.DateTimeFormat("en-US", {
-      timeZone: SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+      timeZone: ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
       weekday: "short",
     }).format(result.weeklyInfo[0].weekStart);
     expect(weekdayInSchedulingTz).toBe("Sun");

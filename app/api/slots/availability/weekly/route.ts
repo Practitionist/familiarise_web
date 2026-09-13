@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { coalesceAndResolve } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import { coalesceAndResolve } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -8,7 +8,7 @@ import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
   buildWeeklyOverlapWhere,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
 
     const [weeklySlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityWeekly.findMany({
+      prisma.availabilityWindowWeekly.findMany({
         where: {
           consultantProfileId: consultantProfileId,
         },
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
         skip,
         take: limit,
       }),
-      prisma.slotOfAvailabilityWeekly.count({
+      prisma.availabilityWindowWeekly.count({
         where: { consultantProfileId: consultantProfileId },
       }),
     ]);
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
       prisma.$transaction(
         async (tx) => {
           // Cross-midnight-aware overlap check
-          const overlappingSlot = await tx.slotOfAvailabilityWeekly.findFirst({
+          const overlappingSlot = await tx.availabilityWindowWeekly.findFirst({
             where: buildWeeklyOverlapWhere(
               consultantProfileId,
               startDay,
@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
 
           // Not the response payload: the coalesce below can fold this row
           // away, so the covering row is what the client is answered with.
-          await tx.slotOfAvailabilityWeekly.create({
+          await tx.availabilityWindowWeekly.create({
             data: {
               consultantProfileId,
               startDay,

@@ -24,7 +24,7 @@ import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimez
 import {
   validateTimeSlot,
   validateAllSlotsDetailed,
-} from "@/utils/timeSlotValidation";
+} from "@/utils/scheduling-engine/interval-validation";
 import { formatSlotsForApi } from "@/utils/schedule/formatting";
 import { reportSentryError } from "@/lib/observability/report";
 import type { SlotsType } from "@/utils/schedule/types";
@@ -453,11 +453,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       const updatedData = {
         ...formData,
         scheduleType,
-        slotsOfAvailabilityWeekly:
+        availabilityWindowsWeekly:
           scheduleType === ScheduleType.WEEKLY
             ? formatSlotsForApi(weeklySlots, true, timezone || "UTC")
             : [],
-        slotsOfAvailabilityCustom:
+        availabilityWindowsCustom:
           scheduleType === ScheduleType.CUSTOM
             ? formatSlotsForApi(customSlots, false, timezone || "UTC")
             : [],

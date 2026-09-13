@@ -3,10 +3,10 @@ import { DayOfWeek } from "@prisma/client";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
-import type { ProcessedSlot } from "../types";
+import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/slot-status-tokens";
 
-type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
+type ProcessedSlotsByDay = Record<DayOfWeek, PickerInterval[]>;
 
 interface WeeklyAvailabilityProps {
   slotsByDay: ProcessedSlotsByDay;
@@ -28,9 +28,9 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const mergedSlotsByDay = useMemo(() => {
-    const result: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<
+    const result: Record<DayOfWeek, PickerInterval[]> = {} as Record<
       DayOfWeek,
-      ProcessedSlot[]
+      PickerInterval[]
     >;
     for (const day of DAY_NAMES) {
       const sorted = (slotsByDay[day] || []).slice().sort((a, b) => {
@@ -53,7 +53,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   }, [mergedSlotsByDay]);
 
   // Get the date for booked slots in user timezone
-  const getBookedSlotDate = (slot: ProcessedSlot) => {
+  const getBookedSlotDate = (slot: PickerInterval) => {
     if (!slot.startsAt) return "";
     const date = new Date(slot.startsAt);
     return date.toLocaleDateString(undefined, {

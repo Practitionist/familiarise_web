@@ -21,8 +21,8 @@ import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
-} from "../../utils/slotAllocation/occupancyPolicy";
-import { isOccupiedByLiveAppointment } from "../../utils/slotAllocation/SlotValidationService";
+} from "../../utils/scheduling-engine/occupancyPolicy";
+import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/ScheduleValidationService";
 
 const PROFILE = "consultant-profile-1";
 const USER = "consultant-user-1";

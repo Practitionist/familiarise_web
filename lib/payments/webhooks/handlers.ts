@@ -23,7 +23,7 @@ import {
   TrialSessionStatus,
 } from "@prisma/client";
 import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
@@ -1726,7 +1726,7 @@ async function confirmApprovalStatus(
     // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
     // Do NOT change PENDING → APPROVED here!
     // Subscription stays PENDING until consultant allocates slots via Requests tab
-    // SlotAllocationService.allocate() will set status to APPROVED when slots are allocated
+    // SchedulingService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
       // CAS — the pre-read can race a cancel; the guard decides (B2).
       await tx.subscription.updateMany({

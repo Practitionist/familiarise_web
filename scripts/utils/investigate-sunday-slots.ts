@@ -9,7 +9,7 @@
 import "dotenv/config";
 import { DayOfWeek } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 const SUBSCRIPTION_ID = "cmgflwuvk03nymf4gysztdb19"; // Extended subscription with Aug dates
@@ -19,7 +19,7 @@ async function investigateSundaySlots() {
 
   try {
     // 1. Check for any Sunday slots for this consultant
-    const sundaySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+    const sundaySlots = await prisma.availabilityWindowWeekly.findMany({
       where: {
         consultantProfileId: CONSULTANT_ID,
         startDay: DayOfWeek.SUNDAY,

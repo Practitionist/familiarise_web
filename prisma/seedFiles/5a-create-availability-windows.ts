@@ -1,7 +1,7 @@
 import { faker } from "@faker-js/faker";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
-import { getTimezoneOffsetMinutes } from "../../utils/slotAllocation/slotTimeUtils";
+import { getTimezoneOffsetMinutes } from "../../utils/scheduling-engine/slotTimeUtils";
 import { UserWithProfiles } from "./1a-create-users";
 
 const MAX_SLOT_DURATION = 6 * 2; // In 30-min intervals (12)
@@ -159,7 +159,7 @@ export async function createSlotsOfAvailability(
           }
         }
 
-        await prisma.slotOfAvailabilityWeekly.createMany({
+        await prisma.availabilityWindowWeekly.createMany({
           data: weeklySlots,
         });
       } else {
@@ -209,7 +209,7 @@ export async function createSlotsOfAvailability(
           }
         }
 
-        await prisma.slotOfAvailabilityCustom.createMany({
+        await prisma.availabilityWindowCustom.createMany({
           data: customSlots,
         });
       }

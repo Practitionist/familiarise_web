@@ -221,20 +221,20 @@ export default function ConsultationCheckoutPage({
   useEffect(() => {
     async function fetchSlotData() {
       try {
-        const { slotOfAvailabilityWeeklyId, slotOfAvailabilityCustomId } =
+        const { availabilityWindowWeeklyId, availabilityWindowCustomId } =
           resolvedSearchParams;
 
-        if (slotOfAvailabilityWeeklyId) {
+        if (availabilityWindowWeeklyId) {
           const response = await fetch(
-            `/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`,
+            `/api/slots/availability/weekly/${availabilityWindowWeeklyId}`,
           );
           if (response.ok) {
             const data = await response.json();
             setSlotData(data.data);
           }
-        } else if (slotOfAvailabilityCustomId) {
+        } else if (availabilityWindowCustomId) {
           const response = await fetch(
-            `/api/slots/availability/custom/${slotOfAvailabilityCustomId}`,
+            `/api/slots/availability/custom/${availabilityWindowCustomId}`,
           );
           if (response.ok) {
             const data = await response.json();
@@ -253,8 +253,8 @@ export default function ConsultationCheckoutPage({
     }
 
     if (
-      resolvedSearchParams.slotOfAvailabilityWeeklyId ||
-      resolvedSearchParams.slotOfAvailabilityCustomId
+      resolvedSearchParams.availabilityWindowWeeklyId ||
+      resolvedSearchParams.availabilityWindowCustomId
     ) {
       fetchSlotData();
     }
@@ -329,10 +329,10 @@ export default function ConsultationCheckoutPage({
           paymentGateway: gateway,
           startsAt: validatedSearchParams.startsAt,
           endsAt: validatedSearchParams.endsAt,
-          slotOfAvailabilityWeeklyId:
-            validatedSearchParams.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId:
-            validatedSearchParams.slotOfAvailabilityCustomId,
+          availabilityWindowWeeklyId:
+            validatedSearchParams.availabilityWindowWeeklyId,
+          availabilityWindowCustomId:
+            validatedSearchParams.availabilityWindowCustomId,
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           notes: validatedSearchParams.notes,
@@ -905,10 +905,10 @@ export default function ConsultationCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             startsAt: validatedSearchParams.startsAt,
                             endsAt: validatedSearchParams.endsAt,
-                            slotOfAvailabilityWeeklyId:
-                              validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId:
-                              validatedSearchParams.slotOfAvailabilityCustomId,
+                            availabilityWindowWeeklyId:
+                              validatedSearchParams.availabilityWindowWeeklyId,
+                            availabilityWindowCustomId:
+                              validatedSearchParams.availabilityWindowCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
@@ -953,10 +953,10 @@ export default function ConsultationCheckoutPage({
                             paymentGateway: "STRIPE",
                             startsAt: validatedSearchParams.startsAt,
                             endsAt: validatedSearchParams.endsAt,
-                            slotOfAvailabilityWeeklyId:
-                              validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId:
-                              validatedSearchParams.slotOfAvailabilityCustomId,
+                            availabilityWindowWeeklyId:
+                              validatedSearchParams.availabilityWindowWeeklyId,
+                            availabilityWindowCustomId:
+                              validatedSearchParams.availabilityWindowCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,

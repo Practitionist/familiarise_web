@@ -102,16 +102,16 @@ export async function readAvailabilityGridMarker(
       (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(w."updatedAt") AS t
-            FROM "SlotOfAvailabilityWeekly" w
+            FROM "AvailabilityWindowWeekly" w
            WHERE w."consultantProfileId" = ${consultantId}
           UNION ALL
           SELECT max(cu."updatedAt")
-            FROM "SlotOfAvailabilityCustom" cu
+            FROM "AvailabilityWindowCustom" cu
            WHERE cu."consultantProfileId" = ${consultantId}
        ) a) AS "availabilityUpdatedAt",
-      (SELECT (SELECT count(*) FROM "SlotOfAvailabilityWeekly" w
+      (SELECT (SELECT count(*) FROM "AvailabilityWindowWeekly" w
                  WHERE w."consultantProfileId" = ${consultantId})
-            + (SELECT count(*) FROM "SlotOfAvailabilityCustom" cu
+            + (SELECT count(*) FROM "AvailabilityWindowCustom" cu
                  WHERE cu."consultantProfileId" = ${consultantId}))::int
         AS "availabilityRowCount",
       (SELECT max(p."updatedAt")

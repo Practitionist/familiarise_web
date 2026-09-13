@@ -1,8 +1,8 @@
 import prisma from "@/lib/prisma";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { buildOccupiedAppointmentFilter } from "@/utils/slotAllocation/occupancyPolicy";
+import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 
 export async function GET(
   req: NextRequest,
@@ -65,7 +65,7 @@ export async function GET(
     });
 
     // Get custom slots
-    const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+    const customSlots = await prisma.availabilityWindowCustom.findMany({
       where: {
         consultantProfileId: consultantId,
         startsAt: { gte: new Date(startDateInUtc) },
@@ -77,7 +77,7 @@ export async function GET(
     });
 
     // Get weekly slots
-    const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+    const weeklySlots = await prisma.availabilityWindowWeekly.findMany({
       where: {
         consultantProfileId: consultantId,
       },
@@ -94,7 +94,7 @@ export async function GET(
     });
 
     // For weekly slots, generate instances for the date range and filter out allocated ones
-    const unallocatedWeeklySlots: TSlotTiming[] = [];
+    const unallocatedWeeklySlots: TIntervalTiming[] = [];
     const start = new Date(startDateInUtc);
     const end = new Date(endDateInUtc);
 
@@ -151,7 +151,7 @@ export async function GET(
               dayOfWeek: weeklySlot.startDay,
               startsAt: slotStart.toISOString(),
               endsAt: slotEnd.toISOString(),
-              slotOfAvailabilityId: weeklySlot.id,
+              availabilityWindowId: weeklySlot.id,
               slotOfAppointmentId: "",
               localStartTime: slotStart.toLocaleTimeString(),
               localEndTime: slotEnd.toLocaleTimeString(),
@@ -165,15 +165,15 @@ export async function GET(
       }
     });
 
-    // Convert custom slots to TSlotTiming format
-    const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
+    // Convert custom slots to TIntervalTiming format
+    const formattedCustomSlots: TIntervalTiming[] = unallocatedCustomSlots.map(
       (slot) => ({
         slotId: slot.id,
         dateInISO: slot.startsAt.toISOString(),
         dayOfWeek: dayMap[new Date(slot.startsAt).getDay()],
         startsAt: slot.startsAt.toISOString(),
         endsAt: slot.endsAt.toISOString(),
-        slotOfAvailabilityId: slot.id,
+        availabilityWindowId: slot.id,
         slotOfAppointmentId: "",
         localStartTime: new Date(slot.startsAt).toLocaleTimeString(),
         localEndTime: new Date(slot.endsAt).toLocaleTimeString(),

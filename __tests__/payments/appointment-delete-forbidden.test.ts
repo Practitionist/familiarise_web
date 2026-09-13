@@ -56,7 +56,7 @@ const SLOT_SCAN_ROOTS = ["scripts", "jobs", "lib", "app", "utils"];
  * reset scripts wipe a disposable database and are not booking writes.
  */
 const SLOT_DELETE_ALLOWLIST = [
-  "utils/slotAllocation/SlotAllocationService.ts",
+  "utils/scheduling-engine/SchedulingService.ts",
   "prisma/",
   "scripts/db/",
 ];
@@ -66,7 +66,7 @@ const SLOT_DELETE_ALLOWLIST = [
 const SLOT_DELETE =
   /\bslotOfAppointment(?:\??\.delete(?:Many)?|\[\s*["']delete(?:Many)?["']\s*\])\s*\(/;
 // A file entry (no trailing slash) matches exactly; a directory entry matches
-// on a path boundary, so `SlotAllocationService.tsx` is not the allocator.
+// on a path boundary, so `SchedulingService.tsx` is not the allocator.
 function isAllowlisted(file: string): boolean {
   return SLOT_DELETE_ALLOWLIST.some((ok) =>
     ok.endsWith("/") ? file.startsWith(ok) : file === ok,

@@ -2,7 +2,7 @@
 
 import { useToast } from "@/components/ui/use-toast";
 import type { ConsultantDetailData } from "./types";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import type {
   TPublicConsultantReview,
@@ -48,8 +48,10 @@ export function ExpertProfileClient({
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
+  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
+    null,
+  );
 
   const timezone = browserTimezone || userDetails?.timezone;
 
@@ -139,17 +141,17 @@ export function ExpertProfileClient({
       const endsAt = new Date(selectedSlot.endsAt);
 
       if (
-        (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
-        "WEEKLY"
+        (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
+          .type === "WEEKLY"
       ) {
         params.append(
-          "slotOfAvailabilityWeeklyId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowWeeklyId",
+          selectedSlot.availabilityWindowId,
         );
       } else {
         params.append(
-          "slotOfAvailabilityCustomId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowCustomId",
+          selectedSlot.availabilityWindowId,
         );
       }
       params.append("startsAt", startsAt.toISOString());

@@ -10,7 +10,7 @@ import {
   LockContentionError,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
-import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -52,8 +52,8 @@ export async function POST(req: NextRequest) {
       consultantProfileId,
       startsAt,
       endsAt,
-      slotOfAvailabilityWeeklyId,
-      slotOfAvailabilityCustomId,
+      availabilityWindowWeeklyId,
+      availabilityWindowCustomId,
       consultationPlanId,
       organizationId,
     } = parseResult.data;
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
-      `Availability slot: ${slotOfAvailabilityWeeklyId ? `Weekly ID: ${slotOfAvailabilityWeeklyId}` : `Custom ID: ${slotOfAvailabilityCustomId}`}`;
+      `Availability slot: ${availabilityWindowWeeklyId ? `Weekly ID: ${availabilityWindowWeeklyId}` : `Custom ID: ${availabilityWindowCustomId}`}`;
 
     // DISTRIBUTED LOCKS: serialize on the CONSULTEE first, then the slot
     // atoms. Order matters: direct checkout takes consultee → slot atoms
@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
 
         // Generate 30-minute slot chunks from startTime to endTime.
         // SlotOfAppointment records are always 30 minutes each — consistent with
-        // manual and auto allocation paths in SlotAllocationService.
+        // manual and auto allocation paths in SchedulingService.
         const SLOT_DURATION_MS = 30 * 60 * 1000;
         const slotChunkStarts: Date[] = [];
         let current = new Date(startTime);
@@ -217,7 +217,7 @@ export async function POST(req: NextRequest) {
 
         // RE-VALIDATE inside lock: Ensure ALL 30-min chunks are still available
         // This is the critical missing piece - prevents double-booking even after lock
-        const validationService = new SlotValidationService(prisma);
+        const validationService = new ScheduleValidationService(prisma);
         const validation = await validationService.checkSlotAvailability(
           slotChunkStarts,
           consultationPlan.consultantProfile.user.id,
@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
 
         // CRITICAL SECTION: Create consultation (protected by lock AND validated)
         // Create one SlotOfAppointment per 30-min chunk — consistent with
-        // SlotAllocationService which also uses 30-min granularity.
+        // SchedulingService which also uses 30-min granularity.
         const slotChunksToCreate = slotChunkStarts.map((chunkStart) => ({
           startsAt: chunkStart,
           endsAt: new Date(chunkStart.getTime() + SLOT_DURATION_MS),

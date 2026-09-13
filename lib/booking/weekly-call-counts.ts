@@ -1,4 +1,4 @@
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /**
  * #997 Phase 3 — one confirmed (non-tentative) appointment whose slot count
@@ -27,7 +27,7 @@ export function computeWeeklyConfirmedCallCounts(
     if (slots.length !== slotsPerCall) continue;
     const firstSlot = slots[0];
     if (!firstSlot?.startsAt) continue;
-    const weekKey = SlotCalculationService.weekKey(
+    const weekKey = ScheduleCalculationService.weekKey(
       new Date(firstSlot.startsAt),
       appt.subscription?.schedulingTimezone || undefined,
     );

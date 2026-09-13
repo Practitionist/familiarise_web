@@ -1,7 +1,7 @@
 import { DayOfWeek } from "@prisma/client";
 import { addDays, isBefore, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { weeklyRowOccurrencesInRange } from "@/utils/schedule/weekly-projection";
 
 // Booking status constants and types
@@ -203,11 +203,13 @@ export function makeLocalizer(timezone: string) {
   };
 }
 
-export interface ProcessedSlot {
+// #1554 — one concrete instance of an availability window inside a date range,
+// before the plan-length cut; the picker receives it as TIntervalTiming.
+export interface AvailabilityInterval {
   start: Date;
   end: Date;
   availabilityId: string;
-  type: "WEEKLY" | "CUSTOM"; // Keep as is to match TSlotTiming
+  type: "WEEKLY" | "CUSTOM"; // Keep as is to match TIntervalTiming
 }
 
 /**
@@ -239,8 +241,8 @@ export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
   endDate: Date,
-): ProcessedSlot[] {
-  const processedSlots: ProcessedSlot[] = [];
+): AvailabilityInterval[] {
+  const processedSlots: AvailabilityInterval[] = [];
 
   // Defensive: Validate input parameters
   if (!Array.isArray(weeklySlots)) {
@@ -302,7 +304,7 @@ export function processCustomSlots(
   customSlots: CustomSlot[],
   startDate: Date,
   endDate: Date,
-): ProcessedSlot[] {
+): AvailabilityInterval[] {
   // Defensive: Validate input parameters
   if (!Array.isArray(customSlots)) {
     console.warn("⚠️ processCustomSlots: customSlots is not an array");
@@ -367,10 +369,10 @@ export function processCustomSlots(
  * Split slots that cross midnight in the target timezone
  */
 export function splitSlotsByDay(
-  slots: ProcessedSlot[],
+  slots: AvailabilityInterval[],
   timezone: string,
-): ProcessedSlot[] {
-  const splitSlots: ProcessedSlot[] = [];
+): AvailabilityInterval[] {
+  const splitSlots: AvailabilityInterval[] = [];
 
   slots.forEach((slot) => {
     let current = slot.start;
@@ -540,10 +542,10 @@ export function getSlotBookingStatus(
 }
 
 /**
- * Convert processed slots to TSlotTiming format
+ * Convert processed slots to TIntervalTiming format
  */
 export function convertToSlotTimings(
-  processedSlots: ProcessedSlot[],
+  processedSlots: AvailabilityInterval[],
   appointmentSlots: AppointmentSlot[],
   timezone: string,
   // #907 — optional pre-built index to bound the per-slot overlap scan.
@@ -552,7 +554,7 @@ export function convertToSlotTimings(
   // (breakDownSlotsByDuration recomputes per sub-window), so skip the whole
   // O(slots × appts) status pass there. Defaults true for standalone callers.
   computeStatus: boolean = true,
-): (TSlotTiming & {
+): (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
 })[] {
@@ -571,14 +573,14 @@ export function convertToSlotTimings(
       dayOfWeek: dayMap[loc.dayIndex(slot.start)],
       startsAt: slot.start.toISOString(),
       endsAt: slot.end.toISOString(),
-      slotOfAvailabilityId: slot.availabilityId,
+      availabilityWindowId: slot.availabilityId,
       slotOfAppointmentId: "",
       localStartTime: loc.timeP(slot.start),
       localEndTime: loc.timeP(slot.end),
       type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
-    } as TSlotTiming & {
+    } as TIntervalTiming & {
       isAllocated: boolean;
       bookingStatus: BookingStatus;
     };
@@ -600,15 +602,15 @@ export function convertToSlotTimings(
  * Only merges slots that are NOT allocated (available).
  */
 export function mergeConsecutiveSlots(
-  slots: (TSlotTiming & {
+  slots: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
-    slotOfAvailabilityIds?: string[];
+    availabilityWindowIds?: string[];
   })[],
-): (TSlotTiming & {
+): (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus?: BookingStatus;
-  slotOfAvailabilityIds?: string[];
+  availabilityWindowIds?: string[];
 })[] {
   if (!slots || slots.length === 0) return [];
 
@@ -617,14 +619,14 @@ export function mergeConsecutiveSlots(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
 
-  const mergedSlots: (TSlotTiming & {
+  const mergedSlots: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
-    slotOfAvailabilityIds?: string[];
+    availabilityWindowIds?: string[];
   })[] = [];
 
   let currentMerged: (typeof sortedSlots)[number] & {
-    slotOfAvailabilityIds?: string[];
+    availabilityWindowIds?: string[];
   } = { ...sortedSlots[0] };
 
   for (let i = 1; i < sortedSlots.length; i++) {
@@ -652,18 +654,18 @@ export function mergeConsecutiveSlots(
       // pre-merged slot — so unioning only `currentSlot`'s single id would
       // drop every row it had already absorbed.
       const ids = new Set([
-        ...(currentMerged.slotOfAvailabilityIds ?? [
-          currentMerged.slotOfAvailabilityId,
+        ...(currentMerged.availabilityWindowIds ?? [
+          currentMerged.availabilityWindowId,
         ]),
-        ...(currentSlot.slotOfAvailabilityIds ?? [
-          currentSlot.slotOfAvailabilityId,
+        ...(currentSlot.availabilityWindowIds ?? [
+          currentSlot.availabilityWindowId,
         ]),
       ]);
       currentMerged = {
         ...currentMerged,
         endsAt: currentSlot.endsAt,
         localEndTime: currentSlot.localEndTime,
-        slotOfAvailabilityIds: [...ids],
+        availabilityWindowIds: [...ids],
       };
     } else {
       // Push the current merged slot and start a new one
@@ -682,7 +684,7 @@ export function mergeConsecutiveSlots(
  * Break down slots by duration using sliding windows while preserving allocation information
  */
 export function breakDownSlotsByDuration(
-  slots: (TSlotTiming & {
+  slots: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
   })[],
@@ -692,11 +694,11 @@ export function breakDownSlotsByDuration(
   // #907 — optional pre-built index; built lazily from appointmentSlots if
   // omitted so existing callers (e.g. TrialScheduleCalendar) stay unchanged.
   index?: AppointmentIndex,
-): (TSlotTiming & {
+): (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
 })[] {
-  const brokenDownSlots: (TSlotTiming & {
+  const brokenDownSlots: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus: BookingStatus;
   })[] = [];
@@ -741,7 +743,7 @@ export function breakDownSlotsByDuration(
 
       brokenDownSlots.push({
         ...slot,
-        slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
+        slotId: `${slot.availabilityWindowId}-${currentStart.getTime()}`,
         startsAt: currentStart.toISOString(),
         endsAt: currentEnd.toISOString(),
         localStartTime: loc.timeP(currentStart),
@@ -767,14 +769,14 @@ export function breakDownSlotsByDuration(
  * Group slots by date in the target timezone
  */
 export function groupSlotsByDate(
-  slotTimings: (TSlotTiming & {
+  slotTimings: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus: BookingStatus;
   })[],
   timezone: string,
 ): Record<
   string,
-  (TSlotTiming & {
+  (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus: BookingStatus;
   })[]
@@ -791,7 +793,7 @@ export function groupSlotsByDate(
     },
     {} as Record<
       string,
-      (TSlotTiming & {
+      (TIntervalTiming & {
         isAllocated: boolean;
         bookingStatus: BookingStatus;
       })[]
@@ -825,7 +827,7 @@ export function processAvailabilitySlots(
   durationInHours: number = 0.5, // Default to 30-minute intervals
 ): Record<
   string,
-  (TSlotTiming & {
+  (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus: BookingStatus;
   })[]
@@ -885,13 +887,13 @@ export function processAvailabilitySlots(
  * and you only need to create duration-appropriate windows for display.
  */
 export function breakDownSlotsPreservingStatus(
-  apiSlots: (TSlotTiming & {
+  apiSlots: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus?: BookingStatus;
   })[],
   durationInHours: number,
   timezone: string,
-): (TSlotTiming & {
+): (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
 })[] {
@@ -903,7 +905,7 @@ export function breakDownSlotsPreservingStatus(
 
   // Merge consecutive available slots to allow longer duration windows
   const mergedSlots = mergeConsecutiveSlots(apiSlots);
-  const result: (TSlotTiming & {
+  const result: (TIntervalTiming & {
     isAllocated: boolean;
     bookingStatus: BookingStatus;
   })[] = [];
@@ -952,7 +954,7 @@ export function breakDownSlotsPreservingStatus(
 
       result.push({
         ...slot,
-        slotId: `${slot.slotOfAvailabilityId}-${windowStart}`,
+        slotId: `${slot.availabilityWindowId}-${windowStart}`,
         startsAt: windowStartDate.toISOString(),
         endsAt: windowEndDate.toISOString(),
         localStartTime: loc.timeP(windowStartDate),

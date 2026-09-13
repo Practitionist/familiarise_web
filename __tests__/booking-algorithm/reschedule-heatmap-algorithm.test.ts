@@ -11,9 +11,9 @@ import {
   isCompleteCall,
 } from "@/lib/scheduling/slotSelectionValidation";
 import { resolveSlotStatusKey } from "@/lib/scheduling/slot-status-tokens";
-import type { TimeSlot } from "@/hooks/scheduling/useCalendarData";
+import type { BookableInterval } from "@/hooks/scheduling/useCalendarData";
 
-const slot = (hour: number, minute = 0): TimeSlot => {
+const slot = (hour: number, minute = 0): BookableInterval => {
   const start = new Date(Date.UTC(2026, 7, 7, hour, minute, 0));
   return {
     startTime: start,

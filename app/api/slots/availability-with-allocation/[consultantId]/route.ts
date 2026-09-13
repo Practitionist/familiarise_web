@@ -8,13 +8,13 @@ import {
   makeLocalizer,
   processAvailabilitySlots,
   WeeklySlot,
-} from "@/utils/timeSlotsProcessing";
+} from "@/utils/scheduling-engine/intervals";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
-import { isOccupiedByLiveAppointment } from "@/utils/slotAllocation/SlotValidationService";
+} from "@/utils/scheduling-engine/occupancyPolicy";
+import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { getSession } from "@/lib/auth-server";
 import {
   buildOverlapMetaIndex,
@@ -28,10 +28,10 @@ import {
   ifNoneMatchSatisfied,
   readAvailabilityGridMarker,
 } from "@/lib/scheduling/availabilityGridMarker";
-import type { TSlotTiming } from "@/types/slots";
-import type { BookingStatus } from "@/utils/timeSlotsProcessing";
+import type { TIntervalTiming } from "@/types/slots";
+import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
 
-type SlotTimingWithOverlap = TSlotTiming & {
+type SlotTimingWithOverlap = TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
   overlappingAppointments?: OverlapAppointmentMeta[];
@@ -259,8 +259,8 @@ export async function GET(
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
       include: {
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: {
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: {
           where: {
             // Use comprehensive overlap check for custom slots to match appointment logic
             OR: [
@@ -532,7 +532,7 @@ export async function GET(
 
     // Convert to utility interfaces with defensive validation
     // Weekly slots now use Int (minutes since midnight UTC 0-1439) instead of DateTime
-    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly
+    const weeklySlots: WeeklySlot[] = consultant.availabilityWindowsWeekly
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (
@@ -600,7 +600,7 @@ export async function GET(
         utcOffsetMinutes: slot.utcOffsetMinutes,
       }));
 
-    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
+    const customSlots: CustomSlot[] = consultant.availabilityWindowsCustom
       .filter((slot) => {
         // Defensive: Validate required fields exist
         if (!slot.startsAt || !slot.endsAt) {
@@ -722,7 +722,7 @@ export async function GET(
           dayOfWeek: dayMap[loc.dayIndex(start)],
           startsAt: start.toISOString(),
           endsAt: end.toISOString(),
-          slotOfAvailabilityId: "",
+          availabilityWindowId: "",
           slotOfAppointmentId: "",
           localStartTime: loc.timeP(start),
           localEndTime: loc.timeP(end),

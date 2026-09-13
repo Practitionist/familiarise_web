@@ -13,7 +13,7 @@ process.env.TZ = "UTC";
 
 import "./setup";
 
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   validateSubscriptionSlots,
   groupSlotsByDay,
@@ -24,7 +24,7 @@ import {
 } from "@/lib/scheduling/slotSelectionValidation";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
-import type { TimeSlot } from "@/lib/scheduling/calendarUtils";
+import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 
 const limits = (slotsPerSession: number, maxSlots: number): SlotLimits => ({
   minSlots: maxSlots * slotsPerSession,
@@ -50,7 +50,7 @@ describe("dayKey (default Asia/Kolkata)", () => {
     const slots = [
       { startTime: new Date("2026-07-19T23:30:00.000Z") },
       { startTime: new Date("2026-07-20T00:30:00.000Z") },
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
     const grouped = groupSlotsByDay(slots);
     expect(grouped.size).toBe(1);
     expect(Array.from(grouped.keys())[0]).toBe("2026-07-20");
@@ -61,7 +61,7 @@ describe("dayKey (default Asia/Kolkata)", () => {
     const slots = [
       { startTime: new Date("2026-07-19T18:00:00.000Z") },
       { startTime: new Date("2026-07-19T19:00:00.000Z") },
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
     expect(groupSlotsByDay(slots).size).toBe(2);
   });
 
@@ -89,10 +89,10 @@ describe("weekKey (default Asia/Kolkata)", () => {
 
   it("matches startOfWeekSundayInTz exactly", () => {
     const d = new Date("2026-07-15T10:00:00.000Z");
-    const weekStartInstant = SlotCalculationService.startOfWeekSundayInTz(d);
+    const weekStartInstant = ScheduleCalculationService.startOfWeekSundayInTz(d);
     // The instant is Sunday 00:00 IST = Saturday 18:30Z.
     expect(weekStartInstant.toISOString()).toBe("2026-07-11T18:30:00.000Z");
-    expect(SlotCalculationService.dayKey(weekStartInstant)).toBe(weekKey(d));
+    expect(ScheduleCalculationService.dayKey(weekStartInstant)).toBe(weekKey(d));
   });
 
   it("handles a DST-observing timezone (Europe/London week boundary)", () => {
@@ -116,7 +116,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     const slots = makeConsecutiveTimeSlots(
       "2026-07-20T23:30:00.000Z",
       2,
-    ) as TimeSlot[];
+    ) as CalendarInterval[];
     const result = validateSubscriptionSlots(
       slots,
       { sessionsPerWeek: 1, sessionDurationInHours: 1 },
@@ -132,7 +132,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     const slots = makeConsecutiveTimeSlots(
       "2026-07-20T18:00:00.000Z",
       2,
-    ) as TimeSlot[];
+    ) as CalendarInterval[];
     // Each IST day holds one lone slot — the pair never forms a complete
     // same-day call, so it can't consume a weekly-limit unit.
     const byDay = groupSlotsByDay(slots);
@@ -146,7 +146,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     const slots = [
       ...makeConsecutiveTimeSlots("2026-07-15T10:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-07-18T19:30:00.000Z", 2),
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
     const result = validateSubscriptionSlots(
       slots,
       { sessionsPerWeek: 1, sessionDurationInHours: 1 },
@@ -160,7 +160,7 @@ describe("client/server bucketing parity at day boundaries", () => {
     const slots = [
       ...makeConsecutiveTimeSlots("2026-07-15T10:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-07-18T17:00:00.000Z", 2),
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
     const result = validateSubscriptionSlots(
       slots,
       { sessionsPerWeek: 1, sessionDurationInHours: 1 },
@@ -170,17 +170,17 @@ describe("client/server bucketing parity at day boundaries", () => {
     expect(result.weeklyCallsError).toContain("Maximum 1 per week");
   });
 
-  it("client groupSlotsByDay and SlotCalculationService.groupSlotsByDay agree on boundary slots", () => {
+  it("client groupSlotsByDay and ScheduleCalculationService.groupSlotsByDay agree on boundary slots", () => {
     const boundarySlots = [
       { startTime: new Date("2026-07-19T18:00:00.000Z"), endTime: new Date("2026-07-19T18:30:00.000Z") },
       { startTime: new Date("2026-07-19T18:30:00.000Z"), endTime: new Date("2026-07-19T19:00:00.000Z") },
       { startTime: new Date("2026-07-20T00:00:00.000Z"), endTime: new Date("2026-07-20T00:30:00.000Z") },
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
     const clientKeys = Array.from(groupSlotsByDay(boundarySlots).keys()).sort();
     const serverKeys = Array.from(
-      SlotCalculationService.groupSlotsByDay(
+      ScheduleCalculationService.groupSlotsByDay(
         boundarySlots as unknown as Parameters<
-          typeof SlotCalculationService.groupSlotsByDay
+          typeof ScheduleCalculationService.groupSlotsByDay
         >[0],
       ).keys(),
     ).sort();

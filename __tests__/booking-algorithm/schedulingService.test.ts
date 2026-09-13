@@ -1,5 +1,5 @@
 /**
- * Comprehensive tests for SlotAllocationService
+ * Comprehensive tests for SchedulingService
  *
  * Covers:
  * - allocate() mode routing (auto, manual, requested, invalid)
@@ -52,22 +52,24 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
 }));
 
-// Mock SlotValidationService to isolate unit under test.
+// Mock ScheduleValidationService to isolate unit under test.
 // RV-2 — keep the real isOccupiedByLiveAppointment export; the allocator imports
 // it from this module and findAvailableSlots calls it to drop expired holds.
 const mockValidateFn = jest.fn();
 // #908 — the short write txn re-checks conflicts via revalidateConflicts.
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import {
   ScheduleType,
   DayOfWeek,
@@ -161,10 +163,10 @@ function makeConsultantProfile(overrides: any = {}) {
   return {
     user: { id: "consultant-1", timezone: "UTC" },
     scheduleType: ScheduleType.WEEKLY,
-    slotsOfAvailabilityWeekly: [
+    availabilityWindowsWeekly: [
       makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11),
     ],
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsCustom: [],
     ...overrides,
   };
 }
@@ -286,7 +288,7 @@ afterEach(() => {
 
 describe("allocate() - Mode routing", () => {
   it("should return error for manual mode with no slots", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -297,7 +299,7 @@ describe("allocate() - Mode routing", () => {
   });
 
   it("should return error for manual mode with empty slots array", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -309,7 +311,7 @@ describe("allocate() - Mode routing", () => {
   });
 
   it("should return error for invalid allocation mode", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "invalid" as any,
@@ -324,7 +326,7 @@ describe("allocate() - Mode routing", () => {
       new Error("DB connection failed"),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -340,7 +342,7 @@ describe("allocate() - Mode routing", () => {
     // slot count (2 = one 1h call) to reach the txn that rejects with a non-Error.
     (prisma.$transaction as jest.Mock).mockRejectedValue("string error");
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -358,7 +360,7 @@ describe("Manual allocation", () => {
   it("should return error when event not found", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(null);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "nonexistent",
       mode: "manual",
@@ -372,7 +374,7 @@ describe("Manual allocation", () => {
   it("should reject duplicate slots", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -391,7 +393,7 @@ describe("Manual allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
     // 1-hour session needs 2 slots, but providing 3
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -415,7 +417,7 @@ describe("Manual allocation", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -430,7 +432,7 @@ describe("Manual allocation", () => {
   it("should create appointment on successful validation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -444,7 +446,7 @@ describe("Manual allocation", () => {
   it("should create slot records with 30-minute duration", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -464,7 +466,7 @@ describe("Manual allocation", () => {
   it("should connect both consultant and consultee to appointment", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -483,7 +485,7 @@ describe("Manual allocation", () => {
   it("should set correct appointment type for consultation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -497,7 +499,7 @@ describe("Manual allocation", () => {
   it("should connect appointment to consultation via relation field", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -513,7 +515,7 @@ describe("Manual allocation", () => {
   it("should update consultation status to APPROVED", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -539,7 +541,7 @@ describe("Manual allocation", () => {
       { id: "old-apt-1", slotsOfAppointment: [] },
     ]);
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -560,7 +562,7 @@ describe("Manual allocation", () => {
       warnings: ["Week of Jan 6 is fully booked"],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -574,7 +576,7 @@ describe("Manual allocation", () => {
   it("should handle subscription manual allocation with correct appointment type", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -596,7 +598,7 @@ describe("Manual allocation", () => {
     );
 
     // 4 slots → 2 appointments of 2 slots each (1hr sessions)
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -618,7 +620,7 @@ describe("Requested slot allocation", () => {
   it("should return error when event not found", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(null);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "nonexistent",
       mode: "requested",
@@ -633,7 +635,7 @@ describe("Requested slot allocation", () => {
       makeConsultationEvent({ appointment: null }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -654,7 +656,7 @@ describe("Requested slot allocation", () => {
     // appointment.findMany returns empty — no actual appointments in DB
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -689,7 +691,7 @@ describe("Requested slot allocation", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -727,7 +729,7 @@ describe("Requested slot allocation", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -766,7 +768,7 @@ describe("Requested slot allocation", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -802,7 +804,7 @@ describe("Requested slot allocation", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -830,7 +832,7 @@ describe("Requested slot allocation", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -861,7 +863,7 @@ describe("Requested slot allocation", () => {
       },
     ]);
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -896,7 +898,7 @@ describe("Requested slot allocation", () => {
     );
     mockTx.appointment.findMany.mockResolvedValue(existingApts);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "requested",
@@ -913,7 +915,7 @@ describe("Auto allocation", () => {
   it("should return error when event not found", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(null);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "nonexistent",
       mode: "auto",
@@ -930,13 +932,13 @@ describe("Auto allocation", () => {
           consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [],
+            availabilityWindowsWeekly: [],
           }),
         },
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -949,7 +951,7 @@ describe("Auto allocation", () => {
   it("should find and allocate consecutive slots for consultation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -966,7 +968,7 @@ describe("Auto allocation", () => {
   it("should find consecutive slots for webinar", async () => {
     mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -988,7 +990,7 @@ describe("Auto allocation", () => {
           consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
               makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 10),
             ],
@@ -1014,7 +1016,7 @@ describe("Auto allocation", () => {
       .mockResolvedValueOnce([{ slotsOfAppointment: consulteeBusy }]) // #898 consultee-busy query
       .mockResolvedValue([]); // delete
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1039,7 +1041,7 @@ describe("Auto allocation", () => {
           consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
             ],
           }),
@@ -1060,7 +1062,7 @@ describe("Auto allocation", () => {
       .mockResolvedValueOnce([{ slotsOfAppointment: bookedSlots }]) // booked slots
       .mockResolvedValue([]); // delete
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1080,7 +1082,7 @@ describe("Auto allocation", () => {
           consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
             ],
           }),
@@ -1117,7 +1119,7 @@ describe("Auto allocation", () => {
       ])
       .mockResolvedValue([]); // delete
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1136,7 +1138,7 @@ describe("Auto allocation", () => {
           consultantProfileId: "consultant-profile-1",
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
             ],
           }),
@@ -1169,7 +1171,7 @@ describe("Auto allocation", () => {
       ])
       .mockResolvedValue([]); // delete
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1195,7 +1197,7 @@ describe("Auto allocation", () => {
           totalSessions: 8, // authoritative plan count → 8 × 2 slots = 16
           consultantProfile: makeConsultantProfile({
             // Only TWO available days per week for a THREE-per-week class.
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11),
               makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 11),
             ],
@@ -1208,7 +1210,7 @@ describe("Auto allocation", () => {
     );
     mockTx.appointment.findMany.mockResolvedValue([]); // no existing bookings
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -1251,7 +1253,7 @@ describe("Auto allocation", () => {
           sessionsPerWeek: 3,
           sessionDurationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 12),
             ],
           }),
@@ -1263,7 +1265,7 @@ describe("Auto allocation", () => {
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -1285,7 +1287,7 @@ describe("Auto allocation", () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1326,7 +1328,7 @@ describe("Auto allocation", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1353,7 +1355,7 @@ describe("Auto allocation", () => {
       ])
       .mockResolvedValue([]); // booked slots and delete queries
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1379,7 +1381,7 @@ describe("Auto allocation", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -1393,7 +1395,7 @@ describe("Auto allocation", () => {
   it("should update webinar status to SCHEDULED", async () => {
     mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -1415,7 +1417,7 @@ describe("Auto allocation", () => {
   it("should pass transaction with 60-second timeout", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -1444,7 +1446,7 @@ describe("fetchEventData - config extraction", () => {
       appointment: null,
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1463,7 +1465,7 @@ describe("fetchEventData - config extraction", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1487,7 +1489,7 @@ describe("fetchEventData - config extraction", () => {
     );
 
     // 1.5-hour session needs 3 consecutive slots
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1504,7 +1506,7 @@ describe("fetchEventData - config extraction", () => {
   it("should extract subscription config including sessionsPerWeek and scheduling period", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1533,7 +1535,7 @@ describe("fetchEventData - config extraction", () => {
   it("should extract webinar config with durationInHours", async () => {
     mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "manual",
@@ -1574,7 +1576,7 @@ describe("fetchEventData - config extraction", () => {
       }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -1615,7 +1617,7 @@ describe("updateEventStatus", () => {
   it("should set APPROVED for subscription with existing scheduling period", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1650,7 +1652,7 @@ describe("updateEventStatus", () => {
       }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1665,7 +1667,7 @@ describe("updateEventStatus", () => {
   it("should set SCHEDULED for webinar without scheduling period", async () => {
     mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "manual",
@@ -1689,7 +1691,7 @@ describe("updateEventStatus", () => {
       }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -1730,7 +1732,7 @@ describe("updateEventStatus", () => {
     it("succeeds — a draft can be given its first session", async () => {
       arrangeDraft();
 
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType,
         eventId,
         mode: "manual",
@@ -1743,7 +1745,7 @@ describe("updateEventStatus", () => {
     it("does not publish it — every status write is guarded against DRAFT", async () => {
       const model = arrangeDraft();
 
-      await SlotAllocationService.allocate({
+      await SchedulingService.allocate({
         eventType,
         eventId,
         mode: "manual",
@@ -1774,7 +1776,7 @@ describe("updateEventStatus", () => {
           : makeClassEvent({ status: "CANCELLED" }),
       );
 
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType,
         eventId,
         mode: "manual",
@@ -1796,7 +1798,7 @@ describe("createAppointments - grouping and validation", () => {
       }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1833,7 +1835,7 @@ describe("createAppointments - grouping and validation", () => {
       }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -1860,7 +1862,7 @@ describe("createAppointments - grouping and validation", () => {
   it("should set isTentative to false on all created slots", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1884,7 +1886,7 @@ describe("createAppointments - grouping and validation", () => {
       cancellationPolicyId: "policy-abc",
     });
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1901,7 +1903,7 @@ describe("createAppointments - grouping and validation", () => {
   it("should only connect consultant when no consultee (webinar)", async () => {
     mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "manual",
@@ -1917,7 +1919,7 @@ describe("createAppointments - grouping and validation", () => {
   it("should include slotsOfAppointment in create response", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1941,7 +1943,7 @@ describe("deleteExistingAppointments", () => {
       { id: "old-2", slotsOfAppointment: [] },
     ]);
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -1986,7 +1988,7 @@ describe("deleteExistingAppointments", () => {
       where.id === "old-2" ? { count: 0 } : { count: 1 },
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2011,7 +2013,7 @@ describe("deleteExistingAppointments", () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2039,7 +2041,7 @@ describe("deleteExistingAppointments", () => {
     // Call #2 — deleteExistingAppointments(onlyTentative) re-fetch.
     mockTx.appointment.findMany.mockResolvedValueOnce([tentativeAppointment]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2093,7 +2095,7 @@ describe("deleteExistingAppointments", () => {
       slotsOfAppointment: [{ id: "new-slot-1" }, { id: "new-slot-1b" }],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -2150,7 +2152,7 @@ describe("deleteExistingAppointments", () => {
       slotsOfAppointment: [{ id: "new-slot-2" }, { id: "new-slot-2b" }],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -2171,7 +2173,7 @@ describe("deleteExistingAppointments", () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2198,7 +2200,7 @@ describe("deleteExistingAppointments", () => {
       { id: "placeholder-apt", slotsOfAppointment: [], _count: { payment: 1 } },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2230,7 +2232,7 @@ describe("deleteExistingAppointments", () => {
       { id: "no-pay-1", slotsOfAppointment: [], _count: { payment: 0 } },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2268,7 +2270,7 @@ describe("deleteExistingAppointments", () => {
       slotsOfAppointment: [{ id: "reused-slot-1" }, { id: "reused-slot-2" }],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2344,7 +2346,7 @@ describe("deleteExistingAppointments", () => {
     // count 0 (refused) and the appointment is kept for REUSE.
     mockTx.appointment.deleteMany.mockResolvedValue({ count: 0 });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "manual",
@@ -2416,7 +2418,7 @@ describe("deleteExistingAppointments", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2488,7 +2490,7 @@ describe("partial reschedule slot count", () => {
 
     // Provide the WRONG count (3). The error must reference the PARTIAL expected
     // count (2), proving it no longer demands the full session total (10).
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2509,7 +2511,7 @@ describe("partial reschedule slot count", () => {
     mockTx.appointment.findMany.mockResolvedValue(twoTentativeAppointments);
 
     // Provide the correct partial count (2) → no longer rejected.
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2534,7 +2536,7 @@ describe("Edge cases", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2558,7 +2560,7 @@ describe("Edge cases", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "manual",
@@ -2580,7 +2582,7 @@ describe("Edge cases", () => {
   it("should handle class with sessionsPerWeek mapping to sessionsPerWeek", async () => {
     mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -2596,8 +2598,8 @@ describe("Edge cases", () => {
   it("should handle custom schedule consultant", async () => {
     const customConsultant = makeConsultantProfile({
       scheduleType: ScheduleType.CUSTOM,
-      slotsOfAvailabilityWeekly: [],
-      slotsOfAvailabilityCustom: [
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [
         makeCustomAvailabilitySlot(
           "2025-01-06T10:00:00.000Z",
           "2025-01-06T12:00:00.000Z",
@@ -2615,7 +2617,7 @@ describe("Edge cases", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -2652,7 +2654,7 @@ describe("Edge cases", () => {
 
       const slots = ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"];
 
-      await SlotAllocationService.allocate({
+      await SchedulingService.allocate({
         eventType,
         eventId: `${eventType}-1`,
         mode: "manual",
@@ -2680,7 +2682,7 @@ describe("Manual allocation - distributed lock", () => {
 
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2706,7 +2708,7 @@ describe("Manual allocation - distributed lock", () => {
   it("takes the consultant-wide lock when a weekly cap applies", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -2730,7 +2732,7 @@ describe("Manual allocation - distributed lock", () => {
       new Error("DB connection lost"),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2750,7 +2752,7 @@ describe("Manual allocation - distributed lock", () => {
       new Error("Lock acquisition failed: resource is locked"),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2776,7 +2778,7 @@ describe("Manual allocation - distributed lock", () => {
       makeConsultationEvent({ requestedBy: { user: { id: "consultee-9" } } }),
     );
 
-    await SlotAllocationService.allocate({
+    await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2804,7 +2806,7 @@ describe("Manual allocation - distributed lock", () => {
       ),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
@@ -2833,7 +2835,7 @@ describe("Auto allocation - timezone day shift", () => {
           durationInHours: 1,
           consultantProfile: makeConsultantProfile({
             user: { id: "consultant-1", timezone: "Asia/Kolkata" },
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 3, 11, 330),
             ],
           }),
@@ -2841,7 +2843,7 @@ describe("Auto allocation - timezone day shift", () => {
       }),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -2872,7 +2874,7 @@ describe("allocation resilience — error codes", () => {
           sessionsPerWeek: 1,
           sessionDurationInHours: 1,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
             ],
           }),
@@ -2885,7 +2887,7 @@ describe("allocation resilience — error codes", () => {
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -2906,7 +2908,7 @@ describe("allocation resilience — error codes", () => {
           sessionDurationInHours: 1,
           totalSessions: 6,
           consultantProfile: makeConsultantProfile({
-            slotsOfAvailabilityWeekly: [
+            availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10), // only 1h/wk
             ],
           }),
@@ -2918,7 +2920,7 @@ describe("allocation resilience — error codes", () => {
     );
     mockTx.appointment.findMany.mockResolvedValue([]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -2944,7 +2946,7 @@ describe("#1206 partial allocation", () => {
         sessionDurationInHours: 1,
         totalSessions: 6,
         consultantProfile: makeConsultantProfile({
-          slotsOfAvailabilityWeekly: [
+          availabilityWindowsWeekly: [
             makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
           ],
         }),
@@ -2960,7 +2962,7 @@ describe("#1206 partial allocation", () => {
   });
 
   it("refuses by default and reports how many sessions WOULD fit", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -2976,14 +2978,14 @@ describe("#1206 partial allocation", () => {
   });
 
   it("places exactly the advertised count when the consultant allows it", async () => {
-    const refusal = await SlotAllocationService.allocate({
+    const refusal = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
     });
     mockTx.appointment.create.mockClear();
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -3005,7 +3007,7 @@ describe("#1206 partial allocation", () => {
   it("is ignored for a single-session consultation", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

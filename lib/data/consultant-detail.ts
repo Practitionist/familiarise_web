@@ -91,8 +91,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       domain: true,
       subDomains: true,
       tags: true,
-      slotsOfAvailabilityWeekly: true,
-      slotsOfAvailabilityCustom: true,
+      availabilityWindowsWeekly: true,
+      availabilityWindowsCustom: true,
       consultationPlans: true,
       subscriptionPlans: {
         include: {

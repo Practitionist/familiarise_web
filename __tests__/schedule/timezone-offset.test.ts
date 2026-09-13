@@ -16,7 +16,7 @@ jest.mock("@prisma/client", () => ({
   Prisma: {},
 }));
 
-import { getTimezoneOffsetMinutes } from "@/utils/slotAllocation/slotTimeUtils";
+import { getTimezoneOffsetMinutes } from "@/utils/scheduling-engine/slotTimeUtils";
 
 describe("getTimezoneOffsetMinutes", () => {
   it("IST is +330 year-round (no DST)", () => {

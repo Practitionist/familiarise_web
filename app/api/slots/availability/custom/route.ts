@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import { coalesceAndResolveCustom } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import { coalesceAndResolveCustom } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma } from "@prisma/client";
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const whereClause: Prisma.SlotOfAvailabilityCustomWhereInput = {
+    const whereClause: Prisma.AvailabilityWindowCustomWhereInput = {
       consultantProfileId: consultantProfileId,
     };
 
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [customSlots, total] = await Promise.all([
-      prisma.slotOfAvailabilityCustom.findMany({
+      prisma.availabilityWindowCustom.findMany({
         where: whereClause,
         orderBy: {
           startsAt: "asc",
@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.slotOfAvailabilityCustom.count({ where: whereClause }),
+      prisma.availabilityWindowCustom.count({ where: whereClause }),
     ]);
 
     return NextResponse.json(
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
       prisma.$transaction(
         async (tx) => {
           // Check for overlapping slots
-          const overlappingSlot = await tx.slotOfAvailabilityCustom.findFirst({
+          const overlappingSlot = await tx.availabilityWindowCustom.findFirst({
             where: {
               consultantProfileId,
               OR: [
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
 
           // Not the response payload: the coalesce below can fold this row
           // away, so the covering row is what the client is answered with.
-          await tx.slotOfAvailabilityCustom.create({
+          await tx.availabilityWindowCustom.create({
             data: {
               consultantProfileId,
               startsAt: startTime,

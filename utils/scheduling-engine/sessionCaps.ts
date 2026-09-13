@@ -5,7 +5,7 @@
  * than the rules it feeds).
  *
  * These caps are keyed by the event's scheduling-timezone day (ADR B9) via
- * SlotCalculationService.dayKey — the same key on both sides.
+ * ScheduleCalculationService.dayKey — the same key on both sides.
  */
 
 /** A subscription holds at most one session per day with a consultee. */

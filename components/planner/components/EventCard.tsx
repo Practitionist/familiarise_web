@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { isRecurringEventType } from "@/utils/slotAllocation/types";
+import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 import { Event } from "@/types/planner-events";

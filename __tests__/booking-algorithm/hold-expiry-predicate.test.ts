@@ -12,8 +12,8 @@
 import "./setup";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildDeadHoldFilter } from "../../utils/slotAllocation/occupancyPolicy";
-import { isOccupiedByLiveAppointment } from "../../utils/slotAllocation/SlotValidationService";
+import { buildDeadHoldFilter } from "../../utils/scheduling-engine/occupancyPolicy";
+import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/ScheduleValidationService";
 
 const NOW = new Date("2026-09-02T10:00:00Z");
 const PAST = new Date("2026-09-02T09:00:00Z");

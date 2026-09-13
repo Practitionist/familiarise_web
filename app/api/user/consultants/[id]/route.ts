@@ -3,7 +3,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
-} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
@@ -31,7 +31,7 @@ import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
   slotsOverlap,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
@@ -83,8 +83,8 @@ const updateConsultantSchema = z
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),
     tagIds: z.array(uuidSchema),
-    slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
-    slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
+    availabilityWindowsWeekly: z.array(weeklySlotSchema).optional(),
+    availabilityWindowsCustom: z.array(customSlotSchema).optional(),
     // #1326 — accepted only so a caller who sends an offset is checked against
     // the profile timezone instead of silently ignored; it never wins.
     utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
@@ -105,14 +105,14 @@ const updateConsultantSchema = z
     (data) => {
       if (data.scheduleType === "WEEKLY") {
         return (
-          data.slotsOfAvailabilityWeekly &&
-          data.slotsOfAvailabilityWeekly.length > 0
+          data.availabilityWindowsWeekly &&
+          data.availabilityWindowsWeekly.length > 0
         );
       }
       if (data.scheduleType === "CUSTOM") {
         return (
-          data.slotsOfAvailabilityCustom &&
-          data.slotsOfAvailabilityCustom.length > 0
+          data.availabilityWindowsCustom &&
+          data.availabilityWindowsCustom.length > 0
         );
       }
       return false;
@@ -227,8 +227,8 @@ export async function GET(
         domain: true,
         subDomains: true,
         tags: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: true,
         consultationPlans: {
           ...(planVisibilityFilter && { where: planVisibilityFilter }),
           include: { faqs: { orderBy: { order: "asc" } } },
@@ -318,8 +318,8 @@ export async function PUT(
       domainId,
       subDomainIds,
       tagIds,
-      slotsOfAvailabilityWeekly,
-      slotsOfAvailabilityCustom,
+      availabilityWindowsWeekly,
+      availabilityWindowsCustom,
       // New fields
       headline,
       websiteUrl,
@@ -405,7 +405,7 @@ export async function PUT(
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
-      if (slotsOfAvailabilityWeekly?.length) {
+      if (availabilityWindowsWeekly?.length) {
         // Resolve timezone offset once for all slots (same user → same
         // timezone), through the one resolver every write path shares (#1326).
         const userTimezone = await prisma.user
@@ -432,8 +432,8 @@ export async function PUT(
         }
         const rowTimezone = resolveWeeklyTimezone(userTimezone);
 
-        const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
-          slotsOfAvailabilityWeekly.map((slot) => {
+        const weeklySlotData: Prisma.AvailabilityWindowWeeklyCreateManyInput[] =
+          availabilityWindowsWeekly.map((slot) => {
             const startTimeUtc = dateToMinuteUtc(new Date(slot.startsAt));
             const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
             // #1343 — dayOfWeekforStartTimeInUTC is the wire name the settings
@@ -493,7 +493,7 @@ export async function PUT(
 
         // Delete existing then create new, atomically — a failure between the
         // two halves would leave the consultant with no availability at all.
-        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
         //
         // Serializable, like the per-row slot routes: at Read Committed a
         // second replacement running concurrently takes its snapshot before
@@ -512,10 +512,10 @@ export async function PUT(
         await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              await tx.slotOfAvailabilityWeekly.deleteMany({
+              await tx.availabilityWindowWeekly.deleteMany({
                 where: { consultantProfileId: id },
               });
-              await tx.slotOfAvailabilityWeekly.createMany({
+              await tx.availabilityWindowWeekly.createMany({
                 data: mergedWeekly,
               });
             },
@@ -528,7 +528,7 @@ export async function PUT(
         );
       } else {
         // No weekly slots submitted — clear existing
-        await prisma.slotOfAvailabilityWeekly.deleteMany({
+        await prisma.availabilityWindowWeekly.deleteMany({
           where: { consultantProfileId: id },
         });
       }
@@ -536,13 +536,13 @@ export async function PUT(
 
     // Update custom slots if schedule type is CUSTOM
     if (scheduleType === ScheduleType.CUSTOM) {
-      if (slotsOfAvailabilityCustom?.length) {
+      if (availabilityWindowsCustom?.length) {
         // Dates, not the wider `string | Date` the Prisma input allows, so the
         // merge below can compare instants (#1320).
-        const customSlotData: (Prisma.SlotOfAvailabilityCustomCreateManyInput & {
+        const customSlotData: (Prisma.AvailabilityWindowCustomCreateManyInput & {
           startsAt: Date;
           endsAt: Date;
-        })[] = slotsOfAvailabilityCustom.map((slot) => ({
+        })[] = availabilityWindowsCustom.map((slot) => ({
           consultantProfileId: id,
           startsAt: new Date(slot.startsAt),
           endsAt: new Date(slot.endsAt),
@@ -580,15 +580,15 @@ export async function PUT(
 
         // Delete existing then create new, atomically and Serializably — see
         // the weekly arm for both reasons.
-        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
         const mergedCustom = mergeAdjacentCustomRows(customSlotData);
         await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              await tx.slotOfAvailabilityCustom.deleteMany({
+              await tx.availabilityWindowCustom.deleteMany({
                 where: { consultantProfileId: id },
               });
-              await tx.slotOfAvailabilityCustom.createMany({
+              await tx.availabilityWindowCustom.createMany({
                 data: mergedCustom,
               });
             },
@@ -601,7 +601,7 @@ export async function PUT(
         );
       } else {
         // No custom slots submitted — clear existing
-        await prisma.slotOfAvailabilityCustom.deleteMany({
+        await prisma.availabilityWindowCustom.deleteMany({
           where: { consultantProfileId: id },
         });
       }
@@ -627,8 +627,8 @@ export async function PUT(
         domain: true,
         subDomains: true,
         tags: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: true,
         consultationPlans: true,
         subscriptionPlans: {
           include: {
@@ -743,10 +743,10 @@ export async function DELETE(
       // #1580 — the collaborations go with the profile: a deactivated
       // consultant must not keep a share on every future settlement.
       const collaborationsRemoved = await prisma.$transaction(async (tx) => {
-        await tx.slotOfAvailabilityWeekly.deleteMany({
+        await tx.availabilityWindowWeekly.deleteMany({
           where: { consultantProfileId: id },
         });
-        await tx.slotOfAvailabilityCustom.deleteMany({
+        await tx.availabilityWindowCustom.deleteMany({
           where: { consultantProfileId: id },
         });
         await tx.consultantProfile.update({
@@ -770,10 +770,10 @@ export async function DELETE(
     // transaction as the deletes, before the profile goes (#1580).
     const hardRemoved = await prisma.$transaction(async (tx) => {
       const removed = await removeCollaboratorStanding(tx, session.user.id);
-      await tx.slotOfAvailabilityWeekly.deleteMany({
+      await tx.availabilityWindowWeekly.deleteMany({
         where: { consultantProfileId: id },
       });
-      await tx.slotOfAvailabilityCustom.deleteMany({
+      await tx.availabilityWindowCustom.deleteMany({
         where: { consultantProfileId: id },
       });
       await tx.consultationPlan.deleteMany({

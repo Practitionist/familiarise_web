@@ -29,8 +29,8 @@ jest.mock("../../lib/prisma", () => {
       update: jest.fn().mockResolvedValue({}),
     },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    slotOfAvailabilityWeekly: { groupBy: jest.fn().mockResolvedValue([]) },
-    slotOfAvailabilityCustom: { groupBy: jest.fn().mockResolvedValue([]) },
+    availabilityWindowWeekly: { groupBy: jest.fn().mockResolvedValue([]) },
+    availabilityWindowCustom: { groupBy: jest.fn().mockResolvedValue([]) },
     $disconnect: jest.fn(),
   };
   return { __esModule: true, default: db };
@@ -43,13 +43,13 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 // The allocator is out of scope here and drags Novu/undici into the graph.
-jest.mock("../../utils/slotAllocation/SlotAllocationService", () => ({
+jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
   __esModule: true,
-  SlotAllocationService: { allocate: jest.fn() },
+  SchedulingService: { allocate: jest.fn() },
 }));
-jest.mock("../../utils/slotAllocation/SlotCalculationService", () => ({
+jest.mock("../../utils/scheduling-engine/ScheduleCalculationService", () => ({
   __esModule: true,
-  SlotCalculationService: {
+  ScheduleCalculationService: {
     getSlotsPerCall: jest.fn().mockReturnValue(1),
     calculateRequiredSlots: jest.fn().mockReturnValue(1),
   },

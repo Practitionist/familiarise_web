@@ -1,4 +1,4 @@
-import { THIRTY_MIN_MS } from "@/utils/timeSlotsProcessing";
+import { THIRTY_MIN_MS } from "@/utils/scheduling-engine/intervals";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot. Only computed
  * (and only ever returned) when the caller is the owning consultant/staff —

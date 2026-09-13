@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/components/ui/use-toast";
 import {
-  TimeSlot,
+  CalendarInterval,
   calculateRequiredSlots,
 } from "@/lib/scheduling/calendarUtils";
 import {
@@ -11,7 +11,7 @@ import {
   AllocationResult,
 } from "@/lib/scheduling/allocationAlgorithms";
 import { AllocationService } from "@/lib/scheduling/allocationService";
-import { isRecurringEventType } from "@/utils/slotAllocation/types";
+import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import {
   ValidationResult,
   EventConstraints,
@@ -133,7 +133,7 @@ export interface UseEventSlotAllocationOptions {
   weeklyConfirmedCallCounts?: Record<string, number>;
 
   /** Preferred time slots (if any) */
-  preferredTimeSlots?: TimeSlot[];
+  preferredTimeSlots?: CalendarInterval[];
 
   /** Timezone for slot calculations */
   timezone?: string;
@@ -179,7 +179,7 @@ export interface UseEventSlotAllocationOptions {
   onValidationChange?: (isValid: boolean, result: ValidationResult) => void;
 
   /** Slot selection change callback */
-  onSlotsChange?: (slots: TimeSlot[]) => void;
+  onSlotsChange?: (slots: CalendarInterval[]) => void;
 }
 
 /**
@@ -187,10 +187,10 @@ export interface UseEventSlotAllocationOptions {
  */
 export interface UseEventSlotAllocationReturn {
   /** Currently selected slots */
-  selectedSlots: TimeSlot[];
+  selectedSlots: CalendarInterval[];
 
   /** Set selected slots directly */
-  setSelectedSlots: (slots: TimeSlot[]) => void;
+  setSelectedSlots: (slots: CalendarInterval[]) => void;
 
   /** Whether allocation is in progress */
   isAllocating: boolean;
@@ -223,29 +223,32 @@ export interface UseEventSlotAllocationReturn {
   slotLimits: SlotLimits;
 
   /** Toggle slot selection with event-specific validation. Pass autoExpandedGroup to add/remove multiple consecutive slots at once. */
-  toggleSlot: (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => void;
+  toggleSlot: (
+    slot: CalendarInterval,
+    autoExpandedGroup?: CalendarInterval[],
+  ) => void;
 
   /** Clear all selected slots */
   clearSlots: () => void;
 
   /** Check if a slot is currently selected */
-  isSlotSelected: (slot: TimeSlot) => boolean;
+  isSlotSelected: (slot: CalendarInterval) => boolean;
 
   /** Pre-computed Set of selected slot timestamps for O(1) lookups */
   selectedSlotsSet: Set<number>;
 
   /** Add multiple slots with validation */
-  addSlots: (slots: TimeSlot[]) => void;
+  addSlots: (slots: CalendarInterval[]) => void;
 
   /** Remove specific slots */
-  removeSlots: (slots: TimeSlot[]) => void;
+  removeSlots: (slots: CalendarInterval[]) => void;
 
   /** Allocate using manually selected slots */
   manualAllocate: () => Promise<void>;
 
   /** Auto-allocate using available slots */
   autoAllocate: (
-    availableSlots: TimeSlot[],
+    availableSlots: CalendarInterval[],
     options?: { allowPartial?: boolean },
   ) => Promise<void>;
 
@@ -260,13 +263,13 @@ export interface UseEventSlotAllocationReturn {
   dismissPartialOffer: () => void;
 
   /** Allocate using the consultee's requested slots (server "requested" mode) */
-  allocateRequestedSlots: (requestedSlots: TimeSlot[]) => Promise<void>;
+  allocateRequestedSlots: (requestedSlots: CalendarInterval[]) => Promise<void>;
 
   /** Validate current slot selection */
   validateSlots: () => ValidationResult;
 
   /** Validate specific slots without selecting them */
-  validateSlotsPreview: (slots: TimeSlot[]) => ValidationResult;
+  validateSlotsPreview: (slots: CalendarInterval[]) => ValidationResult;
 
   /** Get event-specific constraints */
   getEventConstraints: () => EventConstraints;
@@ -275,7 +278,7 @@ export interface UseEventSlotAllocationReturn {
   getSlotLimits: () => SlotLimits;
 
   /** Check if adding a slot would be valid */
-  canAddSlot: (slot: TimeSlot) => boolean;
+  canAddSlot: (slot: CalendarInterval) => boolean;
 }
 
 /**
@@ -324,7 +327,7 @@ export interface AllocationAttemptKey {
 export function computeAttemptFingerprint(
   mode: "manual" | "auto" | "requested",
   eventId: string,
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
@@ -393,7 +396,7 @@ export function useEventSlotAllocation(
   // STATE MANAGEMENT
   // ==========================================
 
-  const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
+  const [selectedSlots, setSelectedSlots] = useState<CalendarInterval[]>([]);
   const [isAllocating, setIsAllocating] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [pendingToasts, setPendingToasts] = useState<AllocationToast[]>([]);
@@ -588,7 +591,7 @@ export function useEventSlotAllocation(
    * Toggle slot selection with event-specific validation
    */
   const toggleSlot = useCallback(
-    (slot: TimeSlot, autoExpandedGroup?: TimeSlot[]) => {
+    (slot: CalendarInterval, autoExpandedGroup?: CalendarInterval[]) => {
       setSelectedSlots((current) => {
         // Safety check to ensure current is always an array
         const currentSlots = current || [];
@@ -984,7 +987,7 @@ export function useEventSlotAllocation(
    * Check if a slot is currently selected — O(1) via Set lookup
    */
   const isSlotSelected = useCallback(
-    (slot: TimeSlot) => {
+    (slot: CalendarInterval) => {
       return selectedSlotsSet.has(slot.startTime.getTime());
     },
     [selectedSlotsSet],
@@ -994,7 +997,7 @@ export function useEventSlotAllocation(
    * Add multiple slots with validation
    */
   const addSlots = useCallback(
-    (slots: TimeSlot[]) => {
+    (slots: CalendarInterval[]) => {
       const newSelection = [...selectedSlots, ...slots];
       const validation = validateEventSlots(
         newSelection,
@@ -1029,7 +1032,7 @@ export function useEventSlotAllocation(
   /**
    * Remove specific slots
    */
-  const removeSlots = useCallback((slotsToRemove: TimeSlot[]) => {
+  const removeSlots = useCallback((slotsToRemove: CalendarInterval[]) => {
     const removeTimestamps = new Set(
       slotsToRemove.map((slot) => slot.startTime.getTime()),
     );
@@ -1135,7 +1138,7 @@ export function useEventSlotAllocation(
     // availability into the browser and ran AllocationAlgorithms here.
     // The parameter is kept for interface stability with UnifiedCalendar.
     async (
-      _availableSlots: TimeSlot[],
+      _availableSlots: CalendarInterval[],
       // #1206 — the second attempt, sent only after the consultant answered
       // the "only N of M fit" confirm.
       allocateOptions?: { allowPartial?: boolean },
@@ -1170,7 +1173,7 @@ export function useEventSlotAllocation(
         if (response.success) {
           // Reflect the server's picks on the grid (best-effort — the host
           // closes the dialog via onSuccess either way).
-          const pickedSlots: TimeSlot[] = (response.data ?? [])
+          const pickedSlots: CalendarInterval[] = (response.data ?? [])
             .flatMap(
               (appointment) =>
                 (appointment.slotsOfAppointment as
@@ -1262,7 +1265,7 @@ export function useEventSlotAllocation(
    * Allocate using the consultee's requested slots (server "requested" mode).
    */
   const allocateRequestedSlots = useCallback(
-    async (requestedSlots: TimeSlot[]) => {
+    async (requestedSlots: CalendarInterval[]) => {
       setIsAllocating(true);
       setAllocationError(null);
 
@@ -1370,7 +1373,7 @@ export function useEventSlotAllocation(
    * Validate specific slots without selecting them (interactive validation)
    */
   const validateSlotsPreview = useCallback(
-    (slots: TimeSlot[]) => {
+    (slots: CalendarInterval[]) => {
       return validateEventSlots(
         slots,
         eventType,
@@ -1398,7 +1401,7 @@ export function useEventSlotAllocation(
    * Check if adding a slot would be valid
    */
   const canAddSlot = useCallback(
-    (slot: TimeSlot) => {
+    (slot: CalendarInterval) => {
       const testSelection = [...selectedSlots, slot];
       const validation = validateEventSlots(
         testSelection,

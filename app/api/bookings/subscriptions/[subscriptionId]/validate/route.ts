@@ -1,26 +1,26 @@
 /**
  * Subscription Slot Validation API Route
  *
- * Refactored to use unified SlotValidationService + SubscriptionValidationService
+ * Refactored to use unified ScheduleValidationService + SubscriptionValidationService
  * Reduced from 240 lines to ~100 lines
  *
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
- * 2. SlotValidationService - Validates business rules (conflicts, availability, etc.)
+ * 2. ScheduleValidationService - Validates business rules (conflicts, availability, etc.)
  * 3. SubscriptionValidationService - Validates subscription-specific rules (weekly limits, etc.)
  */
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 import {
   validationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -53,8 +53,8 @@ const subscriptionInclude = {
         select: {
           user: true,
           scheduleType: true,
-          slotsOfAvailabilityWeekly: true,
-          slotsOfAvailabilityCustom: true,
+          availabilityWindowsWeekly: true,
+          availabilityWindowsCustom: true,
         },
       },
     },
@@ -125,7 +125,7 @@ export async function POST(
       const slotDates = body.slots.map((slot) => new Date(slot));
 
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
-      const validationService = new SlotValidationService(prisma);
+      const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
         "subscription",
         subscriptionId,
@@ -133,10 +133,10 @@ export async function POST(
         {
           userId: consultantProfile.user.id,
           scheduleType: consultantProfile.scheduleType,
-          slotsOfAvailabilityWeekly:
-            consultantProfile.slotsOfAvailabilityWeekly,
-          slotsOfAvailabilityCustom:
-            consultantProfile.slotsOfAvailabilityCustom,
+          availabilityWindowsWeekly:
+            consultantProfile.availabilityWindowsWeekly,
+          availabilityWindowsCustom:
+            consultantProfile.availabilityWindowsCustom,
           timezone: consultantProfile.user.timezone || undefined,
         },
         {

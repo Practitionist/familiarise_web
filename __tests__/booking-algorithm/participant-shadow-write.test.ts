@@ -102,7 +102,7 @@ describe("every slot writer records the participant edge", () => {
     fs.readFileSync(path.join(process.cwd(), f), "utf8");
   const writers: Array<[string, RegExp]> = [
     ["lib/payments/operations/checkout.ts", /recordParticipants\(/],
-    ["utils/slotAllocation/SlotAllocationService.ts", /recordParticipants\(/],
+    ["utils/scheduling-engine/SchedulingService.ts", /recordParticipants\(/],
     ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
     [
       "lib/payments/webhooks/handlers.ts",

@@ -1,6 +1,6 @@
 import type { DayOfWeek, Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
-import { MAX_DURATION_MINUTES } from "@/utils/timeSlotValidation";
+import { MAX_DURATION_MINUTES } from "@/utils/scheduling-engine/interval-validation";
 import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 /**
@@ -88,10 +88,10 @@ export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
  * rows were folded away. Runs inside the caller's transaction when given one.
  */
 export async function coalesceConsultantWeeklyRows(
-  db: Pick<Tx, "slotOfAvailabilityWeekly">,
+  db: Pick<Tx, "availabilityWindowWeekly">,
   consultantProfileId: string,
 ): Promise<{ before: number; after: number }> {
-  const rows = await db.slotOfAvailabilityWeekly.findMany({
+  const rows = await db.availabilityWindowWeekly.findMany({
     where: { consultantProfileId },
     select: {
       id: true,
@@ -112,7 +112,7 @@ export async function coalesceConsultantWeeklyRows(
   // them. They are recomputed rather than copied because a fold moves the
   // row's end. A row written before the dual-write has no zone to recompute
   // from and keeps its nulls.
-  const data: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] = merged.map(
+  const data: Prisma.AvailabilityWindowWeeklyCreateManyInput[] = merged.map(
     (r) => ({
       consultantProfileId,
       startDay: r.startDay,
@@ -125,10 +125,10 @@ export async function coalesceConsultantWeeklyRows(
         : {}),
     }),
   );
-  await db.slotOfAvailabilityWeekly.deleteMany({
+  await db.availabilityWindowWeekly.deleteMany({
     where: { consultantProfileId },
   });
-  await db.slotOfAvailabilityWeekly.createMany({ data });
+  await db.availabilityWindowWeekly.createMany({ data });
   return { before: rows.length, after: merged.length };
 }
 
@@ -148,7 +148,7 @@ export async function coalesceConsultantWeeklyRows(
  * whose id this same transaction may have just deleted.
  */
 export async function coalesceAndResolve<
-  Db extends Pick<Tx, "slotOfAvailabilityWeekly">,
+  Db extends Pick<Tx, "availabilityWindowWeekly">,
 >(
   db: Db,
   consultantProfileId: string,
@@ -160,7 +160,7 @@ export async function coalesceAndResolve<
   },
 ) {
   await coalesceConsultantWeeklyRows(db, consultantProfileId);
-  const covering = await db.slotOfAvailabilityWeekly.findFirst({
+  const covering = await db.availabilityWindowWeekly.findFirst({
     where: {
       consultantProfileId,
       startDay: window.startDay,
@@ -239,10 +239,10 @@ export function mergeAdjacentCustomRows<T extends CustomRowShape>(
  * re-creating every row would orphan ids that are still in flight.
  */
 export async function coalesceConsultantCustomRows(
-  db: Pick<Tx, "slotOfAvailabilityCustom">,
+  db: Pick<Tx, "availabilityWindowCustom">,
   consultantProfileId: string,
 ): Promise<{ before: number; after: number }> {
-  const rows = await db.slotOfAvailabilityCustom.findMany({
+  const rows = await db.availabilityWindowCustom.findMany({
     where: { consultantProfileId },
     select: { id: true, startsAt: true, endsAt: true },
   });
@@ -252,13 +252,13 @@ export async function coalesceConsultantCustomRows(
   }
   const survivors = new Map(merged.map((r) => [r.id, r]));
   const foldedIds = rows.filter((r) => !survivors.has(r.id)).map((r) => r.id);
-  await db.slotOfAvailabilityCustom.deleteMany({
+  await db.availabilityWindowCustom.deleteMany({
     where: { id: { in: foldedIds } },
   });
   for (const original of rows) {
     const survivor = survivors.get(original.id);
     if (survivor && survivor.endsAt.getTime() !== original.endsAt.getTime()) {
-      await db.slotOfAvailabilityCustom.update({
+      await db.availabilityWindowCustom.update({
         where: { id: original.id },
         data: { endsAt: survivor.endsAt },
       });
@@ -273,10 +273,10 @@ export async function coalesceConsultantCustomRows(
  * weekly twin gives.
  */
 export async function coalesceAndResolveCustom<
-  Db extends Pick<Tx, "slotOfAvailabilityCustom">,
+  Db extends Pick<Tx, "availabilityWindowCustom">,
 >(db: Db, consultantProfileId: string, window: CustomRowShape) {
   await coalesceConsultantCustomRows(db, consultantProfileId);
-  const covering = await db.slotOfAvailabilityCustom.findFirst({
+  const covering = await db.availabilityWindowCustom.findFirst({
     where: {
       consultantProfileId,
       startsAt: { lte: window.startsAt },

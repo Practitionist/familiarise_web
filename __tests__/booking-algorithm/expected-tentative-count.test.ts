@@ -21,9 +21,9 @@ jest.mock("../../lib/prisma", () => ({
 
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
@@ -45,7 +45,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -65,8 +65,8 @@ const richSubscription = {
     consultantProfile: {
       user: { id: "consultant-user-1" },
       scheduleType: "WEEKLY",
-      slotsOfAvailabilityWeekly: [],
-      slotsOfAvailabilityCustom: [],
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [],
     },
     durationInMonths: 1,
     sessionsPerWeek: 1,
@@ -110,7 +110,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -154,7 +154,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -186,7 +186,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -263,7 +263,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       return fn(tx);
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",

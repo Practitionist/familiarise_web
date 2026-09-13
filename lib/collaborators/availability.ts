@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 /**
  * AE-2 (#784) — collaborator double-booking guard.

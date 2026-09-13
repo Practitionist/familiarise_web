@@ -62,16 +62,18 @@ jest.mock("../../lib/api/organizations/program-helpers", () => ({
 
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -99,7 +101,7 @@ function subscriptionFixture() {
       consultantProfile: {
         user: { id: "consultant-user-1", timezone: "UTC" },
         scheduleType: ScheduleType.WEEKLY,
-        slotsOfAvailabilityWeekly: [
+        availabilityWindowsWeekly: [
           {
             id: "weekly-mon",
             startDay: DayOfWeek.MONDAY,
@@ -109,7 +111,7 @@ function subscriptionFixture() {
             utcOffsetMinutes: 0,
           },
         ],
-        slotsOfAvailabilityCustom: [],
+        availabilityWindowsCustom: [],
       },
     },
     requestedBy: { user: { id: "consultee-1" } },
@@ -215,7 +217,7 @@ afterEach(() => {
 });
 
 async function allocateOneSession() {
-  return SlotAllocationService.allocate({
+  return SchedulingService.allocate({
     eventType: "subscription",
     eventId: "sub-1",
     mode: "manual",

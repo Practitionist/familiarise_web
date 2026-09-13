@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import {
   breakDownSlotsByDuration,
   mergeConsecutiveSlots,
-} from "@/utils/timeSlotsProcessing";
+} from "@/utils/scheduling-engine/intervals";
 import { useToast } from "@/hooks/use-toast";
 import { format as formatTz } from "date-fns-tz";
 import { Calendar, Clock, Loader2, Check } from "lucide-react";
@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 export interface SelectedSlot {
   startsAt: Date;
   endsAt: Date;
-  slotOfAvailabilityId: string;
+  availabilityWindowId: string;
   slotType: "WEEKLY" | "CUSTOM";
 }
 
@@ -33,10 +33,10 @@ const slotColorClasses: Record<SlotStatus, string> = {
 };
 
 // Determine slot status based on allocation
-function getSlotStatus(slot: TSlotTiming, isSelected: boolean): SlotStatus {
+function getSlotStatus(slot: TIntervalTiming, isSelected: boolean): SlotStatus {
   if (isSelected) return "selected";
   if (slot.isAllocated) return "booked";
-  // Note: partiallyBooked can be added to TSlotTiming type if needed in future
+  // Note: partiallyBooked can be added to TIntervalTiming type if needed in future
   return "available";
 }
 
@@ -65,8 +65,8 @@ export function TrialScheduleCalendar({
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
+  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   const durationInHours = trialDurationMinutes / 60;
@@ -236,7 +236,7 @@ export function TrialScheduleCalendar({
     onSlotSelect({
       startsAt: new Date(selectedSlot.startsAt),
       endsAt: new Date(selectedSlot.endsAt),
-      slotOfAvailabilityId: selectedSlot.slotOfAvailabilityId,
+      availabilityWindowId: selectedSlot.availabilityWindowId,
       slotType: selectedSlot.type,
     });
   };

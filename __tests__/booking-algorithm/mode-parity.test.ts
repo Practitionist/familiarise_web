@@ -4,7 +4,7 @@
  * reschedule reduction. Auto mode has no client engine left to compare since
  * #997/#1132 (the server picks under `isAuto`), so the auto cases here — which
  * only ever exercised the deleted client oracle — are gone; the server's picks
- * are covered by slotAllocationService.test.ts ("Auto allocation", "Auto
+ * are covered by schedulingService.test.ts ("Auto allocation", "Auto
  * allocation - timezone day shift") and preference-scored-allocation.test.ts.
  */
 
@@ -22,7 +22,7 @@ import {
   getEventConstraints,
   getSlotLimits,
 } from "@/lib/scheduling/slotSelectionValidation";
-import { type TimeSlot } from "@/lib/scheduling/calendarUtils";
+import { type CalendarInterval } from "@/lib/scheduling/calendarUtils";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
 import { makeConsecutiveTimeSlots } from "./__mocks__/booking.mockData";
 
@@ -65,7 +65,7 @@ describe("required-count parity across the surviving modes", () => {
       ...makeConsecutiveTimeSlots("2026-08-03T09:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-08-10T09:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-08-17T09:00:00.000Z", 2),
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
 
     const manual = await AllocationAlgorithms.manualAllocate(sixSlots, base);
     expect(manual.success).toBe(false);
@@ -86,7 +86,7 @@ describe("required-count parity across the surviving modes", () => {
       ...makeConsecutiveTimeSlots("2026-08-03T09:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-08-10T09:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-08-17T09:00:00.000Z", 2),
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
 
     const manual = await AllocationAlgorithms.manualAllocate(
       sixSlots,
@@ -108,7 +108,7 @@ describe("required-count parity across the surviving modes", () => {
     const fourSlots = [
       ...makeConsecutiveTimeSlots("2026-08-03T09:00:00.000Z", 2),
       ...makeConsecutiveTimeSlots("2026-08-10T09:00:00.000Z", 2),
-    ] as TimeSlot[];
+    ] as CalendarInterval[];
 
     const requested = await AllocationAlgorithms.allocateRequestedSlots({
       ...twoSessionPlan,
@@ -139,7 +139,7 @@ describe("consecutive-atom rules at the scheduling-timezone day boundary", () =>
     const straddling = makeConsecutiveTimeSlots(
       "2026-08-03T18:00:00.000Z",
       2,
-    ) as TimeSlot[];
+    ) as CalendarInterval[];
     const options = { durationInHours: 1 };
     const verdict = validateEventSlots(
       straddling,
@@ -161,11 +161,11 @@ describe("consecutive-atom rules at the scheduling-timezone day boundary", () =>
       const consecutive = makeConsecutiveTimeSlots(
         "2026-08-03T09:00:00.000Z",
         atoms,
-      ) as TimeSlot[];
+      ) as CalendarInterval[];
       const gappy = [
         ...makeConsecutiveTimeSlots("2026-08-03T09:00:00.000Z", atoms - 1),
         ...makeConsecutiveTimeSlots("2026-08-03T14:00:00.000Z", 1),
-      ] as TimeSlot[];
+      ] as CalendarInterval[];
 
       const good = validateEventSlots(
         consecutive,

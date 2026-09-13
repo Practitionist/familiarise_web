@@ -553,7 +553,7 @@ export async function renewApprovalLock(
 //    keys and both proceed to payment. Locking one key per 30-minute atom the
 //    interval covers makes any overlap collide on its shared atoms.
 //
-// The allocator (SlotAllocationService) intentionally keeps its coarser
+// The allocator (SchedulingService) intentionally keeps its coarser
 // consultant-wide lock: it discovers slots dynamically under that lock, and
 // its write transaction re-validates conflicts and absorbs the #440 exclusion
 // constraint (23P01 → 409). The atom keys serialize the DIRECT writers, which
@@ -947,7 +947,7 @@ export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
 // #898 follow-up — the GiST exclusion constraint `slot_no_confirmed_overlap`
 // is keyed on consultantProfileId, so it CANNOT stop the SAME consultee being
 // booked across two DIFFERENT consultants at overlapping times. The AE-1
-// consultee-calendar conflict check (SlotValidationService.validateNoConflicts)
+// consultee-calendar conflict check (ScheduleValidationService.validateNoConflicts)
 // runs at Read-Committed with no consultee lock, leaving a check-then-write
 // window under concurrent checkout. This lock serializes booking activity for
 // one consultee (different consultees stay fully parallel) so the

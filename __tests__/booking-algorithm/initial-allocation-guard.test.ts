@@ -27,14 +27,14 @@ jest.mock("../../lib/prisma", () => ({
   ALLOCATION_TX_TIMEOUT_MS: 30000,
 }));
 
-// Mock SlotValidationService so the race-window test can reach the write
+// Mock ScheduleValidationService so the race-window test can reach the write
 // transaction without a full availability fixture (same pattern as
-// slotAllocationService.test.ts).
+// schedulingService.test.ts).
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
@@ -53,7 +53,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -83,7 +83,7 @@ describe("manual allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
     mockPrisma.slotOfAppointment.count.mockResolvedValue(4);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -101,7 +101,7 @@ describe("manual allocation with initialAllocation", () => {
   it("counts only confirmed slots — tentative checkout holds do not trip the guard", async () => {
     mockPrisma.slotOfAppointment.count.mockResolvedValue(0);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -122,7 +122,7 @@ describe("manual allocation with initialAllocation", () => {
   it("without the flag, existing confirmed slots do NOT 409 (replace/reschedule preserved)", async () => {
     mockPrisma.slotOfAppointment.count.mockResolvedValue(4);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -145,8 +145,8 @@ describe("manual allocation: transaction race window", () => {
         consultantProfile: {
           user: { id: "consultant-user-1" },
           scheduleType: "WEEKLY",
-          slotsOfAvailabilityWeekly: [],
-          slotsOfAvailabilityCustom: [],
+          availabilityWindowsWeekly: [],
+          availabilityWindowsCustom: [],
         },
         durationInMonths: 1,
         sessionsPerWeek: 1,
@@ -174,7 +174,7 @@ describe("manual allocation: transaction race window", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -194,7 +194,7 @@ describe("auto allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
     mockPrisma.slotOfAppointment.count.mockResolvedValue(2);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -218,7 +218,7 @@ describe("requested allocation with initialAllocation", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "requested",
@@ -244,7 +244,7 @@ describe("advisory lock statement shape (#1518)", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "requested",

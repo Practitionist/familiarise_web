@@ -8,7 +8,7 @@
  * SUBSCRIPTION lazy allocation, CLASS pre-allocation, marketplace WEBINAR, and
  * CONSULTATION reschedule each used to create Appointment rows with
  * `organizationId = null` even when the booker was org-funded. The org tag is
- * resolved per event type inside `SlotAllocationService.fetchEventData`:
+ * resolved per event type inside `SchedulingService.fetchEventData`:
  *
  *   - CONSULTATION → existing Appointment.organizationId (preserved across the
  *     reschedule delete+recreate).
@@ -23,16 +23,16 @@
  * not a re-implementation of the rule. Full DB integration lives in the E2E
  * guide.
  */
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
-import type { EventType } from "@/utils/slotAllocation/types";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import type { EventType } from "@/utils/scheduling-engine/types";
 
 // Minimal consultant profile so fetchEventData resolves past its
 // "consultant profile not found" guard — the tests only assert organizationId.
 const CONSULTANT = {
   user: { id: "consultant-1", timezone: null },
   scheduleType: "WEEKLY",
-  slotsOfAvailabilityWeekly: [],
-  slotsOfAvailabilityCustom: [],
+  availabilityWindowsWeekly: [],
+  availabilityWindowsCustom: [],
 };
 
 // fetchEventData is private + static; it uses only its `tx` arg (no `this`), so
@@ -43,7 +43,7 @@ async function resolveOrg(
   event: unknown,
 ): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const svc = SlotAllocationService as any;
+  const svc = SchedulingService as any;
   const tx = {
     [model]: { findUnique: jest.fn().mockResolvedValue(event) },
   };

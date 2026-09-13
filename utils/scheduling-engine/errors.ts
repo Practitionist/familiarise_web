@@ -1,7 +1,7 @@
 /**
  * Typed error classes for slot allocation.
  *
- * Used by SlotAllocationService.classifyError() to map errors to HTTP status
+ * Used by SchedulingService.classifyError() to map errors to HTTP status
  * codes via instanceof checks instead of brittle string-prefix matching.
  */
 

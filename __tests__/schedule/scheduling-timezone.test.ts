@@ -16,11 +16,11 @@ import {
   isValidIanaTimezone,
   resolveSchedulingTimezone,
 } from "@/lib/scheduling/schedulingTimezone";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { validateDailyHours } from "@/lib/scheduling/slotSelectionValidation";
-import type { TimeSlot } from "@/lib/scheduling/calendarUtils";
+import type { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 
-const hourSlot = (startIso: string): TimeSlot => {
+const hourSlot = (startIso: string): CalendarInterval => {
   const startTime = new Date(startIso);
   return {
     startTime,
@@ -48,7 +48,7 @@ describe("resolveSchedulingTimezone", () => {
 
   it("matches the constant the bucketing code defaults to", () => {
     expect(resolveSchedulingTimezone(null)).toBe(
-      SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+      ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
     );
   });
 
@@ -80,14 +80,14 @@ describe("the resolved zone moves the cap buckets", () => {
 
   it("a London consultant's sessions bucket on London days", () => {
     const london = resolveSchedulingTimezone("Europe/London");
-    expect(SlotCalculationService.dayKey(straddling, london)).toBe(
+    expect(ScheduleCalculationService.dayKey(straddling, london)).toBe(
       "2026-07-20",
     );
   });
 
   it("a consultant with no zone keeps the Indian day boundaries", () => {
     const fallback = resolveSchedulingTimezone(null);
-    expect(SlotCalculationService.dayKey(straddling, fallback)).toBe(
+    expect(ScheduleCalculationService.dayKey(straddling, fallback)).toBe(
       "2026-07-21",
     );
   });
@@ -97,13 +97,16 @@ describe("the resolved zone moves the cap buckets", () => {
     // different Sunday-anchored weeks.
     const weekend = new Date("2026-07-18T20:00:00Z");
     expect(
-      SlotCalculationService.weekKey(
+      ScheduleCalculationService.weekKey(
         weekend,
         resolveSchedulingTimezone("Europe/London"),
       ),
     ).toBe("2026-07-12");
     expect(
-      SlotCalculationService.weekKey(weekend, resolveSchedulingTimezone(null)),
+      ScheduleCalculationService.weekKey(
+        weekend,
+        resolveSchedulingTimezone(null),
+      ),
     ).toBe("2026-07-19");
   });
 

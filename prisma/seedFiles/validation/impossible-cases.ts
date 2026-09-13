@@ -277,7 +277,7 @@ export const impossibleCases: ValidationTestCase[] = [
       if (!consultant) throw new Error("No consultant found for test");
 
       // Create first slot (9:00-12:00 UTC = 540-720 minutes since midnight)
-      await prisma.slotOfAvailabilityWeekly.create({
+      await prisma.availabilityWindowWeekly.create({
         data: {
           consultantProfileId: consultant.id,
           startDay: "MONDAY",
@@ -288,7 +288,7 @@ export const impossibleCases: ValidationTestCase[] = [
       });
 
       // Create overlapping slot (10:00-14:00 UTC = 600-840 minutes since midnight)
-      await prisma.slotOfAvailabilityWeekly.create({
+      await prisma.availabilityWindowWeekly.create({
         data: {
           consultantProfileId: consultant.id,
           startDay: "MONDAY",

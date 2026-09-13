@@ -369,7 +369,7 @@ export async function PATCH(request: NextRequest) {
       });
 
       // If approved, notify consultee
-      // Note: Appointment slots are created through SlotAllocationService during checkout,
+      // Note: Appointment slots are created through SchedulingService during checkout,
       // not here. This handler only manages status transitions and notifications.
       if (status === AppointmentStatus.APPROVED) {
         // Fire-and-forget: notify consultee that subscription started

@@ -9,13 +9,13 @@
  * consultant's day boundaries.
  *
  * The source is `User.timezone` on the owning consultant rather than
- * `SlotOfAvailabilityWeekly.timezone`: the latter is nullable, deliberately
+ * `AvailabilityWindowWeekly.timezone`: the latter is nullable, deliberately
  * left unwritten until the post-MVP DST work (#872), and is per-availability-
  * row, so several rows could disagree with no rule for picking between them.
  * `User.timezone` is one value per consultant and is actually written today,
  * by onboarding and by the profile editor.
  */
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /** A junk zone here silently corrupts every cap for the booking, so gate it. */
 export function isValidIanaTimezone(timezone: string): boolean {
@@ -37,7 +37,7 @@ export function resolveSchedulingTimezone(
 ): string {
   const timezone = consultantTimezone?.trim();
   if (!timezone || !isValidIanaTimezone(timezone)) {
-    return SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
+    return ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
   }
   return timezone;
 }

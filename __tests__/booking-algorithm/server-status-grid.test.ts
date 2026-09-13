@@ -10,7 +10,7 @@
  *
  *  - computeWeeklyConfirmedCallCounts (lib/booking/weekly-call-counts.ts):
  *    Phase 3's per-week confirmed-call aggregate, parity-checked against
- *    SlotCalculationService.weekKey — the SAME key the interactive weekly-
+ *    ScheduleCalculationService.weekKey — the SAME key the interactive weekly-
  *    limit guard and the server validator (SubscriptionValidationService) use.
  *  - buildOverlapMetaIndex / overlapMetaCandidatesFor / extractOverlapTitleAndParticipant
  *    (availability-with-allocation route): Phase 2's per-interval tooltip
@@ -31,7 +31,7 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import {
   buildOverlapMetaIndex,
@@ -64,16 +64,16 @@ describe("computeWeeklyConfirmedCallCounts", () => {
       confirmedAppt("2025-01-08T10:00:00.000Z"), // Wednesday, same week
     ];
     const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID, SLOTS_PER_CALL);
-    const weekKey = SlotCalculationService.weekKey(new Date("2025-01-06T10:00:00.000Z"));
+    const weekKey = ScheduleCalculationService.weekKey(new Date("2025-01-06T10:00:00.000Z"));
     expect(counts[weekKey]).toBe(2);
   });
 
-  it("parity: buckets by the SAME key as SlotCalculationService.weekKey per appointment's own schedulingTimezone", () => {
+  it("parity: buckets by the SAME key as ScheduleCalculationService.weekKey per appointment's own schedulingTimezone", () => {
     const tz = "America/Los_Angeles";
     const startIso = "2025-01-06T10:00:00.000Z";
     const appts = [confirmedAppt(startIso, { tz })];
     const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID, SLOTS_PER_CALL);
-    const expectedKey = SlotCalculationService.weekKey(new Date(startIso), tz);
+    const expectedKey = ScheduleCalculationService.weekKey(new Date(startIso), tz);
     expect(counts[expectedKey]).toBe(1);
     expect(Object.keys(counts)).toEqual([expectedKey]);
   });

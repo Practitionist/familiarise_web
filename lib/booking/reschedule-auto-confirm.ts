@@ -19,8 +19,8 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import type { EventType } from "@/utils/slotAllocation/types";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import type { EventType } from "@/utils/scheduling-engine/types";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -79,7 +79,7 @@ export async function tryAutoConfirmProposal(
   // this is the only holder — no nesting, same lock order as accept.
   try {
     return await withAppointmentLock(request.appointmentId, async () => {
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType,
         eventId,
         // The proposed times go STRAIGHT to the allocator. Nothing is written until

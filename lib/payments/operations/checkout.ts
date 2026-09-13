@@ -8,7 +8,7 @@ import {
   findUncoveredAtom,
   loadPublishedCoverage,
   windowAtoms,
-} from "@/utils/slotAllocation/availabilityCoverage";
+} from "@/utils/scheduling-engine/availabilityCoverage";
 import {
   linkParticipantsToPayment,
   recordParticipants,
@@ -56,7 +56,7 @@ import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile"
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
@@ -211,11 +211,11 @@ export function buildPaymentMetadata(
     // back in, stranding a captured sale as REQUIRES_MANUAL_RECOVERY.
     ...(data.startsAt && { startsAt: data.startsAt }),
     ...(data.endsAt && { endsAt: data.endsAt }),
-    ...(data.slotOfAvailabilityWeeklyId && {
-      slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId,
+    ...(data.availabilityWindowWeeklyId && {
+      availabilityWindowWeeklyId: data.availabilityWindowWeeklyId,
     }),
-    ...(data.slotOfAvailabilityCustomId && {
-      slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId,
+    ...(data.availabilityWindowCustomId && {
+      availabilityWindowCustomId: data.availabilityWindowCustomId,
     }),
     ...(data.schedulingPeriodStartsAt && {
       schedulingPeriodStartsAt: data.schedulingPeriodStartsAt,
@@ -1255,14 +1255,14 @@ export async function validateSlotAvailability(
 
   // 0b. Validate the whole [start, end) window against the consultant's
   // PUBLISHED availability. #1320 — this used to check the window against the
-  // single row the client named (`slotOfAvailabilityWeeklyId`), so a two-hour
+  // single row the client named (`availabilityWindowWeeklyId`), so a two-hour
   // booking spanning two adjacent one-hour rows was rejected even though the
   // expert-page grid drew them as one block and the generator now merges
   // them. The rule is now interval containment against the UNION of the
   // consultant's rows: every 30-minute atom of the window must fall inside
   // some published row. The named id, when present, still proves ownership
   // and catches a soft-deleted profile (B13); it is no longer the boundary.
-  if (data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId) {
+  if (data.availabilityWindowWeeklyId || data.availabilityWindowCustomId) {
     // Both row kinds are read for the same three facts, so they share one
     // include; a checkout names at most one of them.
     const namedRowInclude = {
@@ -1271,15 +1271,15 @@ export async function validateSlotAvailability(
       },
     } as const;
     const named =
-      (data.slotOfAvailabilityWeeklyId
-        ? await tx.slotOfAvailabilityWeekly.findUnique({
-            where: { id: data.slotOfAvailabilityWeeklyId },
+      (data.availabilityWindowWeeklyId
+        ? await tx.availabilityWindowWeekly.findUnique({
+            where: { id: data.availabilityWindowWeeklyId },
             include: namedRowInclude,
           })
         : null) ??
-      (data.slotOfAvailabilityCustomId
-        ? await tx.slotOfAvailabilityCustom.findUnique({
-            where: { id: data.slotOfAvailabilityCustomId },
+      (data.availabilityWindowCustomId
+        ? await tx.availabilityWindowCustom.findUnique({
+            where: { id: data.availabilityWindowCustomId },
             include: namedRowInclude,
           })
         : null);
@@ -1337,8 +1337,8 @@ export async function validateSlotAvailability(
           customRows: customRows.length,
           slotStartISO: data.startsAt,
           slotEndISO: data.endsAt,
-          namedWeeklyId: data.slotOfAvailabilityWeeklyId ?? null,
-          namedCustomId: data.slotOfAvailabilityCustomId ?? null,
+          namedWeeklyId: data.availabilityWindowWeeklyId ?? null,
+          namedCustomId: data.availabilityWindowCustomId ?? null,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -2037,7 +2037,7 @@ async function revalidateInsideLock(
 
           // Consultee-side conflict check.
           //
-          // validateNoConflicts (SlotValidationService) is scoped to the
+          // validateNoConflicts (ScheduleValidationService) is scoped to the
           // consultant's User ID — it ensures the consultant is not double-booked
           // but says nothing about the learner's own calendar. A learner who is
           // a member of two orgs (e.g., Org A with SEAT_PACK and Org B with
@@ -3509,7 +3509,7 @@ export async function handleCheckout(
             //     all known at checkout because consultant pre-allocated)
             //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
             //     checkout. Slots are allocated lazily by the consultant;
-            //     debits land in SlotAllocationService.createAppointments,
+            //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
 
@@ -3558,7 +3558,7 @@ export async function handleCheckout(
                 // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
                 createdAppointment = subscriptionResult.appointment;
                 // engagementsForCap stays null — debit happens at
-                // SlotAllocationService.createAppointments time.
+                // SchedulingService.createAppointments time.
                 break;
               }
 

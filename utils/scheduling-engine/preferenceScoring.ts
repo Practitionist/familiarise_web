@@ -25,7 +25,7 @@ import type {
   ReschedulePreferredTimeOfDay,
 } from "@prisma/client";
 
-import { SlotCalculationService } from "./SlotCalculationService";
+import { ScheduleCalculationService } from "./ScheduleCalculationService";
 
 /**
  * What the initiator asked for. Both halves are independent and optional, so
@@ -124,7 +124,7 @@ export function matchesPreferredDays(
 ): boolean {
   if (!preference?.preferredDays) return true;
   return weekdayMatches(
-    SlotCalculationService.weekdayInTz(start, timeZone),
+    ScheduleCalculationService.weekdayInTz(start, timeZone),
     preference.preferredDays,
   );
 }
@@ -144,7 +144,7 @@ export function scoreCandidateStart(
 
   // One Intl round-trip for both axes; this runs per candidate, per row, under
   // the allocation lock.
-  const { hour, weekday } = SlotCalculationService.zonedClock(start, timeZone);
+  const { hour, weekday } = ScheduleCalculationService.zonedClock(start, timeZone);
 
   let score = 0;
 

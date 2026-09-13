@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { coalesceAndResolve } from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+import { coalesceAndResolve } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma, DayOfWeek } from "@prisma/client";
@@ -7,7 +7,7 @@ import {
   minutesToTimeString,
   validateWeeklySlotTimeOrder,
   buildWeeklyOverlapWhere,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
@@ -79,7 +79,7 @@ async function applyWeeklySlotEdit(
       async (tx) => {
         // Cross-midnight-aware overlap check against the authoritative
         // consultant.
-        const overlappingSlot = await tx.slotOfAvailabilityWeekly.findFirst({
+        const overlappingSlot = await tx.availabilityWindowWeekly.findFirst({
           where: buildWeeklyOverlapWhere(
             currentSlot.consultantProfileId,
             next.startDay,
@@ -101,7 +101,7 @@ async function applyWeeklySlotEdit(
 
         // No `include`: the coalesce below can fold this row away, so the
         // covering row — not this one — is what the client is answered with.
-        const updatedSlot = await tx.slotOfAvailabilityWeekly.update({
+        const updatedSlot = await tx.availabilityWindowWeekly.update({
           where: { id },
           data: { ...next, utcOffsetMinutes, ...localColumns },
         });
@@ -166,7 +166,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const weeklySlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+    const weeklySlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },
       include: {
         consultantProfile: true,
@@ -211,7 +211,7 @@ export async function PUT(
     }
 
     // Fetch existing slot for authoritative consultantProfileId and ownership
-    const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+    const currentSlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id },
       include: {
         consultantProfile: {
@@ -356,7 +356,7 @@ export async function PATCH(
       );
     }
 
-    const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+    const currentSlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },
       include: {
         consultantProfile: {
@@ -463,7 +463,7 @@ export async function DELETE(
       );
     }
 
-    const weeklySlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+    const weeklySlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id },
       include: { consultantProfile: { select: { userId: true } } },
     });
@@ -483,7 +483,7 @@ export async function DELETE(
       );
     }
 
-    const deletedSlot = await prisma.slotOfAvailabilityWeekly.delete({
+    const deletedSlot = await prisma.availabilityWindowWeekly.delete({
       where: { id: id },
       include: {
         consultantProfile: true,

@@ -1,7 +1,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
-import { TimeSlot } from "./calendarUtils";
-import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { CalendarInterval } from "./calendarUtils";
+import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot, computed
  * server-side (only present when `includeAppointmentDetails` was authorized). */
@@ -275,7 +275,7 @@ export class AllocationService {
   static async allocateSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
-    slots: TimeSlot[],
+    slots: CalendarInterval[],
     allocationOptions?: AllocationCallOptions,
   ): Promise<AllocationResponse> {
     // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
@@ -423,7 +423,7 @@ export class AllocationService {
   static async validateSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
-    slots: TimeSlot[],
+    slots: CalendarInterval[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 

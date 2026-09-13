@@ -49,16 +49,18 @@ jest.mock("@sentry/nextjs", () => ({
 
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -82,8 +84,8 @@ function consultationWithRow(hours: number) {
       consultantProfile: {
         user: { id: "consultant-user-1", timezone: "UTC" },
         scheduleType: ScheduleType.CUSTOM,
-        slotsOfAvailabilityWeekly: [],
-        slotsOfAvailabilityCustom: [customRow(hours)],
+        availabilityWindowsWeekly: [],
+        availabilityWindowsCustom: [customRow(hours)],
       },
     },
     requestedBy: { user: { id: "consultee-1" } },
@@ -171,7 +173,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // inside the row, so the ceiling — not the row — ended it.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(48));
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -203,7 +205,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // Four hours of cover: 8 starts, then the row's own end stops it.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(4));
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",
@@ -219,7 +221,7 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     // truncated, so reporting one would be a false positive.
     mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(24));
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

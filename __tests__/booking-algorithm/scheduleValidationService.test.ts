@@ -1,5 +1,5 @@
 /**
- * Comprehensive tests for SlotValidationService
+ * Comprehensive tests for ScheduleValidationService
  *
  * Covers:
  * - checkSlotAvailability (conflict detection)
@@ -23,9 +23,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import {
-  SlotValidationService,
+  ScheduleValidationService,
   isOccupiedByLiveAppointment,
-} from "@/utils/slotAllocation/SlotValidationService";
+} from "@/utils/scheduling-engine/ScheduleValidationService";
 import { ScheduleType, DayOfWeek, AppointmentStatus } from "@prisma/client";
 import {
   makeConsultantData,
@@ -45,12 +45,12 @@ const mockPrisma = {
   },
 } as any;
 
-let service: SlotValidationService;
+let service: ScheduleValidationService;
 
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
-  service = new SlotValidationService(mockPrisma);
+  service = new ScheduleValidationService(mockPrisma);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
   mockPrisma.appointment.findMany.mockResolvedValue([]);
 });
@@ -76,7 +76,7 @@ function futureSlots(
 
 const weeklyConsultant = makeConsultantData({
   scheduleType: ScheduleType.WEEKLY,
-  slotsOfAvailabilityWeekly: [
+  availabilityWindowsWeekly: [
     // Sunday June 1 2025 is a Sunday, so June 2 is Monday
     makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 17),
     makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 17),
@@ -86,7 +86,7 @@ const weeklyConsultant = makeConsultantData({
 
 const customConsultant = makeConsultantData({
   scheduleType: ScheduleType.CUSTOM,
-  slotsOfAvailabilityCustom: [
+  availabilityWindowsCustom: [
     makeCustomAvailabilitySlot(
       "2025-06-02T09:00:00.000Z",
       "2025-06-02T12:00:00.000Z",
@@ -742,7 +742,7 @@ describe("validate: class event", () => {
     // if another session also had slots on Sunday.
     const crossMidnightConsultant = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [
+      availabilityWindowsWeekly: [
         makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 23, 24), // Mon 23:00-24:00 UTC
         makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 0, 1), // Tue 00:00-01:00 UTC
         makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 10, 17), // Tue 10:00-17:00 UTC

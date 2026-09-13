@@ -72,8 +72,8 @@ beforeEach(() => {
     id: CONSULTANT_ID,
     userId: "user-consultant",
     scheduleType: "WEEKLY",
-    slotsOfAvailabilityWeekly: [],
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsWeekly: [],
+    availabilityWindowsCustom: [],
   });
   mockedAppointments.mockResolvedValue([]);
 });

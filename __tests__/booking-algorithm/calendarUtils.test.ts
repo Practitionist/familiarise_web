@@ -7,7 +7,7 @@
  * - slotsOverlap
  * - getSlotStatus (booking detection fix, partial booking, conflicts)
  * - formatSlotsForAPI
- * - calculateRequiredSlots (delegation to SlotCalculationService)
+ * - calculateRequiredSlots (delegation to ScheduleCalculationService)
  * - countSundayWeeksInclusive (delegation)
  * - startOfWeekSunday (delegation)
  * - validateSelectedSlots (all event types)
@@ -36,7 +36,7 @@ import {
   calculateCallProgress,
   getAppointmentTitle,
   getAppointmentUser,
-  type TimeSlot,
+  type CalendarInterval,
   type Appointment,
 } from "@/lib/scheduling/calendarUtils";
 import { ScheduleType, DayOfWeek, AppointmentsType } from "@prisma/client";
@@ -59,7 +59,7 @@ describe("mapWeeklySlots", () => {
   it("should return empty array when no weekly slots defined", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [],
+      availabilityWindowsWeekly: [],
     });
     expect(mapWeeklySlots(data as any, new Date())).toEqual([]);
   });
@@ -67,7 +67,7 @@ describe("mapWeeklySlots", () => {
   it("should generate 30-minute intervals from availability slot", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [
+      availabilityWindowsWeekly: [
         makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11), // 2 hours = 4 slots
       ],
     });
@@ -89,7 +89,7 @@ describe("mapWeeklySlots", () => {
   it("should use UTC hours (timezone fix verification)", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [
+      availabilityWindowsWeekly: [
         makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 14, 15), // 2pm-3pm UTC
       ],
     });
@@ -104,7 +104,7 @@ describe("mapWeeklySlots", () => {
   it("should handle month view", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [
+      availabilityWindowsWeekly: [
         makeWeeklyAvailabilitySlot(DayOfWeek.WEDNESDAY, 10, 11),
       ],
     });
@@ -117,7 +117,7 @@ describe("mapWeeklySlots", () => {
   it("should mark all generated slots as available and not booked", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.WEEKLY,
-      slotsOfAvailabilityWeekly: [
+      availabilityWindowsWeekly: [
         makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 10),
       ],
     });
@@ -141,7 +141,7 @@ describe("mapCustomSlots", () => {
   it("should return empty array when no custom slots", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.CUSTOM,
-      slotsOfAvailabilityCustom: [],
+      availabilityWindowsCustom: [],
     });
     expect(mapCustomSlots(data as any)).toEqual([]);
   });
@@ -149,7 +149,7 @@ describe("mapCustomSlots", () => {
   it("should generate 30-minute intervals from custom slot", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.CUSTOM,
-      slotsOfAvailabilityCustom: [
+      availabilityWindowsCustom: [
         makeCustomAvailabilitySlot(
           "2025-01-10T09:00:00.000Z",
           "2025-01-10T11:00:00.000Z",
@@ -164,7 +164,7 @@ describe("mapCustomSlots", () => {
   it("should support configurable interval", () => {
     const data = makeConsultantData({
       scheduleType: ScheduleType.CUSTOM,
-      slotsOfAvailabilityCustom: [
+      availabilityWindowsCustom: [
         makeCustomAvailabilitySlot(
           "2025-01-10T09:00:00.000Z",
           "2025-01-10T10:00:00.000Z",
@@ -186,7 +186,7 @@ describe("slotsOverlap", () => {
       startsAt: "2025-01-06T09:00:00Z",
       endsAt: "2025-01-06T10:00:00Z",
     };
-    expect(slotsOverlap(slot1 as TimeSlot, apptSlot)).toBe(true);
+    expect(slotsOverlap(slot1 as CalendarInterval, apptSlot)).toBe(true);
   });
 
   it("should detect non-overlapping slots", () => {
@@ -195,7 +195,7 @@ describe("slotsOverlap", () => {
       startsAt: "2025-01-06T10:00:00Z",
       endsAt: "2025-01-06T10:30:00Z",
     };
-    expect(slotsOverlap(slot1 as TimeSlot, apptSlot)).toBe(false);
+    expect(slotsOverlap(slot1 as CalendarInterval, apptSlot)).toBe(false);
   });
 
   it("should not count back-to-back as overlapping", () => {
@@ -204,7 +204,7 @@ describe("slotsOverlap", () => {
       startsAt: "2025-01-06T09:30:00Z",
       endsAt: "2025-01-06T10:00:00Z",
     };
-    expect(slotsOverlap(slot1 as TimeSlot, apptSlot)).toBe(false);
+    expect(slotsOverlap(slot1 as CalendarInterval, apptSlot)).toBe(false);
   });
 });
 
@@ -230,7 +230,7 @@ describe("getSlotStatus", () => {
   });
 
   it("should mark slot as available when it matches availability", () => {
-    const availableSlots: TimeSlot[] = [
+    const availableSlots: CalendarInterval[] = [
       {
         startTime: local(9, 0),
         endTime: local(10, 0),
@@ -249,7 +249,7 @@ describe("getSlotStatus", () => {
   });
 
   it("should mark slot as booked when fully contained in appointment (fix verification)", () => {
-    const availableSlots: TimeSlot[] = [
+    const availableSlots: CalendarInterval[] = [
       {
         startTime: local(9, 0),
         endTime: local(10, 0),
@@ -288,7 +288,7 @@ describe("getSlotStatus", () => {
   });
 
   it("should mark slot as partially booked when it only overlaps", () => {
-    const availableSlots: TimeSlot[] = [];
+    const availableSlots: CalendarInterval[] = [];
     const appointments: Appointment[] = [
       {
         id: "apt-1",
@@ -382,15 +382,15 @@ describe("getSlotStatus", () => {
 
 describe("formatSlotsForAPI", () => {
   it("should return ISO strings of start times", () => {
-    const slots: TimeSlot[] = [
+    const slots: CalendarInterval[] = [
       makeTimeSlot(
         "2025-01-06T09:00:00.000Z",
         "2025-01-06T09:30:00.000Z",
-      ) as TimeSlot,
+      ) as CalendarInterval,
       makeTimeSlot(
         "2025-01-06T09:30:00.000Z",
         "2025-01-06T10:00:00.000Z",
-      ) as TimeSlot,
+      ) as CalendarInterval,
     ];
 
     const result = formatSlotsForAPI(slots);
@@ -408,13 +408,13 @@ describe("formatSlotsForAPI", () => {
 // ─── calculateRequiredSlots delegation ──────────────────────────────────────
 
 describe("calculateRequiredSlots (calendarUtils wrapper)", () => {
-  it("should delegate to SlotCalculationService for consultations", () => {
+  it("should delegate to ScheduleCalculationService for consultations", () => {
     expect(
       calculateRequiredSlots("consultation", undefined, undefined, 1),
     ).toBe(2);
   });
 
-  it("should delegate to SlotCalculationService for subscriptions", () => {
+  it("should delegate to ScheduleCalculationService for subscriptions", () => {
     const result = calculateRequiredSlots(
       "subscription",
       undefined,
@@ -430,7 +430,7 @@ describe("calculateRequiredSlots (calendarUtils wrapper)", () => {
 // ─── countSundayWeeksInclusive / startOfWeekSunday delegation ───────────────
 
 describe("Delegated week functions", () => {
-  it("countSundayWeeksInclusive should match SlotCalculationService", () => {
+  it("countSundayWeeksInclusive should match ScheduleCalculationService", () => {
     expect(
       countSundayWeeksInclusive(new Date("2025-01-06"), new Date("2025-01-31")),
     ).toBe(4);
@@ -462,8 +462,11 @@ describe("validateSelectedSlots", () => {
   });
 
   it("should reject past slots", () => {
-    const pastSlots: TimeSlot[] = [
-      makeTimeSlot("2024-01-01T09:00:00Z", "2024-01-01T09:30:00Z") as TimeSlot,
+    const pastSlots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2024-01-01T09:00:00Z",
+        "2024-01-01T09:30:00Z",
+      ) as CalendarInterval,
     ];
     const result = validateSelectedSlots(pastSlots, "webinar", 1, 0.5);
     expect(result.isValid).toBe(false);
@@ -474,7 +477,7 @@ describe("validateSelectedSlots", () => {
     it("should accept correct number of consecutive slots", () => {
       const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 2);
       const result = validateSelectedSlots(
-        slots as TimeSlot[],
+        slots as CalendarInterval[],
         "consultation",
         2,
         1,
@@ -485,7 +488,7 @@ describe("validateSelectedSlots", () => {
     it("should reject wrong number of slots", () => {
       const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 1);
       const result = validateSelectedSlots(
-        slots as TimeSlot[],
+        slots as CalendarInterval[],
         "consultation",
         2,
         1,
@@ -494,15 +497,15 @@ describe("validateSelectedSlots", () => {
     });
 
     it("should reject slots on different days", () => {
-      const slots: TimeSlot[] = [
+      const slots: CalendarInterval[] = [
         makeTimeSlot(
           "2025-06-01T09:00:00Z",
           "2025-06-01T09:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
         makeTimeSlot(
           "2025-06-02T09:00:00Z",
           "2025-06-02T09:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
       ];
       const result = validateSelectedSlots(slots, "consultation", 2, 1);
       expect(result.isValid).toBe(false);
@@ -510,15 +513,15 @@ describe("validateSelectedSlots", () => {
     });
 
     it("should reject non-consecutive same-day slots", () => {
-      const slots: TimeSlot[] = [
+      const slots: CalendarInterval[] = [
         makeTimeSlot(
           "2025-06-01T09:00:00Z",
           "2025-06-01T09:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
         makeTimeSlot(
           "2025-06-01T10:00:00Z",
           "2025-06-01T10:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
       ];
       const result = validateSelectedSlots(slots, "consultation", 2, 1);
       expect(result.isValid).toBe(false);
@@ -530,7 +533,7 @@ describe("validateSelectedSlots", () => {
     it("should accept correct consecutive slots", () => {
       const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 4);
       const result = validateSelectedSlots(
-        slots as TimeSlot[],
+        slots as CalendarInterval[],
         "webinar",
         4,
         2,
@@ -539,15 +542,15 @@ describe("validateSelectedSlots", () => {
     });
 
     it("should reject non-consecutive webinar slots", () => {
-      const slots: TimeSlot[] = [
+      const slots: CalendarInterval[] = [
         makeTimeSlot(
           "2025-06-01T09:00:00Z",
           "2025-06-01T09:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
         makeTimeSlot(
           "2025-06-01T10:00:00Z",
           "2025-06-01T10:30:00Z",
-        ) as TimeSlot,
+        ) as CalendarInterval,
       ];
       const result = validateSelectedSlots(slots, "webinar", 2, 1);
       expect(result.isValid).toBe(false);
@@ -559,7 +562,7 @@ describe("validateSelectedSlots", () => {
     it("should validate total slot count", () => {
       const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 3);
       const result = validateSelectedSlots(
-        slots as TimeSlot[],
+        slots as CalendarInterval[],
         "subscription",
         4,
       );
@@ -569,7 +572,7 @@ describe("validateSelectedSlots", () => {
     it("should pass when slot count matches", () => {
       const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 4);
       const result = validateSelectedSlots(
-        slots as TimeSlot[],
+        slots as CalendarInterval[],
         "subscription",
         4,
       );
@@ -579,7 +582,10 @@ describe("validateSelectedSlots", () => {
 
   it("should reject invalid event type", () => {
     const slots = makeConsecutiveTimeSlots("2025-06-01T09:00:00Z", 1);
-    const result = validateSelectedSlots(slots as TimeSlot[], "invalid" as any);
+    const result = validateSelectedSlots(
+      slots as CalendarInterval[],
+      "invalid" as any,
+    );
     expect(result.isValid).toBe(false);
   });
 });
@@ -588,9 +594,15 @@ describe("validateSelectedSlots", () => {
 
 describe("groupSlotsByWeek", () => {
   it("should group slots by week using startOfWeek", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-13T09:00:00Z", "2025-01-13T09:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-13T09:00:00Z",
+        "2025-01-13T09:30:00Z",
+      ) as CalendarInterval,
     ];
 
     const grouped = groupSlotsByWeek(slots);
@@ -598,9 +610,15 @@ describe("groupSlotsByWeek", () => {
   });
 
   it("should keep same-week slots together", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-08T09:00:00Z", "2025-01-08T09:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-08T09:00:00Z",
+        "2025-01-08T09:30:00Z",
+      ) as CalendarInterval,
     ];
 
     const grouped = groupSlotsByWeek(slots);
@@ -614,9 +632,15 @@ describe("groupSlotsByWeek", () => {
 
 describe("validateSlotDistribution", () => {
   it("should pass when slots per week are within limit", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-13T09:00:00Z", "2025-01-13T09:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-13T09:00:00Z",
+        "2025-01-13T09:30:00Z",
+      ) as CalendarInterval,
     ];
 
     const result = validateSlotDistribution(slots, 1);
@@ -624,10 +648,19 @@ describe("validateSlotDistribution", () => {
   });
 
   it("should fail when a week exceeds the limit", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-07T09:00:00Z", "2025-01-07T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-08T09:00:00Z", "2025-01-08T09:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-07T09:00:00Z",
+        "2025-01-07T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-08T09:00:00Z",
+        "2025-01-08T09:30:00Z",
+      ) as CalendarInterval,
     ];
 
     const result = validateSlotDistribution(slots, 2);
@@ -640,39 +673,56 @@ describe("validateSlotDistribution", () => {
 
 describe("validateDayBasedConsecutiveSlots", () => {
   it("should return true for single slot", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(true);
   });
 
   it("should return true for consecutive slots on same day", () => {
     const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 3);
-    expect(validateDayBasedConsecutiveSlots(slots as TimeSlot[])).toBe(true);
+    expect(validateDayBasedConsecutiveSlots(slots as CalendarInterval[])).toBe(
+      true,
+    );
   });
 
   it("should return false for non-consecutive slots", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-06T10:00:00Z",
+        "2025-01-06T10:30:00Z",
+      ) as CalendarInterval,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
   });
 
   it("should return false for slots on different days", () => {
-    const slots: TimeSlot[] = [
-      makeTimeSlot("2025-01-06T09:00:00Z", "2025-01-06T09:30:00Z") as TimeSlot,
-      makeTimeSlot("2025-01-07T09:30:00Z", "2025-01-07T10:00:00Z") as TimeSlot,
+    const slots: CalendarInterval[] = [
+      makeTimeSlot(
+        "2025-01-06T09:00:00Z",
+        "2025-01-06T09:30:00Z",
+      ) as CalendarInterval,
+      makeTimeSlot(
+        "2025-01-07T09:30:00Z",
+        "2025-01-07T10:00:00Z",
+      ) as CalendarInterval,
     ];
     expect(validateDayBasedConsecutiveSlots(slots)).toBe(false);
   });
 
   it("should accept slots with sub-second tolerance", () => {
-    const slots: TimeSlot[] = [
+    const slots: CalendarInterval[] = [
       makeTimeSlot(
         "2025-01-06T09:00:00.000Z",
         "2025-01-06T09:30:00.000Z",
-      ) as TimeSlot,
+      ) as CalendarInterval,
       {
         startTime: new Date(
           new Date("2025-01-06T09:30:00.000Z").getTime() + 500,
@@ -699,28 +749,28 @@ describe("calculateCallProgress", () => {
 
   it("should count complete calls for 1-hour sessions", () => {
     const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 4); // 4 slots = 2 complete calls
-    const result = calculateCallProgress(slots as TimeSlot[], 1);
+    const result = calculateCallProgress(slots as CalendarInterval[], 1);
     expect(result).toContain("2");
     expect(result).toContain("scheduled");
   });
 
   it("should count complete calls for 1.5-hour sessions", () => {
     const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 3); // 3 slots = 1 complete 1.5hr call
-    const result = calculateCallProgress(slots as TimeSlot[], 1.5);
+    const result = calculateCallProgress(slots as CalendarInterval[], 1.5);
     expect(result).toContain("1");
     expect(result).toContain("scheduled");
   });
 
   it("should warn about incomplete calls", () => {
     const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 1); // 1 slot, need 2 for 1hr
-    const result = calculateCallProgress(slots as TimeSlot[], 1);
+    const result = calculateCallProgress(slots as CalendarInterval[], 1);
     expect(result).toContain("Add");
     expect(result).toContain("more slot");
   });
 
   it("should show progress with maxTotalCalls", () => {
     const slots = makeConsecutiveTimeSlots("2025-01-06T09:00:00Z", 2);
-    const result = calculateCallProgress(slots as TimeSlot[], 1, 8);
+    const result = calculateCallProgress(slots as CalendarInterval[], 1, 8);
     expect(result).toContain("1/8");
   });
 });

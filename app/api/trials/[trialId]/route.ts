@@ -42,12 +42,12 @@ import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
   windowAtoms,
-} from "@/utils/slotAllocation/availabilityCoverage";
+} from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { reportSentryError } from "@/lib/observability/report";
 

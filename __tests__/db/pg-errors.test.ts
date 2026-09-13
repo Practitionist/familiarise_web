@@ -1,7 +1,7 @@
 // Structured Postgres-error predicates: pins the SQLSTATE detection and the
 // quarantined exclusion-constraint text fallback (Prisma's unmodelled-constraint
 // gap, prisma/prisma#25562). Replaces the message-substring matching that used
-// to live inline in SlotAllocationService.classifyError.
+// to live inline in SchedulingService.classifyError.
 import { isUniqueViolation, isExclusionViolation } from "@/lib/db/pg-errors";
 
 describe("pg-errors predicates", () => {

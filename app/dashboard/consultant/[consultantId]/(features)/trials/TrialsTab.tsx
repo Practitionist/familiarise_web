@@ -292,7 +292,7 @@ export function TrialsTab() {
           slotData: {
             startsAt: slot.startsAt.toISOString(),
             endsAt: slot.endsAt.toISOString(),
-            slotOfAvailabilityId: slot.slotOfAvailabilityId,
+            availabilityWindowId: slot.availabilityWindowId,
             slotType: slot.slotType,
           },
         }),

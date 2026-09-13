@@ -2,7 +2,7 @@
  * Canonical N×30-minute slot atoms for a single session (#1071 / ADR B1).
  *
  * Planner CRUD historically wrote one long SlotOfAppointment spanning the full
- * duration, while SlotAllocationService wrote ceil(hours/0.5) half-hour rows.
+ * duration, while SchedulingService wrote ceil(hours/0.5) half-hour rows.
  * Reschedule then updated only slotsOfAppointment[0], stranding the rest.
  *
  * Every planner create/update path must go through these helpers so an
@@ -10,7 +10,7 @@
  */
 
 import type { PrismaLike } from "@/lib/prisma";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { groupSlotsIntoRuns, isDeadSlot } from "@/lib/appointments/slots";
 
 export const SLOT_DURATION_MS = 30 * 60 * 1000;
@@ -47,7 +47,7 @@ export function buildContiguousSlotAtoms(
   }
 
   const slotsPerSession =
-    SlotCalculationService.getSlotsPerCall(durationInHours);
+    ScheduleCalculationService.getSlotsPerCall(durationInHours);
   const isTentative = input.isTentative ?? false;
   const userIds = [...new Set((input.userIds ?? []).filter(Boolean))];
 

@@ -2,7 +2,7 @@
  * Utility functions for converting between Int (minutes since midnight UTC)
  * and human-readable time representations.
  *
- * Used by SlotOfAvailabilityWeekly which stores availability times as
+ * Used by AvailabilityWindowWeekly which stores availability times as
  * Int (0-1439) instead of DateTime, eliminating timezone confusion.
  *
  * FIX Issue #6 from Architecture Review (#446):
@@ -60,7 +60,7 @@ export function minuteUtcToDate(minuteUtc: number, referenceDate: Date): Date {
 /**
  * Map DayOfWeek enum string to JS getUTCDay() index (Sunday=0 ... Saturday=6)
  *
- * Shared constant used by SlotAllocationService and SlotValidationService
+ * Shared constant used by SchedulingService and ScheduleValidationService
  * to convert Prisma DayOfWeek enum values to numeric day indices.
  */
 export const DAY_OF_WEEK_TO_INDEX: Record<string, number> = {
@@ -150,8 +150,8 @@ export function buildWeeklyOverlapWhere(
   startTimeUtc: number,
   endTimeUtc: number,
   excludeId?: string,
-): Prisma.SlotOfAvailabilityWeeklyWhereInput {
-  const baseWhere: Prisma.SlotOfAvailabilityWeeklyWhereInput = {
+): Prisma.AvailabilityWindowWeeklyWhereInput {
+  const baseWhere: Prisma.AvailabilityWindowWeeklyWhereInput = {
     consultantProfileId,
     ...(excludeId ? { id: { not: excludeId } } : {}),
   };

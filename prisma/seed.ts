@@ -22,7 +22,7 @@ import { createWebinarPlans } from "./seedFiles/4c-create-webinar-plans";
 import { createClassPlans } from "./seedFiles/4d-create-class-plans";
 
 // Phase 5: Availability
-import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availability";
+import { createSlotsOfAvailability } from "./seedFiles/5a-create-availability-windows";
 
 // Phase 6: Appointments
 import { createAppointments } from "./seedFiles/6a-create-appointments";
