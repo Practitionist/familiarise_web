@@ -450,15 +450,30 @@ const StreamProviderImpl = ({
         userId: userDetails.id,
       });
 
+      // No `user` in the constructor: that path connects in the background,
+      // retries five times inside the SDK, and leaks one unhandled rejection
+      // per attempt to Sentry — while this function reported "connected"
+      // without ever awaiting it. One attempt, awaited; the outer catch owns
+      // classification, retry and reporting, exactly as for chat.
       const client = new StreamVideoClient({
         apiKey: apiKey,
-        user: {
-          id: userDetails.id,
-          name: userDetails.name ?? userDetails.id,
-          image: userDetails.image ?? undefined,
-        },
-        tokenProvider: () => getCachedToken("video"),
+        options: { maxConnectUserRetries: 1 },
       });
+      try {
+        await client.connectUser(
+          {
+            id: userDetails.id,
+            name: userDetails.name ?? userDetails.id,
+            image: userDetails.image ?? undefined,
+          },
+          () => getCachedToken("video"),
+        );
+      } catch (error) {
+        // Release the coordinator so nothing keeps the failed client alive;
+        // the global ref is only ever set for a client that connected.
+        await client.disconnectUser().catch(() => undefined);
+        throw error;
+      }
 
       // Store in global reference
       setGlobalVideoClient(client);
@@ -527,19 +542,6 @@ const StreamProviderImpl = ({
         // Stream said this cannot succeed as-is (deactivated user, bad token,
         // suspended app). Report once with a stable fingerprint and stop: the
         // five backoff retries per client per page were the Sentry noise.
-        //
-        // The video client connects in the background from its constructor
-        // and its coordinator keeps reconnecting after a rejection — every
-        // attempt reached Sentry through the global handlers. Tear it down.
-        const video = getGlobalVideoClient();
-        if (video) {
-          setGlobalVideoClient(null);
-          setVideoConnected(false);
-          setClients((current) =>
-            current ? { ...current, video: null } : current,
-          );
-          void video.disconnectUser().catch(() => undefined);
-        }
         if (!signedOutRef.current && process.env.NODE_ENV !== "development") {
           Sentry.captureException(
             error instanceof Error ? error : new Error(classified.detail),
