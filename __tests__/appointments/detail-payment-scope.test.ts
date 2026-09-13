@@ -236,25 +236,23 @@ describe("seat payments", () => {
   });
 
   it("counts a zero-amount seat as paid and never adds paise of two currencies", () => {
-    const byUser = seatPaymentsByUser([
-      {
-        userId: A,
-        paymentStatus: "SUCCEEDED",
-        amount: 0,
-        currency: "INR",
-        createdAt: "2026-09-01T00:00:00Z",
-      },
-      {
-        userId: B,
-        paymentStatus: "SUCCEEDED",
-        amount: 500,
-        currency: "USD",
-        createdAt: "2026-09-01T00:00:00Z",
-      },
-    ]);
-    // An appointment settles in one currency (ADR 15); a row that breaks
-    // that is counted, not summed into an INR total.
-    expect(summarizeSeatPayments(byUser)).toEqual({
+    const inr = {
+      userId: A,
+      paymentStatus: "SUCCEEDED",
+      amount: 0,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    const usd = {
+      userId: B,
+      paymentStatus: "SUCCEEDED",
+      amount: 500,
+      currency: "USD",
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+    // An appointment settles in the plan's currency (ADR 15); a row that
+    // breaks that is counted, not summed — whichever row comes first.
+    const expected = {
       paid: 2,
       pending: 0,
       lapsed: 0,
@@ -262,7 +260,13 @@ describe("seat payments", () => {
       collectedPaise: 0,
       currency: "INR",
       otherCurrency: 1,
-    });
+    };
+    expect(
+      summarizeSeatPayments(seatPaymentsByUser([inr, usd]), "INR"),
+    ).toEqual(expected);
+    expect(
+      summarizeSeatPayments(seatPaymentsByUser([usd, inr]), "INR"),
+    ).toEqual(expected);
   });
 
   it("derives the refund state and nets it out of what was collected", () => {
@@ -288,7 +292,8 @@ describe("seat payments", () => {
     expect(paymentDisplayStatus({ ...full, paymentStatus: "PENDING" })).toBe(
       "PENDING",
     );
-    // A newer PENDING row (a rebooking) speaks for the seat over the refund.
+    // A newer PENDING row (a rebooking) speaks for the seat over the refund;
+    // an OLDER abandoned hold does not outrank a newer refund.
     const rebooked = {
       ...full,
       paymentStatus: "PENDING",
@@ -296,6 +301,8 @@ describe("seat payments", () => {
       createdAt: "2026-09-02T00:00:00Z",
     };
     expect(seatPaymentsByUser([full, rebooked]).get(A)).toBe(rebooked);
+    const abandoned = { ...rebooked, createdAt: "2026-08-01T00:00:00Z" };
+    expect(seatPaymentsByUser([abandoned, full]).get(A)).toBe(full);
     expect(summarizeSeatPayments(seatPaymentsByUser([full, partial]))).toEqual({
       paid: 1,
       pending: 0,

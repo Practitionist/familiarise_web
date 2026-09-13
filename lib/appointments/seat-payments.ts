@@ -50,22 +50,18 @@ export function netPaise(
   return Math.max(0, Number(row.amount) - refundedPaise(row));
 }
 
-/** Which row speaks for a seat when a user has more than one (a class). */
-const STATUS_RANK: Record<string, number> = {
-  SUCCEEDED: 0,
-  PARTIALLY_REFUNDED: 0,
-  PENDING: 1,
-  FAILED: 2,
-  EXPIRED: 3,
-  // Money came back: the seat is not paid for, and a newer PENDING row (a
-  // rebooking) must speak over it.
-  REFUNDED: 3,
-};
-
-function rank(status: string): number {
-  return STATUS_RANK[status] ?? 4;
+/** Money is in and stayed in: the row that answers "did this seat pay". */
+function isPaid(status: PaymentDisplayStatus): boolean {
+  return status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED";
 }
 
+/**
+ * Which row speaks for a seat when a user has more than one (a class): a paid
+ * row, else the newest — the latest attempt is the seat's current story,
+ * whether that is a rebooking after a refund or a hold that lapsed after an
+ * abandoned one. Ranking PENDING above REFUNDED let an old abandoned hold
+ * outrank a newer refund.
+ */
 export function seatPaymentsByUser<T extends SeatPaymentRow>(
   rows: readonly T[],
 ): Map<string, T> {
@@ -76,11 +72,11 @@ export function seatPaymentsByUser<T extends SeatPaymentRow>(
       best.set(row.userId, row);
       continue;
     }
-    const byRank =
-      rank(paymentDisplayStatus(row)) - rank(paymentDisplayStatus(current));
+    const rowPaid = isPaid(paymentDisplayStatus(row));
+    const currentPaid = isPaid(paymentDisplayStatus(current));
     const newer =
       new Date(row.createdAt).getTime() > new Date(current.createdAt).getTime();
-    if (byRank < 0 || (byRank === 0 && newer)) best.set(row.userId, row);
+    if (rowPaid !== currentPaid ? rowPaid : newer) best.set(row.userId, row);
   }
   return best;
 }
@@ -97,9 +93,15 @@ export type SeatPaymentSummary = {
   otherCurrency: number;
 };
 
+/**
+ * `currency` is the plan's settlement currency (ADR 15: INR), which the
+ * caller knows and the rows do not decide — the first row naming it made the
+ * total depend on row order. A row in any other currency is counted, never
+ * added: paise of two currencies do not sum.
+ */
 export function summarizeSeatPayments(
   byUser: ReadonlyMap<string, SeatPaymentRow>,
-  fallbackCurrency = "INR",
+  currency = "INR",
 ): SeatPaymentSummary {
   const summary: SeatPaymentSummary = {
     paid: 0,
@@ -107,20 +109,12 @@ export function summarizeSeatPayments(
     lapsed: 0,
     refunded: 0,
     collectedPaise: 0,
-    currency: fallbackCurrency,
+    currency,
     otherCurrency: 0,
   };
-  // Every seat on an appointment settles in one currency (ADR 15: INR-only);
-  // the first row names it. A row in any other currency is counted, never
-  // added — paise of two currencies do not sum.
-  let currencySeen = false;
   for (const row of byUser.values()) {
-    if (!currencySeen && row.currency) {
-      summary.currency = String(row.currency);
-      currencySeen = true;
-    }
     const status = paymentDisplayStatus(row);
-    if (status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED") {
+    if (isPaid(status)) {
       summary.paid += 1;
       if (String(row.currency) === summary.currency) {
         summary.collectedPaise += netPaise(row);

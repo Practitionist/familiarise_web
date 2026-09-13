@@ -369,9 +369,13 @@ export function AppointmentDetailClient({
   // just their own (scopeAppointmentDetail).
   const isGroup = isGroupKind(vm.kind);
   const seatPayments = seatPaymentsByUser(payments);
+  // The plan's settlement currency names the total, not whichever row came
+  // first.
   const seatSummary = summarizeSeatPayments(
     seatPayments,
-    payments[0]?.currency?.toString() ?? "INR",
+    detail.appointment.webinar?.webinarPlan?.priceCurrency ??
+      detail.appointment.class?.classPlan?.priceCurrency ??
+      "INR",
   );
   // #1163 — the read narrows to open statuses and takes one, so [0] is THE
   // live proposal; the card is the answer surface "Awaiting schedule
