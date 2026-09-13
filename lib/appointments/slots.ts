@@ -421,8 +421,24 @@ export function getSessionVMJoinState(
   return getSessionJoinState(run, opts);
 }
 
+/**
+ * When the host closed the room (or maintenance drained it), else null. An
+ * inactivity timeout or a pre-start `ended_early` is not the session's end:
+ * the gates re-admit, so the buckets and the timeline must not call it over
+ * (#1607).
+ */
+export function meetingClosedAt(session: SessionVM): Date | null {
+  return isDeliberateEnd({
+    endedAt: session.meetingEndedAt,
+    endedReason: session.meetingEndedReason,
+  })
+    ? session.meetingEndedAt
+    : null;
+}
+
 function sessionEnd(session: SessionVM): number {
-  if (session.meetingEndedAt) return session.meetingEndedAt.getTime();
+  const closedAt = meetingClosedAt(session);
+  if (closedAt) return closedAt.getTime();
   return session.endsAt
     ? session.endsAt.getTime()
     : session.startsAt.getTime() + DEFAULT_MEETING_DURATION_MS;

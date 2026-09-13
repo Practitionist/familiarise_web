@@ -9,6 +9,7 @@ import {
   DEFAULT_MEETING_DURATION_MS,
   getSessionVMJoinState,
   isSessionOver,
+  meetingClosedAt,
 } from "@/lib/appointments/slots";
 import type { SessionVM } from "@/lib/appointments/view-model";
 import { CountdownBadge } from "./CountdownBadge";
@@ -82,8 +83,9 @@ function slotStatus(slot: SessionVM, joinWindowMs: number): SessionStatus {
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
   // The host closing the call early is what separates a session we have a
-  // record of from one that simply ran past its slot with nobody in it.
-  if (slot.meetingEndedAt) return "completed";
+  // record of from one that simply ran past its slot with nobody in it. A
+  // timeout or a pre-start end is neither (#1607).
+  if (meetingClosedAt(slot)) return "completed";
   // `disabled` on a session whose time has not arrived is a dead row
   // (cancelled, or released for reschedule) — "no record" would be a lie
   // about the future, so it keeps reading as upcoming.
