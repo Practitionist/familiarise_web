@@ -45,10 +45,10 @@ jobs:
         run: npm ci
 
       - name: Generate Prisma client
-        run: npx --no prisma generate
+        run: npx --no-install --ignore-scripts prisma generate
 
       - name: Cleanup tentative slots
-        run: npx --no tsx jobs/appointments/cleanup-tentative-occurrences.ts
+        run: node_modules/.bin/tsx jobs/appointments/cleanup-tentative-occurrences.ts
 
       - name: Notify on failure
         if: failure()

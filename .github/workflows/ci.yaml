@@ -142,7 +142,7 @@ jobs:
         # #1554 — the scheduling vocabulary the reset retired (SlotOfAppointment,
         # MeetingSession, TrialSession, /api/slots/ …) must not come back into
         # code. Docs and prompts are reported, never fatal. Static only.
-        run: npx --no tsx scripts/ci/check-terminology.ts
+        run: node_modules/.bin/tsx scripts/ci/check-terminology.ts
 
       - name: Workflow hygiene guard
         # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
