@@ -1,5 +1,5 @@
 /**
- * #1454 — the loop behind `netlify/functions/reconcile-ledgers-background.mts`.
+ * #1454 — the loop behind the sibling `index.mts` background function.
  *
  * Advances one ledger reconcile run by POSTing bounded chunks to the job's
  * HTTP twin until the twin reports the run COMPLETED or FAILED, or the driver's

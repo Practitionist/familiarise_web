@@ -11,7 +11,7 @@
  * function to its 15-minute ceiling.
  */
 
-import { driveReconcileRun } from "../../lib/reconcile/drive-reconcile-run";
+import { driveReconcileRun } from "../../netlify/functions/reconcile-ledgers-background/drive";
 
 function twin(statuses: Array<"RUNNING" | "COMPLETED">) {
   const calls: string[] = [];

@@ -4,13 +4,13 @@
  * ledger reconcile run through the CRON_SECRET-gated twin at
  * `/api/cleanup/reconcile-ledgers` in bounded chunks; progress lives on the
  * report row, so a retry resumes. Docs: docs/maintenance/04-cron-jobs-reference.md.
- * Dependency-free like `cron-tick.mts`: `process.env`, global `fetch`, one pure loop.
+ * Self-contained like `cron-tick.mts`: `process.env`, global `fetch`, Web Crypto,
+ * and the pure loop in the sibling `drive.ts` — nothing outside this directory.
  */
 
-import { createHash, timingSafeEqual } from "node:crypto";
-import { driveReconcileRun } from "../../lib/reconcile/drive-reconcile-run";
+import { driveReconcileRun } from "./drive.ts";
 
-/** Rows per chunk unless RECONCILE_DRIVER_LIMIT or the kick body overrides it. */
+/** Rows per chunk unless RECONCILE_DRIVER_LIMIT or the kick overrides it. */
 const DEFAULT_LIMIT = 100;
 /** Under the 15-minute background limit with room for the final chunk and its retry. */
 const BUDGET_MS = 13 * 60 * 1000;
@@ -32,11 +32,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Constant-time bearer check, the same shape as lib/cron/cleanup-route.ts. */
-function bearerMatches(header: string | null, secret: string): boolean {
+function log(record: Record<string, unknown>): void {
+  console.log(JSON.stringify({ event: "reconcile-driver", ...record }));
+}
+
+/** Constant-time bearer check over SHA-256 digests, as lib/cron/cleanup-route.ts does. */
+async function bearerMatches(
+  header: string | null,
+  secret: string,
+): Promise<boolean> {
   if (!header) return false;
-  const sha = (v: string) => createHash("sha256").update(v).digest();
-  return timingSafeEqual(sha(header), sha(`Bearer ${secret}`));
+  const digest = async (v: string) =>
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)),
+    );
+  const [a, b] = await Promise.all([
+    digest(header),
+    digest(`Bearer ${secret}`),
+  ]);
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 /**
@@ -52,10 +68,6 @@ function resolveBaseUrl(): string {
     "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   return baseUrl;
-}
-
-function log(record: Record<string, unknown>): void {
-  console.log(JSON.stringify({ event: "reconcile-driver", ...record }));
 }
 
 interface KickParams {
@@ -86,26 +98,33 @@ async function readKick(req: Request): Promise<KickParams & { from: string }> {
 export default async function reconcileLedgersBackground(
   req: Request,
 ): Promise<Response> {
+  // First statement, before any await: a driver that answers 202 and does
+  // nothing must at least leave this line in the function log.
   const secret = process.env.CRON_SECRET;
   const baseUrl = resolveBaseUrl();
-  const kick = await readKick(req);
   const authHeader = req.headers.get("authorization");
   log({
     phase: "start",
-    runId: kick.runId ?? null,
-    limit: kick.limit ?? null,
-    paramsFrom: kick.from,
+    method: req.method,
+    url: req.url,
     baseUrl,
     hasSecret: Boolean(secret),
     hasAuthHeader: authHeader !== null,
-    method: req.method,
+  });
+
+  const kick = await readKick(req);
+  log({
+    phase: "params",
+    runId: kick.runId ?? null,
+    limit: kick.limit ?? null,
+    paramsFrom: kick.from,
   });
   if (!secret) {
     const error = "CRON_SECRET is not set — the driver cannot authenticate";
     console.error(JSON.stringify({ event: "reconcile-driver", error }));
     return jsonResponse({ error }, 500);
   }
-  if (!bearerMatches(authHeader, secret)) {
+  if (!(await bearerMatches(authHeader, secret))) {
     log({ phase: "end", outcome: "UNAUTHORIZED" });
     return jsonResponse({ error: "Unauthorized" }, 401);
   }

@@ -10,7 +10,7 @@
  *  - `POST` with no body runs the full scope, which takes longer than the
  *    ~26 s the Netlify edge waits for a Route Handler's first byte (#1454).
  *    It opens a report row, hands the run id to the background driver
- *    (`netlify/functions/reconcile-ledgers-background.mts`) and answers
+ *    (`netlify/functions/reconcile-ledgers-background/index.mts`) and answers
  *    `202 { reportId }` at once; poll `GET ?id=<reportId>` until
  *    `summary.status` is COMPLETED. A full-scope run already RUNNING and
  *    younger than the stale window answers 409 with its id instead.
