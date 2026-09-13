@@ -1623,6 +1623,7 @@ export class SchedulingService {
           // exactly what the delete-and-replan path was destroying.
           let enrolledUserIds: string[] = [];
           let deletedAppointmentIds: string[] = [];
+          let freedOrdinals: number[] = [];
           let reusableAppointmentId: string | undefined;
           if (isTopUp) {
             // A group event's learners live ONLY on the slot↔user M2M, and the
@@ -1639,14 +1640,18 @@ export class SchedulingService {
                 );
             }
           } else {
-            ({ enrolledUserIds, deletedAppointmentIds, reusableAppointmentId } =
-              await this.deleteExistingAppointments(
-                tx,
-                eventType,
-                eventId,
-                isReschedule,
-                isInProgressReallocation,
-              ));
+            ({
+              enrolledUserIds,
+              deletedAppointmentIds,
+              freedOrdinals,
+              reusableAppointmentId,
+            } = await this.deleteExistingAppointments(
+              tx,
+              eventType,
+              eventId,
+              isReschedule,
+              isInProgressReallocation,
+            ));
           }
 
           // Create appointments
@@ -1661,6 +1666,7 @@ export class SchedulingService {
             organizationId,
             reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
             idempotencyKey, // #837
+            freedOrdinals, // #1554 — replacements keep their position
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -2108,6 +2114,7 @@ export class SchedulingService {
           const {
             enrolledUserIds,
             deletedAppointmentIds,
+            freedOrdinals,
             reusableAppointmentId,
           } = await this.deleteExistingAppointments(
             tx,
@@ -2129,6 +2136,7 @@ export class SchedulingService {
             organizationId,
             reusableAppointmentId, // #898 — REUSE preserved 1:1 appointment
             idempotencyKey, // #837
+            freedOrdinals, // #1554 — replacements keep their position
           );
 
           // Reconnect enrolled users to new slots (for group events like classes)
@@ -3535,6 +3543,9 @@ export class SchedulingService {
     // replay trips the @unique (P2002 → typed 409 below) if it slips past the
     // pre-check. Nullable by design: only real keys dedupe.
     idempotencyKey?: string,
+    // #1554 — ordinals of the rows this allocation replaces, in call order;
+    // call i inherits position i and only surplus calls take a new number.
+    inheritedOrdinals: number[] = [],
   ): Promise<any[]> {
     const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
@@ -3626,9 +3637,12 @@ export class SchedulingService {
             select: { id: true },
           })
         )?.id;
-      // A replacement written after a reschedule sits beside the RESCHEDULED
-      // row it replaces, so it continues the wrapper's ordinals.
-      const firstOrdinal = wrapperId ? await nextOrdinal(tx, wrapperId) : 1;
+      // A genuinely new call continues the wrapper's numbering past both the
+      // surviving rows and the positions being inherited.
+      let nextFreshOrdinal = Math.max(
+        wrapperId ? await nextOrdinal(tx, wrapperId) : 1,
+        ...inheritedOrdinals.map((ordinal) => ordinal + 1),
+      );
       // #837 — the batch's dedupe key rides on the wrapper.
       const idempotencyData = idempotencyKey
         ? { allocationIdempotencyKey: idempotencyKey }
@@ -3636,7 +3650,7 @@ export class SchedulingService {
       // One occurrence per call with the real end; the 30-minute intervals
       // stay the unit of arithmetic, not the persisted shape.
       const occurrencesToCreate = calls.map((sessionSlots, callIndex) => ({
-        ordinal: firstOrdinal + callIndex,
+        ordinal: inheritedOrdinals[callIndex] ?? nextFreshOrdinal++,
         startsAt: sessionSlots[0],
         endsAt: new Date(
           sessionSlots[sessionSlots.length - 1].getTime() +
@@ -3668,10 +3682,11 @@ export class SchedulingService {
             include: { occurrences: true },
           });
       appointments = [wrapper];
+      const written = new Set(occurrencesToCreate.map((row) => row.ordinal));
       newOccurrenceIds = (
         wrapper.occurrences as { id: string; ordinal: number }[]
       )
-        .filter((row) => row.ordinal >= firstOrdinal)
+        .filter((row) => written.has(row.ordinal))
         .map((row) => row.id);
       // #1319 A9 — allocation writes confirmed occurrences, so the participants
       // are CONFIRMED from the start; a reused wrapper already has its rows
@@ -3976,6 +3991,8 @@ export class SchedulingService {
    * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
    * @returns deletedAppointmentIds - AE-4: appointment ids whose tentative slots
    *   were freed (partial reschedule path), so callers can refresh those slots.
+   * @returns freedOrdinals - #1554: the ordinals of the occurrence rows this
+   *   call deleted, in start order, so their replacements inherit them.
    */
   private static async deleteExistingAppointments(
     tx: Tx,
@@ -3987,6 +4004,7 @@ export class SchedulingService {
     preservedSlotCount: number;
     enrolledUserIds: string[];
     deletedAppointmentIds: string[];
+    freedOrdinals: number[];
     // #898 — id of a preserved 1:1 (consultation/webinar) payment-bearing
     // appointment the caller must REUSE: its @unique event FK is still taken,
     // so a fresh create would throw P2002. At most one per 1:1 event.
@@ -4026,6 +4044,7 @@ export class SchedulingService {
       // scheduled (tentative crud-with-plan slots → onlyTentative path).
       // reconnectEnrolledUsers re-seats them; it filters the consultant itself.
       const enrolledUserIdSet = new Set<string>();
+      const freed: { ordinal: number; startsAt: Date }[] = [];
       for (const appointment of appointments) {
         const hasConfirmed = appointment.occurrences.some(
           (slot) => !slot.isTentative,
@@ -4036,6 +4055,9 @@ export class SchedulingService {
 
         if (hasTentative) {
           deletedAppointmentIds.push(appointment.id);
+          for (const slot of appointment.occurrences) {
+            if (slot.isTentative) freed.push(slot);
+          }
           // Collect the seat holders before the appointment may be deleted
           // (their participant rows cascade with it).
           for (const seat of appointment.participants) {
@@ -4081,6 +4103,7 @@ export class SchedulingService {
         preservedSlotCount: 0,
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds,
+        freedOrdinals: this.ordinalsInStartOrder(freed),
         reusableAppointmentId,
       };
     } else if (preservePastSlots) {
@@ -4104,6 +4127,7 @@ export class SchedulingService {
 
       let preservedSlotCount = 0;
       const enrolledUserIdSet = new Set<string>();
+      const freed: { ordinal: number; startsAt: Date }[] = [];
       const imminentCutoff = new Date(now.getTime() + TWENTY_FOUR_HOURS_IN_MS);
 
       for (const appointment of appointments) {
@@ -4136,6 +4160,7 @@ export class SchedulingService {
         }
 
         if (deletableFutureSlots.length > 0) {
+          freed.push(...deletableFutureSlots);
           await tx.appointmentOccurrence.deleteMany({
             where: {
               appointmentId: appointment.id,
@@ -4164,6 +4189,7 @@ export class SchedulingService {
         // AE-4 — in-progress path frees future slots, not tentative ones; the
         // freed-id contract is scoped to the partial-reschedule case.
         deletedAppointmentIds: [],
+        freedOrdinals: this.ordinalsInStartOrder(freed),
         // #898 — only class/subscription (1:N) reach this branch; no 1:1 reuse.
         reusableAppointmentId,
       };
@@ -4204,6 +4230,11 @@ export class SchedulingService {
           enrolledUserIdSet.add(seat.userId);
         }
       }
+      // Every sessionless row below is deleted whichever arm runs; a
+      // held-session row survives and keeps its ordinal.
+      const freed = existingAppointments.flatMap((appointment) =>
+        appointment.occurrences.filter((slot) => slot.meetingSession === null),
+      );
 
       await Promise.all(
         existingAppointments.map(async (appointment) => {
@@ -4258,9 +4289,22 @@ export class SchedulingService {
         preservedSlotCount: 0,
         enrolledUserIds: Array.from(enrolledUserIdSet),
         deletedAppointmentIds: [],
+        freedOrdinals: this.ordinalsInStartOrder(freed),
         reusableAppointmentId,
       };
     }
+  }
+
+  /** #1554 — freed ordinals in call order, so call i inherits position i. */
+  private static ordinalsInStartOrder(
+    rows: { ordinal: number; startsAt: Date }[],
+  ): number[] {
+    return [...rows]
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      )
+      .map((row) => row.ordinal);
   }
 
   /**

@@ -188,9 +188,9 @@ export function intervalStartsOf(occurrence: {
 }
 
 /**
- * The next free ordinal on an appointment. A replacement written after a
- * reschedule sits beside the RESCHEDULED row it replaces, and the unique on
- * (appointmentId, ordinal) must hold across both.
+ * The next free ordinal on an appointment, for a genuinely NEW call (an
+ * allocation top-up). A replacement after a reschedule inherits the replaced
+ * row's ordinal instead; the live-row partial unique ignores dead rows.
  */
 export async function nextOrdinal(
   tx: PrismaLike,
@@ -240,11 +240,18 @@ export async function replaceOccurrence(
   });
 
   if (live.length === 0) {
+    // The replacement keeps the position of the call it replaces: the row the
+    // reschedule most recently released. Only a booking with no call at all
+    // takes a new number.
+    const replaced = existing
+      .filter((row) => row.completionStatus === "RESCHEDULED")
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
     const created = await tx.appointmentOccurrence.create({
       data: {
         appointmentId: args.appointmentId,
         ...target,
-        ordinal: await nextOrdinal(tx, args.appointmentId),
+        ordinal:
+          replaced?.ordinal ?? (await nextOrdinal(tx, args.appointmentId)),
       },
     });
     return { occurrenceId: created.id };

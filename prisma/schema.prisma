@@ -4898,8 +4898,8 @@ model AppointmentOccurrence {
   // #705 — the per-call private rating.
   feedback AppointmentFeedback[]
 
-  // #1554 — 1-based position inside the appointment; a replacement written after
-  // a reschedule takes the next number, so the unique holds across dead rows.
+  // #1554 — 1-based position; a replacement after a reschedule inherits it, the
+  // partial unique in prisma/sql ignores dead rows.
   ordinal     Int
   startsAt    DateTime @db.Timestamptz
   endsAt      DateTime @db.Timestamptz
@@ -4928,7 +4928,8 @@ model AppointmentOccurrence {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([appointmentId, ordinal])
+  // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
+  // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
   // #440 — serves the overlap recheck + the future exclusion constraint.

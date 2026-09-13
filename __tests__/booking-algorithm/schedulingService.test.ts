@@ -88,6 +88,9 @@ import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmen
 
 function makeMockTx() {
   return {
+    // #1065 — a released RESCHEDULED row makes the allocator look for the
+    // preference request it answers; none here.
+    rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },
     // #836 — updateEventStatus routes through the CAS transition helpers,
     // which call updateMany and read the returned count.
     consultation: {
@@ -153,8 +156,8 @@ function makeMockTx() {
       // event has no confirmed slots" rather than from a client flag that was
       // never true, so it runs on the ordinary allocation paths too.
       count: jest.fn().mockResolvedValue(0),
-      // #1554 — nextOrdinal on a reused appointment: one RESCHEDULED row
-      // already sits at ordinal 1, so the replacement takes 2.
+      // #1554 — nextOrdinal for a genuinely NEW call on a reused wrapper:
+      // one row already sits at ordinal 1, so a fresh call takes 2.
       aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 1 } }),
     },
     // pg_advisory_xact_lock inside guardInitialAllocationInTx.
@@ -632,6 +635,72 @@ describe("Manual allocation", () => {
         endsAt: new Date("2025-01-13T11:00:00Z"),
       }),
     ]);
+  });
+
+  it("a rescheduled call keeps its ordinal (#1554)", async () => {
+    // Week 2 of a three-call plan was released (RESCHEDULED + tentative). The
+    // replacement must be call 2 again — max+1 would read 1,3,4 and break
+    // every "N of M" display.
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodEndsAt: new Date("2025-01-24T00:00:00Z"),
+      }),
+    );
+    const row = (
+      id: string,
+      ordinal: number,
+      day: string,
+      tentative: boolean,
+    ) => ({
+      id,
+      ordinal,
+      startsAt: new Date(`${day}T10:00:00Z`),
+      endsAt: new Date(`${day}T11:00:00Z`),
+      isTentative: tentative,
+      completionStatus: tentative ? "RESCHEDULED" : "SCHEDULED",
+      meetingSession: null,
+    });
+    const wrapper = {
+      id: "sub-wrapper",
+      occurrences: [
+        row("occ-1", 1, "2025-01-06", false),
+        row("occ-2", 2, "2025-01-13", true),
+        row("occ-3", 3, "2025-01-20", false),
+      ],
+      participants: [],
+      _count: { payment: 1 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([wrapper]);
+    mockTx.appointment.findFirst.mockResolvedValue({
+      id: "sub-wrapper",
+      cancellationPolicyId: null,
+    });
+    // Surviving rows top out at 3, so max+1 would hand the replacement 4.
+    mockTx.appointmentOccurrence.aggregate.mockResolvedValue({
+      _max: { ordinal: 3 },
+    });
+    mockTx.appointment.update.mockResolvedValue({
+      id: "sub-wrapper",
+      occurrences: [],
+    });
+
+    const result = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: ["2025-01-14T10:00:00Z", "2025-01-14T10:30:00Z"],
+      expectedTentativeSlotCount: 1,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(mockTx.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sub-wrapper" },
+        data: expect.objectContaining({
+          occurrences: { create: [expect.objectContaining({ ordinal: 2 })] },
+        }),
+      }),
+    );
   });
 });
 
@@ -2304,11 +2373,21 @@ describe("deleteExistingAppointments", () => {
   it("#898: REUSEs a payment-bearing consultation appointment on full-delete (update, not create)", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
 
-    // Paid consultation appointment (slots already stripped) reaches full-delete.
+    // Paid consultation appointment reaches full-delete; its sessionless row
+    // (ordinal 1) is stripped and the replacement inherits that position.
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "paid-consult-apt",
-        occurrences: [],
+        occurrences: [
+          {
+            id: "old-1",
+            ordinal: 1,
+            startsAt: new Date("2024-12-30T10:00:00Z"),
+            endsAt: new Date("2024-12-30T11:00:00Z"),
+            isTentative: false,
+            meetingSession: null,
+          },
+        ],
         participants: [],
         _count: { payment: 1 },
       },
@@ -2326,14 +2405,14 @@ describe("deleteExistingAppointments", () => {
     });
 
     expect(result.success).toBe(true);
-    // New occurrence attaches to the SAME appointment (REUSE), at the next
-    // ordinal so the unique holds beside the replaced row (#1554)...
+    // New occurrence attaches to the SAME appointment (REUSE) and keeps the
+    // replaced row's position (#1554 — a rescheduled call keeps its ordinal)...
     expect(mockTx.appointment.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "paid-consult-apt" },
         data: expect.objectContaining({
           occurrences: {
-            create: [expect.objectContaining({ ordinal: 2 })],
+            create: [expect.objectContaining({ ordinal: 1 })],
           },
         }),
       }),

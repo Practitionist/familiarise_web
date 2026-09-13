@@ -13,6 +13,15 @@ ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_time_o
 -- SPLIT
 ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_time_order" CHECK ("endsAt" > "startsAt");
 -- SPLIT
+-- #1554 — `ordinal` is the call's position in its purchase and a replacement
+-- written after a reschedule inherits it, so the unique holds over LIVE rows
+-- only; the RESCHEDULED / CANCELLED row keeps its number for history.
+DROP INDEX IF EXISTS "appointment_occurrence_live_ordinal_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "appointment_occurrence_live_ordinal_key"
+  ON "AppointmentOccurrence" ("appointmentId", "ordinal")
+  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL;
+-- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative" CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0);
