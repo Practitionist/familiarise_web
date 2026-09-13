@@ -315,10 +315,21 @@ function seedAccess(
   const startsAt = new Date(Date.now() - 5 * MINUTE);
   const endsAt = new Date(Date.now() + (opts.slotEndsInMs ?? 25 * MINUTE));
 
+  // #1554 — the gate evaluates the meeting's OWN occurrence, which the
+  // resolver's include already carries; no separate occurrence read.
   db.meeting.findUnique.mockResolvedValue({
     id: "ms-1",
     streamCallId: "slot-abc",
+    endedAt: null,
+    endedReason: null,
     occurrence: {
+      id: "slot-1",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-1",
       appointment: { id: "appt-1", deletedAt: null, ...appointment },
     },
   });
@@ -327,17 +338,7 @@ function seedAccess(
   db.appointmentParticipant.findFirst.mockResolvedValue(
     opts.joinerIsParticipant === false ? null : { id: "seat-1" },
   );
-  db.appointmentOccurrence.findMany.mockResolvedValue([
-    {
-      id: "slot-1",
-      startsAt,
-      endsAt,
-      isTentative: false,
-      completionStatus: "SCHEDULED",
-      appointmentId: "appt-1",
-      meeting: { id: "ms-1", endedAt: null },
-    },
-  ]);
+  db.appointmentOccurrence.findMany.mockResolvedValue([]);
   db.appointmentOccurrence.findFirst.mockResolvedValue(null);
   db.collaborator.findFirst.mockResolvedValue(null);
   db.user.findUnique.mockResolvedValue({ consultantProfileId: null });
@@ -518,5 +519,44 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
     expect(access.hasAccess).toBe(false);
     expect(access.message).toBe("This session has ended.");
+  });
+
+  it("gates on the meeting's OWN call, not the wrapper's next one (#1554)", async () => {
+    // A subscription wrapper holds many calls. This room belongs to a call
+    // that ended 45 minutes ago; the wrapper's next call is live right now.
+    // Evaluating "the current or next occurrence" would admit the visitor
+    // into the wrong room — the gate must read the meeting's occurrence.
+    seedAccess(
+      {
+        ...consultation("APPROVED"),
+        consultation: null,
+        subscription: {
+          status: "SCHEDULED",
+          subscriptionPlan: {
+            consultantProfileId: "cp-1",
+            recordingEnabled: false,
+          },
+        },
+      },
+      { slotEndsInMs: -45 * MINUTE },
+    );
+    db.appointmentOccurrence.findMany.mockResolvedValue([
+      {
+        id: "slot-live",
+        startsAt: new Date(Date.now() - 5 * MINUTE),
+        endsAt: new Date(Date.now() + 25 * MINUTE),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+        appointmentId: "appt-1",
+        meeting: null,
+      },
+    ]);
+
+    const access = await resolveMeetingAccess("slot-abc", "user_1");
+
+    expect(access.hasAccess).toBe(false);
+    expect(access.message).toBe("This session has ended.");
+    // And nothing enumerated the wrapper's other calls to decide it.
+    expect(db.appointmentOccurrence.findMany).not.toHaveBeenCalled();
   });
 });

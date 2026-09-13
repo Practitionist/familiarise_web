@@ -12,9 +12,10 @@ import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   CONSULTANT_JOIN_WINDOW_MS,
-  getCurrentOrNextOccurrence,
   getOccurrenceJoinState,
+  isDeadOccurrence,
   isDeliberateEnd,
+  type JoinableOccurrence,
 } from "@/lib/appointments/occurrences";
 import {
   isCancelledLikeStatus,
@@ -215,31 +216,25 @@ const REJOIN_GRACE_MS = 30 * 60 * 1000;
  *
  * Returns null when joining is permitted; otherwise a user-facing refusal.
  */
-async function meetingPolicyRefusal(args: {
-  appointmentId: string;
+/**
+ * The row the gate evaluates: the meeting's OWN occurrence (#1554 — the
+ * Stream room is keyed to one call, and a multi-call wrapper must not have
+ * another of its calls answer for it), with the meeting's end state.
+ */
+export type GatedOccurrence = JoinableOccurrence & {
+  meeting: { id: string; endedAt: Date | null; endedReason: string | null };
+};
+
+export async function meetingPolicyRefusal(args: {
+  occurrence: GatedOccurrence;
   role: Exclude<MeetingRole, null>;
   streamCallId: string;
 }): Promise<string | null> {
   const now = new Date();
-
-  const slots = await prisma.appointmentOccurrence.findMany({
-    where: { appointmentId: args.appointmentId, deletedAt: null },
-    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
-    select: {
-      id: true,
-      startsAt: true,
-      endsAt: true,
-      isTentative: true,
-      completionStatus: true,
-      appointmentId: true,
-      meeting: {
-        select: { id: true, endedAt: true, endedReason: true },
-      },
-    },
-  });
-
-  const occurrence = getCurrentOrNextOccurrence(slots, now);
-  if (!occurrence) return "This session has no active time slot.";
+  const { occurrence } = args;
+  if (isDeadOccurrence(occurrence)) {
+    return "This session has no active time slot.";
+  }
 
   const state = getOccurrenceJoinState(occurrence, {
     joinWindowMs:
@@ -270,8 +265,8 @@ async function meetingPolicyRefusal(args: {
 
       // Inside the clock grace, a reconnect is fine.
       if (
-        now.getTime() <=
-        new Date(occurrence.endsAt).getTime() + REJOIN_GRACE_MS
+        occurrence.endsAt &&
+        now.getTime() <= new Date(occurrence.endsAt).getTime() + REJOIN_GRACE_MS
       )
         return null;
 
@@ -401,7 +396,14 @@ export async function resolveMeetingAccess(
       };
     }
     const refusal = await meetingPolicyRefusal({
-      appointmentId: appointment.id,
+      occurrence: {
+        ...meeting.occurrence,
+        meeting: {
+          id: meeting.id,
+          endedAt: meeting.endedAt,
+          endedReason: meeting.endedReason,
+        },
+      },
       role,
       streamCallId,
     });
