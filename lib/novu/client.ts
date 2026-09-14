@@ -4,19 +4,20 @@
  * Pattern follows lib/stream-client.ts
  */
 import { Novu } from "@novu/api";
+import { resolveNovuSecretKey } from "./secret-key";
 
-const NOVU_SECRET_KEY = process.env.NOVU_SECRET_KEY;
+const { name: NOVU_KEY_NAME, key: NOVU_KEY } = resolveNovuSecretKey();
 
 let novuInstance: Novu | null = null;
 
 export function isNovuConfigured(): boolean {
-  return !!NOVU_SECRET_KEY;
+  return !!NOVU_KEY;
 }
 
 export function validateNovuConfig(): void {
-  if (!NOVU_SECRET_KEY) {
+  if (!NOVU_KEY) {
     throw new Error(
-      "NOVU_SECRET_KEY is not configured. Please set it in your environment variables.",
+      `${NOVU_KEY_NAME} is not configured. Please set it in your environment variables.`,
     );
   }
 }
@@ -31,7 +32,7 @@ export function getNovuClient(): Novu {
     // Prisma connection. The caller's deadline stops US waiting; these stop the
     // orphaned request from burning the instance after we have moved on.
     novuInstance = new Novu({
-      secretKey: NOVU_SECRET_KEY!,
+      secretKey: NOVU_KEY!,
       timeoutMs: 5_000,
       retryConfig: {
         strategy: "backoff",
