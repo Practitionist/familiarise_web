@@ -18,9 +18,9 @@ The platform distinguishes channel purposes by ID prefix; the canonical prefix c
 | -------------------------- | -------------------------------- | ------------ | ----------------------------- |
 | Direct message             | `dm-{...}`                       | `messaging`  | The two participants          |
 | Webinar event              | `webinar-{webinarId}`            | `team`       | Host + participants           |
-| Class event                | `class-{classId}`                | `team`       | Host + participants           |
+| Class event                | `class-{cohortId}`               | `team`       | Host + participants           |
 | **Collaborator (webinar)** | `collab-webinar-{webinarPlanId}` | `messaging`  | Host + accepted collaborators |
-| **Collaborator (class)**   | `collab-class-{classPlanId}`     | `messaging`  | Host + accepted collaborators |
+| **Collaborator (class)**   | `collab-class-{cohortPlanId}`    | `messaging`  | Host + accepted collaborators |
 
 The `consultation-{id}` and `subscription-{id}` patterns are **legacy** — nothing creates them any more (#1134 P0-7); 1:1 conversations are DMs. `getChannelTypeFromId()` still resolves all messaging-side prefixes (including `collab-`) so existing rows keep working.
 

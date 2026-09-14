@@ -104,7 +104,7 @@ erDiagram
     SubscriptionPlan ||--o{ Subscription : "has many"
     SubscriptionPlan ||--o{ Trial : "has many"
     WebinarPlan ||--|| Webinar : "has one"
-    ClassPlan ||--|| Class : "has one"
+    CohortPlan ||--|| Class : "has one"
 
     Consultation ||--o| Appointment : "has one"
     Subscription ||--o{ Appointment : "has many (1 placeholder + M sessions)"
@@ -154,7 +154,7 @@ flowchart TD
     CHECK_TYPE -->|CONSULTATION| CONSULT[handleConsultationCheckout]
     CHECK_TYPE -->|SUBSCRIPTION| SUB[handleSubscriptionCheckout]
     CHECK_TYPE -->|WEBINAR| WEB[handleWebinarCheckout]
-    CHECK_TYPE -->|CLASS| CLS[handleClassCheckout]
+    CHECK_TYPE -->|COHORT| CLS[handleCohortCheckout]
     CHECK_TYPE -->|TRIAL| TRIAL[Trial Flow - No Checkout Handler]
     CHECK_TYPE -->|Other| ERR[Throw: Invalid appointment type]
 
@@ -514,7 +514,7 @@ A class is a recurring, 1:many event with multiple sessions. It combines the mul
 
 A class has M sessions, but there is still only ONE Appointment record for the whole class -- the wrapper. Each session is one AppointmentOccurrence row under that wrapper, not a separate Appointment. When a user enrolls, checkout adds a single AppointmentParticipant row on the wrapper; that one row is the enrollee's seat for every session, because the roster is scoped to the Appointment, not to an individual occurrence.
 
-The reason this matters at the database level is the webhook confirmation. Since the seat lives on the wrapper and not on each session, confirming a class enrollment only ever flips one participant row (filtered by `classId` and `userId`), and that single flip makes every one of the class's occurrences bookable for that user.
+The reason this matters at the database level is the webhook confirmation. Since the seat lives on the wrapper and not on each session, confirming a class enrollment only ever flips one participant row (filtered by `cohortId` and `userId`), and that single flip makes every one of the class's occurrences bookable for that user.
 
 #### Capacity: Unique Participant Counting
 
@@ -537,7 +537,7 @@ sequenceDiagram
     CE->>SYS: Browse class listing, click "Enroll"
 
     rect rgb(255, 249, 220)
-        Note over SYS,DB: handleClassCheckout (checkout.ts L2656)
+        Note over SYS,DB: handleCohortCheckout (checkout.ts L2656)
         SYS->>DB: Fetch class with plan, the wrapper's occurrences, and live participants
         SYS->>DB: countUniqueParticipants across the wrapper's roster
 
@@ -565,7 +565,7 @@ sequenceDiagram
         Note over WH,DB: handlePaymentSuccess Phase 1
         WH->>DB: Mark payment SUCCEEDED
         WH->>DB: confirmExistingAppointment
-        Note over WH,DB: For CLASS: setParticipantStatus<br/>WHERE classId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
+        Note over WH,DB: For COHORT: setParticipantStatus<br/>WHERE cohortId AND userId AND status=HELD<br/>flips to CONFIRMED once, covering every session
         WH->>DB: UPDATE Class status = SCHEDULED
     end
 
@@ -599,23 +599,23 @@ Because AppointmentParticipant is the only participant list and it is scoped to 
 #### Class-Specific Confirmation Behavior
 
 ```typescript
-// confirmExistingAppointment for CLASS:
+// confirmExistingAppointment for COHORT:
 await setParticipantStatus(
   tx,
-  { appointment: { classId }, userId, status: "HELD" },
+  { appointment: { cohortId }, userId, status: "HELD" },
   "CONFIRMED",
 );
 ```
 
-This scopes by `classId` (not a single `appointmentId`) because the class's wrapper is looked up by its class relation, and it flips exactly one participant row rather than any occurrence. This matters because the Payment record links to the wrapper Appointment, and that one Appointment already carries every session as an occurrence.
+This scopes by `cohortId` (not a single `appointmentId`) because the class's wrapper is looked up by its class relation, and it flips exactly one participant row rather than any occurrence. This matters because the Payment record links to the wrapper Appointment, and that one Appointment already carries every session as an occurrence.
 
 #### Source References
 
-- `handleClassCheckout()`: `lib/payments/operations/checkout.ts` line 2656
+- `handleCohortCheckout()`: `lib/payments/operations/checkout.ts` line 2656
 - Participant seating: `recordParticipants()` call in `lib/payments/operations/checkout.ts` around line 2739
 - Unique participant counting: `countUniqueParticipants()` in `lib/payments/utils/participants.ts`
 - Class-specific confirmation: `lib/payments/webhooks/handlers.ts` line 1851
-- `completeClasses()`: `scripts/appointments/auto-complete-appointments.ts`
+- `completeCohorts()`: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -916,9 +916,9 @@ stateDiagram-v2
 
 **Important**: `COMPLETED` to `CONVERTED` is not triggered by the cron job. It happens inside `handleSubscriptionCheckout()` when the system finds a completed trial from the same consultee for the same consultant and links it to the new subscription.
 
-### 8c. WebinarStatus / ClassStatus
+### 8c. WebinarStatus / CohortStatus
 
-Used by `Webinar.status` and `Class.status`. Both enums share the same values and transition logic.
+Used by `Webinar.status` and `Cohort.status`. Both enums share the same values and transition logic.
 
 ```mermaid
 stateDiagram-v2
@@ -1068,7 +1068,7 @@ The reason the system marks the payment as SUCCEEDED (not FAILED) is truthfulnes
 
 **Scenario**: A consultant wants to add a new session to a class after users have already enrolled.
 
-**What happens**: Checkout refuses to seat a new enrollee until every session the plan promises (`classPlan.totalSessions`) already exists as an occurrence on the wrapper, so a class does not normally reach "enrolled" and "partially scheduled" at the same time. If a consultant adds an occurrence to an already-enrolled class's wrapper regardless, every existing AppointmentParticipant row picks it up immediately, because the roster is scoped to the Appointment, not to an individual occurrence -- there is no separate "sync enrollment" step required or possible.
+**What happens**: Checkout refuses to seat a new enrollee until every session the plan promises (`cohortPlan.totalSessions`) already exists as an occurrence on the wrapper, so a class does not normally reach "enrolled" and "partially scheduled" at the same time. If a consultant adds an occurrence to an already-enrolled class's wrapper regardless, every existing AppointmentParticipant row picks it up immediately, because the roster is scoped to the Appointment, not to an individual occurrence -- there is no separate "sync enrollment" step required or possible.
 
 ### 9g. Late Failure Webhook After Success
 
@@ -1157,7 +1157,7 @@ The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries
 | Function                  | Finds                                                                                          | Transition                 | Extra Actions                                               |
 | ------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------- |
 | `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED        | None                                                        |
-| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED        | None                                                        |
+| `completeCohorts()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED        | None                                                        |
 | `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None                                                        |
 | `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None                                                        |
 | `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED        | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |

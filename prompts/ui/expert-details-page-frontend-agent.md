@@ -82,7 +82,7 @@ model ConsultantProfile {
   consultationPlans           ConsultationPlan[]
   subscriptionPlans           SubscriptionPlan[]
   webinarPlans                WebinarPlan[]
-  classPlans                  ClassPlan[]
+  cohortPlans                  CohortPlan[]
 }
 ```
 
@@ -217,7 +217,7 @@ model WebinarPlan {
 }
 
 // Multi-session cohort programs
-model ClassPlan {
+model CohortPlan {
   id                     String
   title                  String
   description            String   @db.Text
@@ -239,7 +239,7 @@ model ClassPlan {
   recordingEnabled       Boolean
   imageUrl               String?
   topics                 Topic[]
-  classContents          ClassContent[]
+  cohortContents          CohortContent[]
   materials              PlanMaterial[]
   classes                Class[]        // Scheduled cohort instances
   consultantProfileId    String?
@@ -306,7 +306,7 @@ model SubscriptionContent {
   description String?
 }
 
-model ClassContent {
+model CohortContent {
   id          String
   title       String
   description String?
@@ -321,13 +321,13 @@ model Webinar {
   webinarPlan WebinarPlan
 }
 
-// Scheduled cohort instances of ClassPlan
-model Class {
+// Scheduled cohort instances of CohortPlan
+model Cohort {
   id        String
   startsAt  DateTime
   endsAt    DateTime
-  status    ClassStatus
-  classPlan ClassPlan
+  status    CohortStatus
+  cohortPlan CohortPlan
 }
 ```
 
@@ -383,9 +383,9 @@ type TConsultantDetailData = {
     subscriptionContents: SubscriptionContent[];
   })[];
   webinarPlans: (WebinarPlan & { webinars: Webinar[] })[];
-  classPlans: (ClassPlan & {
+  cohortPlans: (CohortPlan & {
     classes: Class[];
-    classContents: ClassContent[];
+    cohortContents: CohortContent[];
   })[];
 };
 
@@ -515,16 +515,16 @@ Each `WebinarPlan` card shows:
 - CTA: "Register" → routes to checkout
 
 **Classes (Cohort programs)**
-Each `ClassPlan` card shows:
+Each `CohortPlan` card shows:
 
 - Title + cover image
 - Price
 - Program structure: "X months · Y sessions/week · Z total hours"
 - Max participants (small group indicator if ≤ 10)
 - Certificate + recording badges
-- Curriculum (`classContents` — show titles as a numbered list, collapsed)
+- Curriculum (`cohortContents` — show titles as a numbered list, collapsed)
 - Learning outcomes
-- Upcoming cohort instances via `classPlan.classes`
+- Upcoming cohort instances via `cohortPlan.classes`
 - CTA: "Enrol" → routes to checkout
 
 ---

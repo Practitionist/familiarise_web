@@ -111,15 +111,15 @@ enum WebinarStatus {
 
 ---
 
-### ClassStatus
+### CohortStatus
 
 **Location**: `prisma/schema.prisma`
-**Model**: `Class`
+**Model**: `Cohort`
 
 Tracks the **execution** state of classes.
 
 ```prisma
-enum ClassStatus {
+enum CohortStatus {
   SCHEDULED
   IN_PROGRESS
   COMPLETED
@@ -423,20 +423,20 @@ AppointmentStatus: PENDING or EXPIRED
 
 ---
 
-### Webinar/Class Execution Flow
+### Webinar/Cohort Execution Flow
 
 ```
 Appointment: Created
     ↓
-WebinarStatus/ClassStatus: SCHEDULED
+WebinarStatus/CohortStatus: SCHEDULED
     ↓
 Event: Start Time Reached
     ↓
-WebinarStatus/ClassStatus: IN_PROGRESS
+WebinarStatus/CohortStatus: IN_PROGRESS
     ↓
 Event: End Time Reached
     ↓
-WebinarStatus/ClassStatus: COMPLETED
+WebinarStatus/CohortStatus: COMPLETED
 ```
 
 ---
@@ -527,11 +527,11 @@ If Escalated:
 
 3. **Handle race conditions** - payments can succeed/fail while user is still on checkout page
 
-### When Working with WebinarStatus/ClassStatus
+### When Working with WebinarStatus/CohortStatus
 
 1. **Separate booking state from execution state**
    - AppointmentStatus: Tracks the booking/approval process
-   - WebinarStatus/ClassStatus: Tracks the event execution
+   - WebinarStatus/CohortStatus: Tracks the event execution
 
 2. **Don't transition to IN_PROGRESS until event actually starts**
    - Use scheduled jobs or manual triggers

@@ -94,7 +94,7 @@ import { withCircuitBreaker, checkRedisHealth } from "@/lib/redis";
 | `unlockApproval`           | Release any approval lock     | N/A         | `void`                         |
 | `lockSlotBooking`          | Lock time slot for booking    | 60s         | `ApprovalLock`                 |
 | `unlockSlotBooking`        | Release slot booking lock     | N/A         | `void`                         |
-| `lockEventCheckout`        | Lock event for checkout       | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s | `ApprovalLock`                 |
+| `lockEventCheckout`        | Lock event for checkout       | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / COHORT 300s | `ApprovalLock`                 |
 | `lockAutoAllocate`         | Lock auto-allocation (consultant-level) | 150s | `ApprovalLock`          |
 | `unlockAutoAllocate`       | Release auto-allocate lock    | N/A         | `void`                         |
 | `unlockEventCheckout`      | Release event checkout lock   | N/A         | `void`                         |
@@ -461,7 +461,7 @@ async function lockEventCheckout(
 
 | Parameter         | Type     | Required | Default | Description                                                    |
 | ----------------- | -------- | -------- | ------- | -------------------------------------------------------------- |
-| `appointmentType` | `string` | Yes      | -       | Type of appointment (`"WEBINAR"`, `"CLASS"`, `"SUBSCRIPTION"`) |
+| `appointmentType` | `string` | Yes      | -       | Type of appointment (`"WEBINAR"`, `"COHORT"`, `"SUBSCRIPTION"`) |
 | `eventOrPlanId`   | `string` | Yes      | -       | Event ID or subscription plan ID                               |
 | `ttl`             | `number` | No       | `60000` | Time-to-live in milliseconds (60 seconds default)              |
 
@@ -528,7 +528,7 @@ async function acquireEventSlot(
 
 | Parameter         | Type     | Required | Default  | Description                                              |
 | ----------------- | -------- | -------- | -------- | -------------------------------------------------------- |
-| `eventType`       | `string` | Yes      | -        | Type of event (`"WEBINAR"`, `"CLASS"`)                   |
+| `eventType`       | `string` | Yes      | -        | Type of event (`"WEBINAR"`, `"COHORT"`)                   |
 | `eventId`         | `string` | Yes      | -        | Unique event identifier                                  |
 | `maxParticipants` | `number` | Yes      | -        | Maximum concurrent reservations allowed                  |
 | `ttl`             | `number` | No       | `300000` | Reservation TTL in ms (5 minutes for payment completion) |
@@ -947,7 +947,7 @@ const delay = exponentialBackoff
 export interface EventSlotReservation {
   reservationId: string; // Unique reservation UUID
   slotNumber: number; // Slot number (1 to maxParticipants)
-  eventType: string; // Event type (WEBINAR, CLASS)
+  eventType: string; // Event type (WEBINAR, COHORT)
   eventId: string; // Event identifier
 }
 ```
@@ -1068,7 +1068,7 @@ Redis Namespace
 | Consultation Approval     | 60 seconds                                                                         | 59.4 seconds                   | Payment link generation          |
 | Subscription Approval     | 60 seconds                                                                         | 59.4 seconds                   | Subscription processing          |
 | Slot Booking              | 60 seconds                                                                         | 59.4 seconds                   | Time slot allocation             |
-| Event Checkout            | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s | varies                         | Webinar/class/subscription checkout |
+| Event Checkout            | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / COHORT 300s | varies                         | Webinar/class/subscription checkout |
 | Auto-Allocate             | 150 seconds (consultant-level; NOT narrowed per slot — #860 tracks that)           | ~148.5 seconds                 | Auto-allocation serialization    |
 | Event Slot (Semaphore)    | 5 minutes                                                                          | 4.95 minutes                   | Multi-participant payment window |
 | Appointment Lock (Legacy) | 5 minutes                                                                          | 4.95 minutes                   | Complex time slot allocation     |

@@ -32,7 +32,7 @@ The three unenforced flags are **write-only**: the invite and update APIs persis
 
 ## The enforced surface: participant rosters
 
-`GET /api/participants/webinar/[webinarId]` and `GET /api/participants/class/[classId]` return the event's roster. For non-privileged callers the query itself constrains visibility: the event must belong to a plan the caller **owns**, or a plan on which the caller is an **`ACCEPTED` collaborator with `canSeeAttendees: true`**. Everyone else receives 404 — the event's existence is not confirmed to callers with no right to its roster.
+`GET /api/participants/webinar/[webinarId]` and `GET /api/participants/cohort/[cohortId]` return the event's roster. For non-privileged callers the query itself constrains visibility: the event must belong to a plan the caller **owns**, or a plan on which the caller is an **`ACCEPTED` collaborator with `canSeeAttendees: true`**. Everyone else receives 404 — the event's existence is not confirmed to callers with no right to its roster.
 
 ```typescript
 // app/api/participants/webinar/[webinarId]/route.ts

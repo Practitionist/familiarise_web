@@ -46,7 +46,7 @@ Unified validation for all 4 event types. Takes a `PrismaClient` or transaction 
 | `validateConsultation` | Same day + consecutive + exact slot count                          |
 | `validateSubscription` | Delegates to `SubscriptionValidationService`                       |
 | `validateWebinar`      | Consecutive + exact slot count                                     |
-| `validateClass`        | Complete sessions per day + consecutive within day + weekly limits |
+| `validateCohort`       | Complete sessions per day + consecutive within day + weekly limits |
 
 ```mermaid
 sequenceDiagram
@@ -63,7 +63,7 @@ sequenceDiagram
     VS->>DB: validateNoConflicts(slots, consultantId)
     DB-->>VS: Existing appointments
     VS->>VS: validateSchedulingPeriod(slots, start, end)
-    VS->>VS: validateConsultation/Subscription/Webinar/Class
+    VS->>VS: validateConsultation/Subscription/Webinar/Cohort
     VS-->>API: ValidationResult {isValid, errors, warnings}
 ```
 
@@ -179,12 +179,12 @@ erDiagram
     ConsultationPlan ||--o{ Consultation : creates
     SubscriptionPlan ||--o{ Subscription : creates
     WebinarPlan ||--o{ Webinar : creates
-    ClassPlan ||--o{ ClassEvent : creates
+    CohortPlan ||--o{ CohortEvent : creates
 
     Consultation ||--o| Appointment : "has one"
     Subscription ||--o| Appointment : "has one wrapper"
     Webinar ||--o| Appointment : "has one"
-    ClassEvent ||--o| Appointment : "has one wrapper"
+    CohortEvent ||--o| Appointment : "has one wrapper"
 
     Appointment ||--|{ AppointmentOccurrence : "contains (one per call)"
     Appointment ||--o{ AppointmentParticipant : "the only roster"
@@ -203,7 +203,7 @@ erDiagram
         string consultationId FK
         string subscriptionId FK
         string webinarId FK
-        string classId FK
+        string cohortId FK
     }
 
     AppointmentOccurrence {
@@ -215,7 +215,7 @@ erDiagram
     }
 ```
 
-> Note: we are using ClassEvent instead of Class because Class is a reserved keyword in Mermaid.
+> Note: we are using CohortEvent instead of Class because Class is a reserved keyword in Mermaid.
 
 **Key relationships**:
 

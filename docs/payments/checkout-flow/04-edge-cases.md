@@ -527,7 +527,7 @@ await tx.webinar.update({
 
 ```typescript
 // Counted total slots across all sessions
-const currentParticipants = classInstance.appointments.reduce(
+const currentParticipants = cohortInstance.appointments.reduce(
   (total, apt) => total + apt.appointmentOccurrences.length,
   0,
 );
@@ -539,7 +539,7 @@ const currentParticipants = classInstance.appointments.reduce(
 ```typescript
 // Count unique users across all sessions
 const uniqueUserIds = new Set<string>();
-for (const apt of classInstance.appointments) {
+for (const apt of cohortInstance.appointments) {
   for (const slot of apt.appointmentOccurrences) {
     if (slot.user && Array.isArray(slot.user)) {
       slot.user.forEach((u) => uniqueUserIds.add(u.id));
@@ -821,7 +821,7 @@ const totalSessions = 13 * 2 = 26 sessions
 
 **Current Implementation:**
 
-**File:** `/app/api/bookings/classes/crud-with-plan/route.ts` (lines 162-164)
+**File:** `/app/api/bookings/cohorts/crud-with-plan/route.ts` (lines 162-164)
 
 ```typescript
 // Calculate total sessions
@@ -835,8 +835,8 @@ Array.from({
   sessionDate.setDate(sessionDate.getDate() + weekOffset * 7 + dayOffset);
 
   return {
-    appointmentType: AppointmentsType.CLASS,
-    classId: createdClass.id,
+    appointmentType: AppointmentsType.COHORT,
+    cohortId: createdCohort.id,
     appointmentOccurrences: {
       create: {
         startsAt: sessionDate,
@@ -956,7 +956,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 **Session Calculations:**
 
 - Subscription: `/lib/payments/operations/checkout.ts`
-- Class: `/app/api/bookings/classes/crud-with-plan/route.ts`
+- Class: `/app/api/bookings/cohorts/crud-with-plan/route.ts`
 
 **Error Handling:**
 
@@ -975,7 +975,7 @@ Key models:
 - `AppointmentOccurrence` - Time slots
 - `Refund` - Refund records
 - `Dispute` - Dispute records
-- `Consultation`, `Subscription`, `Webinar`, `Class` - Event types
+- `Consultation`, `Subscription`, `Webinar`, `Cohort` - Event types
 
 ---
 
@@ -989,7 +989,7 @@ Key models:
 // Consultation: /app/checkout/plans/consultation/[consultationPlanId]/page.tsx
 // Subscription: /app/checkout/plans/subscription/[subscriptionPlanId]/page.tsx
 // Webinar: /app/checkout/plans/webinar/[webinarId]/page.tsx
-// Class: /app/checkout/plans/class/[classPlanId]/page.tsx
+// Class: /app/checkout/plans/class/[cohortPlanId]/page.tsx
 ```
 
 **API Calls:**

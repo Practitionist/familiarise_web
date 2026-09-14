@@ -345,8 +345,8 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- CLASS PLAN (8 sessions over 2 months, 2 meetings/week, 1.5 hours each, INR 8000, max 20)
-INSERT INTO "ClassPlan" (
+-- COHORT PLAN (8 sessions over 2 months, 2 meetings/week, 1.5 hours each, INR 8000, max 20)
+INSERT INTO "CohortPlan" (
   id, title, description, price, "priceCurrency",
   "certificateProvided", "recordingEnabled",
   "durationInMonths", "sessionsPerWeek",
@@ -390,12 +390,12 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- Create a CLASS instance with scheduling period (next 2 months)
-INSERT INTO "Class" (
+-- Create a COHORT instance with scheduling period (next 2 months)
+INSERT INTO "Cohort" (
   id, status,
   "schedulingPeriodStartsAt", "schedulingPeriodEndsAt",
   "schedulingTimezone",
-  "classPlanId",
+  "cohortPlanId",
   "createdAt", "updatedAt"
 )
 VALUES (
@@ -432,11 +432,11 @@ SELECT id, "startsAt", "endsAt" FROM "AvailabilityWindowCustom" WHERE "consultan
 SELECT id, title, price, "durationInHours" FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';
 SELECT id, title, price, "sessionsPerWeek", "totalSessions", "durationInMonths" FROM "SubscriptionPlan" WHERE id = 'test-subscription-plan-001';
 SELECT id, title, price, "maxParticipants", "durationInHours" FROM "WebinarPlan" WHERE id = 'test-webinar-plan-001';
-SELECT id, title, price, "maxParticipants", "sessionsPerWeek", "totalSessions" FROM "ClassPlan" WHERE id = 'test-class-plan-001';
+SELECT id, title, price, "maxParticipants", "sessionsPerWeek", "totalSessions" FROM "CohortPlan" WHERE id = 'test-class-plan-001';
 
 -- Verify webinar/class instances
 SELECT id, status, "webinarPlanId" FROM "Webinar" WHERE id = 'test-webinar-001';
-SELECT id, status, "classPlanId", "schedulingPeriodStartsAt", "schedulingPeriodEndsAt" FROM "Class" WHERE id = 'test-class-001';
+SELECT id, status, "cohortPlanId", "schedulingPeriodStartsAt", "schedulingPeriodEndsAt" FROM "Cohort" WHERE id = 'test-class-001';
 
 -- Verify accounts
 SELECT id, "userId", "providerId" FROM accounts WHERE "userId" LIKE 'test-%';
@@ -1016,7 +1016,7 @@ async () => {
 
 ---
 
-## PHASE 4: CLASS TESTING
+## PHASE 4: COHORT TESTING
 
 ### Overview
 
@@ -1048,7 +1048,7 @@ async () => {
   }
 
   const response = await fetch(
-    "/api/bookings/classes/test-class-001/allocate",
+    "/api/bookings/cohorts/test-class-001/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1068,7 +1068,7 @@ async () => {
 SELECT a.id, soa."startsAt", soa."endsAt"
 FROM "Appointment" a
 JOIN "AppointmentOccurrence" soa ON soa."appointmentId" = a.id
-WHERE a."classId" = 'test-class-001'
+WHERE a."cohortId" = 'test-class-001'
 ORDER BY soa."startsAt" ASC;
 ```
 
@@ -1082,7 +1082,7 @@ async () => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      appointmentType: "CLASS",
+      appointmentType: "COHORT",
       planId: "test-class-plan-001",
       eventId: "test-class-001",
       paymentGateway: "STRIPE",
@@ -1720,7 +1720,7 @@ SELECT 'AppointmentOccurrence', COUNT(*) FROM "AppointmentOccurrence" WHERE "app
   WHERE c."consultationPlanId" = 'test-consultation-plan-001'
      OR s."subscriptionPlanId" = 'test-subscription-plan-001'
      OR a."webinarId" = 'test-webinar-001'
-     OR a."classId" = 'test-class-001'
+     OR a."cohortId" = 'test-class-001'
 )
 UNION ALL
 SELECT 'Payments', COUNT(*) FROM "Payment" WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001')
@@ -1773,22 +1773,22 @@ DELETE FROM "AppointmentOccurrence" WHERE "appointmentId" IN (
   OR "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001')
   OR "subscriptionId" IN (SELECT id FROM "Subscription" WHERE "subscriptionPlanId" = 'test-subscription-plan-001')
   OR "webinarId" = 'test-webinar-001'
-  OR "classId" = 'test-class-001'
+  OR "cohortId" = 'test-class-001'
 );
 DELETE FROM "Payment" WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001');
 DELETE FROM "Appointment" WHERE id LIKE 'test-%'
   OR "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001')
   OR "subscriptionId" IN (SELECT id FROM "Subscription" WHERE "subscriptionPlanId" = 'test-subscription-plan-001')
   OR "webinarId" = 'test-webinar-001'
-  OR "classId" = 'test-class-001';
+  OR "cohortId" = 'test-class-001';
 DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-001';
 DELETE FROM "Subscription" WHERE "subscriptionPlanId" = 'test-subscription-plan-001';
 DELETE FROM "Webinar" WHERE id = 'test-webinar-001';
-DELETE FROM "Class" WHERE id = 'test-class-001';
+DELETE FROM "Cohort" WHERE id = 'test-class-001';
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-001';
 DELETE FROM "SubscriptionPlan" WHERE id = 'test-subscription-plan-001';
 DELETE FROM "WebinarPlan" WHERE id = 'test-webinar-plan-001';
-DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-001';
+DELETE FROM "CohortPlan" WHERE id = 'test-class-plan-001';
 DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-001';
 DELETE FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-001';
 DELETE FROM sessions WHERE "userId" IN ('test-consultant-user-001', 'test-consultee-user-001');
@@ -1811,12 +1811,12 @@ declared on `Consultation.status` and `Subscription.status`, both of which are
 
 ```
 AppointmentStatus: PENDING | APPROVED | APPROVED_PENDING_PAYMENT | SCHEDULED | COMPLETED | REJECTED | CANCELLED | EXPIRED
-AppointmentsType: CONSULTATION | SUBSCRIPTION | WEBINAR | CLASS | TRIAL
+AppointmentsType: CONSULTATION | SUBSCRIPTION | WEBINAR | COHORT | TRIAL
 OccurrenceCompletionStatus: SCHEDULED | COMPLETED | UNVERIFIED | CANCELLED | RESCHEDULED
 PaymentStatus: PENDING | SUCCEEDED | FAILED | EXPIRED
 PaymentGateway: STRIPE | RAZORPAY | DODO_PAYMENTS | CARD
 WebinarStatus: DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
-ClassStatus: DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
+CohortStatus: DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
 TrialStatus: PENDING | AWAITING_PAYMENT | SCHEDULED | COMPLETED | CONVERTED | CANCELLED | REJECTED
 BookingSource: DIRECT_CHECKOUT | REQUEST_SUBMITTED
 CancellationReason: SCHEDULE_CONFLICT | FOUND_ALTERNATIVE | FINANCIAL_REASONS | PERSONAL_EMERGENCY | NO_LONGER_NEEDED | CONSULTANT_UNAVAILABLE | CONSULTANT_EMERGENCY | PAYMENT_FAILED | EXPIRED | CONSULTANT_ISSUE | TECHNICAL_ISSUE | MODERATION | OTHER
@@ -1857,11 +1857,11 @@ which a bare framework 405 would not, and it is what replaced the raw
 | `/api/bookings/webinars/[webinarId]/allocate`                 | PATCH                   | Allocate the webinar's time slot                            |
 | `/api/bookings/webinars/[webinarId]/validate`                 | POST                    | Validate webinar slots                                      |
 | `/api/bookings/webinars/crud-with-plan`                       | POST, PATCH             | Create/update webinar plus its plan                         |
-| `/api/bookings/classes`                                       | GET                     | List classes                                                |
-| `/api/bookings/classes/[classId]`                             | GET, PUT, DELETE        | Single class                                                |
-| `/api/bookings/classes/[classId]/allocate`                    | PATCH                   | Allocate class sessions                                     |
-| `/api/bookings/classes/[classId]/validate`                    | POST                    | Validate class slots                                        |
-| `/api/bookings/classes/crud-with-plan`                        | POST, PATCH             | Create/update class plus its plan                           |
+| `/api/bookings/cohorts`                                       | GET                     | List classes                                                |
+| `/api/bookings/cohorts/[cohortId]`                             | GET, PUT, DELETE        | Single class                                                |
+| `/api/bookings/cohorts/[cohortId]/allocate`                    | PATCH                   | Allocate class sessions                                     |
+| `/api/bookings/cohorts/[cohortId]/validate`                    | POST                    | Validate class slots                                        |
+| `/api/bookings/cohorts/crud-with-plan`                        | POST, PATCH             | Create/update class plus its plan                           |
 | `/api/appointments`                                           | GET                     | Scoped appointment list (`?orgScope=`, `?appointmentType=`) |
 | `/api/appointments/[appointmentId]`                           | GET                     | Single appointment detail                                   |
 | `/api/appointments/[appointmentId]/cancel`                    | POST                    | Cancel an appointment                                       |
@@ -1896,7 +1896,7 @@ which a bare framework 405 would not, and it is what replaced the raw
 | `/explore/experts`                                  | Consultee  | Browse consultants              |
 | `/explore/experts/[consultantId]`                   | Consultee  | Consultant profile + booking    |
 | `/explore/programs/plans/webinars/[webinarPlanId]`  | Consultee  | Webinar registration            |
-| `/explore/programs/plans/classes/[classPlanId]`     | Consultee  | Class enrollment                |
+| `/explore/programs/plans/classes/[cohortPlanId]`     | Consultee  | Class enrollment                |
 | `/checkout/plans/consultation/[planId]`             | Consultee  | Consultation checkout           |
 | `/checkout/plans/subscription/[planId]`             | Consultee  | Subscription checkout           |
 | `/checkout/plans/webinar/[planId]`                  | Consultee  | Webinar checkout                |

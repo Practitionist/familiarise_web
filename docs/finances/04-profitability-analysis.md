@@ -227,7 +227,7 @@ For **per-transaction profitability**, each transaction must cover:
 - Half-day: ₹1,999
 - Full-day: ₹3,999
 
-### CLASS PLANS
+### COHORT PLANS
 
 | Duration     | Calls/Week | Max Participants | Variable Cost | Min Price (100 txn/mo) | Min Price (500 txn/mo) |
 | ------------ | ---------- | ---------------- | ------------- | ---------------------- | ---------------------- |
@@ -292,7 +292,7 @@ WEBINAR:
 ├── Half-day:   ₹1,999   (Platform earns: ₹300)
 └── Full-day:   ₹3,999   (Platform earns: ₹600)
 
-CLASS (per month equivalent):
+COHORT (per month equivalent):
 ├── Small group (≤10):  ₹2,999/mo  (Platform earns: ₹450/mo)
 ├── Medium group (≤20): ₹4,999/mo  (Platform earns: ₹750/mo)
 └── Large group (≤50):  ₹9,999/mo  (Platform earns: ₹1,500/mo)

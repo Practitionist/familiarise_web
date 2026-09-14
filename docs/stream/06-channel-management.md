@@ -191,7 +191,7 @@ cannot reset someone else's guard. Legitimate callers always act as self:
 own id.
 
 **Its expected-set excludes events past retention.** `getWebinarIdsForUser` and
-`getClassIdsForUser` select each event's latest slot `endsAt` plus the owning
+`getCohortIdsForUser` select each event's latest slot `endsAt` plus the owning
 organization's `streamRecordingRetentionDays`, then drop events whose window
 has lapsed via `isPastRetention` in `lib/stream/channel-lifecycle.ts`. Without
 this filter the sync could lazily resurrect a channel the retention cron
@@ -395,32 +395,32 @@ flowchart TB
     DedupeWebinars --> AddToWebinars[For each webinar:<br/>addUserToEventChannel]
 
     subgraph "Class Membership"
-        GetClassesAppts[Query classes<br/>where user holds slots]
-        DedupeClasses[Deduplicate class IDs,<br/>drop events past retention]
+        GetCohortsAppts[Query classes<br/>where user holds slots]
+        DedupeCohorts[Deduplicate class IDs,<br/>drop events past retention]
 
-        GetClassesAppts --> DedupeClasses
+        GetCohortsAppts --> DedupeCohorts
     end
 
-    AddToWebinars --> GetClassesAppts
-    DedupeClasses --> AddToClasses[For each class:<br/>addUserToEventChannel]
+    AddToWebinars --> GetCohortsAppts
+    DedupeCohorts --> AddToCohorts[For each class:<br/>addUserToEventChannel]
 
-    AddToClasses --> IsConsultant{User is<br/>consultant?}
+    AddToCohorts --> IsConsultant{User is<br/>consultant?}
 
     IsConsultant -->|No| Success
     IsConsultant -->|Yes| GetHostedWebinars
 
     subgraph "Consultant Hosted Events"
         GetHostedWebinars[Query hosted webinars]
-        GetHostedClasses[Query hosted classes]
+        GetHostedCohorts[Query hosted classes]
         AddConsultantToWebinars[Add to all webinar channels]
-        AddConsultantToClasses[Add to all class channels]
+        AddConsultantToCohorts[Add to all class channels]
 
         GetHostedWebinars --> AddConsultantToWebinars
-        GetHostedClasses --> AddConsultantToClasses
+        GetHostedCohorts --> AddConsultantToCohorts
     end
 
-    AddConsultantToWebinars --> GetHostedClasses
-    AddConsultantToClasses --> Success
+    AddConsultantToWebinars --> GetHostedCohorts
+    AddConsultantToCohorts --> Success
 
     Success([Return success: true])
 

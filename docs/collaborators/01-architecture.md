@@ -41,7 +41,7 @@ The POST handler (`app/api/collaborations/webinar/[planId]/route.ts` and its cla
 `inviteCollaborator()` in `lib/collaborators/service.ts:96` then enforces the system invariants:
 
 1. **Percentage range.** The share must be greater than 0 and at most 90.
-2. **Role subset.** The merged `CollaboratorRole` enum cannot itself reject a class role on a webinar invitation, so `asPlanRole()` checks the role against the plan type's allowed subset (`WEBINAR_COLLABORATOR_ROLES` / `CLASS_COLLABORATOR_ROLES` from `schemas/collaborators.ts`).
+2. **Role subset.** The merged `CollaboratorRole` enum cannot itself reject a class role on a webinar invitation, so `asPlanRole()` checks the role against the plan type's allowed subset (`WEBINAR_COLLABORATOR_ROLES` / `COHORT_COLLABORATOR_ROLES` from `schemas/collaborators.ts`).
 3. **Invitee standing (#1580 C-P1-9).** The invited consultant profile must exist (a fabricated id would otherwise create an orphaned row), must not be soft-deleted, must be `VERIFIED`, and must belong to a user who is neither erased nor under an active ban (a ban whose `banExpires` has passed does not count). A refusal is a `CollaboratorIneligibleError`, which the route returns as 400.
 4. **Not already an attendee.** A consultant who already holds a seat on one of the plan's live events (the slot↔user join, ignoring cancelled and soft-deleted events) cannot also be a collaborator on it; the checkout guard refuses the other direction (C-P0-2). This is a 409.
 5. **The plan is open.** An archived plan (`archivedAt` set) takes no new collaborator; a missing plan reads the same way. Also a 409.
@@ -72,7 +72,7 @@ When the invited consultant opens their dashboard, the Collaborations page (powe
 `PATCH /api/collaborations/{id}/respond` carries `{ "response": "ACCEPTED" | "DECLINED", "planType": "webinar" | "class" }`. `respondToInvitation()` (`service.ts:237`) verifies three things:
 
 1. **Identity** — the record's `consultantProfileId` must match the authenticated consultant. You can only answer your own invitations.
-2. **Type match** — with the merged table, a `planType` that does not match the record (its `webinarPlanId`/`classPlanId`) is the old wrong-table lookup and returns null (#784).
+2. **Type match** — with the merged table, a `planType` that does not match the record (its `webinarPlanId`/`cohortPlanId`) is the old wrong-table lookup and returns null (#784).
 3. **Status** — the record must still be `PENDING`. You cannot re-accept an accepted invitation or revive a declined one.
 4. **The invite gates, again (#1580 C-P1-9)** — on an `ACCEPTED` response the invitee-standing, not-an-attendee and plan-open checks from §2 run a second time, because a ban, an erasure, an archive or a seat purchase can land between the invite and the answer. A decline is not gated. A refusal surfaces as 400 or 409 from the respond route.
 
@@ -111,7 +111,7 @@ Enforcement has two halves, both landing with #784:
 
 The guard is a no-op when the plan has no accepted collaborators, runs inside the scheduling transaction so its read stays consistent with the slot write that follows, and asks one aggregate query on the common no-conflict path (the per-co-host probe runs only when a clash is already certain).
 
-**Layer 2 covers both plan types.** `assertCollaboratorsAvailable` is called from `app/api/bookings/webinars/crud-with-plan/route.ts`, and its multi-window twin `assertCollaboratorsAvailableForWindows` is called from `app/api/bookings/classes/crud-with-plan/route.ts` and from `utils/scheduling-engine/SchedulingService.ts`, so a class co-instructor is refused a clashing session in the same way a webinar co-host is. Layer 1 is unaffected — the owner's denormalized `consultantProfileId` protects the host across every event type.
+**Layer 2 covers both plan types.** `assertCollaboratorsAvailable` is called from `app/api/bookings/webinars/crud-with-plan/route.ts`, and its multi-window twin `assertCollaboratorsAvailableForWindows` is called from `app/api/bookings/cohorts/crud-with-plan/route.ts` and from `utils/scheduling-engine/SchedulingService.ts`, so a class co-instructor is refused a clashing session in the same way a webinar co-host is. Layer 1 is unaffected — the owner's denormalized `consultantProfileId` protects the host across every event type.
 
 ---
 

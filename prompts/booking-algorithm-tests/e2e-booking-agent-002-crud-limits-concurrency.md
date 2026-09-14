@@ -220,7 +220,7 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- Class Plan: 3 meetings/week, 6 sessions, 1h each, 15 max, INR 9000
-INSERT INTO "ClassPlan" (
+INSERT INTO "CohortPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
   "maxParticipants",
   price, "priceCurrency",
@@ -252,8 +252,8 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO "Class" (
-  id, "classPlanId", status,
+INSERT INTO "Cohort" (
+  id, "cohortPlanId", status,
   "schedulingPeriodStartsAt", "schedulingPeriodEndsAt",
   "createdAt", "updatedAt"
 )
@@ -277,9 +277,9 @@ SELECT id, headline FROM "ConsultantProfile" WHERE id = 'test-consultant-profile
 SELECT id, title FROM "ConsultationPlan"  WHERE id = 'test-consultation-plan-002';
 SELECT id, title FROM "SubscriptionPlan"  WHERE id = 'test-subscription-plan-002';
 SELECT id, title FROM "WebinarPlan"       WHERE id = 'test-webinar-plan-002';
-SELECT id, title FROM "ClassPlan"         WHERE id = 'test-class-plan-002';
+SELECT id, title FROM "CohortPlan"         WHERE id = 'test-class-plan-002';
 SELECT id, status FROM "Webinar"          WHERE id = 'test-webinar-002';
-SELECT id, status FROM "Class"            WHERE id = 'test-class-002';
+SELECT id, status FROM "Cohort"            WHERE id = 'test-class-002';
 SELECT COUNT(*) as slot_count FROM "AvailabilityWindowWeekly"
   WHERE "consultantProfileId" = 'test-consultant-profile-002';
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
@@ -584,7 +584,7 @@ fetch("/api/checkout", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    appointmentType: "CLASS",
+    appointmentType: "COHORT",
     eventId: "test-class-002",
     isMockPayment: true,
   }),
@@ -1000,7 +1000,7 @@ UNION ALL
 SELECT
   'Class Appointments',
   COUNT(*), 0, 0
-FROM "Appointment" WHERE "classId" = 'test-class-002'
+FROM "Appointment" WHERE "cohortId" = 'test-class-002'
 UNION ALL
 SELECT
   'Total Slots',
@@ -1010,7 +1010,7 @@ JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-002')
    OR a."subscriptionId" IN (SELECT id FROM "Subscription"  WHERE "subscriptionPlanId" = 'test-subscription-plan-002')
    OR a."webinarId" = 'test-webinar-002'
-   OR a."classId"   = 'test-class-002';
+   OR a."cohortId"   = 'test-class-002';
 ```
 
 ---
@@ -1027,14 +1027,14 @@ WHERE "appointmentId" IN (
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" IN ('test-consultation-plan-002','test-403-plan-002'))
      OR a."subscriptionId" IN (SELECT id FROM "Subscription"  WHERE "subscriptionPlanId" = 'test-subscription-plan-002')
      OR a."webinarId" = 'test-webinar-002'
-     OR a."classId"   = 'test-class-002'
+     OR a."cohortId"   = 'test-class-002'
 );
 
 -- Payments
 DELETE FROM "Payment"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
-  WHERE a."webinarId" = 'test-webinar-002' OR a."classId" = 'test-class-002'
+  WHERE a."webinarId" = 'test-webinar-002' OR a."cohortId" = 'test-class-002'
 );
 
 -- Appointments
@@ -1042,7 +1042,7 @@ DELETE FROM "Appointment"
 WHERE "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" IN ('test-consultation-plan-002','test-403-plan-002'))
    OR "subscriptionId" IN (SELECT id FROM "Subscription"  WHERE "subscriptionPlanId" = 'test-subscription-plan-002')
    OR "webinarId" = 'test-webinar-002'
-   OR "classId"   = 'test-class-002';
+   OR "cohortId"   = 'test-class-002';
 
 -- Edge-case test rows
 DELETE FROM "Appointment"  WHERE id IN ('test-24h-apt-002','test-403-apt-002');
@@ -1052,13 +1052,13 @@ DELETE FROM "Consultation" WHERE id IN ('test-24h-cons-002','test-403-cons-002')
 DELETE FROM "Consultation" WHERE "consultationPlanId" IN ('test-consultation-plan-002','test-403-plan-002');
 DELETE FROM "Subscription"  WHERE "subscriptionPlanId" = 'test-subscription-plan-002';
 DELETE FROM "Webinar"       WHERE id = 'test-webinar-002';
-DELETE FROM "Class"         WHERE id = 'test-class-002';
+DELETE FROM "Cohort"         WHERE id = 'test-class-002';
 
 -- Plans
 DELETE FROM "ConsultationPlan" WHERE id IN ('test-consultation-plan-002','test-403-plan-002');
 DELETE FROM "SubscriptionPlan" WHERE id = 'test-subscription-plan-002';
 DELETE FROM "WebinarPlan"      WHERE id = 'test-webinar-plan-002';
-DELETE FROM "ClassPlan"        WHERE id = 'test-class-plan-002';
+DELETE FROM "CohortPlan"        WHERE id = 'test-class-plan-002';
 
 -- Availability
 DELETE FROM "AvailabilityWindowWeekly"  WHERE "consultantProfileId" = 'test-consultant-profile-002';

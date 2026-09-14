@@ -31,7 +31,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/bookings/consultations", // POST/PATCH only
   "/api/bookings/subscriptions", // POST only
   "/api/bookings/webinars", // POST only
-  "/api/bookings/classes", // POST only
+  "/api/bookings/cohorts", // POST only
   "/api/bookings/*/allocate",
   "/api/trials", // POST only
   "/api/plans/*/materials", // POST only

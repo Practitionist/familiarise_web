@@ -73,7 +73,7 @@ Triaged 2026-07-12 against real code (3 verifier agents cross-checked every clai
 
 ## High concurrency / multi-device
 
-Webhook storms are covered by unique `eventId` and early-return if payment already SUCCEEDED. Overlapping slot captures use Serializable + confirm-time overlap recheck (#827). Under spike, Redis lock TTL for CLASS can be 300s — serverless freeze may lose lock ownership; extendLock helps once.
+Webhook storms are covered by unique `eventId` and early-return if payment already SUCCEEDED. Overlapping slot captures use Serializable + confirm-time overlap recheck (#827). Under spike, Redis lock TTL for COHORT can be 300s — serverless freeze may lose lock ownership; extendLock helps once.
 
 ## Suggested directions
 

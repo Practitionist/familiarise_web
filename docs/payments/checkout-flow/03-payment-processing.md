@@ -36,7 +36,7 @@ Content-Type: application/json
 
 // Request body (validated by Zod schema)
 {
-  "appointmentType": "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
+  "appointmentType": "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "COHORT",
   "planId"?: "string",           // For consultation/subscription
   "eventId"?: "string",          // For webinar/class
   "startsAt"?: "date",           // For consultation/subscription (renamed from `slotStartTimeInUTC`)
@@ -150,7 +150,7 @@ export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
   CONSULTATION: 60_000, //  60 s — single-slot write + gateway round-trip
   SUBSCRIPTION: 120_000, // 120 s — same as WEBINAR
   WEBINAR: 120_000, // 120 s — may write N seats
-  CLASS: 300_000, // 300 s — N sessions × M slots
+  COHORT: 300_000, // 300 s — N sessions × M slots
 };
 ```
 
@@ -712,8 +712,8 @@ async function createAppointmentFromWebhook(
       });
       break;
 
-    case AppointmentsType.CLASS:
-      appointment = await createClass(tx, {
+    case AppointmentsType.COHORT:
+      appointment = await createCohort(tx, {
         eventId,
         userId: payment.user.id,
       });
@@ -779,7 +779,7 @@ async function confirmExistingAppointment(
     });
   }
   if (appointment?.class) {
-    await tx.class.update({
+    await tx.cohort.update({
       where: { id: appointment.class.id },
       data: { status: "SCHEDULED" },
     });
@@ -929,7 +929,7 @@ async function cleanupFailedPaymentAppointment(
 
 **Cleanup Rules:**
 
-- **Webinar/Class:** Remove only the user's tentative slot, keep appointment
+- **Webinar/Cohort:** Remove only the user's tentative slot, keep appointment
 - **Consultation/Subscription:** If no confirmed slots remain, delete everything
 - **Partial Failure:** If some slots confirmed, keep appointment with confirmed slots
 
@@ -1288,7 +1288,7 @@ sequenceDiagram
 
         Job->>DB: Update payment status = FAILED
 
-        alt Webinar/Class
+        alt Webinar/Cohort
             Job->>DB: Delete tentative slots only
         else Consultation/Subscription
             Job->>DB: Check remaining slots

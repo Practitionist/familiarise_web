@@ -69,7 +69,7 @@ the rest — which is exactly how `BILLING_ADMIN` landed at 70 between `MAINTAIN
 at 80 and `MANAGER` at 60.
 
 ```mermaid
-classDiagram
+cohortDiagram
   class OWNER {
     rank = 100
     everything incl. billing + delete

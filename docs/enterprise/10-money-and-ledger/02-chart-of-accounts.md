@@ -17,7 +17,7 @@ last-reviewed: 2026-06-05
 ## 1. The ten accounts
 
 ```mermaid
-classDiagram
+cohortDiagram
   class Assets_DebitNormal {
     CASH  — platform gateway / settlement cash
     ORG_RECEIVABLE  — an INVOICE-funded org owes us (accrued at booking, cleared on payment)

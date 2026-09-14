@@ -36,7 +36,7 @@ The system handles four appointment types:
 | **CONSULTATION** | 1-on-1 session       | Single slot, exclusive             |
 | **SUBSCRIPTION** | Recurring sessions   | Multiple slots over period         |
 | **WEBINAR**      | Multi-user event     | Shared slot, per-user confirmation |
-| **CLASS**        | Multi-session course | Multiple shared slots              |
+| **COHORT**        | Multi-session course | Multiple shared slots              |
 
 ### Key Safety Features
 
@@ -122,7 +122,7 @@ The system handles four appointment types:
 | consultationId ------|--+    | endsAt               |
 | subscriptionId ------|--|    | isTentative ----------|---> true = unconfirmed
 | webinarId -----------|--|    | appointmentId        |
-| classId -------------|--|    | user[] --------------|---> User[] (many-to-many)
+| cohortId -------------|--|    | user[] --------------|---> User[] (many-to-many)
 +----------------------+  |    +----------------------+
 | appointmentOccurrences[] |--|--> AppointmentOccurrence[]
 | payment[]            |  |
@@ -203,7 +203,7 @@ AppointmentStatus:
 | `app/checkout/plans/consultation/[planId]/page.tsx`   | Consultation         |
 | `app/checkout/plans/subscription/[planId]/page.tsx`   | Subscription         |
 | `app/checkout/plans/webinar/[webinarPlanId]/page.tsx` | Webinar              |
-| `app/checkout/plans/class/[classPlanId]/page.tsx`     | Class                |
+| `app/checkout/plans/class/[cohortPlanId]/page.tsx`     | Class                |
 | `app/checkout/checkout-success/page.tsx`              | Success confirmation |
 
 ### Webhook Files
@@ -289,7 +289,7 @@ AppointmentStatus:
 |  URL Search Params:                                                               |
 |  - CONSULTATION: startsAt, endsAt, availabilityWindow*Id                          |
 |  - SUBSCRIPTION: schedulingPeriodStartsAt, schedulingPeriodEndsAt                 |
-|  - WEBINAR/CLASS: eventId                                                         |
+|  - WEBINAR/COHORT: eventId                                                         |
 |  - Optional: discountCode, notes                                                  |
 +-----------------------------------------------------------------------------------+
                                         |
@@ -301,7 +301,7 @@ AppointmentStatus:
 |  - consultationSearchParamsSchema                                                 |
 |  - subscriptionSearchParamsSchema                                                 |
 |  - webinarSearchParamsSchema                                                      |
-|  - classSearchParamsSchema                                                        |
+|  - cohortSearchParamsSchema                                                        |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v
@@ -365,7 +365,7 @@ AppointmentStatus:
 |  ------------------------------------------------------------------------------   |
 |  File: utils/appointmentlock.ts                                                   |
 |  - CONSULTATION/SUBSCRIPTION (direct): Lock on slot ID                            |
-|  - WEBINAR/CLASS: Lock on event ID                                                |
+|  - WEBINAR/COHORT: Lock on event ID                                                |
 |  - Prevents race conditions during concurrent checkouts                           |
 |  - Uses Redis/Upstash for distributed locking                                     |
 +-----------------------------------------------------------------------------------+
@@ -436,7 +436,7 @@ AppointmentStatus:
 |  |  - Finds existing Webinar + Appointment                                 |      |
 |  |  - Adds user to AppointmentOccurrence with isTentative=true                 |      |
 |  +-------------------------------------------------------------------------+      |
-|  |  handleClassCheckout()                                                  |      |
+|  |  handleCohortCheckout()                                                  |      |
 |  |  - Finds existing Class + all Appointments                              |      |
 |  |  - Adds user to all session slots with isTentative=true                 |      |
 |  +-------------------------------------------------------------------------+      |
@@ -723,7 +723,7 @@ AppointmentStatus:
 |  1. UPDATE PAYMENT STATUS = FAILED                                                |
 |  2. CLEANUP TENTATIVE SLOTS                                                       |
 |     - CONSULTATION/SUBSCRIPTION: Delete all tentative slots                       |
-|     - WEBINAR/CLASS: Remove user from slot (keep if others exist)                 |
+|     - WEBINAR/COHORT: Remove user from slot (keep if others exist)                 |
 |  3. DELETE ORPHANED RECORDS                                                       |
 |     - If no confirmed slots: delete consultation/subscription/appointment         |
 |  4. SEND PAYMENT FAILURE EMAIL                                                    |

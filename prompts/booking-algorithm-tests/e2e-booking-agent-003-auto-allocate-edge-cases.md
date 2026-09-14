@@ -35,17 +35,17 @@ them manually choosing times.
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | **Search window**            | 4 weeks from now                                                                                                    | Full `schedulingPeriodStartsAt → EndsAt`                   |
 | **Slot grouping**            | One appointment containing all consecutive slots (entire duration)                                                  | One appointment per session, distributed across the period |
-| **Weekly limits**            | None                                                                                                                | `sessionsPerWeek` on `ClassPlan`                           |
+| **Weekly limits**            | None                                                                                                                | `sessionsPerWeek` on `CohortPlan`                           |
 | **Re-allocate**              | Replaces in a transaction; the appointment is only deleted when `payment: { none: {} }` still matches at write time | Same                                                       |
 | **Request body**             | `{ "isAuto": true }`                                                                                                | `{ "isAuto": true }`                                       |
-| **API endpoint**             | `PATCH /api/bookings/webinars/[webinarId]/allocate`                                                                 | `PATCH /api/bookings/classes/[classId]/allocate`           |
+| **API endpoint**             | `PATCH /api/bookings/webinars/[webinarId]/allocate`                                                                 | `PATCH /api/bookings/cohorts/[cohortId]/allocate`           |
 | **isAuto + slots both sent** | `isAuto` wins, `slots` ignored                                                                                      | `isAuto` wins, `slots` ignored                             |
 
 **Critical source files:**
 
 - `utils/scheduling-engine/SchedulingService.ts` — `autoAllocate()`, reached through the public `allocate()` entry point via `dispatch`
 - `app/api/bookings/webinars/[webinarId]/allocate/route.ts`
-- `app/api/bookings/classes/[classId]/allocate/route.ts`
+- `app/api/bookings/cohorts/[cohortId]/allocate/route.ts`
 - `schemas/slotAllocation/validationSchemas.ts`
 
 ---
@@ -62,7 +62,7 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - All others → table name = Prisma model name (e.g. `"ConsultantProfile"`)
 - Passwords → bcrypt. Use the signup UI flow at `/auth/signup` for reliability.
 - Timestamps → `timestamptz` columns, stored as UTC
-- `priceCurrency` (not `currency`) on `WebinarPlan` / `ClassPlan`
+- `priceCurrency` (not `currency`) on `WebinarPlan` / `CohortPlan`
 - `ConsulteeProfile` requires `userId` (NOT NULL) — create User first
 - `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
 
@@ -233,7 +233,7 @@ Two classes:
 - **Class B** (`test-class-003b`): 4 sessions, 2/week, 5-day period → only ~2 sessions can fit → **should fail**
 
 ```sql
-INSERT INTO "ClassPlan" (
+INSERT INTO "CohortPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
   "sessionsPerWeek", "maxParticipants",
   price, "priceCurrency",
@@ -262,8 +262,8 @@ ON CONFLICT (id) DO NOTHING;
 ### Step 0.8 — Class Instances
 
 ```sql
-INSERT INTO "Class" (
-  id, "classPlanId", status,
+INSERT INTO "Cohort" (
+  id, "cohortPlanId", status,
   "schedulingPeriodStartsAt", "schedulingPeriodEndsAt",
   "createdAt", "updatedAt"
 )
@@ -295,7 +295,7 @@ Run these SELECT queries and confirm all rows exist before proceeding:
 SELECT
   (SELECT COUNT(*) FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-003') AS weekly_avail,
   (SELECT COUNT(*) FROM "Webinar" WHERE id IN ('test-webinar-003', 'test-webinar-003b'))                        AS webinars,
-  (SELECT COUNT(*) FROM "Class"   WHERE id IN ('test-class-003', 'test-class-003b'))                            AS classes;
+  (SELECT COUNT(*) FROM "Cohort"   WHERE id IN ('test-class-003', 'test-class-003b'))                            AS classes;
 -- Expected: weekly_avail=5, webinars=2, classes=2
 ```
 
@@ -471,7 +471,7 @@ Re-login as CONSULTANT before starting this phase.
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/bookings/classes/test-class-003/allocate",
+    "/api/bookings/cohorts/test-class-003/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -491,7 +491,7 @@ all slots `isTentative: false`.
 SELECT a.id, COUNT(s.id) AS slot_count, BOOL_AND(NOT s."isTentative") AS all_confirmed
 FROM "Appointment" a
 JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
-WHERE a."classId" = 'test-class-003'
+WHERE a."cohortId" = 'test-class-003'
 GROUP BY a.id
 ORDER BY MIN(s."startsAt");
 -- Expected: 4 rows, each slot_count=2, all all_confirmed=true
@@ -505,7 +505,7 @@ SELECT
   COUNT(DISTINCT a.id)              AS sessions_this_week
 FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
-WHERE a."classId" = 'test-class-003'
+WHERE a."cohortId" = 'test-class-003'
   AND s."startsAt" = (
     SELECT MIN(s2."startsAt")
     FROM "AppointmentOccurrence" s2
@@ -539,7 +539,7 @@ async () => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      appointmentType: "CLASS",
+      appointmentType: "COHORT",
       planId: "test-class-plan-003",
       eventId: "test-class-003",
       paymentGateway: "STRIPE",
@@ -559,7 +559,7 @@ SELECT a.id, COUNT(DISTINCT sou."B") AS linked_users
 FROM "Appointment" a
 JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 JOIN "_AppointmentParticipant" sou ON sou."A" = s.id
-WHERE a."classId" = 'test-class-003'
+WHERE a."cohortId" = 'test-class-003'
 GROUP BY a.id
 ORDER BY a.id;
 -- Expected: 4 rows, each linked_users=2 (consultant + consultee)
@@ -607,7 +607,7 @@ As CONSULTANT:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/bookings/classes/test-class-003b/allocate",
+    "/api/bookings/cohorts/test-class-003b/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -682,15 +682,15 @@ SELECT 'Webinar B appointments', COUNT(*)
 FROM "Appointment" WHERE "webinarId" = 'test-webinar-003b'
 UNION ALL
 SELECT 'Class A appointments', COUNT(*)
-FROM "Appointment" WHERE "classId" = 'test-class-003'
+FROM "Appointment" WHERE "cohortId" = 'test-class-003'
 UNION ALL
 SELECT 'Class A slots',     COUNT(*)
 FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
-WHERE a."classId" = 'test-class-003'
+WHERE a."cohortId" = 'test-class-003'
 UNION ALL
 SELECT 'Class B appointments', COUNT(*)
-FROM "Appointment" WHERE "classId" = 'test-class-003b';
+FROM "Appointment" WHERE "cohortId" = 'test-class-003b';
 ```
 
 ---
@@ -706,7 +706,7 @@ WHERE "A" IN (
   SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."webinarId" IN ('test-webinar-003','test-webinar-003b')
-     OR a."classId"   IN ('test-class-003','test-class-003b')
+     OR a."cohortId"   IN ('test-class-003','test-class-003b')
 );
 
 -- 2. Slots
@@ -714,7 +714,7 @@ DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT id FROM "Appointment"
   WHERE "webinarId" IN ('test-webinar-003','test-webinar-003b')
-     OR "classId"   IN ('test-class-003','test-class-003b')
+     OR "cohortId"   IN ('test-class-003','test-class-003b')
 );
 
 -- 3. Payments
@@ -722,21 +722,21 @@ DELETE FROM "Payment"
 WHERE "appointmentId" IN (
   SELECT id FROM "Appointment"
   WHERE "webinarId" IN ('test-webinar-003','test-webinar-003b')
-     OR "classId"   IN ('test-class-003','test-class-003b')
+     OR "cohortId"   IN ('test-class-003','test-class-003b')
 );
 
 -- 4. Appointments
 DELETE FROM "Appointment"
 WHERE "webinarId" IN ('test-webinar-003','test-webinar-003b')
-   OR "classId"   IN ('test-class-003','test-class-003b');
+   OR "cohortId"   IN ('test-class-003','test-class-003b');
 
 -- 5. Events
 DELETE FROM "Webinar" WHERE id IN ('test-webinar-003','test-webinar-003b');
-DELETE FROM "Class"   WHERE id IN ('test-class-003','test-class-003b');
+DELETE FROM "Cohort"   WHERE id IN ('test-class-003','test-class-003b');
 
 -- 6. Plans
 DELETE FROM "WebinarPlan" WHERE id IN ('test-webinar-plan-003','test-webinar-plan-003b');
-DELETE FROM "ClassPlan"   WHERE id IN ('test-class-plan-003','test-class-plan-003b');
+DELETE FROM "CohortPlan"   WHERE id IN ('test-class-plan-003','test-class-plan-003b');
 
 -- 7. Availability
 DELETE FROM "AvailabilityWindowWeekly"
@@ -772,11 +772,11 @@ DELETE FROM "Domain"    WHERE id = 'test-domain-003';
 SELECT
   (SELECT COUNT(*) FROM "Webinar"
    WHERE id IN ('test-webinar-003','test-webinar-003b'))                                                          AS webinars,
-  (SELECT COUNT(*) FROM "Class"
+  (SELECT COUNT(*) FROM "Cohort"
    WHERE id IN ('test-class-003','test-class-003b'))                                                              AS classes,
   (SELECT COUNT(*) FROM "Appointment"
    WHERE "webinarId" IN ('test-webinar-003','test-webinar-003b')
-      OR "classId"   IN ('test-class-003','test-class-003b'))                                                     AS apts,
+      OR "cohortId"   IN ('test-class-003','test-class-003b'))                                                     AS apts,
   (SELECT COUNT(*) FROM users
    WHERE email IN ('testconsultant003@familiarise.com','testconsultee003@familiarise.com'))                       AS users;
 -- Expected: all zeros
@@ -792,7 +792,7 @@ SELECT
 | 2   | Webinar slots are consecutive                      | `slot[i].endsAt === slot[i+1].startsAt` for all i in response  | True for all i    |
 | 3   | Webinar slot count matches 2h ÷ 30min              | `COUNT(*) of appointmentOccurrences` in response               | 4                 |
 | 4   | Re-auto-allocate doesn't double appointments       | Count after 2nd call                                           | Still 1           |
-| 5   | Class auto-alloc creates correct appointment count | `COUNT(*) FROM Appointment WHERE classId='test-class-003'`     | 4                 |
+| 5   | Class auto-alloc creates correct appointment count | `COUNT(*) FROM Appointment WHERE cohortId='test-class-003'`     | 4                 |
 | 6   | Each class appointment has 2 slots (1h)            | Per-appointment slot count in DB                               | 2 for each        |
 | 7   | Weekly session limit enforced                      | `GROUP BY date_trunc('week', ...)` — max sessions per week     | ≤ 2               |
 | 8   | Consultee checkout on webinar succeeds             | HTTP status + payment status                                   | 200, SUCCEEDED    |

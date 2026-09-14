@@ -92,7 +92,7 @@ The table below lists the configured hold periods and the reasoning behind each.
 | Appointment type | Hold (hours) | Rationale |
 |---|---|---|
 | `CONSULTATION` | 24 | short engagement, quick refund resolution |
-| `CLASS` | 24 | same profile as a consultation |
+| `COHORT` | 24 | same profile as a consultation |
 | `WEBINAR` | 48 | leaves room for participant feedback |
 | `SUBSCRIPTION` | 168 (7 days) | longer commitment, higher refund risk |
 

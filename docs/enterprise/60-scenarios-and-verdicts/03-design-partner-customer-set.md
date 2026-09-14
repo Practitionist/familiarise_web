@@ -17,7 +17,7 @@ Reference for engineering: [#703](https://github.com/Practitionist/familiarise_w
 ## Terminology
 
 - **"Design-partner customer set"** — the group of customers accepted into the post-MVP enterprise launch. Deliberately narrow. Used interchangeably with "launch cohort" in strategy conversations.
-- **NOT to be confused with** the `Class` Prisma model — that's a B2C cohort-based course appointment type, unrelated to this document.
+- **NOT to be confused with** the `Cohort` Prisma model — that's a B2C cohort-based course appointment type, unrelated to this document.
 
 ## Section 1 — Yes-onboard profile
 

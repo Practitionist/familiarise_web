@@ -33,8 +33,8 @@ Special sets:
 
 ## Event lifecycle (Webinar, Class)
 
-`EVENT_ALLOWED_FROM` / `CLASS_EVENT_ALLOWED_FROM` (identical maps), via
-`transitionWebinarEvent` / `transitionClassEvent`:
+`EVENT_ALLOWED_FROM` / `COHORT_EVENT_ALLOWED_FROM` (identical maps), via
+`transitionWebinarEvent` / `transitionCohortEvent`:
 
 | To ↓ From → | DRAFT | SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED |
 |---|---|---|---|---|---|
@@ -81,10 +81,10 @@ documented exceptions. Adding one requires an entry here + doctrine review.
 
 | Writer | Entity | Guard shape | Note |
 |---|---|---|---|
-| `lib/payments/webhooks/handlers.ts` `confirmExistingAppointment` | Webinar/Class → SCHEDULED | CAS via `EVENT_ALLOWED_FROM.SCHEDULED` updateMany (B2) | terminal capture returns `capturedAfterTerminal` → Phase-2 refund |
+| `lib/payments/webhooks/handlers.ts` `confirmExistingAppointment` | Webinar/Cohort → SCHEDULED | CAS via `EVENT_ALLOWED_FROM.SCHEDULED` updateMany (B2) | terminal capture returns `capturedAfterTerminal` → Phase-2 refund |
 | `handlers.ts` legacy subscription creator | Subscription slot birth | n/a (tentative birth, HOIf) | confirm flips owned by guard |
-| `app/api/appointments/[appointmentId]/cancel/route.ts` | Consultation/Subscription/Webinar/Class → CANCELLED | `updateMany` with `CANCELLABLE_FROM` / event allowed-from | hoisted maps (#838) |
-| `.../reschedule/route.ts` | Consultation PENDING restore; Webinar/Class SCHEDULED | explicit fromIn arrays | policy-gated edges |
+| `app/api/appointments/[appointmentId]/cancel/route.ts` | Consultation/Subscription/Webinar/Cohort → CANCELLED | `updateMany` with `CANCELLABLE_FROM` / event allowed-from | hoisted maps (#838) |
+| `.../reschedule/route.ts` | Consultation PENDING restore; Webinar/Cohort SCHEDULED | explicit fromIn arrays | policy-gated edges |
 | `scripts/appointments/auto-complete-appointments.ts` | all → COMPLETED | `updateMany` with from-set | cron-locked |
 | `scripts/appointments/cleanup-invalid-appointments.ts` | → CANCELLED | from-set per entity | ops repair script |
 | `lib/moderation/cancel-user-engagements.ts` | → CANCELLED | `CANCELLABLE_FROM` / event maps | moderation front door |

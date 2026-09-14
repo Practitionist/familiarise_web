@@ -77,7 +77,7 @@ flowchart TD
     Plans --> ConsultPlan["ConsultationPlan\ntitle, price, duration, topics"]
     Plans --> SubPlan["SubscriptionPlan\nsessionsPerWeek, durationInMonths\ntrial toggle + price"]
     Plans --> WebinarPlan["WebinarPlan\nmaxParticipants, recording policy\ncertificate toggle"]
-    Plans --> ClassPlan["ClassPlan\ncurriculum, number of sessions"]
+    Plans --> CohortPlan["CohortPlan\ncurriculum, number of sessions"]
 
     Plans --> Availability["Set availability\n/dashboard/consultant/settings/schedule/"]
     Availability --> Weekly["Weekly slots\ne.g. Every Mon 6–9pm IST\nstored as UTC minutes since midnight"]
@@ -169,7 +169,7 @@ sequenceDiagram
     GW-->>API: paymentIntentId + clientSecret
 
     API->>DB: SERIALIZABLE transaction
-    Note over DB: Create Consultation/Subscription/Webinar/Class (PENDING)<br/>Create Appointment<br/>Create AppointmentOccurrence (isTentative=true)<br/>Create Payment (PENDING) + PaymentLeg(s)
+    Note over DB: Create Consultation/Subscription/Webinar/Cohort (PENDING)<br/>Create Appointment<br/>Create AppointmentOccurrence (isTentative=true)<br/>Create Payment (PENDING) + PaymentLeg(s)
 
     API->>Redis: Release lock
     API-->>FE: paymentIntentId + clientSecret

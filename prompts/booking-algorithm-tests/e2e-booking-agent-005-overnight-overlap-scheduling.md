@@ -197,7 +197,7 @@ ON CONFLICT (id) DO NOTHING;
 ### Step 0.6 — Class Plan + Instance (for scheduling period boundary tests)
 
 ```sql
-INSERT INTO "ClassPlan" (
+INSERT INTO "CohortPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
   "sessionsPerWeek", "maxParticipants",
   price, "priceCurrency",
@@ -213,8 +213,8 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO "Class" (
-  id, "classPlanId", status,
+INSERT INTO "Cohort" (
+  id, "cohortPlanId", status,
   "schedulingPeriodStartsAt", "schedulingPeriodEndsAt",
   "createdAt", "updatedAt"
 )
@@ -238,7 +238,7 @@ SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
 SELECT id, "startsAt", "endsAt"
   FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';
 SELECT id, title FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-005';
-SELECT id, status, "schedulingPeriodEndsAt" FROM "Class" WHERE id = 'test-class-005';
+SELECT id, status, "schedulingPeriodEndsAt" FROM "Cohort" WHERE id = 'test-class-005';
 ```
 
 **STOP and fix any missing rows before continuing.**
@@ -1044,10 +1044,10 @@ As CONSULTANT, try to manually allocate a class session that starts within the p
 ```javascript
 async () => {
   // Get the class scheduling period
-  const classResp = await fetch("/api/bookings/classes/test-class-005");
-  const classData = await classResp.json();
+  const cohortResp = await fetch("/api/bookings/cohorts/test-class-005");
+  const cohortData = await cohortResp.json();
   const periodEnd = new Date(
-    classData.data?.schedulingPeriodEndsAt || classData.schedulingPeriodEndsAt,
+    cohortData.data?.schedulingPeriodEndsAt || cohortData.schedulingPeriodEndsAt,
   );
 
   // Create a slot that starts 30 min before period end and ends 30 min after
@@ -1055,7 +1055,7 @@ async () => {
   const slotEnd = new Date(periodEnd.getTime() + 30 * 60000);
 
   const response = await fetch(
-    "/api/bookings/classes/test-class-005/allocate",
+    "/api/bookings/cohorts/test-class-005/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1091,7 +1091,7 @@ async () => {
   slotEnd.setUTCHours(11, 0, 0, 0); // 1h session
 
   const response = await fetch(
-    "/api/bookings/classes/test-class-005/allocate",
+    "/api/bookings/cohorts/test-class-005/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -1134,7 +1134,7 @@ SELECT 'Consultations Booked', COUNT(*)
 FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005'
 UNION ALL
 SELECT 'Class Appointments', COUNT(*)
-FROM "Appointment" WHERE "classId" = 'test-class-005';
+FROM "Appointment" WHERE "cohortId" = 'test-class-005';
 ```
 
 ---
@@ -1150,32 +1150,32 @@ WHERE "A" IN (
   SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
-     OR a."classId" = 'test-class-005'
+     OR a."cohortId" = 'test-class-005'
 );
 
 DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
-     OR a."classId" = 'test-class-005'
+     OR a."cohortId" = 'test-class-005'
 );
 
 DELETE FROM "Payment"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
-     OR a."classId" = 'test-class-005'
+     OR a."cohortId" = 'test-class-005'
 );
 
 DELETE FROM "Appointment"
 WHERE "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
-   OR "classId" = 'test-class-005';
+   OR "cohortId" = 'test-class-005';
 
 DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005';
-DELETE FROM "Class" WHERE id = 'test-class-005';
+DELETE FROM "Cohort" WHERE id = 'test-class-005';
 
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-005';
-DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-005';
+DELETE FROM "CohortPlan" WHERE id = 'test-class-plan-005';
 
 DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
 DELETE FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';

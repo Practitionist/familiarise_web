@@ -89,7 +89,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] `SchedulingService` keeps its coarser consultant-wide `auto-allocate:<consultantProfileId>[:scope]` lock (`lockAutoAllocate`), because it discovers slots dynamically under that lock; its write transaction re-validates conflicts and absorbs the `slot_no_confirmed_overlap` exclusion constraint
 - [ ] Cancel and reschedule take `lockAppointment` (`APPOINTMENT_LOCK_TTL_MS`) so a stale tab and a live cancel serialize instead of racing the CAS write
 - [ ] Global lock order is respected end-to-end: event/consultant -> consultee -> slot
-- [ ] Checkout lock TTLs match `CHECKOUT_LOCK_TTL_MS` by type (CONSULTATION 60s, SUBSCRIPTION/WEBINAR 120s, CLASS 600s) — sized per checkout shape, not one universal TTL
+- [ ] Checkout lock TTLs match `CHECKOUT_LOCK_TTL_MS` by type (CONSULTATION 60s, SUBSCRIPTION/WEBINAR 120s, COHORT 600s) — sized per checkout shape, not one universal TTL
 - [ ] Request-path lock acquisitions (approvals, allocation, consultee, appointment, event-checkout) use the bounded `REQUEST_PATH_RETRY_CONFIG` (~7s worst case), not the unbounded `DEFAULT_RETRY_CONFIG` (~204s) — a request-path caller that waits on `DEFAULT` will 504 before Redis ever returns a 409
 - [ ] Checkout's interval locks use `CHECKOUT_WAIT_RETRY_CONFIG`: contention losers fail fast to a structured 409 rather than queueing, since the winner's checkout (revalidation + gateway call + tx) rarely finishes fast enough for a wait to help
 - [ ] A lock acquisition failure is surfaced as a typed error (`SlotLockError`, `EventCheckoutBusyError`, `ConsulteeBookingBusyError`, `AppointmentBusyError`) mapped to 409/423, never swallowed into a generic 500
@@ -103,7 +103,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 - [ ] A booking window is validated against the UNION of every published weekly or custom availability row, not the first row that happens to match — `utils/scheduling-engine/availabilityCoverage.ts`'s `findUncoveredAtom()` walks every 30-minute atom of the window and only fails if some atom is covered by no row at all, so two adjacent availability rows correctly cover a window that spans both
 - [ ] Slot timing validation: not in the past, minimum lead time (`validateSlotTiming`)
 - [ ] Plan existence verified inside the transaction
-- [ ] Webinar/Class capacity checked (`maxParticipants` vs current participants)
+- [ ] Webinar/Cohort capacity checked (`maxParticipants` vs current participants)
 - [ ] Both consultant AND consultee connected to `AppointmentOccurrence` via the M2M
 - [ ] Payment webhook handling is idempotent (check the existing status before updating)
 - [ ] A slot occupied by an `APPROVED_PENDING_PAYMENT` request, or a `PENDING` `DIRECT_CHECKOUT` request, is treated as free once every one of its payment rows is dead (`EXPIRED`, `FAILED`, or `PENDING` past `expiresAt`) — never by the clock alone, since a `SUCCEEDED` row keeps its `expiresAt` and must stay blocking. The JS predicate (`isOccupiedByLiveAppointment`, `utils/scheduling-engine/ScheduleValidationService.ts`) and its SQL twin (`buildDeadHoldFilter`, `utils/scheduling-engine/occupancyPolicy.ts`) must agree — `__tests__/booking-algorithm/hold-expiry-predicate.test.ts` asserts this
@@ -112,7 +112,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 ## 8. Frontend
 
 - [ ] Unscheduled events filtered: both webinars AND classes use `.filter(e => !e.appointment)`
-- [ ] `useScheduling` (`hooks/scheduling/useScheduling.ts`) hook: correct `requiredSlots` for SUBSCRIPTION and CLASS types
+- [ ] `useScheduling` (`hooks/scheduling/useScheduling.ts`) hook: correct `requiredSlots` for SUBSCRIPTION and COHORT types
 - [ ] Calendar renders overnight slots correctly (split across two days if needed)
 - [ ] Main UI save paths (onboarding + settings) create single overnight weekly records (not split at midnight)
 - [ ] Frontend validator (`isValidTimeRange`, `validateTimeSlot` in `lib/scheduling/slotSelectionValidation.ts`) accepts overnight slots
@@ -137,7 +137,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 
 ## 10. Status Transitions
 
-- [ ] Every status write on a Consultation, Subscription, Webinar, Class, Trial, AppointmentOccurrence, or RescheduleRequest goes through the matching helper in `lib/booking/transitions.ts` (`transitionConsultationRequest`, `transitionSubscriptionRequest`, `transitionWebinarEvent`, `transitionClassEvent`, `transitionOccurrenceCompletion`, `transitionTrial`, `transitionRescheduleRequest`) — never a raw `update`/`updateMany` on a status column
+- [ ] Every status write on a Consultation, Subscription, Webinar, Class, Trial, AppointmentOccurrence, or RescheduleRequest goes through the matching helper in `lib/booking/transitions.ts` (`transitionConsultationRequest`, `transitionSubscriptionRequest`, `transitionWebinarEvent`, `transitionCohortEvent`, `transitionOccurrenceCompletion`, `transitionTrial`, `transitionRescheduleRequest`) — never a raw `update`/`updateMany` on a status column
 - [ ] The allowed-from set for the target status lives in the transition's `*_ALLOWED_FROM` map (keyed by TARGET state); a caller with a flow-specific edge passes `fromIn` rather than hand-rolling the WHERE clause
 - [ ] A transition that matches zero rows throws `IllegalTransitionError`, mapped to a 4xx — it must never be swallowed or retried as if it were a transient failure
 - [ ] Cancellation soft-cancels: `Appointment`/`AppointmentOccurrence` rows are never deleted for a booking a `Payment` row points at. Slots move to `completionStatus: "CANCELLED"`; the slot is freed by status alone

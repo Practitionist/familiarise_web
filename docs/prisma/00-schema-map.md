@@ -68,7 +68,7 @@ flowchart TD
         ConsultationPlan
         SubscriptionPlan
         WebinarPlan
-        ClassPlan
+        CohortPlan
     end
     subgraph Bookings["Bookings"]
         Consultation
@@ -90,7 +90,7 @@ flowchart TD
     end
     subgraph Collab["Collaboration"]
         WebinarCollaborator
-        ClassCollaborator
+        CohortCollaborator
     end
     subgraph Pay["Payments"]
         Payment
@@ -329,7 +329,7 @@ erDiagram
     Topic }o--o{ ConsultationPlan : "on plan"
     Topic }o--o{ SubscriptionPlan : "on plan"
     Topic }o--o{ WebinarPlan : "on plan"
-    Topic }o--o{ ClassPlan : "on plan"
+    Topic }o--o{ CohortPlan : "on plan"
 ```
 
 `ConsultantReview` is the public reputation rail and #1300 gave it companions that the diagram above omits for space: `ConsultantReviewRevision` (one append-only row per superseded version of a review's text) and the enums `ReviewTrack` (`ONE_TO_ONE` or `GROUP`), `RatingCause` (what a rater says drove a low score, shared with `AppointmentFeedback`) and `ReviewActor` (`AUTHOR` or `MODERATION`, who removed a review or its reply). Every staff act on a review or a private rating is a `ModerationAction` row, which since #1562 no longer needs a report behind it. The `ScoringSnapshot` model that #1542 added was dropped by #1566. The reference for all of them is [`docs/reviews/`](../reviews/README.md), and the column-by-column list is [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md).
@@ -458,7 +458,7 @@ erDiagram
         OrgPlanVisibility visibility
         datetime archivedAt
     }
-    ClassPlan {
+    CohortPlan {
         string id
         string consultantProfileId
         string organizationId
@@ -481,7 +481,7 @@ erDiagram
         string consultationPlanId
         string subscriptionPlanId
         string webinarPlanId
-        string classPlanId
+        string cohortPlanId
         string fileName
         string fileUrl
         int order
@@ -491,7 +491,7 @@ erDiagram
         string consultationPlanId
         string subscriptionPlanId
         string webinarPlanId
-        string classPlanId
+        string cohortPlanId
         string question
         string answer
         int order
@@ -500,19 +500,19 @@ erDiagram
     ConsultantProfile ||--o{ ConsultationPlan : "offers"
     ConsultantProfile ||--o{ SubscriptionPlan : "offers"
     ConsultantProfile ||--o{ WebinarPlan : "offers"
-    ConsultantProfile ||--o{ ClassPlan : "offers"
+    ConsultantProfile ||--o{ CohortPlan : "offers"
     Organization ||--o{ ConsultationPlan : "owns (optional)"
     Organization ||--o{ SubscriptionPlan : "owns (optional)"
     Organization ||--o{ WebinarPlan : "owns (optional)"
-    Organization ||--o{ ClassPlan : "owns (optional)"
+    Organization ||--o{ CohortPlan : "owns (optional)"
     ConsultationPlan ||--o{ PlanMaterial : "materials"
     SubscriptionPlan ||--o{ PlanMaterial : "materials"
     WebinarPlan ||--o{ PlanMaterial : "materials"
-    ClassPlan ||--o{ PlanMaterial : "materials"
+    CohortPlan ||--o{ PlanMaterial : "materials"
     ConsultationPlan ||--o{ PlanFaq : "faqs"
     SubscriptionPlan ||--o{ PlanFaq : "faqs"
     WebinarPlan ||--o{ PlanFaq : "faqs"
-    ClassPlan ||--o{ PlanFaq : "faqs"
+    CohortPlan ||--o{ PlanFaq : "faqs"
 ```
 
 ---
@@ -543,16 +543,16 @@ erDiagram
         int order
         float hoursAllotted
     }
-    ClassPlan {
+    CohortPlan {
         string id
         string title
         int sessionsPerWeek
         int durationInMonths
         int totalSessions
     }
-    ClassContent {
+    CohortContent {
         string id
-        string classPlanId
+        string cohortPlanId
         string title
         string sectionLabel
         string[] outcomes
@@ -563,7 +563,7 @@ erDiagram
     }
 
     SubscriptionPlan ||--o{ SubscriptionContent : "session outline"
-    ClassPlan ||--o{ ClassContent : "session outline"
+    CohortPlan ||--o{ CohortContent : "session outline"
 ```
 
 ---
@@ -722,7 +722,7 @@ erDiagram
         WebinarStatus status
         string feedbackSummary
     }
-    ClassPlan {
+    CohortPlan {
         string id
         string consultantProfileId
         int price
@@ -732,16 +732,16 @@ erDiagram
     }
     Class {
         string id
-        string classPlanId
-        ClassStatus status
+        string cohortPlanId
+        CohortStatus status
         datetime schedulingPeriodStartsAt
         datetime schedulingPeriodEndsAt
     }
     WebinarPlan ||--o{ Webinar : "schedules instances"
-    ClassPlan ||--o{ Class : "runs cohorts"
+    CohortPlan ||--o{ Class : "runs cohorts"
 ```
 
-`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
+`Webinar.maxParticipants` and `Cohort.maxParticipants` are nullable per-instance
 capacity overrides; null inherits the plan's value. See
 [the capacity section of the booking docs](../booking/02-event-types-and-validation.md).
 
@@ -759,7 +759,7 @@ erDiagram
         string consultationId
         string subscriptionId
         string webinarId
-        string classId
+        string cohortId
         string organizationId
     }
     Consultation {
@@ -776,7 +776,7 @@ erDiagram
     }
     Class {
         string id
-        ClassStatus status
+        CohortStatus status
     }
     Trial {
         string id
@@ -936,16 +936,16 @@ erDiagram
         CollaboratorStatus status
         datetime respondedAt
     }
-    ClassPlan {
+    CohortPlan {
         string id
         string consultantProfileId
     }
-    ClassCollaborator {
+    CohortCollaborator {
         string id
         string consultantProfileId
-        string classPlanId
+        string cohortPlanId
         string invitedById
-        ClassCollaboratorRole role
+        CohortCollaboratorRole role
         float revenueSharePercentage
         CollaboratorStatus status
         datetime respondedAt
@@ -953,8 +953,8 @@ erDiagram
 
     WebinarPlan ||--o{ WebinarCollaborator : "has collaborators"
     ConsultantProfile ||--o{ WebinarCollaborator : "collaborates on"
-    ClassPlan ||--o{ ClassCollaborator : "has collaborators"
-    ConsultantProfile ||--o{ ClassCollaborator : "collaborates on"
+    CohortPlan ||--o{ CohortCollaborator : "has collaborators"
+    ConsultantProfile ||--o{ CohortCollaborator : "collaborates on"
 ```
 
 ---
@@ -1846,7 +1846,7 @@ erDiagram
         string consultationId
         string subscriptionId
         string webinarId
-        string classId
+        string cohortId
     }
     SystemJobExecution {
         string id
@@ -1913,7 +1913,7 @@ Every enum in the schema and its values.
 | `OverageBehavior`              | BLOCK, CHARGE_MEMBER, CHARGE_ORG                                                                                                                                                                                                                                                       |
 | `OverageChargeStatus`          | PENDING, ACCRUED, CHARGED, BLOCKED, REVERSED, FAILED                                                                                                                                                                                                                                   |
 | `OrgPlanVisibility`            | PUBLIC, ORG_ONLY, ORG_AND_PUBLIC                                                                                                                                                                                                                                                       |
-| `CoveredPlanType`              | CONSULTATION, CLASS, WEBINAR, SUBSCRIPTION                                                                                                                                                                                                                                             |
+| `CoveredPlanType`              | CONSULTATION, COHORT, WEBINAR, SUBSCRIPTION                                                                                                                                                                                                                                             |
 | `OrgInvoiceStatus`             | DRAFT, ISSUED, PAID, OVERDUE, VOID, CANCELLED, REFUNDED                                                                                                                                                                                                                                |
 | `IrpStatus`                    | PENDING, GENERATED, CANCELLED, FAILED                                                                                                                                                                                                                                                  |
 | `PoStatus`                     | ACTIVE, CLOSED, CANCELLED                                                                                                                                                                                                                                                              |
@@ -1925,14 +1925,14 @@ Every enum in the schema and its values.
 | `MsmeStatus`                   | NONE, MICRO, SMALL, MEDIUM                                                                                                                                                                                                                                                             |
 | `PayoutArrangement`            | DIRECT, AOR, EOR                                                                                                                                                                                                                                                                       |
 | `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                                                                                                                                        |
-| `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL                                                                                                                                                                                                                                      |
+| `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, COHORT, TRIAL                                                                                                                                                                                                                                      |
 | `OccurrenceCompletionStatus`         | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED                                                                                                                                                                                                                               |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                                                                                                                                     |
 | `TrialStatus`           | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                                          |
 | `WaitlistStatus`               | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list)                                                                                                                                                                                                                           |
 | `WaitlistSource`               | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT                                                                                                                                                                                                                      |
 | `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
-| `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
+| `CohortStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                                                                                                                                         |
 | `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                                                                                                                                         |
 | `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                                                                                                                                     |
@@ -1951,7 +1951,7 @@ Every enum in the schema and its values.
 | `PayoutAccountType`            | BANK_ACCOUNT, UPI, STRIPE_CONNECT                                                                                                                                                                                                                                                      |
 | `CollaboratorStatus`           | PENDING, ACCEPTED, DECLINED, REMOVED                                                                                                                                                                                                                                                   |
 | `WebinarCollaboratorRole`      | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT                                                                                                                                                                                                                                   |
-| `ClassCollaboratorRole`        | CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR                                                                                                                                                                                                                     |
+| `CohortCollaboratorRole`        | CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR                                                                                                                                                                                                                     |
 | `ConsultantVerificationStatus` | PENDING_VERIFICATION, UNDER_REVIEW, VERIFIED, REJECTED                                                                                                                                                                                                                                 |
 | `ProfileVerificationStatus`    | PENDING, APPROVED, REJECTED, NEEDS_INFO, SUPERSEDED                                                                                                                                                                                                                                    |
 | `DocumentReviewStatus`         | PENDING, IN_REVIEW, APPROVED, REJECTED, NEEDS_REVISION                                                                                                                                                                                                                                 |
@@ -1963,7 +1963,7 @@ Every enum in the schema and its values.
 | `CareerStage`                  | SCHOOL_STUDENT, STUDENT, EARLY_CAREER, MID_CAREER, SENIOR, EXECUTIVE                                                                                                                                                                                                                   |
 | `BudgetPreference`             | BUDGET, MODERATE, PREMIUM, FLEXIBLE                                                                                                                                                                                                                                                    |
 | `OfferingFormat`                  | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
-| `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, CLASS_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
+| `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, COHORT_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
 | `FeedbackStatus`               | PENDING, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CLOSED                                                                                                                                                                                                                                   |
 | `SupportTicketStatus`          | OPEN, IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED                                                                                                                                                                                                                                           |
 | `SupportPriority`              | LOW, MEDIUM, HIGH, URGENT                                                                                                                                                                                                                                                              |

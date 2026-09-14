@@ -7,7 +7,7 @@
 
 ## What it is
 
-A consultant can sell a **WEBINAR** or **CLASS** plan with one session and N attendees (e.g. 1 webinar × 50 attendees). For tax purposes, each attendee's purchase is a **separate ECO transaction**:
+A consultant can sell a **WEBINAR** or **COHORT** plan with one session and N attendees (e.g. 1 webinar × 50 attendees). For tax purposes, each attendee's purchase is a **separate ECO transaction**:
 
 | Per-attendee event | Per-attendee record |
 |---|---|
@@ -29,12 +29,12 @@ This matters because:
 
 ### B2C
 
-- WEBINAR / CLASS plans purchased individually by N consumers. **Applies.**
+- WEBINAR / COHORT plans purchased individually by N consumers. **Applies.**
 - Each consumer transaction is independent at the tax level.
 
 ### B2B (org-sponsored)
 
-- A WEBINAR / CLASS purchased by an org for N member-attendees. The org gets a single invoice line per attendee (one consolidated invoice covering all attendees).
+- A WEBINAR / COHORT purchased by an org for N member-attendees. The org gets a single invoice line per attendee (one consolidated invoice covering all attendees).
 - TDS per attendee on the consultant payout side (each attendee's payment is a separate ECO event).
 - TCS Sec 52 N/A (B2B side).
 
@@ -46,18 +46,18 @@ This matters because:
 
 | File | What it does | State |
 |---|---|---|
-| `Appointment` (schema) | One row per attendee per session — many appointments can share `webinarPlanId` / `classPlanId` | ✅ |
+| `Appointment` (schema) | One row per attendee per session — many appointments can share `webinarPlanId` / `cohortPlanId` | ✅ |
 | `Payment` (schema) | One per checkout. Verify: does each attendee's checkout create a separate `Payment`? | ⚠️ verify |
 | `Invoice` (B2C) / `OrganizationInvoice` (B2B) | Per-payment. ✅ for B2C; B2B has line items aggregated to monthly invoice. | ✅ |
 | `TDSRecord` | Per-payout, not per-payment. The aggregator should sum across attendee payments to produce a single per-quarter TDS record. | ⚠️ verify |
 | Webinar / class checkout | Each attendee goes through `/api/checkout` separately → one Payment per attendee. | ⚠️ verify |
-| `lib/payments/operations/checkout.ts` | Same code path for CONSULTATION / WEBINAR / CLASS | ✅ |
+| `lib/payments/operations/checkout.ts` | Same code path for CONSULTATION / WEBINAR / COHORT | ✅ |
 
 ## Gap
 
 | Gap | Severity |
 |---|---|
-| Data-path verification: does each WEBINAR/CLASS attendee produce its own Payment + Invoice + earnings record? | 🟠 |
+| Data-path verification: does each WEBINAR/COHORT attendee produce its own Payment + Invoice + earnings record? | 🟠 |
 | Per-attendee place-of-supply capture (each attendee may be in a different state) | 🟠 — depends on [doc 02](./02-gst-overview.md) state-capture work |
 | GSTR-8 aggregation: ensure TCS lines are per-Payment, not per-session | 🟠 |
 | Refund of 1 attendee out of N: only that attendee's credit note + TDS / TCS adjustment, not the whole session | 🟠 |
@@ -74,7 +74,7 @@ This matters because:
 2. **Add an integration test** that seeds a webinar + 5 attendees in 3 different states + runs the GST/TDS aggregators; assert the per-attendee math.
 3. **Refund-of-one-attendee test**: refund attendee #3, verify only attendee #3's credit note + TDS adjustment + TCS adjustment are emitted; the other 4 are untouched.
 4. **GSTR-1 (or GSTR-8) export**: per-Payment lines, not per-Session. Verify in the export builder.
-5. **Multi-consultant collaborator handling**: if a class has 2 collaborating consultants splitting revenue (current `WebinarCollaborator` / `ClassCollaborator` schema supports this), each consultant gets their own TDS calculation on their split.
+5. **Multi-consultant collaborator handling**: if a class has 2 collaborating consultants splitting revenue (current `WebinarCollaborator` / `CohortCollaborator` schema supports this), each consultant gets their own TDS calculation on their split.
 
 ## Acceptance
 

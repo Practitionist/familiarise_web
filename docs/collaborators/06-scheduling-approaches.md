@@ -11,7 +11,7 @@ This document records the three considered approaches to collaborator scheduling
 Scheduling remains exclusively the host's action, and two things are true for collaborators:
 
 1. **They can see the schedule.** Collaborators with `ACCEPTED` status get a read-only schedule section on each active collaboration card in the Collaborations dashboard page.
-2. **They cannot be double-booked by it.** When the host schedules a webinar or a class, the proposed windows are checked against every accepted co-host's confirmed commitments, and a clash is rejected with HTTP 409 rather than silently proceeding (`assertCollaboratorsAvailable` and `assertCollaboratorsAvailableForWindows` in `lib/collaborators/availability.ts`, called from `app/api/bookings/webinars/crud-with-plan/route.ts`, `app/api/bookings/classes/crud-with-plan/route.ts` and `utils/scheduling-engine/SchedulingService.ts` — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
+2. **They cannot be double-booked by it.** When the host schedules a webinar or a class, the proposed windows are checked against every accepted co-host's confirmed commitments, and a clash is rejected with HTTP 409 rather than silently proceeding (`assertCollaboratorsAvailable` and `assertCollaboratorsAvailableForWindows` in `lib/collaborators/availability.ts`, called from `app/api/bookings/webinars/crud-with-plan/route.ts`, `app/api/bookings/cohorts/crud-with-plan/route.ts` and `utils/scheduling-engine/SchedulingService.ts` — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
 
 ### What collaborators see
 
@@ -57,7 +57,7 @@ model ScheduleSuggestion {
 
   // Same XOR discipline as Collaborator (#784): exactly one plan FK set.
   webinarPlanId String?
-  classPlanId   String?
+  cohortPlanId   String?
 
   respondedAt  DateTime?
   responseNote String?

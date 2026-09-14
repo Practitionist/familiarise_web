@@ -288,7 +288,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 **Code:** `lib/payments/operations/refund.ts`, `jobs/refunds/*`, `jobs/disputes/*`
 - [ ] Refund cascade (legs + earnings + utilization reversal) `✅` — `refund.ts`
 - [ ] Refund ledger reversal always balanced (platformPlug residual) `✅` #778 §C
-- [ ] Multi-booking (CLASS) refund reversal `🟡` #776 — `CLASS_MULTI` source built + unit-tested in `reversal-engine.ts`, but NOT yet wired to a production caller (no flow resolves a consolidated class into child payment ids). Engine is foundational; production wiring is a follow-up.
+- [ ] Multi-booking (COHORT) refund reversal `🟡` #776 — `COHORT_MULTI` source built + unit-tested in `reversal-engine.ts`, but NOT yet wired to a production caller (no flow resolves a consolidated class into child payment ids). Engine is foundational; production wiring is a follow-up.
 - [ ] Gateway refund reconcile cron `✅` — `reconcile-pending-refunds.ts`, `cascade-refund-earnings.ts`
 - [ ] `Refund.failureReason` + REFUND_FAILED notification `❌` #779 §D
 - [ ] Disputes: created/lost handlers + deadline alerts `✅` — `jobs/disputes/{reconcile-disputes,handle-lost-disputes,alert-dispute-deadlines}.ts`

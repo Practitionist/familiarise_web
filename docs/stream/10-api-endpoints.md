@@ -529,8 +529,8 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
   classes: Array<{
     id: string,
     status: string,
-    classPlanId: string,
-    classPlanTitle: string,
+    cohortPlanId: string,
+    cohortPlanTitle: string,
     consultantId: string,
     participantIds: string[],
     appointmentParticipantIds: string[],

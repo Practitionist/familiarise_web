@@ -104,10 +104,10 @@ flowchart TB
   DPDP -->|"member.removed on erasure"| HOOKS
   AUDIT -->|"raw payloads diverted"| SYSEV
 
-  classDef wired fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
-  classDef partial fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
-  classDef skipped fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
-  classDef parked fill:#e2e3e5,stroke:#6c757d,color:#1c1f23;
+  cohortDef wired fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
+  cohortDef partial fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
+  cohortDef skipped fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
+  cohortDef parked fill:#e2e3e5,stroke:#6c757d,color:#1c1f23;
 ```
 
 Legend: 🟢 ✅ Wired · 🟡 🟡 Partial (a sub-surface is designed-not-active —
@@ -324,7 +324,7 @@ Each section also lists:
 ### E.1 Stream consultation/webinar/class channels — ✅ Wired
 
 - **Schema:** No Prisma fields — Stream stores channels externally. Org tagging is `custom.organization_id` on the Stream channel.
-- **Code paths:** [`actions/stream/chat/channel.action.ts`](../../../actions/stream/chat/channel.action.ts) — `createConsultationChannel`, `createSubscriptionChannel`, `createWebinarChannel`, `createClassChannel`. Each accepts an optional `organizationId` override; otherwise falls back through `plan.organizationId` → `appointment.organizationId` (C.3) → null.
+- **Code paths:** [`actions/stream/chat/channel.action.ts`](../../../actions/stream/chat/channel.action.ts) — `createConsultationChannel`, `createSubscriptionChannel`, `createWebinarChannel`, `createCohortChannel`. Each accepts an optional `organizationId` override; otherwise falls back through `plan.organizationId` → `appointment.organizationId` (C.3) → null.
 - **Why:** Plan-level org covers org-hosted plans; appointment-level org covers org-funded bookings on platform plans. Combined, the chain catches the 2 customer-relevant cases without false positives on personal bookings.
 - **Future work:** none open.
 

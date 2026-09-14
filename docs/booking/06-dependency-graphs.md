@@ -296,19 +296,19 @@ erDiagram
   ConsultationPlan ||--o{ Consultation : creates
   SubscriptionPlan ||--o{ Subscription : creates
   WebinarPlan ||--o{ Webinar : creates
-  ClassPlan ||--o{ ClassEvent : creates
+  CohortPlan ||--o{ CohortEvent : creates
 
   Consultation ||--o| Appointment : "1 appointment"
   Subscription ||--o{ Appointment : "M appointments"
   Webinar ||--o| Appointment : "1 appointment"
-  ClassEvent ||--o{ Appointment : "M appointments"
+  CohortEvent ||--o{ Appointment : "M appointments"
 
   Appointment ||--|{ AppointmentOccurrence : "N slots per session"
   Appointment ||--o{ BookingStatusHistory : "one row per creation and CAS transition"
   AppointmentOccurrence ||--o| Meeting : "video call"
 ```
 
-> Note: the diagram labels the Prisma `Class` model as `ClassEvent` because `class` is a reserved keyword in Mermaid.
+> Note: the diagram labels the Prisma `Cohort` model as `CohortEvent` because `class` is a reserved keyword in Mermaid.
 
 ---
 

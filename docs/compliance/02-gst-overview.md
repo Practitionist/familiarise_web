@@ -71,7 +71,7 @@ Plus the orthogonal obligations:
 2. **Place-of-supply state capture missing on B2C checkout** (CBIC Notification 02/2023-IT mandates it).
 3. **GST credit notes on refunds missing** (handled in [doc 05](./05-refund-and-chargeback-tax-adjustments.md)).
 4. **GSTIN live registry verification missing** — only format check today.
-5. **HSN selection static** — should pick **998311** (management consulting, group 9983) for CONSULTATION; **999293** (commercial training & coaching, group 9992) for WEBINAR / CLASS / SUBSCRIPTION on educational content. _(See header SAC correction — 999293 is training, NOT consulting; both 18%, so this is a classification/ITC-trail fix, not a rate fix.)_
+5. **HSN selection static** — should pick **998311** (management consulting, group 9983) for CONSULTATION; **999293** (commercial training & coaching, group 9992) for WEBINAR / COHORT / SUBSCRIPTION on educational content. _(See header SAC correction — 999293 is training, NOT consulting; both 18%, so this is a classification/ITC-trail fix, not a rate fix.)_
 6. **LUT enforcement** — invoice generator doesn't gate on `lutNumber` for non-resident purchases.
 7. **RCM routing** — schema field present; no logic.
 

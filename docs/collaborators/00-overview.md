@@ -7,7 +7,7 @@
 
 The collaborator system enables multi-creator content on the Familiarise platform. A consultant (the "host") who owns a webinar or class plan can invite other consultants to collaborate with defined roles and revenue shares. Collaborators accept or decline invitations, and when participants pay for the service, earnings are split among all collaborators at settlement time.
 
-This document set was rewritten on 2026-08-14 against the current code. The largest change since the original write-up is #784, which merged the two per-type junction models (`WebinarCollaborator` and `ClassCollaborator`) into one `Collaborator` model, and #768/#772, which replaced the JSON permission override and the float revenue share with typed columns.
+This document set was rewritten on 2026-08-14 against the current code. The largest change since the original write-up is #784, which merged the two per-type junction models (`WebinarCollaborator` and `CohortCollaborator`) into one `Collaborator` model, and #768/#772, which replaced the JSON permission override and the float revenue share with typed columns.
 
 ### Goals
 
@@ -48,15 +48,15 @@ The following table records the load-bearing choices and why each was made.
 
 ## Data model
 
-One `Collaborator` row links a consultant profile to exactly one plan. The `collaboratorType` discriminator says which kind, and exactly one of `webinarPlanId`/`classPlanId` is set — Postgres CHECK constraints are not Prisma-expressible, so the XOR is app-enforced by `assertCollaboratorPlanXor` in `lib/collaborators/service.ts:33`.
+One `Collaborator` row links a consultant profile to exactly one plan. The `collaboratorType` discriminator says which kind, and exactly one of `webinarPlanId`/`cohortPlanId` is set — Postgres CHECK constraints are not Prisma-expressible, so the XOR is app-enforced by `assertCollaboratorPlanXor` in `lib/collaborators/service.ts:33`.
 
 ```
-ConsultantProfile ──── owns ────────────► WebinarPlan / ClassPlan
+ConsultantProfile ──── owns ────────────► WebinarPlan / CohortPlan
         │                                        │ 1:many
         │ collaborates via                       ▼
         └─────────────────────────────► Collaborator
-                                          collaboratorType  WEBINAR | CLASS
-                                          webinarPlanId?  ⊕  classPlanId?   (XOR)
+                                          collaboratorType  WEBINAR | COHORT
+                                          webinarPlanId?  ⊕  cohortPlanId?   (XOR)
                                           role              CollaboratorRole
                                           revenueShareBps   Int (3000 = 30%)
                                           canApprovePayment / canViewAnalytics /
@@ -74,9 +74,9 @@ The model lives at `prisma/schema.prisma:6392`. Its fields are listed below.
 | --------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
 | `id`                  | String               | Primary key (cuid)                                                                          |
 | `consultantProfileId` | String               | The collaborator's profile                                                                  |
-| `collaboratorType`    | `CollaboratorType`   | `WEBINAR` or `CLASS` — mirrors which plan FK is set                                         |
+| `collaboratorType`    | `CollaboratorType`   | `WEBINAR` or `COHORT` — mirrors which plan FK is set                                         |
 | `webinarPlanId`       | String?              | Set iff `collaboratorType = WEBINAR`                                                        |
-| `classPlanId`         | String?              | Set iff `collaboratorType = CLASS`                                                          |
+| `cohortPlanId`         | String?              | Set iff `collaboratorType = COHORT`                                                          |
 | `role`                | `CollaboratorRole`   | One merged enum; the service rejects a class role on a webinar collaboration and vice versa |
 | `canApprovePayment`   | Boolean              | Typed permission, default `false` (#768)                                                    |
 | `canViewAnalytics`    | Boolean              | Typed permission, default `false` (#768)                                                    |
@@ -87,14 +87,14 @@ The model lives at `prisma/schema.prisma:6392`. Its fields are listed below.
 | `invitedById`         | String               | The host who sent the invitation                                                            |
 | `respondedAt`         | DateTime?            | When the collaborator responded                                                             |
 
-Uniqueness is a pair of partial-behaving constraints: `@@unique([consultantProfileId, webinarPlanId])` and `@@unique([consultantProfileId, classPlanId])`. Postgres treats NULLs as distinct, so each constraint bites only for its own plan type — a consultant can hold one collaboration per plan.
+Uniqueness is a pair of partial-behaving constraints: `@@unique([consultantProfileId, webinarPlanId])` and `@@unique([consultantProfileId, cohortPlanId])`. Postgres treats NULLs as distinct, so each constraint bites only for its own plan type — a consultant can hold one collaboration per plan.
 
 ### Enums
 
 The three enums sit directly below the model (`prisma/schema.prisma:6427`, `:6432`, `:6440`).
 
 ```
-CollaboratorType:    WEBINAR | CLASS
+CollaboratorType:    WEBINAR | COHORT
 
 CollaboratorStatus:  PENDING   — invitation sent, awaiting response
                      ACCEPTED  — collaborator accepted
@@ -138,12 +138,12 @@ The table below maps each concern to its source file.
 | `lib/payments/payouts/earnings-service.ts`                       | `createEarningsFromPayment` — applies the split at settlement and posts the booking journal                                                                                                               |
 | `app/api/collaborations/webinar/[planId]/route.ts`               | GET/POST webinar collaborators                                                                                                                                                                            |
 | `app/api/collaborations/webinar/[planId]/[id]/route.ts`          | PATCH/DELETE a specific webinar collaborator (thin wrapper over `member-handlers.ts`)                                                                                                                     |
-| `app/api/collaborations/class/[planId]/route.ts`                 | GET/POST class collaborators                                                                                                                                                                              |
-| `app/api/collaborations/class/[planId]/[id]/route.ts`            | PATCH/DELETE a specific class collaborator (thin wrapper over `member-handlers.ts`)                                                                                                                       |
+| `app/api/collaborations/cohort/[planId]/route.ts`                 | GET/POST class collaborators                                                                                                                                                                              |
+| `app/api/collaborations/cohort/[planId]/[id]/route.ts`            | PATCH/DELETE a specific class collaborator (thin wrapper over `member-handlers.ts`)                                                                                                                       |
 | `app/api/collaborations/[id]/respond/route.ts`                   | PATCH accept/decline an invitation                                                                                                                                                                        |
 | `app/api/collaborations/route.ts`                                | GET all my collaborations                                                                                                                                                                                 |
 | `app/api/collaborations/webinar/[planId]/revenue-split/route.ts` | GET webinar revenue-split preview                                                                                                                                                                         |
-| `app/api/collaborations/class/[planId]/revenue-split/route.ts`   | GET class revenue-split preview                                                                                                                                                                           |
+| `app/api/collaborations/cohort/[planId]/revenue-split/route.ts`   | GET class revenue-split preview                                                                                                                                                                           |
 | `app/api/participants/webinar/[webinarId]/route.ts`              | Participant roster — the surface `canSeeAttendees` gates                                                                                                                                                  |
 | `components/collaborators/`                                      | `CollaboratorsTab`, `InvitationsPanel`, `HostedPlanCard`, `RevenueSplitBar` and friends                                                                                                                   |
 | `actions/stream/chat/channel.action.ts`                          | `createCollaboratorChannel()`                                                                                                                                                                             |

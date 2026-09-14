@@ -489,7 +489,7 @@ Classes are **multi-session group courses** taught by a consultant to multiple s
 
 ### Entry Points
 
-**Frontend Page:** `/app/checkout/plans/class/[classPlanId]/page.tsx`
+**Frontend Page:** `/app/checkout/plans/class/[cohortPlanId]/page.tsx`
 
 **User Journey:**
 
@@ -515,7 +515,7 @@ Classes are **multi-session group courses** taught by a consultant to multiple s
 **Class Creation** (by consultant):
 
 ```
-ClassPlan {
+CohortPlan {
   id: "plan_class_123",
   title: "Python Bootcamp",
   durationInMonths: 3,
@@ -526,7 +526,7 @@ ClassPlan {
   ↓
 Class {
   id: "class_abc",
-  classPlanId: "plan_class_123",
+  cohortPlanId: "plan_class_123",
   schedulingPeriodStartsAt: "2025-01-15",
   schedulingPeriodEndsAt: "2025-04-15",
   status: "SCHEDULED",
@@ -535,16 +535,16 @@ Class {
 Appointments [  // All created during class creation
   Appointment {  // Week 1
     id: "appt_week1",
-    appointmentType: "CLASS",
-    classId: "class_abc",
+    appointmentType: "COHORT",
+    cohortId: "class_abc",
     appointmentOccurrences: [
       { id: "slot_template_w1", user: [], ... }
     ]
   },
   Appointment {  // Week 2
     id: "appt_week2",
-    appointmentType: "CLASS",
-    classId: "class_abc",
+    appointmentType: "COHORT",
+    cohortId: "class_abc",
     appointmentOccurrences: [
       { id: "slot_template_w2", user: [], ... }
     ]
@@ -583,15 +583,15 @@ Class {
 
 ### Backend Processing
 
-**Main Function:** `/lib/payments/operations/checkout.ts` - `handleClassCheckout()` (Lines 648-742)
+**Main Function:** `/lib/payments/operations/checkout.ts` - `handleCohortCheckout()` (Lines 648-742)
 
 #### Step 1: Get Class with ALL Appointments and Slots
 
 ```typescript
-const classInstance = await tx.class.findUnique({
+const cohortInstance = await tx.cohort.findUnique({
   where: { id: data.eventId },
   include: {
-    classPlan: true,
+    cohortPlan: true,
     appointments: {
       include: {
         appointmentOccurrences: {
@@ -604,11 +604,11 @@ const classInstance = await tx.class.findUnique({
   },
 });
 
-if (!classInstance) {
+if (!cohortInstance) {
   throw new Error("Class not found");
 }
 
-const plan = classInstance.classPlan;
+const plan = cohortInstance.cohortPlan;
 ```
 
 **What's Loaded:**
@@ -626,7 +626,7 @@ const plan = classInstance.classPlan;
 // Lines 677-686
 const uniqueUserIds = new Set<string>();
 
-for (const apt of classInstance.appointments) {
+for (const apt of cohortInstance.appointments) {
   for (const slot of apt.appointmentOccurrences) {
     if (slot.user && Array.isArray(slot.user)) {
       slot.user.forEach((u: { id: string }) => uniqueUserIds.add(u.id));
@@ -667,8 +667,8 @@ Unique students = Set { student1, student2 }.size = 2  ← Correct count
 #### Step 3: Check Capacity
 
 ```typescript
-const capacity = getClassCapacity({
-  classInstance,
+const capacity = getCohortCapacity({
+  cohortInstance,
   plan,
   excludeUserIds: ownerUserId ? [ownerUserId] : [],
 });
@@ -704,7 +704,7 @@ if (uniqueUserIds.has(userId)) {
 // Lines 710-728
 const createdSlots = [];
 
-for (const appointment of classInstance.appointments) {
+for (const appointment of cohortInstance.appointments) {
   // Get timing from the first existing slot (template slot)
   const existingSlot = appointment.appointmentOccurrences[0];
 
@@ -756,7 +756,7 @@ AND appointmentId IN (appt_week1, appt_week2, ...);
 #### Step 6: Return First Appointment
 
 ```typescript
-const firstAppointment = classInstance.appointments[0];
+const firstAppointment = cohortInstance.appointments[0];
 
 if (!firstAppointment) {
   throw new Error("No class sessions found");
@@ -789,7 +789,7 @@ sequenceDiagram
     U->>FE: Click "Enroll Now"
     FE->>API: POST /api/checkout<br/>{ eventId: "class_abc" }
 
-    API->>CO: handleClassCheckout()
+    API->>CO: handleCohortCheckout()
     CO->>DB: Get Class with<br/>all appointments + slots + users
     DB-->>CO: Class {<br/>  appointments: [10 sessions],<br/>  each with current slots<br/>}
 
@@ -939,7 +939,7 @@ sequenceDiagram
 
 | Aspect                       | Consultation     | Subscription      | Webinar           | Class                   |
 | ---------------------------- | ---------------- | ----------------- | ----------------- | ----------------------- |
-| **Plan Records**             | ConsultationPlan | SubscriptionPlan  | WebinarPlan       | ClassPlan               |
+| **Plan Records**             | ConsultationPlan | SubscriptionPlan  | WebinarPlan       | CohortPlan               |
 | **Event Records**            | Consultation (1) | Subscription (1)  | Webinar (1)       | Class (1)               |
 | **Appointments Per Booking** | 1                | N (e.g., 26)      | 1 (shared)        | N (shared, pre-created) |
 | **Slots Per User**           | 1                | N (1 per session) | 1                 | N (1 per session)       |
@@ -1045,7 +1045,7 @@ UPDATE AppointmentOccurrence SET isTentative = false WHERE id = slotId
 
 ```typescript
 {
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS",
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "COHORT",
   planId: "...",
   eventId: "..." (for webinar/class),
   startsAt: "..." (for consultation/subscription),

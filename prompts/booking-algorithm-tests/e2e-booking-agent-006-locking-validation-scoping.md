@@ -60,7 +60,7 @@ All test data uses the `-006` suffix to avoid collisions with existing seed data
 - `utils/appointmentlock.ts` — all lock functions
 - `utils/errors/SlotLockError.ts` — custom error class
 - `app/api/bookings/webinars/[webinarId]/allocate/route.ts`
-- `app/api/bookings/classes/[classId]/allocate/route.ts`
+- `app/api/bookings/cohorts/[cohortId]/allocate/route.ts`
 - `app/api/checkout/route.ts`
 
 ---
@@ -270,7 +270,7 @@ VALUES ('test-webinar-006a', 'test-webinar-plan-006a', 'SCHEDULED', NOW(), NOW()
 ON CONFLICT (id) DO NOTHING;
 
 -- Class Plan: 2 sessions, 1/week, 1h each, 3 max
-INSERT INTO "ClassPlan" (
+INSERT INTO "CohortPlan" (
   id, title, "sessionDurationInHours", "totalSessions",
   "sessionsPerWeek", "maxParticipants",
   price, "priceCurrency",
@@ -286,8 +286,8 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO "Class" (
-  id, "classPlanId", status,
+INSERT INTO "Cohort" (
+  id, "cohortPlanId", status,
   "schedulingPeriodStartsAt", "schedulingPeriodEndsAt",
   "createdAt", "updatedAt"
 )
@@ -330,7 +330,7 @@ SELECT COUNT(*) as slots_a FROM "AvailabilityWindowWeekly" WHERE "consultantProf
 SELECT COUNT(*) as slots_b FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006b';
 SELECT id, title FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-006a';
 SELECT id, status FROM "Webinar" WHERE id IN ('test-webinar-006a', 'test-webinar-006a-wl');
-SELECT id, status FROM "Class" WHERE id = 'test-class-006a';
+SELECT id, status FROM "Cohort" WHERE id = 'test-class-006a';
 ```
 
 **STOP and fix any missing rows before continuing.**
@@ -410,7 +410,7 @@ First allocate the class:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/bookings/classes/test-class-006a/allocate",
+    "/api/bookings/cohorts/test-class-006a/allocate",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -426,7 +426,7 @@ Then fire two concurrent requests:
 ```javascript
 async () => {
   const makeRequest = () =>
-    fetch("/api/bookings/classes/test-class-006a/allocate", {
+    fetch("/api/bookings/cohorts/test-class-006a/allocate", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isAuto: true }),
@@ -444,7 +444,7 @@ DB verify:
 ```sql
 SELECT COUNT(DISTINCT a.id) AS apt_count
 FROM "Appointment" a
-WHERE a."classId" = 'test-class-006a';
+WHERE a."cohortId" = 'test-class-006a';
 -- Expected: 2 (class has 2 total sessions, no more)
 ```
 
@@ -988,7 +988,7 @@ SELECT 'Webinar Appointments', COUNT(*)
 FROM "Appointment" WHERE "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
 UNION ALL
 SELECT 'Class Appointments', COUNT(*)
-FROM "Appointment" WHERE "classId" = 'test-class-006a'
+FROM "Appointment" WHERE "cohortId" = 'test-class-006a'
 UNION ALL
 SELECT 'Consultations', COUNT(*)
 FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a';
@@ -1008,7 +1008,7 @@ WHERE "A" IN (
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
      OR a."webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
-     OR a."classId" = 'test-class-006a'
+     OR a."cohortId" = 'test-class-006a'
 );
 
 -- Slots
@@ -1017,7 +1017,7 @@ WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
      OR a."webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
-     OR a."classId" = 'test-class-006a'
+     OR a."cohortId" = 'test-class-006a'
 );
 
 -- Payments
@@ -1026,25 +1026,25 @@ WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
      OR a."webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
-     OR a."classId" = 'test-class-006a'
+     OR a."cohortId" = 'test-class-006a'
 );
 
 -- Appointments
 DELETE FROM "Appointment"
 WHERE "consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
    OR "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
-   OR "classId" = 'test-class-006a';
+   OR "cohortId" = 'test-class-006a';
 
 
 -- Services
 DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a';
 DELETE FROM "Webinar" WHERE id IN ('test-webinar-006a', 'test-webinar-006a-wl');
-DELETE FROM "Class" WHERE id = 'test-class-006a';
+DELETE FROM "Cohort" WHERE id = 'test-class-006a';
 
 -- Plans
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-006a';
 DELETE FROM "WebinarPlan" WHERE id IN ('test-webinar-plan-006a', 'test-webinar-plan-006a-wl');
-DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-006a';
+DELETE FROM "CohortPlan" WHERE id = 'test-class-plan-006a';
 
 -- Availability
 DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" IN ('test-consultant-profile-006a', 'test-consultant-profile-006b');
@@ -1072,7 +1072,7 @@ DELETE FROM "Domain" WHERE id = 'test-domain-006';
 SELECT
   (SELECT COUNT(*) FROM users WHERE email LIKE 'test%006%@familiarise.com') AS users,
   (SELECT COUNT(*) FROM "ConsultantProfile" WHERE id LIKE 'test-consultant-profile-006%') AS profiles,
-  (SELECT COUNT(*) FROM "Appointment" WHERE "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl') OR "classId" = 'test-class-006a') AS appointments;
+  (SELECT COUNT(*) FROM "Appointment" WHERE "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl') OR "cohortId" = 'test-class-006a') AS appointments;
 -- Expected: all zeros
 ```
 

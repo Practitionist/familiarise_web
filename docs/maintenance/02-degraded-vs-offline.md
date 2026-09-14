@@ -43,7 +43,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | **Consultations** (`/api/bookings/consultations`)                                                  | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | HIGH       |
 | **Subscriptions** (`/api/bookings/subscriptions`)                                                  | GET: Allowed, POST: Allowed (gap)       | Blocked                    | HIGH       |
 | **Webinars** (`/api/bookings/webinars`)                                                            | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
-| **Classes** (`/api/bookings/classes`)                                                              | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
+| **Classes** (`/api/bookings/cohorts`)                                                              | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
 | **Allocate slots** (`/api/bookings/*/allocate`)                                                    | Allowed (gap)                           | Blocked                    | HIGH       |
 | **Validate** (`/api/bookings/*/validate`)                                                          | Allowed (read-only)                     | Blocked                    | LOW        |
 | **Participants** (`/api/participants/*`)                                                           | Allowed                                 | Blocked                    | LOW        |
@@ -171,14 +171,14 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 ### Event Routes (Classes)
 
-- `GET /api/bookings/classes` -- List classes
-- `POST /api/bookings/classes` -- Create class
-- `GET /api/bookings/classes/[id]` -- Get class
-- `POST /api/bookings/classes/[id]/allocate` -- Allocate slots
-- `GET /api/bookings/classes/[id]/validate` -- Validate class
-- `GET /api/bookings/classes/check-duplicate-title` -- Check duplicates
-- `POST /api/bookings/classes/crud-with-plan` -- Create class with plan
-- `PATCH /api/bookings/classes/crud-with-plan/[id]` -- Update class with plan
+- `GET /api/bookings/cohorts` -- List classes
+- `POST /api/bookings/cohorts` -- Create class
+- `GET /api/bookings/cohorts/[id]` -- Get class
+- `POST /api/bookings/cohorts/[id]/allocate` -- Allocate slots
+- `GET /api/bookings/cohorts/[id]/validate` -- Validate class
+- `GET /api/bookings/cohorts/check-duplicate-title` -- Check duplicates
+- `POST /api/bookings/cohorts/crud-with-plan` -- Create class with plan
+- `PATCH /api/bookings/cohorts/crud-with-plan/[id]` -- Update class with plan
 
 ### Trial Routes
 
@@ -195,7 +195,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 - `DELETE /api/participants/consultations/[id]` -- Remove participant
 - `GET /api/participants/subscriptions/[id]` -- Subscription participants
 - `GET /api/participants/webinar/[id]` -- Webinar participants
-- `GET /api/participants/class/[id]` -- Class participants
+- `GET /api/participants/cohort/[id]` -- Class participants
 
 ## The appointment freeze follows the cancellation doctrine (2026-08-14, #1162 / #1169 PR 3)
 

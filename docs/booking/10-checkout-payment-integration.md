@@ -114,7 +114,7 @@ The `checkoutSchema` enforces per-type requirements via `superRefine`:
 | CONSULTATION     | `startsAt`, `endsAt`, one of `slotOfAvailabilityWeeklyId` / `slotOfAvailabilityCustomId` | Slot timing validated against minimum lead time      |
 | SUBSCRIPTION     | Either slot data OR `schedulingPeriodStartsAt` + `schedulingPeriodEndsAt`                                    | If slots provided, availability ID also required     |
 | WEBINAR          | `eventId`                                                                                                    | No slot times needed (uses master slot from webinar) |
-| CLASS            | `eventId`                                                                                                    | No slot times needed (uses session slots from class) |
+| COHORT            | `eventId`                                                                                                    | No slot times needed (uses session slots from class) |
 | TRIAL            | (handled separately)                                                                                         | Included in `appointmentTypeSchema`                  |
 
 Cross-field validations:
@@ -133,7 +133,7 @@ Each type has a dedicated handler called inside the Serializable transaction:
 | CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                     |
 | SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking. |
 | WEBINAR      | `handleWebinarCheckout()`      | Adds AppointmentOccurrence to existing shared appointment. Validates: not full, not ended, user not already registered.                                                        |
-| CLASS        | `handleClassCheckout()`        | Creates AppointmentOccurrence for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                                |
+| COHORT        | `handleCohortCheckout()`        | Creates AppointmentOccurrence for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                                |
 
 ### PaymentIntentManager
 
@@ -169,7 +169,7 @@ When `isMockPayment = true`:
 | Subscription (with slots)        | `lockSlotBooking`   | `slot-booking:{consultantUserId}:{startsAt}` | 60s         |
 | Subscription (scheduling period) | `lockEventCheckout` | `event-checkout:SUBSCRIPTION:{planId}`                 | 60s         |
 | Webinar                          | `lockEventCheckout` | `event-checkout:WEBINAR:{eventId}`                     | 60s         |
-| Class                            | `lockEventCheckout` | `event-checkout:CLASS:{eventId}`                       | 60s         |
+| Class                            | `lockEventCheckout` | `event-checkout:COHORT:{eventId}`                       | 60s         |
 
 For multi-participant events (Webinar, Class), an additional semaphore mechanism is available:
 
@@ -221,7 +221,7 @@ If metadata validation fails, the payment is marked as `SUCCEEDED` with descript
 
 Three cooperating changes make a hot event or hot slot survivable:
 
-1. **Optimistic capacity pre-check (WEBINAR/CLASS)** — before the event mutex is even requested, one bounded read answers "already sold out" via the SAME capacity helpers the authoritative recount uses (`readEventCapacity` in checkout.ts). The overwhelming majority of losers in a drop fail fast with a plain **409 `EVENT_SOLD_OUT`** ("sold out, card not charged") instead of queueing into the function timeout.
+1. **Optimistic capacity pre-check (WEBINAR/COHORT)** — before the event mutex is even requested, one bounded read answers "already sold out" via the SAME capacity helpers the authoritative recount uses (`readEventCapacity` in checkout.ts). The overwhelming majority of losers in a drop fail fast with a plain **409 `EVENT_SOLD_OUT`** ("sold out, card not charged") instead of queueing into the function timeout.
 2. **Bounded waiter budgets** — checkout's lock acquisitions (`event-checkout`, `consultee-booking`) pass `CHECKOUT_WAIT_RETRY_CONFIG` (5 retries ≈ 7s worst case), far inside the ~26s function ceiling. The loser of a near-capacity race now gets a structured **409 `EVENT_CHECKOUT_BUSY` / `CONSULTEE_BOOKING_BUSY` with `retryAfter`**, never a raw 504; contention errors are typed classes (`EventCheckoutBusyError`, `ConsulteeBookingBusyError`), not message-sniffed strings.
 3. **Client single auto-retry (B5)** — all four checkout submit paths wrap their request in `fetchCheckoutWithBusyRetry`: on a structured BUSY 409 it shows "your card has not been charged, retrying in Ns…" once, waits the advised pause (capped at 20s), and retries exactly once. The stable `clientIdempotencyKey` rides both attempts and the server CASes on it, so the retry cannot mint a duplicate order.
 
@@ -248,7 +248,7 @@ The `confirmExistingAppointment()` function handles each type differently to pre
 | Consultation | All slots on the appointment         | Single user per appointment                                                                         |
 | Subscription | All slots on the appointment         | Single user per appointment. Status stays PENDING until consultant allocates slots.                 |
 | Webinar      | Only the paying user's slots         | Shared appointment. Filters by `userId` to avoid confirming other participants.                     |
-| Class        | All user's slots across ALL sessions | Filters by `userId` + `classId`. Payment links to first appointment but confirms all session slots. |
+| Class        | All user's slots across ALL sessions | Filters by `userId` + `cohortId`. Payment links to first appointment but confirms all session slots. |
 
 ### handlePaymentFailure()
 

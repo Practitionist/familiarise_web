@@ -672,7 +672,7 @@ graph TD
 
 ```mermaid
 graph TD
-    A[Webinar/Class is Full] --> B[Consultee Joins Waitlist]
+    A[Webinar/Cohort is Full] --> B[Consultee Joins Waitlist]
     B --> C[Position in Queue Assigned]
     C --> D{Spot Opens Up?}
     D -->|Yes| E[Consultee Notified<br/>48-hour window]

@@ -18,7 +18,7 @@ fails the build if either word comes back. The chain going forward is
 appointment → engagement → meeting**, with trials and auth sessions as
 separate things.
 
-## The eight concepts
+## The nine concepts
 
 **Availability window.** The hours a consultant offers, never booked
 directly. Implemented by `AvailabilityWindowWeekly` (recurring, with a frozen
@@ -44,12 +44,23 @@ underneath it — the reset deleted that layer. `AppointmentParticipant` is the
 only participant list; the old implicit slot↔user join table is gone.
 
 **Appointment.** The polymorphic wrapper grouping one or more appointment
-occurrences under exactly one of consultation, subscription, webinar, class,
-or trial, and — since the 2026-09-12 decision — exactly one purchase per
-appointment (`Appointment.subscriptionId` and `Appointment.classId` are
+occurrences under exactly one of consultation, subscription, webinar, cohort
+(the model behind the "class" a customer buys), or trial, and — since the 2026-09-12 decision — exactly one purchase per
+appointment (`Appointment.subscriptionId` and `Appointment.cohortId` are
 `@unique`; the old multi-purchase "siblings" payload is gone). Tentative-
 created at checkout, confirmed by the payment webhook, auto-completed by
 cron.
+
+**Cohort.** The live, multi-session, capacity-bound group offering a
+customer buys as a "class": one run that starts together, moves through one
+fixed schedule and finishes together. Implemented by `CohortPlan` (the terms
+sold — `totalSessions`, `sessionsPerWeek`, `maxParticipants`) and `Cohort`
+(one run of that plan, with `CohortStatus` and its own scheduling window);
+`Appointment.cohortId` is `@unique` and `AppointmentsType.COHORT` names the
+type. The word was chosen at the reset (#1640) because the run is bounded and
+shared, which "class" is not, and because `Class` collides with the mobile
+codegen's own `Class`. Customer-facing copy keeps saying "class"; only the
+identifiers say cohort.
 
 **Engagement.** The enterprise consumption unit: one appointment booked under
 an org program, metered by `engagementsUsed` on the program assignment. This
@@ -91,7 +102,7 @@ The plan fields `sessionDurationInHours`, `totalSessions` and
 counts, not video calls and not auth sessions. The first two predate this
 glossary and are kept under the schema freeze; `sessionsPerWeek` joined them
 via ADR 24, which unified `SubscriptionPlan.callsPerWeek` and
-`ClassPlan.meetingsPerWeek` under one name (#1011). This document is their
+`CohortPlan.meetingsPerWeek` under one name (#1011). This document is their
 disambiguation, and they are not renamed by #1554 because they are plan-shape
 fields, not the retired scheduling identifiers.
 
@@ -103,28 +114,28 @@ qualification events. The June 2026 decision: retire the phrase; org-level
 acquisition incentives, if ever wanted, are a new post-launch-schema
 subsystem.
 
-## Retired identifiers and their replacements (#1554, PR #1638)
+## Retired identifiers and their replacements (#1554, PR #1638; #1640)
 
 This table is the one place that maps the names the code used before the reset to the names it uses now. Older issues, pull requests and engineering-log entries keep the old names because they describe the code as it was; when one of them is picked up, read it through this table rather than editing it. The retired names are refused in code by `scripts/ci/check-terminology.ts`, so a change that reintroduces one fails CI with a pointer back here.
 
-| Retired name                                                                   | Current name                                                        | Note                                                                                |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `SlotOfAvailabilityWeekly`, `SlotOfAvailabilityCustom`                         | `AvailabilityWindowWeekly`, `AvailabilityWindowCustom`              | Offered hours; two models because the shapes share no columns.                      |
-| `SlotOfAppointment` (one row per 30-minute atom)                               | `AppointmentOccurrence` (one row per held call, with `ordinal`)     | The thirty-minute rows are gone; a rescheduled call keeps its `ordinal`.            |
-| implicit `_SlotOfAppointmentToUser` join                                       | `AppointmentParticipant`                                            | The only roster; written on every creation path.                                    |
-| `SlotCompletionStatus`                                                         | `OccurrenceCompletionStatus`                                        | Values unchanged.                                                                   |
-| `MeetingSession`, `meetingSessionId`                                           | `Meeting`, `meetingId`                                              | The Stream call record, keyed by `appointmentOccurrenceId`.                         |
-| `MeetingRecordingConsent`                                                      | `RecordingConsent`                                                  | Keyed by `meetingId`.                                                               |
-| `TrialSession`, `TrialSessionStatus`, `trialSessionPaid`                       | `Trial`, `TrialStatus`, `trialPaid`                                 |                                                                                     |
-| `AppointmentFeedback.slotOfAppointmentId`                                      | `AppointmentFeedback.appointmentOccurrenceId` (nullable)            | NULL means the rating is about the whole booking.                                   |
-| `RescheduleProposedSlot`, `releasedSlotIds`                                    | `RescheduleProposedTime`, `releasedOccurrenceIds`                   |                                                                                     |
-| `ConsultantReview.ratedSessionAt`                                              | `ratedOccurrenceAt`                                                 |                                                                                     |
-| `SessionType`, `ConsultantProfile.sessionTypes`                                | `OfferingFormat`, `offeringFormats`                                 |                                                                                     |
-| `Feedback`, `FeedbackStatus`                                                   | `PlatformFeedback`, `PlatformFeedbackStatus`                        | Product feedback about the platform.                                                |
-| `Collaborator.canApprovePayment/canViewAnalytics/canEditEvent/canSeeAttendees` | `Collaborator.tier` (`PRESENTER`, `CREW`)                           | Only `canSeeAttendees` was ever enforced.                                           |
-| `ErasureRequest.pendingStreamRevocations` (never shipped)                      | `StreamRevocationRetry`                                             | A typed outbox row per failed revocation.                                           |
-| `utils/slotAllocation/*`, `SlotAllocationService`                              | `utils/scheduling-engine/*`, `SchedulingService`                    | `ScheduleValidationService`, `ScheduleCalculationService`, `intervals.ts` likewise. |
-| `lib/appointments/{slots,contiguous-slot-run,sessions-of}.ts`, `SessionVM`     | `lib/appointments/occurrences.ts`, `OccurrenceVM`                   | The run-grouping layer was deleted.                                                 |
-| `/api/slots/*`                                                                 | `/api/scheduling/*`                                                 |                                                                                     |
-| Stream call id `slot-<id>`                                                     | `occurrence-<id>` (`-r<suffix>` after a rebuild)                    |                                                                                     |
-| `Class`, `ClassPlan`, `CLASS`                                                  | `Cohort`, `CohortPlan`, `COHORT` — decided, not yet renamed (#1640) | Customer copy keeps saying "class".                                                 |
+| Retired name                                                                   | Current name                                                                                                | Note                                                                                                    |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `SlotOfAvailabilityWeekly`, `SlotOfAvailabilityCustom`                         | `AvailabilityWindowWeekly`, `AvailabilityWindowCustom`                                                      | Offered hours; two models because the shapes share no columns.                                          |
+| `SlotOfAppointment` (one row per 30-minute atom)                               | `AppointmentOccurrence` (one row per held call, with `ordinal`)                                             | The thirty-minute rows are gone; a rescheduled call keeps its `ordinal`.                                |
+| implicit `_SlotOfAppointmentToUser` join                                       | `AppointmentParticipant`                                                                                    | The only roster; written on every creation path.                                                        |
+| `SlotCompletionStatus`                                                         | `OccurrenceCompletionStatus`                                                                                | Values unchanged.                                                                                       |
+| `MeetingSession`, `meetingSessionId`                                           | `Meeting`, `meetingId`                                                                                      | The Stream call record, keyed by `appointmentOccurrenceId`.                                             |
+| `MeetingRecordingConsent`                                                      | `RecordingConsent`                                                                                          | Keyed by `meetingId`.                                                                                   |
+| `TrialSession`, `TrialSessionStatus`, `trialSessionPaid`                       | `Trial`, `TrialStatus`, `trialPaid`                                                                         |                                                                                                         |
+| `AppointmentFeedback.slotOfAppointmentId`                                      | `AppointmentFeedback.appointmentOccurrenceId` (nullable)                                                    | NULL means the rating is about the whole booking.                                                       |
+| `RescheduleProposedSlot`, `releasedSlotIds`                                    | `RescheduleProposedTime`, `releasedOccurrenceIds`                                                           |                                                                                                         |
+| `ConsultantReview.ratedSessionAt`                                              | `ratedOccurrenceAt`                                                                                         |                                                                                                         |
+| `SessionType`, `ConsultantProfile.sessionTypes`                                | `OfferingFormat`, `offeringFormats`                                                                         |                                                                                                         |
+| `Feedback`, `FeedbackStatus`                                                   | `PlatformFeedback`, `PlatformFeedbackStatus`                                                                | Product feedback about the platform.                                                                    |
+| `Collaborator.canApprovePayment/canViewAnalytics/canEditEvent/canSeeAttendees` | `Collaborator.tier` (`PRESENTER`, `CREW`)                                                                   | Only `canSeeAttendees` was ever enforced.                                                               |
+| `ErasureRequest.pendingStreamRevocations` (never shipped)                      | `StreamRevocationRetry`                                                                                     | A typed outbox row per failed revocation.                                                               |
+| `utils/slotAllocation/*`, `SlotAllocationService`                              | `utils/scheduling-engine/*`, `SchedulingService`                                                            | `ScheduleValidationService`, `ScheduleCalculationService`, `intervals.ts` likewise.                     |
+| `lib/appointments/{slots,contiguous-slot-run,sessions-of}.ts`, `SessionVM`     | `lib/appointments/occurrences.ts`, `OccurrenceVM`                                                           | The run-grouping layer was deleted.                                                                     |
+| `/api/slots/*`                                                                 | `/api/scheduling/*`                                                                                         |                                                                                                         |
+| Stream call id `slot-<id>`                                                     | `occurrence-<id>` (`-r<suffix>` after a rebuild)                                                            |                                                                                                         |
+| `Class`, `ClassPlan`, `ClassContent`, `ClassStatus`, `classId`, `CLASS`        | `Cohort`, `CohortPlan`, `CohortContent`, `CohortStatus`, `cohortId`, `COHORT` — renamed in #1640 (PR #1644) | Customer copy keeps saying "class"; `/api/plans/classes` and `/api/bookings/classes` became `/cohorts`. |

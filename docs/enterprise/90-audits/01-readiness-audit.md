@@ -213,7 +213,7 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 - [x] ✅ `autoRenew` flag + `effectiveFrom/To` date validation
 - [x] ✅ Program CRUD under contracts (`LICENSED_SEAT`, `CREDIT_POOL`)
 - [x] ✅ ProgramAssignment lifecycle: assign, update, remove
-- [x] ✅ Engagement cap counting: CONSULTATION (1) / WEBINAR (1) / CLASS (N per day) / SUBSCRIPTION (1 lazy per allocation) — tested in #710
+- [x] ✅ Engagement cap counting: CONSULTATION (1) / WEBINAR (1) / COHORT (N per day) / SUBSCRIPTION (1 lazy per allocation) — tested in #710
 - [x] ✅ `ProgramAssignmentLimitError` raised on cap exhaustion → Novu `ORG_PROGRAM_EXHAUSTED` fired
 - [x] ✅ `OverageBehavior.BLOCK` — checkout rejected at cap
 - [x] ✅ `OverageBehavior.CHARGE_ORG` — overage leg uses `OVERAGE_INVOICE_ACCRUAL` source; P2002 crash eliminated *(FX-1)*

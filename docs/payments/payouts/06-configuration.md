@@ -61,7 +61,7 @@ export const PAYOUT_CONSTANTS = {
     CONSULTATION: 24, // 24 hours
     WEBINAR: 48, // 48 hours
     SUBSCRIPTION: 168, // 7 days
-    CLASS: 24, // 24 hours
+    COHORT: 24, // 24 hours
   },
 
   // Retry config
@@ -286,7 +286,7 @@ HOLD_PERIOD_HOURS: {
   CONSULTATION: 0.1,  // 6 minutes for testing
   WEBINAR: 0.1,
   SUBSCRIPTION: 0.1,
-  CLASS: 0.1,
+  COHORT: 0.1,
 },
 ```
 

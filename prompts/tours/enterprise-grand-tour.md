@@ -503,8 +503,8 @@ can inspect each in isolation.
 
 > **Closed — issue #710 (PR-1a).** `engagementsConsumed` is now
 > derived from the actual count of allocated slots
-> (`classInstance.appointments.length`) rather than hardcoded to 1.
-> An 8-week CLASS consumes 8 cap units, a 12-call SUBSCRIPTION lazy-
+> (`cohortInstance.appointments.length`) rather than hardcoded to 1.
+> An 8-week COHORT consumes 8 cap units, a 12-call SUBSCRIPTION lazy-
 > debits 1 per consultant allocation, and CONSULTATION/WEBINAR debit 1
 > at checkout. LICENSE orgs (cap=null) remain unaffected. T.7.5 (next)
 > verifies the fix end-to-end and includes a BLOCK-overage drill.
@@ -700,7 +700,7 @@ line ~660 for the formatting helper.
 
 **What we're about to do.** On `tour-2026-04-25-wallet-seat` (T.6,
 the Stripe IN shape with `coveredEngagementsPerCycle=4` per quarter),
-have a tour LEARNER book an 8-week CLASS instead of a single
+have a tour LEARNER book an 8-week COHORT instead of a single
 consultation. Observe that `ProgramAssignment.engagementsUsed`
 increments by **8** — one per delivered occurrence — proving that
 the engagement-based cap counter works for multi-session plans.
@@ -708,7 +708,7 @@ the engagement-based cap counter works for multi-session plans.
 This stop used to demonstrate bug #710 (then-current `sessionsConsumed=1`
 hardcode). PR-1a closed that issue: checkout now reads
 `engagementsConsumed` from the actual count of allocated slots
-(`classInstance.appointments.length`), so a multi-session product
+(`cohortInstance.appointments.length`), so a multi-session product
 correctly consumes its full cap weight.
 
 **Real customer pattern.** Stripe IN's CFO asks "we covered 4
@@ -724,8 +724,8 @@ ledger entries, reconcile invariant E, and BLOCK overage rejection.
 
 > Pick one:
 >
-> - `auto` — Use the existing CLASS plan from a seeded consultant (or
->   create a tiny tour CLASS via Supabase MCP with `totalSessions=8`).
+> - `auto` — Use the existing COHORT plan from a seeded consultant (or
+>   create a tiny tour COHORT via Supabase MCP with `totalSessions=8`).
 >   Have the tour learner book it via the marketplace flow. Watch the
 >   network tab for the checkout call.
 > - `manual` — Same path; type `done` after the booking confirms.
@@ -752,7 +752,7 @@ After the booking:
 -- Same query as above
 ```
 
-`engagementsUsed` should now be `N + 8` — one per allocated CLASS
+`engagementsUsed` should now be `N + 8` — one per allocated COHORT
 slot. If it shows `N + 1` the fix has regressed; file a P0.
 
 Cross-check against the actual slot count and the immutable ledger:
@@ -761,8 +761,8 @@ Cross-check against the actual slot count and the immutable ledger:
 -- Slot count for the booked class
 SELECT COUNT(*) FROM "AppointmentOccurrence" sa
 JOIN "Appointment" a ON a.id = sa."appointmentId"
-WHERE a."classId" IN (
-  SELECT id FROM "Class" WHERE "classPlanId" = '<our-plan-id>' ORDER BY "createdAt" DESC LIMIT 1
+WHERE a."cohortId" IN (
+  SELECT id FROM "Cohort" WHERE "cohortPlanId" = '<our-plan-id>' ORDER BY "createdAt" DESC LIMIT 1
 );
 
 -- UsageLedgerEntry must mirror the increment

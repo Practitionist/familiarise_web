@@ -48,7 +48,7 @@ There are exactly three ways, and all of them run on the server:
 
 1. **Explicit creators** — `actions/stream/chat/channel.action.ts`
    (`createChannel` plus the entity wrappers `createWebinarChannel`,
-   `createClassChannel`, `createConsultationChannel`,
+   `createCohortChannel`, `createConsultationChannel`,
    `createSubscriptionChannel`, `createDirectMessageChannel`). Called from
    authenticated API routes under `app/api/` and from
    `lib/payments/webhooks/handlers.ts` at booking/approval time.
@@ -133,7 +133,7 @@ The daily job `jobs/stream/expire-event-channels.ts` (scheduled in
   app-wide UpdateChannelPartial rate limit — see the job's header comment for
   the pacing math and the 2026-08-23 burst that motivated it. After a
   successful Stream call, the job stamps the ledger:
-  `Webinar.chatFrozenAt` / `Class.chatFrozenAt`. The ordering is deliberate: a
+  `Webinar.chatFrozenAt` / `Cohort.chatFrozenAt`. The ordering is deliberate: a
   missed stamp costs one redundant freeze on the next run (safe), while a
   premature stamp could leave a channel unfrozen forever (not safe).
 - **Delete (at the org's retention window).**
@@ -166,7 +166,7 @@ still entitled to them.
 The expected-set is Postgres-authoritative, which cuts both ways: rows that no
 longer confer a right to a channel must be excluded, or the sync will *create*
 damage instead of repairing it. Hence the retention filter (review F-HIGH-2):
-`getWebinarIdsForUser` and `getClassIdsForUser` now select each event's latest
+`getWebinarIdsForUser` and `getCohortIdsForUser` now select each event's latest
 slot `endsAt` plus `organization.streamRecordingRetentionDays` off the
 appointment(s), and drop events where `isPastRetention` is true — the same
 window math the expiry cron applies, fed by the same shared constants.

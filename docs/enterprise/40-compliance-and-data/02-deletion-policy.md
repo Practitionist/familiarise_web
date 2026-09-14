@@ -269,9 +269,9 @@ flowchart TD
     Q6 -->|yes| C4[/"HARD-DELETE OK — Case 4<br/>+ anti-lockout guards"/]:::hard
     Q6 -->|no| DEFAULT[/"SOFT-DELETE (default)<br/>document here first if you<br/>think it's a new hard case"/]:::soft
 
-    classDef soft fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
-    classDef hard fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
-    classDef tomb fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
+    cohortDef soft fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
+    cohortDef hard fill:#f8d7da,stroke:#c0392b,color:#3a0f12;
+    cohortDef tomb fill:#fff3cd,stroke:#b7791f,color:#3a2f00;
 ```
 
 Three exits, three colours: 🟢 soft-delete (the default and Q1/Q2/Q7),
@@ -306,7 +306,7 @@ Out of this epic's scope but observed during the grep:
 | Route | Entity | Action | Verdict |
 |---|---|---|---|
 | `DELETE /plans/webinars/[webinarPlanId]` | `WebinarPlan` | hard-delete | REVIEW — plans carry booking history; should be soft-delete via `isActive` flag |
-| `DELETE /plans/classes/[classPlanId]` | `ClassPlan` | hard-delete | REVIEW — same |
+| `DELETE /plans/classes/[cohortPlanId]` | `CohortPlan` | hard-delete | REVIEW — same |
 | `DELETE /plans/consultations/[consultationPlanId]` | `ConsultationPlan` | hard-delete | REVIEW — same |
 | `DELETE /plans/subscriptions/[subscriptionPlanId]` | `SubscriptionPlan` | hard-delete | REVIEW — same |
 | `DELETE /user/[id]` | `User` | hard-delete | REVIEW — user hard-delete should be gated to DPDP §12 only; general self-delete should be soft |
@@ -345,4 +345,4 @@ are tracked under #703 §15 for v1.1.
 
 ## Glossary — business terms
 
-- **Design-partner customer set** (also informally "launch cohort") — the curated group of 2-3 enterprise customers onboarded during the first 3-6 months post-MVP to validate the enterprise tier. NOT related to the `Class` Prisma model (which is a B2C cohort-based course appointment type). The term appears in `design-partner-customer-set` where the selection criteria are spelled out.
+- **Design-partner customer set** (also informally "launch cohort") — the curated group of 2-3 enterprise customers onboarded during the first 3-6 months post-MVP to validate the enterprise tier. NOT related to the `Cohort` Prisma model (which is a B2C cohort-based course appointment type). The term appears in `design-partner-customer-set` where the selection criteria are spelled out.

@@ -73,7 +73,7 @@ sequenceDiagram
     Note over ES: grossAmount = payment.amount<br/>platformFee = 20%<br/>consultantShare = 80%
 
     ES->>ES: Determine hold period
-    Note over ES: Based on appointmentType:<br/>CONSULTATION: 24h<br/>WEBINAR: 48h<br/>SUBSCRIPTION: 168h<br/>CLASS: 24h
+    Note over ES: Based on appointmentType:<br/>CONSULTATION: 24h<br/>WEBINAR: 48h<br/>SUBSCRIPTION: 168h<br/>COHORT: 24h
 
     ES->>DB: Create ConsultantEarnings
     Note over DB: status: PENDING<br/>holdUntil: now + holdPeriod
@@ -180,7 +180,7 @@ gantt
 
 ## Multi-Party Revenue Splits (Mar 2026)
 
-For WEBINAR and CLASS payments with collaborators, the `sync-payment-earnings` job and the earnings creation flow now call `calculateRevenueSplit()` to create **multiple** `ConsultantEarnings` records per payment -- one for the owner and one for each collaborator, each with their `role` and `sharePercentage`. This replaces the previous single-earnings-per-payment assumption.
+For WEBINAR and COHORT payments with collaborators, the `sync-payment-earnings` job and the earnings creation flow now call `calculateRevenueSplit()` to create **multiple** `ConsultantEarnings` records per payment -- one for the owner and one for each collaborator, each with their `role` and `sharePercentage`. This replaces the previous single-earnings-per-payment assumption.
 
 ---
 

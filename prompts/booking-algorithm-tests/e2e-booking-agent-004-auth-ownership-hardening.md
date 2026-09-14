@@ -1211,7 +1211,7 @@ SELECT
 - **IDs:** all use `-004` suffix (no collisions)
 - **Two consultants:** A (primary) + B (adversary) for cross-ownership tests
 - **Focus:** exclusively **authorization, ownership verification, cross-consultant rejection**
-- **No Subscription/Webinar/Class tests** — single consultation plan to keep scope focused
+- **No Subscription/Webinar/Cohort tests** — single consultation plan to keep scope focused
 - **Tests auth on EVERY HTTP method** for both weekly and custom slot CRUD
 - **Tests bulk settings route** (onboarding equivalent) for auth bypass and validation bypass
 - **Tests checkout ownership scoping** — wrong consultant's availability rejected

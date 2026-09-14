@@ -12,7 +12,7 @@ This document explains how an org and its plans surface on the public marketplac
 
 The enterprise layer's public-facing footprint is just two things. The first is per-type org-owned plans that opt into the marketplace via `OrgPlanVisibility`; the org's "catalog" is now simply its visible plans rather than a separate model. The second is public org pages for HOST and HYBRID orgs that opt into discovery by setting `Organization.isPublic = true`.
 
-The standalone `OrganizationPlan` model and the `/catalog` route set were both removed in the #778 elegance pass, because a separate "org catalog" table duplicated the bookable shape of the four per-type plans. The catalog an org exposes is now exactly its `ConsultationPlan`, `SubscriptionPlan`, `WebinarPlan`, and `ClassPlan` rows (those with `organizationId` set) whose `visibility` is public. Do not reintroduce `OrganizationPlan`.
+The standalone `OrganizationPlan` model and the `/catalog` route set were both removed in the #778 elegance pass, because a separate "org catalog" table duplicated the bookable shape of the four per-type plans. The catalog an org exposes is now exactly its `ConsultationPlan`, `SubscriptionPlan`, `WebinarPlan`, and `CohortPlan` rows (those with `organizationId` set) whose `visibility` is public. Do not reintroduce `OrganizationPlan`.
 
 ## Plan visibility (`OrgPlanVisibility`)
 
@@ -27,7 +27,7 @@ enum OrgPlanVisibility {
 ```
 
 ```prisma
-// on ConsultationPlan / SubscriptionPlan / WebinarPlan / ClassPlan
+// on ConsultationPlan / SubscriptionPlan / WebinarPlan / CohortPlan
 visibility OrgPlanVisibility @default(PUBLIC)
 ```
 
@@ -91,7 +91,7 @@ flowchart TD
   G1 -- no --> HIDE["not on /explore/enterprise/organisations<br/>(SPONSOR-only B2B clients never listed)"]
   G1 -- yes --> LIST["listed + /[orgSlug] detail page<br/>(revalidate 60)"]
 
-  PLAN["per-type org plan<br/>(Consultation/Subscription/Webinar/Class)"] --> G2{"visibility ∈<br/>MARKETPLACE_VISIBILITY?<br/>{PUBLIC, ORG_AND_PUBLIC}"}
+  PLAN["per-type org plan<br/>(Consultation/Subscription/Webinar/Cohort)"] --> G2{"visibility ∈<br/>MARKETPLACE_VISIBILITY?<br/>{PUBLIC, ORG_AND_PUBLIC}"}
   G2 -- "ORG_ONLY" --> PHIDE["filtered out of /explore/**<br/>+ public plan-list APIs<br/>(still visible to members on my-program)"]
   G2 -- yes --> PSHOW["surfaced on marketplace<br/>+ rendered on org detail (≤6/type)"]
 

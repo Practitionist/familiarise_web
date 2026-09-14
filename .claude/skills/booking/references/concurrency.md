@@ -99,7 +99,7 @@ is 45 s against a 30 s Serializable transaction; `APPOINTMENT_LOCK_TTL_MS` is
 75 s against a 60 s reschedule transaction plus its maxWait; `lockAutoAllocate`
 and `lockConsulteeBooking` default to 150 s against a 120 s transaction. Per
 checkout type, `CHECKOUT_LOCK_TTL_MS` is `CONSULTATION` 60 s, `SUBSCRIPTION` and
-`WEBINAR` 120 s, `CLASS` 600 s, because a class checkout writes many sessions
+`WEBINAR` 120 s, `COHORT` 600 s, because a class checkout writes many sessions
 plus a gateway round trip.
 
 Retries multiply the exposure: four Serializable attempts of up to 40 s each

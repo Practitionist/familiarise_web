@@ -108,7 +108,7 @@ the same commit.
 ## Plan visibility (`OrgPlanVisibility`)
 
 Org-owned plans (`ConsultationPlan` / `SubscriptionPlan` / `WebinarPlan` /
-`ClassPlan` with `organizationId` set) carry an `OrgPlanVisibility` enum
+`CohortPlan` with `organizationId` set) carry an `OrgPlanVisibility` enum
 (`PUBLIC` / `ORG_ONLY` / `ORG_AND_PUBLIC`, default `PUBLIC`). Public marketplace
 endpoints filter via `lib/api/plans/visibility.ts` so an `ORG_ONLY` plan never
 leaks to `/explore/**`; org-internal catalog surfaces deliberately skip the

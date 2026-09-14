@@ -239,7 +239,7 @@ the manual allocation.
 
 ## Phase 7 — Overlap on class creation is a conflict, not a 500
 
-Create a class through `POST /api/bookings/classes/crud-with-plan` whose
+Create a class through `POST /api/bookings/cohorts/crud-with-plan` whose
 sessions overlap a time Consultant A already holds a confirmed slot for.
 
 **Expected:** **409** with

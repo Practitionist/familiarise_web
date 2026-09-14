@@ -44,7 +44,7 @@ Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video*
 
  Supabase Postgres (Prisma): Appointment/AppointmentOccurrence (truth),
    Meeting(1:1 slot, streamCallId unique), MeetingAttendance,
-   Recording, WebhookEvent(outbox-ish), Webinar/Class.chatFrozenAt ledger
+   Recording, WebhookEvent(outbox-ish), Webinar/Cohort.chatFrozenAt ledger
 ```text
 
 ### 1.1 Channel taxonomy & ID discipline
@@ -89,7 +89,7 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 `initializeAllChannels()` (`actions/stream/chat/channel.action.ts:516`) and the whole `create*Channel` family (:63,:161,:196,:277,:360,:436,:701) are exported from `"use server"` with **no session check** — any client can mint arbitrary channels/memberships or trigger a full-DB upsert+create storm (batches of 10 parallel, no pause, no cap). The repo's own standard ("any client can reach this function directly", `meeting.action.ts:616`) demands gating. Fix: `requireSession`/role checks at each export, delete dead exports (`initializeAllChannels` has zero production callers).
 
 **F-HIGH-2 · Deleted channels resurrect, and resurrected ones can never re-freeze.**
-`getWebinarIdsForUser/getClassIdsForUser` have no date/status filter, so after the retention cron hard-deletes a channel, the next dashboard sync re-creates it with the full historic roster — and because `chatFrozenAt` was stamped pre-delete, the ledger classifies the resurrected channel as already-frozen. It stays writable forever and its membership regrows unbounded. Fix: exclude events past retention from the sync expected-set (same window math as the cron), or clear `chatFrozenAt` on delete.
+`getWebinarIdsForUser/getCohortIdsForUser` have no date/status filter, so after the retention cron hard-deletes a channel, the next dashboard sync re-creates it with the full historic roster — and because `chatFrozenAt` was stamped pre-delete, the ledger classifies the resurrected channel as already-frozen. It stays writable forever and its membership regrows unbounded. Fix: exclude events past retention from the sync expected-set (same window math as the cron), or clear `chatFrozenAt` on delete.
 
 **F-HIGH-3 · Concurrent first-join races produce duplicate-create failures that fail real user journeys.**
 Two simultaneous first joins both miss `addMembers`, both build roster and call `create()`; loser throws (payment-webhook path fails that attendee inline). Same shape in DM sync and `createCollaboratorChannel` (docstring claims idempotent; nothing enforces it). Fix: catch duplicate-create (Stream code 17?) and adopt the existing channel, mirroring `createDbMeeting`'s P2002 handling.

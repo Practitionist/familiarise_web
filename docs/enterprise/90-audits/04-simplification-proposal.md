@@ -460,7 +460,7 @@ After Phase 1:
 - [ ] `npm run lint` clean
 - [ ] `npx tsc --noEmit` clean
 - [ ] `npx jest` — all suites pass (currently 61 suites / 990 tests; expect same count post-deletion, minus SCIM tests if any were present)
-- [ ] Manual smoke: SPONSOR org create → invite LEARNER → book CLASS → engagementsUsed increments correctly
+- [ ] Manual smoke: SPONSOR org create → invite LEARNER → book COHORT → engagementsUsed increments correctly
 - [ ] ~~Manual smoke: hit `/api/organizations/[orgId]/scim/Users` → expect 501~~ (superseded — SCIM shipped; verify Users CRUD, bearer-token auth, group mapping, deprovisioning and `ScimToken.expiresAt` enforcement instead)
 
 ---

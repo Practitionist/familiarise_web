@@ -28,15 +28,15 @@ as wrong until proven otherwise.
 status column may be written any other way. As of wave 5 (#1319) the set is
 complete:
 
-| Helper                          | Guards                               | Allowed-from map               |
-| ------------------------------- | ------------------------------------ | ------------------------------ |
-| `transitionConsultationRequest` | `Consultation.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionSubscriptionRequest` | `Subscription.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionWebinarEvent`        | `Webinar.status`                     | `EVENT_ALLOWED_FROM`           |
-| `transitionClassEvent`          | `Class.status`                       | `CLASS_EVENT_ALLOWED_FROM`     |
-| `transitionOccurrenceCompletion`      | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
-| `transitionTrial`        | `Trial.status`                | `TRIAL_ALLOWED_FROM`           |
-| `transitionRescheduleRequest`   | `RescheduleRequest.status`           | `RESCHEDULE_ALLOWED_FROM`      |
+| Helper                           | Guards                                   | Allowed-from map               |
+| -------------------------------- | ---------------------------------------- | ------------------------------ |
+| `transitionConsultationRequest`  | `Consultation.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionSubscriptionRequest`  | `Subscription.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionWebinarEvent`         | `Webinar.status`                         | `EVENT_ALLOWED_FROM`           |
+| `transitionCohortEvent`          | `Cohort.status`                          | `COHORT_EVENT_ALLOWED_FROM`    |
+| `transitionOccurrenceCompletion` | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
+| `transitionTrial`                | `Trial.status`                           | `TRIAL_ALLOWED_FROM`           |
+| `transitionRescheduleRequest`    | `RescheduleRequest.status`               | `RESCHEDULE_ALLOWED_FROM`      |
 
 Every map is keyed by **target** state: `ALLOWED_FROM[to]` lists the only states
 the row may currently be in, and that set is baked into the `updateMany`'s

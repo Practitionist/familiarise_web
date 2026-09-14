@@ -175,7 +175,7 @@ export async function processLongOperation(
 | **Slot Booking**           | 60 seconds                                                         | Prevent double-booking consultations |
 | **Consultation Approval**  | 60 seconds                                                         | Payment link generation              |
 | **Subscription Approval**  | 60 seconds                                                         | Subscription processing              |
-| **Event Checkout**         | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / CLASS 300s | Webinar/class/subscription checkout  |
+| **Event Checkout**         | Per-type via `CHECKOUT_LOCK_TTL_MS` (#832): CONSULTATION 60s / SUBSCRIPTION 120s / WEBINAR 120s / COHORT 300s | Webinar/class/subscription checkout  |
 | **Event Slot (Semaphore)** | 5 minutes                                                          | Multi-participant events             |
 | **Auto-Allocate**          | 150 seconds (consultant-level, not narrowed — #860 tracks per-slot narrowing) | Auto-allocation serialization per consultant |
 | **Payout Batch Creation**  | 2 minutes (`lock:payout_batch_creation`)                           | Cron — create payout batches         |

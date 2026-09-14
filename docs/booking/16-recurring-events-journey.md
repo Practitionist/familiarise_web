@@ -81,10 +81,10 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 
 ### 2b. Class Plan
 
-**UI Component:** `app/dashboard/consultant/[consultantId]/(features)/planner/components/EventPlannerForClass.tsx`
-**Service:** `app/dashboard/consultant/[consultantId]/(features)/planner/services/events/class-service.ts`
-**API:** `POST /api/plans/classes` (`app/api/plans/classes/route.ts`)
-**Schema validation:** `ClassPlanSchema` in `schemas/plans.ts`
+**UI Component:** `app/dashboard/consultant/[consultantId]/(features)/planner/components/EventPlannerForCohort.tsx`
+**Service:** `app/dashboard/consultant/[consultantId]/(features)/planner/services/events/cohort-service.ts`
+**API:** `POST /api/plans/cohorts` (`app/api/plans/cohorts/route.ts`)
+**Schema validation:** `CohortPlanSchema` in `schemas/plans.ts`
 
 **Additional class-specific fields:**
 
@@ -95,10 +95,10 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 | `recordingEnabled`       | Boolean | Whether sessions are recorded                                |
 | `recordingStoragePolicy` | Enum    | `STREAM_ONLY` (2-week temp) or `SUPABASE_PERMANENT`          |
 | `certificateProvided`    | Boolean | Whether completers get a certificate                         |
-| `classContents[]`        | Array   | Ordered curriculum items (title, description, hoursAllotted) |
+| `cohortContents[]`        | Array   | Ordered curriculum items (title, description, hoursAllotted) |
 | `collaborators`          | Via UI  | Co-instructors invited through CollaboratorsTab              |
 
-**Key difference from subscription:** Class plans support co-instructors — `Collaborator[]` rows carrying `collaboratorType: CLASS`, whose revenue shares are stored as integer basis points in `revenueShareBps` (#784 merged the old `ClassCollaborator` and `WebinarCollaborator` models into one `Collaborator`; #772 B5 moved the share off a float percentage) — and the capacity system via `maxParticipants`.
+**Key difference from subscription:** Class plans support co-instructors — `Collaborator[]` rows carrying `collaboratorType: COHORT`, whose revenue shares are stored as integer basis points in `revenueShareBps` (#784 merged the old `CohortCollaborator` and `WebinarCollaborator` models into one `Collaborator`; #772 B5 moved the share off a float percentage) — and the capacity system via `maxParticipants`.
 
 ---
 
@@ -109,7 +109,7 @@ Both share the same core flow: **Plan Creation -> Checkout -> Payment -> Slot Al
 Consultees find plans through:
 
 - **Explore pages:** Browse consultants and their plans
-- **Plan detail pages:** e.g., `app/explore/programs/plans/classes/[classPlanId]/page.tsx`
+- **Plan detail pages:** e.g., `app/explore/programs/plans/classes/[cohortPlanId]/page.tsx`
 - **Direct links:** Shared by consultants
 
 ### 3b. Checkout Flow
@@ -161,7 +161,7 @@ handleCheckout()
     |   |-- Create placeholder Appointment (appointmentType: SUBSCRIPTION)
     |   |-- Store schedulingPeriod dates
     |-- For Class:
-    |   |-- Create Appointment linked to Class (appointmentType: CLASS)
+    |   |-- Create Appointment linked to Class (appointmentType: COHORT)
     |   |-- Enroll consultee (connect to appointment)
     |-- Create payment intent with gateway
     |-- Return payment URL/link to frontend
@@ -286,7 +286,7 @@ Subscription (id: "sub_123", status: SCHEDULED)
   ... (8 appointments total, each with 2 slots)
 ```
 
-For a class, the same appointment structure is created during allocation (1 appointment per session). When new consultees enroll via checkout, `handleClassCheckout()` links them to ALL existing `AppointmentOccurrence` records via the M2M `user` relation -- no new Appointments are created per enrollee. All participants (consultant + all consultees) share the same slots.
+For a class, the same appointment structure is created during allocation (1 appointment per session). When new consultees enroll via checkout, `handleCohortCheckout()` links them to ALL existing `AppointmentOccurrence` records via the M2M `user` relation -- no new Appointments are created per enrollee. All participants (consultant + all consultees) share the same slots.
 
 ---
 
@@ -448,7 +448,7 @@ See `docs/booking/08-cancellation-flow.md` for full details.
 **For recurring events:**
 
 - `Subscription.status` -> `CANCELLED` with `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`
-- `Class.status` -> `CANCELLED`
+- `Cohort.status` -> `CANCELLED`
 - All future `AppointmentOccurrence` records -> `completionStatus: CANCELLED`
 - Completed sessions remain marked as `COMPLETED`
 
@@ -491,18 +491,18 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 
 | Aspect                | Subscription                                             | Class                                                                                                     |
 | --------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Prisma models**     | `SubscriptionPlan` -> `Subscription` -> `Appointment[]`  | `ClassPlan` -> `Class` -> `Appointment[]`                                                                 |
+| **Prisma models**     | `SubscriptionPlan` -> `Subscription` -> `Appointment[]`  | `CohortPlan` -> `Cohort` -> `Appointment[]`                                                                 |
 | **Participant count** | Always 1:1                                               | 1:many (up to `maxParticipants`)                                                                          |
 | **Appointments**      | 1 Appointment per session, each has N slots              | 1 Appointment per session (shared by all participants via M2M user relation on slots)                     |
-| **Slot sharing**      | Slots connected to consultant + 1 consultee              | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
-| **Collaborators**     | Not supported                                            | `Collaborator[]` (`collaboratorType: CLASS`) with `revenueShareBps` shares                                |
+| **Slot sharing**      | Slots connected to consultant + 1 consultee              | New enrollees are linked to ALL existing slots of ALL appointments (`handleCohortCheckout` line 1510-1524) |
+| **Collaborators**     | Not supported                                            | `Collaborator[]` (`collaboratorType: COHORT`) with `revenueShareBps` shares                                |
 | **Trial**             | Yes (`Trial` model)                               | No                                                                                                        |
 | **Recording**         | No                                                       | Optional                                                                                                  |
 | **Certificate**       | No                                                       | Optional                                                                                                  |
 | **Capacity**          | No (1:1)                                                 | Yes (per-instance `maxParticipants`; full means sold out)                                                 |
-| **Curriculum model**  | `SubscriptionContent` (session-by-session)               | `ClassContent` (ordered, with `hoursAllotted`)                                                            |
+| **Curriculum model**  | `SubscriptionContent` (session-by-session)               | `CohortContent` (ordered, with `hoursAllotted`)                                                            |
 | **Scheduling field**  | `sessionsPerWeek`                                        | `sessionsPerWeek`                                                                                         |
-| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED)                                                    |
+| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Cohort.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED)                                                    |
 | **Hold period**       | 168h (7 days)                                            | 24h                                                                                                       |
 
 ---

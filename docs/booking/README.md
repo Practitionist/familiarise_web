@@ -103,8 +103,8 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | `/api/bookings/subscriptions/{id}/validate` | POST   | Validate subscription slots |
 | `/api/bookings/webinars/{id}/allocate`      | PATCH  | Allocate webinar slots      |
 | `/api/bookings/webinars/{id}/validate`      | POST   | Validate webinar slots      |
-| `/api/bookings/classes/{id}/allocate`       | PATCH  | Allocate class slots        |
-| `/api/bookings/classes/{id}/validate`       | POST   | Validate class slots        |
+| `/api/bookings/cohorts/{id}/allocate`       | PATCH  | Allocate class slots        |
+| `/api/bookings/cohorts/{id}/validate`       | POST   | Validate class slots        |
 
 ## Quick Navigation
 

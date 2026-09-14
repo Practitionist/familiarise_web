@@ -100,9 +100,9 @@ All application tables have RLS enabled (`rowsecurity = true`):
 ✅ ConsulteeProfile               ✅ Newsletter
 ✅ StaffProfile                   ✅ WebinarPlan
 ✅ ConsultantReview               ✅ Webinar
-✅ ConsultationPlan               ✅ ClassPlan
+✅ ConsultationPlan               ✅ CohortPlan
 ✅ Consultation                   ✅ Class
-✅ SubscriptionPlan               ✅ ClassContent
+✅ SubscriptionPlan               ✅ CohortContent
 ✅ Subscription                   ✅ Waitlist
 ✅ Appointment                    ✅ Feedback
 ✅ AppointmentDocument            ✅ SupportTicket
@@ -207,7 +207,7 @@ Policy: authenticated_delete_*
   Condition: true
 ```
 
-**Applies to:** Domain, SubDomain, Tag, Topic, ConsultationPlan, WebinarPlan, ClassPlan
+**Applies to:** Domain, SubDomain, Tag, Topic, ConsultationPlan, WebinarPlan, CohortPlan
 
 #### 4. Feedback & Support Tables
 
@@ -295,8 +295,8 @@ $$ LANGUAGE plpgsql;
 ✅ Appointment                   ✅ Subscription
 ✅ AppointmentDocument           ✅ SubscriptionPlan
 ✅ Class                         ✅ SupportResponse
-✅ ClassContent                  ✅ SupportTicket
-✅ ClassPlan                     ✅ Tag
+✅ CohortContent                  ✅ SupportTicket
+✅ CohortPlan                     ✅ Tag
 ✅ ConsultantProfile             ✅ Topic
 ✅ ConsultantReview              ✅ Webinar
 ✅ Consultation                  ✅ WebinarPlan

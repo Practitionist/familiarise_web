@@ -49,7 +49,7 @@ The two TDS bugs and the place-of-supply gap are real production risks today.
 
 ### PR 1.3 — HSN selection
 - 999293 for CONSULTATION.
-- 999299 for WEBINAR / CLASS / SUBSCRIPTION on educational content.
+- 999299 for WEBINAR / COHORT / SUBSCRIPTION on educational content.
 - Update `lib/pdf/invoice-renderer.tsx` selection logic + tests.
 
 ### PR 1.4 — Per-FY 194O entity-type threshold

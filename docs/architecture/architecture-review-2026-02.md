@@ -16,7 +16,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
 ### What I Like
 
-- **Polymorphic Appointment model is clever.** The `Appointment` model with nullable FK columns (`consultationId`, `subscriptionId`, `webinarId`, `classId`) and an `AppointmentsType` enum is a pragmatic choice. It avoids the complexity of table-per-type inheritance while keeping queries simple. The `AppointmentOccurrence` many-to-many with `User` is the right call for group events.
+- **Polymorphic Appointment model is clever.** The `Appointment` model with nullable FK columns (`consultationId`, `subscriptionId`, `webinarId`, `cohortId`) and an `AppointmentsType` enum is a pragmatic choice. It avoids the complexity of table-per-type inheritance while keeping queries simple. The `AppointmentOccurrence` many-to-many with `User` is the right call for group events.
 
 - **Cancellation tracking is thorough.** Both `Consultation` and `Subscription` have `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`. This is production-grade audit trail thinking.
 
@@ -74,7 +74,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
    }
    ```
 
-   The appointment's "status" is derived from its parent entity (`Consultation.requestStatus`, `Subscription.requestStatus`, `Webinar.status`, `Class.status`). This means:
+   The appointment's "status" is derived from its parent entity (`Consultation.requestStatus`, `Subscription.requestStatus`, `Webinar.status`, `Cohort.status`). This means:
    - You can't query "all cancelled appointments" without joining 4 tables
    - The cleanup jobs have to check each parent type separately
    - The auto-complete-appointments job has 5 separate query blocks for 5 entity types
@@ -88,7 +88,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
      consultationPlanId String?
      subscriptionPlanId String?
      webinarPlanId      String?
-     classPlanId        String?
+     cohortPlanId        String?
    }
    ```
 
@@ -98,7 +98,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
 ### What Could Cause Production Nightmares
 
-- **The `onDelete: Cascade` on `Consultation → ConsultationPlan`** means deleting a plan deletes ALL consultations. If an admin accidentally deletes a consultation plan, every consultation, appointment, slot, payment reference, and chat channel linked to it vanishes. There's no soft-delete mechanism. Same applies to `Subscription → SubscriptionPlan`, `Webinar → WebinarPlan`, `Class → ClassPlan`.
+- **The `onDelete: Cascade` on `Consultation → ConsultationPlan`** means deleting a plan deletes ALL consultations. If an admin accidentally deletes a consultation plan, every consultation, appointment, slot, payment reference, and chat channel linked to it vanishes. There's no soft-delete mechanism. Same applies to `Subscription → SubscriptionPlan`, `Webinar → WebinarPlan`, `Cohort → CohortPlan`.
 
 - **No row-level security (RLS) at the database level.** All access control is application-level. A single misconfigured API route (or a Prisma Studio session) can expose or modify any user's data. With Supabase, you have RLS available — not using it is a conscious risk.
 

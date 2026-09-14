@@ -84,12 +84,12 @@ to do about it.
 
 The following four statements are the STAGED block. Each precondition must hold on the target database or the statement fails and the whole sidecar run stops.
 
-| Constraint                                                                 | Precondition                                                                                                       |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `Payment.clientIdempotencyKey SET NOT NULL`                                | No Payment row has a null key. Writers have minted keys since #1169 PR 9, so only pre-reset rows can violate this. |
-| `OrganizationPayout.idempotencyKey SET NOT NULL`                           | Same as above for org payouts.                                                                                     |
-| `program_assignment_no_active_overlap`                                     | No two ACTIVE `ProgramAssignment` rows for one program and membership overlap in time.                             |
-| `subscription_plan_total_sessions_min` and `class_plan_total_sessions_min` | Every plan carries `totalSessions >= 1`.                                                                           |
+| Constraint                                                                  | Precondition                                                                                                       |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Payment.clientIdempotencyKey SET NOT NULL`                                 | No Payment row has a null key. Writers have minted keys since #1169 PR 9, so only pre-reset rows can violate this. |
+| `OrganizationPayout.idempotencyKey SET NOT NULL`                            | Same as above for org payouts.                                                                                     |
+| `program_assignment_no_active_overlap`                                      | No two ACTIVE `ProgramAssignment` rows for one program and membership overlap in time.                             |
+| `subscription_plan_total_sessions_min` and `cohort_plan_total_sessions_min` | Every plan carries `totalSessions >= 1`.                                                                           |
 
 ## Decisions recorded for the reset
 

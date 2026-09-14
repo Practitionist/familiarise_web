@@ -33,7 +33,7 @@ flowchart LR
     HOOK -.related.-> XCUT
     PREF -.related.-> XCUT
 
-    classDef here fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
+    cohortDef here fill:#d6f5d6,stroke:#2e7d32,color:#11270f;
 ```
 
 The map reads left-to-right: each rail flows from the abstract obligation, through the enterprise schema or cron that wires it, to the compliance document that owns the rule.

@@ -35,7 +35,7 @@ const [total, items] = await prisma.$transaction([
       consultation:  { select: { consultationPlan: { select: { title: true } }, requestedBy: { select: { user: { select: { id, name, email } } } } } },
       subscription:  { select: { subscriptionPlan: { select: { title: true } }, requestedBy: { select: { user: { select: { id, name, email } } } } } },
       webinar:       { select: { webinarPlan: { select: { title: true } } } },
-      class:         { select: { classPlan: { select: { title: true } } } },
+      class:         { select: { cohortPlan: { select: { title: true } } } },
       // + consultant/consultee -> user, organization
       organization:  { select: { id, name, slug } },
     },

@@ -25,7 +25,7 @@ A successful response returns the visible rows:
       "consultantProfileId": "clx...",
       "collaboratorType": "WEBINAR",
       "webinarPlanId": "clx...",
-      "classPlanId": null,
+      "cohortPlanId": null,
       "role": "CO_HOST",
       "canApprovePayment": false,
       "canViewAnalytics": true,
@@ -90,10 +90,10 @@ Removes a collaborator by setting `status: REMOVED` (a soft delete). Only the pl
 
 The class endpoints are identical in shape, at:
 
-- `GET /api/collaborations/class/[planId]`
-- `POST /api/collaborations/class/[planId]`
-- `PATCH /api/collaborations/class/[planId]/[id]`
-- `DELETE /api/collaborations/class/[planId]/[id]`
+- `GET /api/collaborations/cohort/[planId]`
+- `POST /api/collaborations/cohort/[planId]`
+- `PATCH /api/collaborations/cohort/[planId]/[id]`
+- `DELETE /api/collaborations/cohort/[planId]/[id]`
 
 The role must come from the class subset of the merged `CollaboratorRole` enum: `CO_INSTRUCTOR`, `TEACHING_ASSISTANT`, `GUEST_LECTURER`, `CONTENT_CREATOR`.
 
@@ -141,7 +141,7 @@ Returns all `PENDING` and `ACCEPTED` collaborations for the authenticated consul
         "invitedBy": { "user": { "name": "Kaustav Ghosh" } }
       }
     ],
-    "classCollaborations": [ ... ]
+    "cohortCollaborations": [ ... ]
   }
 }
 ```
@@ -170,6 +170,6 @@ The response is the raw split array — owner first with the remainder, then eac
 
 An empty array means the plan has no accepted collaborators and settlement will use the ordinary single-owner flow.
 
-### GET /api/collaborations/class/[planId]/revenue-split
+### GET /api/collaborations/cohort/[planId]/revenue-split
 
 The class variant behaves identically.

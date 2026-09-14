@@ -237,7 +237,7 @@ charge state machine and CHARGE_MEMBER timeout telemetry are detailed in
 ## `CoveredPlanType`
 
 `Program.coveredPlanTypes: CoveredPlanType[]` enumerates which product
-lines a Program applies to. Values: `CONSULTATION`, `CLASS`, `WEBINAR`,
+lines a Program applies to. Values: `CONSULTATION`, `COHORT`, `WEBINAR`,
 `SUBSCRIPTION`. An empty array means "any plan type" (wildcard).
 
 ## `BillingCycle` and `BillingSubscription`

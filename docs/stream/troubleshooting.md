@@ -158,7 +158,7 @@ Event channels (webinars, classes) are created lazily on first access. When mult
 #### Location
 
 **File:** `actions/stream/chat/event-channel.action.ts`
-**Functions:** `createWebinarChannel()`, `createClassChannel()`
+**Functions:** `createWebinarChannel()`, `createCohortChannel()`
 
 #### Impact
 

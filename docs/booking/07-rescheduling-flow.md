@@ -717,7 +717,7 @@ Requires an active session. Returns `401 Unauthorized` if not authenticated.
 
 | Parameter | Required | Values                                             | Description                                                                                                     |
 | --------- | -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `type`    | Yes      | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `CLASS` | Determines event-type-specific behavior (which related entity to update, whether partial reschedule is allowed) |
+| `type`    | Yes      | `CONSULTATION`, `SUBSCRIPTION`, `WEBINAR`, `COHORT` | Determines event-type-specific behavior (which related entity to update, whether partial reschedule is allowed) |
 
 ### Request Body
 

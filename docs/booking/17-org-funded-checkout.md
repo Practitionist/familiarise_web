@@ -49,12 +49,12 @@ org_wallet_<ts>_<rand>   |   org_invoice_<ts>_<rand>   |   org_license_<ts>_<ran
 
 For wallet funding the same transaction debits the org's balance. Two guards apply. First, a wallet frozen by the ledger reconciler (cache drifted from the journal) refuses to spend (`isWalletFrozen`, #837). Second, the debit itself is `walletDebit()`'s **atomic conditional `updateMany`** in `lib/api/organizations/wallet.ts`: the UPDATE matches only a row whose `walletBalance` is already `>= amount` and decrements it in the same statement, so two concurrent debits cannot overdraw — the loser matches zero rows and throws `WalletInsufficientFundsError`, rolling the booking back. No journal entry posts here; the accounting leg posts at settlement, where the full fee/payable split is known.
 
-### Engagement debits: CLASS at checkout, SUBSCRIPTION lazily
+### Engagement debits: COHORT at checkout, SUBSCRIPTION lazily
 
 Sponsored bookings consume **engagements** against the member's program cap (#710); one engagement is one `Appointment` row, one calendar occurrence. The per-type behavior differs deliberately:
 
 - **CONSULTATION / WEBINAR** debit **1** engagement at checkout.
-- **CLASS** debits **N** engagements at checkout — the count of class appointments the learner enrolled in, all known up front because the consultant pre-allocated the sessions (`classResult.engagementsConsumed`).
+- **COHORT** debits **N** engagements at checkout — the count of class appointments the learner enrolled in, all known up front because the consultant pre-allocated the sessions (`cohortResult.engagementsConsumed`).
 - **SUBSCRIPTION** debits **nothing** at checkout (`engagementsForCap` stays `null`). Slots are allocated lazily by the consultant later, so the debit lands in `SchedulingService.createAppointments`, one per allocation batch.
 
 The debit is `recordBookingUtilization()`, which writes the `BookingUtilization` row and the `PaymentLeg` describing where the money or commitment actually came from. Breaching a `BLOCK`-behavior cap throws `ProgramAssignmentLimitError`, rolls the transaction back, and fires a bell notification to the assignee and org operators.

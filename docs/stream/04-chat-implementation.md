@@ -202,7 +202,7 @@ appears once per slot. The host is added separately and is always a member.
 
 ### Classes
 
-**Format**: `class-{classId}` · **Stream type**: `team`
+**Format**: `class-{cohortId}` · **Stream type**: `team`
 
 Identical in shape; the roster walks `class.appointments[].appointmentOccurrences[].user`.
 

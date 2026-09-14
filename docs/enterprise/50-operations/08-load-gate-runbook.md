@@ -175,7 +175,7 @@ listed with what it must point at.
 | `LOAD_GATE_SLOT_AVAILABILITY_CUSTOM_ID`     | The custom-schedule alternative.                                                                                                                                                                                                                     |
 | `LOAD_GATE_EVENT_ID`                        | The webinar or class instance the hot-event storm attacks.                                                                                                                                                                                           |
 | `LOAD_GATE_EVENT_PLAN_ID`                   | Its plan.                                                                                                                                                                                                                                            |
-| `LOAD_GATE_EVENT_TYPE`                      | `WEBINAR` or `CLASS`.                                                                                                                                                                                                                                |
+| `LOAD_GATE_EVENT_TYPE`                      | `WEBINAR` or `COHORT`.                                                                                                                                                                                                                               |
 | `LOAD_GATE_EVENT_CAPACITY`                  | The effective seat count — the instance's `maxParticipants` when it overrides, otherwise the plan's.                                                                                                                                                 |
 | `LOAD_GATE_EVENT_EXCLUDE_USER_IDS`          | The host's user id. See "what the API cannot tell you".                                                                                                                                                                                              |
 | `LOAD_GATE_HOT_PLAN_ID`                     | The plan for the single contested consultant-minute.                                                                                                                                                                                                 |
@@ -355,7 +355,7 @@ is the right constraint and also a real limitation. Three gaps are worth
 knowing before reading its output.
 
 **There is no capacity endpoint.** `readEventCapacity` is module-private to the
-checkout operation, and `getWebinarCapacity` and `getClassCapacity` are
+checkout operation, and `getWebinarCapacity` and `getCohortCapacity` are
 server-only. Nothing over HTTP returns `{max, registered, remaining, isFull}`.
 The verifier therefore re-derives the registered count by de-duplicating
 participant ids from `GET /api/participants/{webinar,class}/[id]`, and takes

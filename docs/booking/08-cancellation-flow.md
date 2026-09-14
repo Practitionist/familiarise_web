@@ -186,7 +186,7 @@ The key insight: **only a valid JSON body that fails Zod validation returns an e
   "cancellationReason": "SCHEDULE_CONFLICT",
   "cancelledAt": "2025-06-15T10:30:00.000Z",
   "webinarId": null,
-  "classId": null,
+  "cohortId": null,
   "refund": {
     "amountRefundedPaise": 250000,
     "refundPct": 50,
@@ -202,11 +202,11 @@ The key insight: **only a valid JSON body that fails Zod validation returns an e
 | `cancellationReason` | `string \| undefined` | The reason if one was provided                                                  |
 | `cancelledAt`        | `string` (ISO 8601)   | Timestamp of when the cancellation was processed                                |
 | `webinarId`          | `string \| null`      | The webinar ID if this was a webinar cancellation                               |
-| `classId`            | `string \| null`      | The class ID if this was a class cancellation                                   |
+| `cohortId`            | `string \| null`      | The class ID if this was a class cancellation                                   |
 | `refund`             | `object \| null`      | The 1:1 policy refund outcome; `null` when the booking carried no payment       |
 | `eventRefund`        | `object \| null`      | The whole-event fan-out summary; `null` outside class and webinar cancellations |
 
-The `webinarId` and `classId` fields are populated only for webinar and class cancellations. They are included in the client response so the frontend can trigger any UI updates related to the specific event.
+The `webinarId` and `cohortId` fields are populated only for webinar and class cancellations. They are included in the client response so the frontend can trigger any UI updates related to the specific event.
 
 The `refund` object never reports the money as a bare number, because `amountRefundedPaise: 0` on its own is ambiguous — it reads identically whether the policy owed nothing, the balance was already exhausted, or the gateway refused. The `status` field disambiguates all of those.
 
@@ -354,7 +354,7 @@ erDiagram
         string consultationId "cons_xyz789"
         string subscriptionId "null"
         string webinarId "null"
-        string classId "null"
+        string cohortId "null"
     }
 
     CONSULTATION {
@@ -524,7 +524,7 @@ WHERE "appointmentId" = 'appt_abc123'
   AND "completionStatus" IN ('SCHEDULED', 'RESCHEDULED')
 ```
 
-`RESCHEDULED` is in that set on purpose. A slot released by a pending reschedule is not `SCHEDULED`, so filtering on `SCHEDULED` alone would strand those rows in a non-terminal state on a booking that no longer exists — and reschedule proposals hang off exactly those rows. For a subscription or a class the filter widens from one appointment to the whole booking (`subscriptionId` or `classId`), because those bookings span many appointments.
+`RESCHEDULED` is in that set on purpose. A slot released by a pending reschedule is not `SCHEDULED`, so filtering on `SCHEDULED` alone would strand those rows in a non-terminal state on a booking that no longer exists — and reschedule proposals hang off exactly those rows. For a subscription or a class the filter widens from one appointment to the whole booking (`subscriptionId` or `cohortId`), because those bookings span many appointments.
 
 **Operation 3** -- Close any live reschedule proposal:
 
@@ -594,7 +594,7 @@ Alice receives:
   "cancellationReason": "SCHEDULE_CONFLICT",
   "cancelledAt": "2025-06-15T10:30:00.000Z",
   "webinarId": null,
-  "classId": null,
+  "cohortId": null,
   "refund": {
     "amountRefundedPaise": 500000,
     "refundPct": 100,
@@ -702,7 +702,7 @@ flowchart TD
     B -->|"appointment.consultation"| C["CONSULTATION path"]
     B -->|"appointment.subscription"| D["SUBSCRIPTION path"]
     B -->|"appointment.webinar"| E["WEBINAR path"]
-    B -->|"appointment.class"| F["CLASS path"]
+    B -->|"appointment.class"| F["COHORT path"]
 
     subgraph Consultation["Consultation / Subscription"]
         direction TB
@@ -735,7 +735,7 @@ flowchart TD
 
 | Aspect                           | Consultation             | Subscription                     | Webinar                      | Class                        |
 | -------------------------------- | ------------------------ | -------------------------------- | ---------------------------- | ---------------------------- |
-| **Model updated**                | `Consultation`           | `Subscription`                   | `Webinar`                    | `Class`                      |
+| **Model updated**                | `Consultation`           | `Subscription`                   | `Webinar`                    | `Cohort`                      |
 | **Status field**                 | `status`                 | `status`                         | `status`                     | `status`                     |
 | **Audit fields stored**          | Yes (5 fields)           | Yes (5 fields)                   | No                           | No                           |
 | **Cancellation reason on model** | Yes                      | Yes                              | No                           | No                           |
@@ -743,7 +743,7 @@ flowchart TD
 | **Notification sent**            | Yes                      | Yes                              | Yes                          | Yes                          |
 | **Slots deleted**                | No — marked `CANCELLED`  | No — marked `CANCELLED`          | No — marked `CANCELLED`      | No — marked `CANCELLED`      |
 | **Appointment deleted**          | No — preserved           | No — preserved                   | No — preserved               | No — preserved               |
-| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`           | This appointment             | Whole `classId`              |
+| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`           | This appointment             | Whole `cohortId`              |
 | **Refund rail**                  | Policy tier on the gross | Policy tier on the prorated base | Whole-event fan-out, in full | Whole-event fan-out, in full |
 
 ### Consultation Cancellation (Detailed)
@@ -800,7 +800,7 @@ const moved = (
 ).count;
 ```
 
-The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `CLASS_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
+The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `COHORT_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
 
 **Why no audit fields**: Webinars are typically cancelled by the consultant (the host). Since webinars are group events, the system does not track individual cancellation reasons on the event model. The `status` change is sufficient for the event lifecycle. If audit data is needed, it can be reconstructed from the API logs and the `cancelledBy` information in the notification payload.
 
@@ -857,7 +857,7 @@ flowchart TD
     subgraph BEFORE["BEFORE Cancellation"]
         direction TB
         A1["Appointment\n(appt_abc123)\nExists"] --- B1["AppointmentOccurrence\n(1 or more slots)\nExists"]
-        A1 --- C1["Event Record\n(Consultation/Subscription/\nWebinar/Class)\nActive status"]
+        A1 --- C1["Event Record\n(Consultation/Subscription/\nWebinar/Cohort)\nActive status"]
         D1["Payment Records\nExists, various statuses"] --- A1
     end
 
@@ -898,7 +898,7 @@ Green marks a row that comes through untouched, amber a row whose status column 
 | `Consultation` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                   |
 | `Subscription` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                 |
 | `Webinar` (if applicable)      | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Preserved but with minimal state change                                                        |
-| `Class` (if applicable)        | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                      |
+| `Cohort` (if applicable)        | `status = "PUBLISHED"`                             | `status = "CANCELLED"`                                | Same reasoning as webinar                                                                      |
 | `Payment` / `PaymentOrder`     | Various statuses                                   | Preserved; a `Refund` row is added when due           | The policy frozen at checkout decides the amount, not an admin                                 |
 | `Earning` / `PayoutItem`       | May exist if payment was captured                  | Refunded share incremented by the cascade             | Earnings reversal rides the same transaction as the refund                                     |
 
@@ -947,7 +947,7 @@ The three operations inside the transaction execute in a specific order that mat
 ```mermaid
 sequenceDiagram
     participant TX as Transaction
-    participant EventTable as Event Table<br/>(Consultation/Subscription/Webinar/Class)
+    participant EventTable as Event Table<br/>(Consultation/Subscription/Webinar/Cohort)
     participant SlotTable as AppointmentOccurrence Table
     participant RRTable as RescheduleRequest Table
 
@@ -1021,7 +1021,7 @@ For webinars and classes the organiser is read off the plan and every paid atten
 
 | Field             | Value                                                         | Source                                                                                                                                             |
 | ----------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"CLASS"` | `appointment.appointmentType`                                                                                                                      |
+| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"COHORT"` | `appointment.appointmentType`                                                                                                                      |
 | `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                                                                                                                |
 | `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                                                                                                                |
 | `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                                                                                                                |
@@ -1311,7 +1311,7 @@ sequenceDiagram
         Note over API,DB: 0 rows matched -> throw 409 NOT_CANCELLABLE<br/>(rolls back, no refund attempted)
         API->>DB: UPDATE AppointmentOccurrence SET completionStatus = CANCELLED<br/>WHERE appointmentId = ? AND status IN (SCHEDULED, RESCHEDULED)
         API->>DB: UPDATE RescheduleRequest SET status = DECLINED<br/>WHERE appointmentId = ? AND status IN (open)
-        DB-->>API: COMMIT<br/>(success, cancellationReason,<br/>cancelledAt, webinarId, classId)
+        DB-->>API: COMMIT<br/>(success, cancellationReason,<br/>cancelledAt, webinarId, cohortId)
     end
 
     rect rgb(232, 245, 233)

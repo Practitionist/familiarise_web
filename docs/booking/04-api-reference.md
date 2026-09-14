@@ -7,7 +7,7 @@
 | Consultation | `/api/bookings/consultations/{id}/validate` | `/api/bookings/consultations/{id}/allocate` |
 | Subscription | `/api/bookings/subscriptions/{id}/validate` | `/api/bookings/subscriptions/{id}/allocate` |
 | Webinar      | `/api/bookings/webinars/{id}/validate`      | `/api/bookings/webinars/{id}/allocate`      |
-| Class        | `/api/bookings/classes/{id}/validate`       | `/api/bookings/classes/{id}/allocate`       |
+| Class        | `/api/bookings/cohorts/{id}/validate`       | `/api/bookings/cohorts/{id}/allocate`       |
 
 All endpoints require session-based authentication. The `{id}` parameter accepts UUID or CUID format.
 

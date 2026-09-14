@@ -117,7 +117,7 @@ graph LR
 
 | Function                    | Purpose                                 | Trigger                  |
 | --------------------------- | --------------------------------------- | ------------------------ |
-| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`. | Webhook: payment.success |
+| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/COHORT with collaborators, creates multi-party earnings via `calculateRevenueSplit()`. | Webhook: payment.success |
 | `releaseEarningsFromHold`   | PENDING → READY after hold period       | Cron: hourly             |
 | `getConsultantEarnings`     | Fetch earnings for dashboard            | API request              |
 | `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, Cron: lost disputes |

@@ -30,7 +30,7 @@
 | Graphic Designers | Brand identity, logo design, marketing collateral expertise | Business owners need brand guidance. High consulting value. |
 | Photographers | Professional, portfolio-based, teaches or mentors | Photography sessions + portfolio review work perfectly on platform. |
 | Videographers/Filmmakers | Professional, 5+ years, corporate/wedding/content creation | Pricing guidance, technique coaching, portfolio review. |
-| Music Teachers | Classical (Hindustani, Carnatic) and western (guitar, piano, vocals) | Subscription model perfect for weekly music lessons. |
+| Music Teachers | Cohortical (Hindustani, Carnatic) and western (guitar, piano, vocals) | Subscription model perfect for weekly music lessons. |
 | Content Writers/Copywriters | 5+ years, published portfolio, brand/agency experience | Writing coaching, portfolio review, career mentorship. |
 | Voice-Over Artists | Professional, commercial experience | Coaching aspiring voice-over artists. Niche but high-value. |
 | Illustrators/Artists | Professional, gallery/publication credits | Art mentorship, technique coaching, portfolio development. |

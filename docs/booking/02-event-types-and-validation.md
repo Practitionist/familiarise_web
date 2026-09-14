@@ -127,9 +127,9 @@ Consultant-scheduled. Consultees enroll via checkout; a full event reads as sold
 Capacity applies to the two group event types, webinars and classes. It lives in
 two places, and the difference matters.
 
-`WebinarPlan.maxParticipants` and `ClassPlan.maxParticipants` are the plan's
+`WebinarPlan.maxParticipants` and `CohortPlan.maxParticipants` are the plan's
 default: the number a newly created instance starts with.
-`Webinar.maxParticipants` and `Class.maxParticipants` are nullable per-instance
+`Webinar.maxParticipants` and `Cohort.maxParticipants` are nullable per-instance
 overrides. The effective capacity of an event is its own value when it has one
 and the plan's otherwise, which is what `effectiveMaxParticipants` in
 `lib/events/capacity.ts` computes. Every surface that counts seats — the
@@ -252,7 +252,7 @@ flowchart TD
     H -->|consultation| I[validateConsultation]
     H -->|subscription| J[validateSubscription]
     H -->|webinar| K[validateWebinar]
-    H -->|class| L[validateClass]
+    H -->|class| L[validateCohort]
 ```
 
 **Conflict detection** uses range overlap, not exact match:

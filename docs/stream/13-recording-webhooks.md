@@ -226,9 +226,9 @@ erDiagram
     Appointment ||--o| Webinar : "may have"
     Appointment ||--o| Class : "may have"
     Webinar ||--|| WebinarPlan : "belongs to"
-    Class ||--|| ClassPlan : "belongs to"
+    Class ||--|| CohortPlan : "belongs to"
     WebinarPlan ||--|| ConsultantProfile : "owned by"
-    ClassPlan ||--|| ConsultantProfile : "owned by"
+    CohortPlan ||--|| ConsultantProfile : "owned by"
 
     Recording {
         string id PK

@@ -60,7 +60,7 @@ The cap on a `LicensedSeatConfig` is denominated in engagements, where one engag
 | 30-min CONSULTATION   | 1                                     | checkout          |
 | 4-hour CONSULTATION   | 1 (price cap polices the duration)    | checkout          |
 | WEBINAR (any length)  | 1                                     | checkout          |
-| 8-week CLASS          | 8 (one per class day enrolment)       | checkout          |
+| 8-week COHORT          | 8 (one per class day enrolment)       | checkout          |
 | 12-call SUBSCRIPTION  | 1 per consultant allocation (lazy)    | slot allocation   |
 
 The term **engagement** was picked to avoid collision with BetterAuth
