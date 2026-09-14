@@ -29,7 +29,9 @@ const subscriptionsRoute = read(
 );
 const trialsRoute = read("app/api/trials/[trialId]/route.ts");
 const approvalPayment = read("lib/payments/operations/approval-payment.ts");
-const requestForApproval = read("app/api/slots/request-for-approval/route.ts");
+const requestForApproval = read(
+  "app/api/scheduling/request-for-approval/route.ts",
+);
 const checkout = read("lib/payments/operations/checkout.ts");
 
 describe("CORE-3 — no fabricated appointments on approval", () => {
@@ -119,7 +121,7 @@ describe("#1166 ORG-9 — org sponsorship survives the approval flow", () => {
 describe("checkout hardening (#1093 tail + tentative visibility)", () => {
   it("the pre-booking conflict check sees live tentative holds", () => {
     const start = checkout.indexOf(
-      "const existingBooking = await tx.slotOfAppointment.findFirst(",
+      "const existingBooking = await tx.appointmentOccurrence.findFirst(",
     );
     expect(start).toBeGreaterThan(-1);
     const query = checkout

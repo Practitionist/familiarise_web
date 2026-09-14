@@ -5,7 +5,7 @@ import type { AppointmentsType } from "@prisma/client";
 /**
  * Minimal slot interface for meeting operations.
  * This defines only what getOrCreateAppointmentMeeting actually uses.
- * Both TSlotOfAppointment and SlotOfAppointment satisfy this interface.
+ * Both TAppointmentOccurrence and AppointmentOccurrence satisfy this interface.
  */
 export interface MeetingSlot {
   id: string;
@@ -28,7 +28,7 @@ export interface MeetingSlot {
 export interface MeetingAppointment {
   id: string;
   appointmentType: AppointmentsType;
-  slotsOfAppointment: MeetingSlot[];
+  occurrences: MeetingSlot[];
   organizationId?: string | null;
   consultantUserId?: string | null;
   consulteeUserId?: string | null;

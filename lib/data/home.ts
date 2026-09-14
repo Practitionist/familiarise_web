@@ -1,7 +1,17 @@
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
+import {
+  publicReviewSelect,
+  sanitisePublicReviews,
+} from "@/lib/data/review-public";
+import {
+  displayedScore,
+  displayedScoreCount,
+  PERSON_SCORE_ORDER,
+} from "@/lib/reviews-display";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { deriveDirectoryRating } from "@/lib/data/public-stats";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 /**
@@ -26,7 +36,9 @@ export const getHomeExperts = unstable_cache(
     const consultants = await prisma.consultantProfile.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       where: { verificationStatus: "VERIFIED", deletedAt: null },
-      orderBy: { rating: "desc" },
+      // Chosen by the same score the card shows — the raw mean picked ten by a
+      // number the card then hid.
+      orderBy: [...PERSON_SCORE_ORDER],
       take: 10,
       select: {
         ...consultantPublicScalars,
@@ -68,7 +80,19 @@ export const getHomeExperts = unstable_cache(
     // price is already number at the JS boundary (#780 result extension);
     // toPlain strips the extension's inspect symbol so the rows can cross
     // the RSC boundary.
-    return toPlain(consultants);
+    //
+    // #1300 — `rating` on a card means THE PUBLISHED 1:1 SCORE, no fallback
+    // (#1566). NULL stays NULL: the card renders "not enough yet", never 0.0.
+    return toPlain(
+      consultants.map((c) => {
+        const { score, track } = displayedScore(c);
+        return {
+          ...c,
+          rating: score,
+          reviewCount: displayedScoreCount(c, track),
+        };
+      }),
+    );
   },
   ["home-experts"],
   { revalidate: 3600, tags: ["experts", "home"] },
@@ -85,25 +109,96 @@ export const getHomeReviews = unstable_cache(
         consultantProfile: { deletedAt: null },
       },
       take: 20,
-      include: {
-        consultantProfile: {
-          select: {
-            ...consultantPublicScalars,
-            user: { select: { name: true } },
-          },
-        },
-        consulteeProfile: {
-          include: {
-            user: { select: { name: true, image: true } },
-          },
-        },
-      },
+      // #1300 — the allowlist, not a bare `include`: these rows are cached for an
+      // hour and serialised into the landing page's RSC payload for every
+      // anonymous visitor, which is the widest audience any review read has.
+      select: publicReviewSelect,
       orderBy: { rating: "desc" },
     });
-    return toPlain(reviews);
+    return toPlain(sanitisePublicReviews(reviews));
   },
   ["home-reviews"],
   { revalidate: 3600, tags: ["reviews", "home"] },
+);
+
+/**
+ * The real figures behind the landing hero and the category cards (#1490).
+ *
+ * This is deliberately its OWN loader rather than a call to
+ * `getExpertsMetadata`, for two independent reasons. The first is the window:
+ * that loader is cached for 5 minutes to match /explore/experts, and Next
+ * resolves a route's revalidate to the minimum of its segment value and every
+ * data cache entry read during the render, so reading it here would silently
+ * cut this page's 1-hour ISR interval to five minutes — on the surface where
+ * LCP matters most. Rather than shorten `/`, the same counts are cached here at
+ * 3600 to match the segment, exactly as every sibling loader in this file
+ * already does. The second is weight: that loader also reads domains, tags,
+ * languages and companies for the explore filters, none of which the landing
+ * renders.
+ *
+ * Tagged "experts" so the existing purgeExpertSurfaces() call at the
+ * verify/edit/delete write sites clears it on demand; the interval is a
+ * backstop, not the SLA.
+ */
+export const getHomeStats = unstable_cache(
+  async () => {
+    const [totalConsultants, ratedProfiles, completedSessions, byDomain] =
+      await Promise.all([
+        // #781 §B — soft-deleted profiles leave public surfaces.
+        prisma.consultantProfile.count({
+          where: { verificationStatus: "VERIFIED", deletedAt: null },
+        }),
+        // The PUBLISHED 1:1 score, never the raw `rating` mean (0 on every
+        // unreviewed profile). Weighted by rated clients in the shared
+        // `deriveDirectoryRating`, which /explore/experts calls too (#1485).
+        prisma.consultantProfile.findMany({
+          where: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+            publishedRatingOneToOne: { not: null },
+          },
+          select: { publishedRatingOneToOne: true, ratedClientsOneToOne: true },
+        }),
+        // Meetings actually held. The unit is the SLOT: an Appointment carries
+        // no status of its own and a subscription spans many meetings.
+        prisma.appointmentOccurrence.count({
+          where: { completionStatus: "COMPLETED", deletedAt: null },
+        }),
+        prisma.domain.findMany({
+          select: {
+            name: true,
+            _count: {
+              select: {
+                consultantProfiles: {
+                  where: { verificationStatus: "VERIFIED", deletedAt: null },
+                },
+              },
+            },
+          },
+        }),
+      ]);
+
+    return {
+      totalConsultants,
+      ...deriveDirectoryRating(
+        ratedProfiles.map((p) => ({
+          publishedRating: p.publishedRatingOneToOne,
+          reviewCount: p.ratedClientsOneToOne,
+        })),
+      ),
+      completedSessions,
+      // Keyed lowercase so the hardcoded category labels can look themselves up
+      // without depending on how a domain happens to be capitalised.
+      consultantsByDomain: Object.fromEntries(
+        byDomain.map((d) => [
+          d.name.toLowerCase(),
+          d._count.consultantProfiles,
+        ]),
+      ) as Record<string, number>,
+    };
+  },
+  ["home-stats"],
+  { revalidate: 3600, tags: ["experts", "home"] },
 );
 
 export const getHomeImages = unstable_cache(

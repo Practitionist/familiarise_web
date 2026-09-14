@@ -69,7 +69,7 @@ Consultations, webinars, and classes are simple: one event, one appointment, a h
 
 - A subscription can span months (e.g., a 6-month plan with 2 calls per week = 48+ sessions).
 - Each session is its own `Appointment` record.
-- Each appointment has its own set of `SlotOfAppointment` records.
+- Each appointment has its own set of `AppointmentOccurrence` records.
 - The consultee might want to reschedule just 3 sessions out of 48, and those 3 sessions could be spread across 3 different appointments.
 
 This one-to-many-to-many relationship requires the API to look beyond the single appointment ID in the URL and traverse the entire subscription's appointment tree. Without this, partial rescheduling of subscriptions would be impossible.
@@ -209,7 +209,7 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** tab (`RequestSlotAllocationTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots:
+The consultant's dashboard includes a **Requests** tab (`RequestRequestSchedulingTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots:
 
 - It counts **tentative** slots (`isTentative: true`) vs **total** slots.
 - If tentative slots exist, it is a reschedule.
@@ -292,11 +292,11 @@ This path runs the full auto-allocation algorithm. It is reschedule-aware -- see
 ```mermaid
 sequenceDiagram
     participant Con as Consultant (Browser)
-    participant Tab as RequestSlotAllocationTab
+    participant Tab as RequestRequestSchedulingTab
     participant API_List as GET /api/requests
     participant API_Alloc as POST /api/allocate
     participant DB as Database
-    participant Service as SlotAllocationService
+    participant Service as SchedulingService
 
     Con->>Tab: Opens Requests tab
     Tab->>API_List: Fetch PENDING requests
@@ -313,7 +313,7 @@ sequenceDiagram
 
     alt Consultant clicks "Use Requested Times"
         Con->>API_Alloc: useRequestedSlots(eventType, eventId)
-        API_Alloc->>Service: SlotAllocationService.useRequestedSlots()
+        API_Alloc->>Service: SchedulingService.useRequestedSlots()
         Service->>DB: Verify appointments exist
         Service->>DB: Verify slot count matches
         Service->>Service: Validate requested slots
@@ -324,7 +324,7 @@ sequenceDiagram
         API_Alloc-->>Con: Allocation complete
     else Consultant clicks "Allocate Slots"
         Con->>API_Alloc: autoAllocate(eventType, eventId)
-        API_Alloc->>Service: SlotAllocationService.autoAllocate()
+        API_Alloc->>Service: SchedulingService.autoAllocate()
         Service->>DB: Fetch existing slots
         Service->>Service: Detect reschedule via tentative count
         Service->>Service: Calculate requiredSlots<br/>(nonTentative + tentative = original total)
@@ -351,7 +351,7 @@ sequenceDiagram
     participant DB as Database (Prisma)
     participant ConsultantUI as Consultant Frontend
     participant AllocateAPI as POST /allocate
-    participant SlotService as SlotAllocationService
+    participant SlotService as SchedulingService
 
     Note over Consultee,SlotService: PHASE 1: Consultee Initiates Reschedule
 
@@ -476,7 +476,7 @@ graph TD
 Key relationships:
 
 - **Subscription** 1 ---> N **Appointments** (one per session)
-- **Appointment** 1 ---> N **SlotOfAppointment** (time blocks within that session; typically 2 per 1-hour session since slots are 30 minutes each)
+- **Appointment** 1 ---> N **AppointmentOccurrence** (time blocks within that session; typically 2 per 1-hour session since slots are 30 minutes each)
 
 ### The Problem
 
@@ -516,15 +516,15 @@ The code that performs this flattening (route.ts L101-114):
 ```typescript
 // For SUBSCRIPTION type, we need to get ALL slots across ALL appointments
 // because the UI collects slots from all appointments but only passes one appointmentId
-let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
+let allSubscriptionSlots: typeof appointment.appointmentOccurrences = [];
 
 if (appointmentType === "SUBSCRIPTION" && appointment.subscription) {
   const allAppointments = await tx.appointment.findMany({
     where: { subscriptionId: appointment.subscription.id },
-    include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
+    include: { appointmentOccurrences: { orderBy: { startsAt: "asc" } } },
   });
   allSubscriptionSlots = allAppointments.flatMap(
-    (apt) => apt.slotsOfAppointment,
+    (apt) => apt.appointmentOccurrences,
   );
 }
 ```
@@ -597,7 +597,7 @@ Note: The API returns `slotsAffected: 6` (slot count), not `sessionsAffected: 3`
 
 ## Reschedule Detection in Auto-Allocation
 
-When the consultant clicks "Allocate Slots" after a reschedule request, the `SlotAllocationService.autoAllocate()` method runs. This method must be reschedule-aware. Here is why and how.
+When the consultant clicks "Allocate Slots" after a reschedule request, the `SchedulingService.autoAllocate()` method runs. This method must be reschedule-aware. Here is why and how.
 
 ### The Problem Without Detection
 
@@ -612,19 +612,19 @@ If the algorithm did not detect the reschedule, it would call `calculateRequired
 
 ### How Detection Works
 
-The algorithm inspects existing slot data before deciding how many slots to create (`SlotAllocationService.autoAllocate`):
+The algorithm inspects existing slot data before deciding how many slots to create (`SchedulingService.autoAllocate`):
 
 ```typescript
 // Count existing slots by tentative status
 const existingNonTentativeSlotCount = existingAppointments.reduce(
   (count, app) =>
-    count + app.slotsOfAppointment.filter((s) => !s.isTentative).length,
+    count + app.appointmentOccurrences.filter((s) => !s.isTentative).length,
   0,
 );
 
 const tentativeSlotCount = existingAppointments.reduce(
   (count, app) =>
-    count + app.slotsOfAppointment.filter((s) => s.isTentative).length,
+    count + app.appointmentOccurrences.filter((s) => s.isTentative).length,
   0,
 );
 
@@ -639,12 +639,12 @@ if (isReschedule) {
   // new slots, not all 10; the earlier `existingNonTentative + tentative`
   // formula over-allocated partial reschedules.)
   const rescheduleSessions = existingAppointments.filter((a) =>
-    a.slotsOfAppointment.some((s) => s.isTentative),
+    a.appointmentOccurrences.some((s) => s.isTentative),
   ).length;
   requiredSlots = rescheduleSessions * slotsPerCall;
 } else {
   // INITIAL ALLOCATION: Calculate from config
-  requiredSlots = SlotCalculationService.calculateRequiredSlots(
+  requiredSlots = ScheduleCalculationService.calculateRequiredSlots(
     eventType,
     config,
   );
@@ -800,14 +800,14 @@ flowchart TD
 
     A -->|"Yes: Specific slots"| B["Branch 1: Individual/Multiple Session"]
     B --> B1["Filter allSubscriptionSlots to slotIds"]
-    B1 --> B2["UPDATE slotOfAppointment<br/>SET isTentative = true<br/>WHERE id IN (validated slot IDs)"]
+    B1 --> B2["UPDATE appointmentOccurrence<br/>SET isTentative = true<br/>WHERE id IN (validated slot IDs)"]
 
     A -->|"SUBSCRIPTION but no slotIds"| C["Branch 2: Entire Subscription"]
     C --> C1["Fetch ALL appointment IDs<br/>for this subscription"]
-    C1 --> C2["UPDATE slotOfAppointment<br/>SET isTentative = true<br/>WHERE appointmentId IN (all appointment IDs)"]
+    C1 --> C2["UPDATE appointmentOccurrence<br/>SET isTentative = true<br/>WHERE appointmentId IN (all appointment IDs)"]
 
     A -->|"Not SUBSCRIPTION"| D["Branch 3: Non-Subscription"]
-    D --> D1["UPDATE slotOfAppointment<br/>SET isTentative = true<br/>WHERE appointmentId = {appointmentId}"]
+    D --> D1["UPDATE appointmentOccurrence<br/>SET isTentative = true<br/>WHERE appointmentId = {appointmentId}"]
 
     style B fill:#e3f2fd
     style C fill:#fff3e0
@@ -1155,3 +1155,12 @@ A proposal can now be answered by the other side. `POST /api/appointments/[appoi
 
 Two refusals guard the accept path specifically, because accept is the action that moves the booking's slots to new times. A proposal that has passed its `expiresAt` is refused with `PROPOSAL_EXPIRED` before the allocator is asked for anything. The deadline cannot be inferred from the status alone: `expireRescheduleProposals` runs hourly, so a lapsed proposal remains `PENDING_REVIEW` for up to an hour after it stops being answerable. This matters beyond tidiness, because the deadline is `min(now + 72h, earliest released session − 24h)` — accepting a lapsed proposal is precisely how a booking would land inside the 24-hour window that the reschedule route itself refuses to move it into. The race between that check and the final transition needs no lock of its own, since `EXPIRED` is not an allowed from-state for `ACCEPTED` and a cron that wins the race therefore makes the transition fail rather than accept. A booking carrying a live payment dispute is refused with `DISPUTE_ACTIVE`, matching the freeze that the cancel and reschedule routes already apply: while a dispute is contested the booking's state is evidence and must not move. That guard sits deliberately after the counterparty check rather than before it, because answering `409` to an unauthorized caller would turn the endpoint into the dispute oracle that the surrounding 404 discipline exists to prevent. Decline is exempt from both refusals, as it moves nothing.
 
+## Confirming a proposal without declining it (2026-09-05, #1340)
+
+Both confirmation paths — the consultee-initiated auto-confirm in `lib/booking/reschedule-auto-confirm.ts` and the explicit accept in `lib/booking/reschedule-respond.ts` — run in two steps, and the order of those steps is what makes this correct. They first call `SchedulingService.allocate` in manual mode under the consultant-wide lock, so the full availability, cap and conflict validation happens before anything is written, and only when that transaction has committed do they close the proposal itself with a compare-and-swap from `PENDING_REVIEW` to `AUTO_ACCEPTED` or `ACCEPTED`.
+
+The allocator's final act inside that transaction is `resolveConsumedPreferenceRequests`, which closes every open reschedule proposal whose released slots the newly placed times replace. That sweep exists because placing times on the calendar is itself an answer: a competing proposal must not keep holding its `openForAppointmentId` reservation once the session has been moved. Until #1340 the sweep had no way to tell a competing proposal from the one it was serving, so a confirmation superseded itself. The proposal was marked `DECLINED` inside the allocator's transaction, the caller's compare-and-swap then matched zero rows and threw `IllegalTransitionError`, and the booking moved while its audit trail recorded a refusal. Auto-confirm swallowed the error and answered `autoConfirmed: false` to a consultee whose session had already been rescheduled, and the explicit accept rethrew it as a `409` and never sent the MOVED notification.
+
+Both callers therefore pass `excludeRescheduleRequestId` on the allocation request, and the sweep adds `id: { not: … }` to its supersede query. The exclusion is opt-in and deliberately narrow: an allocation that is not confirming a specific proposal — a consultant placing different times by hand, or any ordinary re-plan — still supersedes every open proposal on those slots exactly as before.
+
+Accept now also runs inside `withAppointmentLock`, the same per-appointment atom the cancel and reschedule routes take. Accept is a lifecycle mutation that moves this appointment's slots, and the allocator's own locks are keyed by consultant and by consultee rather than by appointment, so an accept and a concurrent cancellation of the same booking never contended for anything. The lock order is unchanged, because the appointment atom is the coarsest key and is taken before the allocator acquires its own. A caller that arrives while another mutation holds the appointment receives `423 APPOINTMENT_BUSY`, and a caller that arrives while the locking service is unreachable receives `503 BOOKING_LOCK_UNAVAILABLE`, both matching the reschedule route's answers.

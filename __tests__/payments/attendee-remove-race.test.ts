@@ -27,8 +27,6 @@ const mockRequireApiAuth = jest.fn();
 
 const mockWebinarFindFirst = jest.fn();
 const mockClassFindFirst = jest.fn();
-const mockSlotFindMany = jest.fn();
-const mockSlotUpdate = jest.fn();
 const mockParticipantUpdateMany = jest.fn();
 const mockTransaction = jest.fn();
 
@@ -84,13 +82,9 @@ const ORGANISER = {
 };
 const ATTENDEE_ID = "user-attendee";
 
-/** Runs the interactive callback against a tx client backed by the slot mocks. */
+/** Runs the interactive callback against a tx client backed by the seat mock. */
 function runInteractiveTransaction(fn: unknown) {
   return (fn as (tx: unknown) => Promise<number>)({
-    slotOfAppointment: {
-      findMany: (...a: unknown[]) => mockSlotFindMany(...a),
-      update: (...a: unknown[]) => mockSlotUpdate(...a),
-    },
     appointmentParticipant: {
       updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
     },
@@ -141,7 +135,6 @@ beforeEach(() => {
   mockWebinarFindFirst.mockResolvedValue({ id: "webinar-1" });
   mockClassFindFirst.mockResolvedValue({ id: "class-1" });
   mockFindLiveEventSlot.mockResolvedValue(null);
-  mockSlotUpdate.mockResolvedValue({});
   mockParticipantUpdateMany.mockResolvedValue({ count: 1 });
   // The real contract of refundRemovedAttendeeSeat — the roster client reads
   // all three fields to build the organiser's toast, so a stub of some invented
@@ -167,33 +160,29 @@ describe.each(CASES)(
       );
     }
 
-    it("re-reads inside the transaction and refuses to refund when the roster is already empty", async () => {
+    it("releases inside the transaction and refuses to refund when the seat is already gone", async () => {
       // The rival removal committed between this request's auth check and its
-      // write. Pre-fix the outer read had already banked a non-empty roster.
-      mockSlotFindMany.mockResolvedValue([]);
+      // write. #1554 — the seat IS the participant row, and the live-status CAS
+      // in the WHERE matches zero rows for the loser.
+      mockParticipantUpdateMany.mockResolvedValue({ count: 0 });
 
       const res = await handler(request(), { params: params() });
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ removed: false, refund: null });
-      expect(mockSlotUpdate).not.toHaveBeenCalled();
-      // #1319 A9 — the participant row is history, not a seat: a request that
-      // released nothing must not stamp it CANCELLED either.
-      expect(mockParticipantUpdateMany).not.toHaveBeenCalled();
       expect(mockRefundRemovedAttendeeSeat).not.toHaveBeenCalled();
       // Never mind the chat: nothing was released, so nothing is revoked.
       expect(mockRemoveUserFromEventChannel).not.toHaveBeenCalled();
     });
 
     it("runs the roster write at Serializable isolation", async () => {
-      mockSlotFindMany.mockResolvedValue([]);
+      mockParticipantUpdateMany.mockResolvedValue({ count: 0 });
 
       await handler(request(), { params: params() });
 
       expect(mockTransaction).toHaveBeenCalledTimes(1);
-      // Budgets, not just the isolation level: the per-seat disconnect loop can
-      // outrun Prisma's default 5s, and a P2028 timeout is rethrown rather than
-      // retried — 500, seat still held, fee not returned.
+      // Budgets, not just the isolation level: a P2028 timeout is rethrown
+      // rather than retried — 500, seat still held, fee not returned.
       expect(mockTransaction.mock.calls[0][1]).toEqual({
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         maxWait: 10_000,
@@ -201,8 +190,8 @@ describe.each(CASES)(
       });
     });
 
-    it("the winner disconnects every slot and refunds exactly once", async () => {
-      mockSlotFindMany.mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]);
+    it("the winner releases the seat and refunds exactly once", async () => {
+      mockParticipantUpdateMany.mockResolvedValue({ count: 1 });
 
       const res = await handler(request(), { params: params() });
 
@@ -215,12 +204,15 @@ describe.each(CASES)(
           rail: "GATEWAY",
         },
       });
-      expect(mockSlotUpdate).toHaveBeenCalledTimes(2);
-      // #1319 A9 — same transaction as the disconnects, so the seat and its
-      // history commit together or not at all.
+      // #1554 — one CAS statement: only a live seat flips, so the seat and
+      // its history commit together or not at all.
       expect(mockParticipantUpdateMany).toHaveBeenCalledTimes(1);
       expect(mockParticipantUpdateMany).toHaveBeenCalledWith({
-        where: { appointment: participantScope, userId: ATTENDEE_ID },
+        where: {
+          appointment: participantScope,
+          userId: ATTENDEE_ID,
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        },
         data: { status: "CANCELLED" },
       });
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledTimes(1);
@@ -235,12 +227,12 @@ describe.each(CASES)(
 
     it("a serialization abort retries, and the retry sees the empty roster", async () => {
       // The database, not the application, is what separates the two writers:
-      // the loser is aborted on the slot row it also tried to write. Its retry
+      // the loser is aborted on the seat row it also tried to write. Its retry
       // must land on the no-op answer rather than a second refund.
       mockTransaction
         .mockImplementationOnce(() => Promise.reject(serializationFailure()))
         .mockImplementationOnce((fn: unknown) => runInteractiveTransaction(fn));
-      mockSlotFindMany.mockResolvedValue([]);
+      mockParticipantUpdateMany.mockResolvedValue({ count: 0 });
 
       const res = await handler(request(), { params: params() });
 

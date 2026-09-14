@@ -4,7 +4,7 @@ interface User {
   email?: string;
 }
 
-interface SlotOfAppointment {
+interface AppointmentOccurrence {
   id: string;
   startsAt: Date;
   endsAt: Date;
@@ -13,7 +13,7 @@ interface SlotOfAppointment {
 
 interface Appointment {
   id: string;
-  slotsOfAppointment: SlotOfAppointment[];
+  occurrences: AppointmentOccurrence[];
 }
 
 interface ClassPlan {

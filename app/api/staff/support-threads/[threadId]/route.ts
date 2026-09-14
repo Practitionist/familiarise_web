@@ -20,6 +20,7 @@ import {
   notifySupportTicketUpdate,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { SupportThreadIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
@@ -51,7 +52,7 @@ async function loadThread(threadId: string) {
         select: {
           id: true,
           appointmentType: true,
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { startsAt: "asc" },
             take: 1,
             select: { startsAt: true, endsAt: true },
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           select: {
             id: true,
             title: true,
+            referenceNumber: true,
             status: true,
             assignedToId: true,
             // #705 — the SLA clock needs to know whether this is the FIRST
@@ -202,8 +204,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     });
 
     if (thread.supportTicketId) {
-      void notifySupportTicketResponse(thread.userId, {
+      await notifySupportTicketResponse(thread.userId, {
         ticketId: thread.supportTicketId,
+        reference: thread.supportTicket?.referenceNumber ?? undefined,
         ticketTitle: thread.supportTicket?.title ?? "Support",
         message,
         respondedBy: session.user.name ?? "Support",
@@ -333,12 +336,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // #705 — the user is the only party who cannot see the ops queue, and this
     // route was the one status change nobody told them about.
     if (thread.supportTicketId) {
-      void notifySupportTicketUpdate(thread.userId, {
+      await notifySupportTicketUpdate(thread.userId, {
         ticketId: thread.supportTicketId,
-        ticketTitle: thread.supportTicket?.referenceNumber
-          ? `${thread.supportTicket.referenceNumber} — ${thread.supportTicket.title}`
-          : (thread.supportTicket?.title ?? "Support"),
-        status,
+        reference: thread.supportTicket?.referenceNumber ?? undefined,
+        ticketTitle: thread.supportTicket?.title ?? "Support",
+        status: supportTicketStatusLabel(status),
+        statusCode: status,
         dashboardUrl: notificationHref(thread.organizationId, "appointments"),
         ...notificationScope(thread.organizationId),
       });

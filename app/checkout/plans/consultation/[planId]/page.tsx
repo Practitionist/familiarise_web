@@ -9,7 +9,6 @@ import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { fetchReviews } from "@/lib/user";
 import {
   CheckoutInput,
   ConsultationSearchParams,
@@ -31,11 +30,7 @@ import {
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { useSession } from "@/lib/auth-client";
-import {
-  ConsultantProfile,
-  ConsultantReview,
-  ConsultationPlan,
-} from "@prisma/client";
+import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -113,7 +108,6 @@ export default function ConsultationCheckoutPage({
   );
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [_reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   // #828 — useState's lazy initializer runs once per mount.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
@@ -235,20 +229,20 @@ export default function ConsultationCheckoutPage({
   useEffect(() => {
     async function fetchSlotData() {
       try {
-        const { slotOfAvailabilityWeeklyId, slotOfAvailabilityCustomId } =
+        const { availabilityWindowWeeklyId, availabilityWindowCustomId } =
           resolvedSearchParams;
 
-        if (slotOfAvailabilityWeeklyId) {
+        if (availabilityWindowWeeklyId) {
           const response = await fetch(
-            `/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`,
+            `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`,
           );
           if (response.ok) {
             const data = await response.json();
             setSlotData(data.data);
           }
-        } else if (slotOfAvailabilityCustomId) {
+        } else if (availabilityWindowCustomId) {
           const response = await fetch(
-            `/api/slots/availability/custom/${slotOfAvailabilityCustomId}`,
+            `/api/scheduling/availability/custom/${availabilityWindowCustomId}`,
           );
           if (response.ok) {
             const data = await response.json();
@@ -267,8 +261,8 @@ export default function ConsultationCheckoutPage({
     }
 
     if (
-      resolvedSearchParams.slotOfAvailabilityWeeklyId ||
-      resolvedSearchParams.slotOfAvailabilityCustomId
+      resolvedSearchParams.availabilityWindowWeeklyId ||
+      resolvedSearchParams.availabilityWindowCustomId
     ) {
       fetchSlotData();
     }
@@ -343,10 +337,10 @@ export default function ConsultationCheckoutPage({
           paymentGateway: gateway,
           startsAt: validatedSearchParams.startsAt,
           endsAt: validatedSearchParams.endsAt,
-          slotOfAvailabilityWeeklyId:
-            validatedSearchParams.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId:
-            validatedSearchParams.slotOfAvailabilityCustomId,
+          availabilityWindowWeeklyId:
+            validatedSearchParams.availabilityWindowWeeklyId,
+          availabilityWindowCustomId:
+            validatedSearchParams.availabilityWindowCustomId,
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           notes: validatedSearchParams.notes,
@@ -473,10 +467,6 @@ export default function ConsultationCheckoutPage({
         }
 
         setEventData(data);
-
-        // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(data.data.consultantProfile.id);
-        setReviews(reviewsData);
       } catch (error) {
         reportPaymentsError(error);
         console.error("[Checkout] Error fetching event data:", error);
@@ -926,10 +916,10 @@ export default function ConsultationCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             startsAt: validatedSearchParams.startsAt,
                             endsAt: validatedSearchParams.endsAt,
-                            slotOfAvailabilityWeeklyId:
-                              validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId:
-                              validatedSearchParams.slotOfAvailabilityCustomId,
+                            availabilityWindowWeeklyId:
+                              validatedSearchParams.availabilityWindowWeeklyId,
+                            availabilityWindowCustomId:
+                              validatedSearchParams.availabilityWindowCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,
@@ -974,10 +964,10 @@ export default function ConsultationCheckoutPage({
                             paymentGateway: "STRIPE",
                             startsAt: validatedSearchParams.startsAt,
                             endsAt: validatedSearchParams.endsAt,
-                            slotOfAvailabilityWeeklyId:
-                              validatedSearchParams.slotOfAvailabilityWeeklyId,
-                            slotOfAvailabilityCustomId:
-                              validatedSearchParams.slotOfAvailabilityCustomId,
+                            availabilityWindowWeeklyId:
+                              validatedSearchParams.availabilityWindowWeeklyId,
+                            availabilityWindowCustomId:
+                              validatedSearchParams.availabilityWindowCustomId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             notes: validatedSearchParams.notes,

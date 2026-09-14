@@ -2,17 +2,20 @@ import type {
   Prisma,
   Class as PrismaClass,
   Appointment as PrismaAppointment,
-  SlotOfAppointment as PrismaSlotOfAppointment,
+  AppointmentOccurrence as PrismaAppointmentOccurrence,
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
 import type { ConsultantPublicScalars } from "@/lib/data/consultant-public";
 
 type TClassSessionWithSchedule = PrismaClass & {
-  appointments: (PrismaAppointment & {
-    slotsOfAppointment: (PrismaSlotOfAppointment & {
-      user: { id: string }[];
-    })[];
-  })[];
+  // #1554 — one wrapper per class, N occurrences.
+  appointment:
+    | (PrismaAppointment & {
+        occurrences: PrismaAppointmentOccurrence[];
+        // Seat ids only; the capacity gate counts these.
+        participants: { userId: string }[];
+      })
+    | null;
 };
 
 export type TClassPlanDetailsData = Omit<

@@ -29,11 +29,16 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1554 — the refund context reads the one wrapper; none here.
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     // #1003 — group-event cancel reads the attendee roster off the payments so
     // it can notify them. Default to an empty event.
     payment: { findMany: jest.fn().mockResolvedValue([]) },
-    slotOfAppointment: {
+    // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
+    // collaborators for the recipient list. Default to none.
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+    appointmentOccurrence: {
       findMany: jest.fn(),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
@@ -91,7 +96,7 @@ import {
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
-import { cleanupTentativeSlots } from "../../scripts/appointments/cleanup-tentative-slots";
+import { cleanupTentativeOccurrences } from "../../scripts/appointments/cleanup-tentative-occurrences";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -159,7 +164,7 @@ function makeConsultationAppointment(overrides: any = {}) {
   return {
     id: "apt-1",
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: [
+    occurrences: [
       makeSlot("slot-1", FUTURE_DATE),
       makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
     ],
@@ -186,7 +191,7 @@ function makeSubscriptionAppointment(overrides: any = {}) {
   return {
     id: "apt-1",
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment: [
+    occurrences: [
       makeSlot("slot-1", FUTURE_DATE),
       makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
     ],
@@ -213,7 +218,7 @@ function makeWebinarAppointment(overrides: any = {}) {
   return {
     id: "apt-1",
     appointmentType: "WEBINAR",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: { id: "web-1", status: "SCHEDULED" },
@@ -226,7 +231,7 @@ function makeClassAppointment(overrides: any = {}) {
   return {
     id: "apt-1",
     appointmentType: "CLASS",
-    slotsOfAppointment: [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: null,
@@ -273,7 +278,13 @@ function makeMockTx() {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    slotOfAppointment: { updateMany: jest.fn(), deleteMany: jest.fn() },
+    // transitionOccurrenceCompletion reads the from-status, then moves the cohort
+    // with updateManyAndReturn so each moved id gets its history row.
+    appointmentOccurrence: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
+      deleteMany: jest.fn(),
+    },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -283,6 +294,9 @@ function makeMockTx() {
     // openForAppointmentId reservation is released and the expiry cron cannot
     // act on a cancelled booking. Reschedule creates one when times are proposed.
     rescheduleRequest: {
+      // The cancel route reads the open proposals, then CASes each by id.
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
     },
@@ -502,7 +516,7 @@ describe("Reschedule Route Handler - POST", () => {
 
   it("should return 400 when slot is within 24 hours", async () => {
     const appointment = makeConsultationAppointment({
-      slotsOfAppointment: [makeSlot("slot-1", NEAR_DATE)],
+      occurrences: [makeSlot("slot-1", NEAR_DATE)],
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
@@ -516,16 +530,12 @@ describe("Reschedule Route Handler - POST", () => {
 
   it("should enforce 24-hour restriction even if only one of multiple slots is near", async () => {
     const appointment = makeSubscriptionAppointment({
-      slotsOfAppointment: [
+      occurrences: [
         makeSlot("slot-1", FUTURE_DATE), // 48h ahead — OK
         makeSlot("slot-2", NEAR_DATE), // 12h ahead — too close
       ],
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
-
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-    ]);
 
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
       slotIds: ["slot-1", "slot-2"],
@@ -552,14 +562,19 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.slotsAffected).toBe(2);
 
       // Verify slots marked tentative by appointmentId (non-subscription path)
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: {
-          appointmentId: "apt-1",
-          // #837 — reschedule never resurrects COMPLETED/CANCELLED history
-          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-        },
-        data: { isTentative: true, completionStatus: "RESCHEDULED" },
-      });
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalledWith(
+        // objectContaining: `select` is the helper's own business.
+        expect.objectContaining({
+          where: {
+            appointmentId: "apt-1",
+            // #837 — reschedule never resurrects COMPLETED/CANCELLED history
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          },
+          data: { isTentative: true, completionStatus: "RESCHEDULED" },
+        }),
+      );
 
       // Verify consultation status reverted
       expect(mockTx.consultation.updateMany).toHaveBeenCalledWith({
@@ -588,25 +603,9 @@ describe("Reschedule Route Handler - POST", () => {
 
   describe("SUBSCRIPTION", () => {
     it("should mark ALL subscription slots tentative when no slotIds provided", async () => {
+      // #1554 — the subscription is ONE wrapper; every session is a row on it.
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
-
-      // First findMany: gather all subscription slots
-      mockTx.appointment.findMany
-        .mockResolvedValueOnce([
-          { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-          {
-            id: "apt-2",
-            slotsOfAppointment: [
-              makeSlot(
-                "slot-3",
-                new Date(FUTURE_DATE.getTime() + 7 * 24 * 60 * 60 * 1000),
-              ),
-            ],
-          },
-        ])
-        // Second findMany: get appointment IDs for updateMany
-        .mockResolvedValueOnce([{ id: "apt-1" }, { id: "apt-2" }]);
 
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION");
       const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -616,14 +615,19 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.success).toBe(true);
       expect(body.rescheduleType).toBe("entire_booking");
 
-      // Should mark all appointment slots tentative
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: {
-          appointmentId: { in: ["apt-1", "apt-2"] },
-          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-        },
-        data: { isTentative: true, completionStatus: "RESCHEDULED" },
-      });
+      // Should mark every live row of the one wrapper tentative
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalledWith(
+        // objectContaining: `select` is the helper's own business.
+        expect.objectContaining({
+          where: {
+            appointmentId: "apt-1",
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          },
+          data: { isTentative: true, completionStatus: "RESCHEDULED" },
+        }),
+      );
 
       // Should update subscription status
       expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
@@ -651,10 +655,6 @@ describe("Reschedule Route Handler - POST", () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-      ]);
-
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1"],
       });
@@ -665,35 +665,29 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("individual_session");
       expect(body.slotsAffected).toBe(1);
 
-      // The route marks ALL slots belonging to the affected appointment(s), not just the
-      // specified slot ID. This ensures multi-slot sessions (e.g. 1.5h = 3 × 30-min slots)
-      // are rescheduled atomically — a partial-tentative session would be inconsistent.
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: {
-          appointmentId: { in: ["apt-1"] },
-          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-        },
-        data: { isTentative: true, completionStatus: "RESCHEDULED" },
-      });
+      // #1554 — one row is one session, so exactly the named rows are
+      // released; releasing by appointment would free the whole programme.
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalledWith(
+        // objectContaining: `select` is the helper's own business.
+        expect.objectContaining({
+          where: {
+            appointmentId: "apt-1",
+            id: { in: ["slot-1"] },
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          },
+          data: { isTentative: true, completionStatus: "RESCHEDULED" },
+        }),
+      );
     });
 
     it("should return 'multiple_sessions' type when slotIds span multiple sessions", async () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      // #448 — multiple_sessions means slots from MULTIPLE appointments
-      // (sessions), not merely multiple slots of one session.
-      const slotA = makeSlot("slot-1", FUTURE_DATE, { appointmentId: "apt-1" });
-      const slotB = makeSlot(
-        "slot-2",
-        new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
-        { appointmentId: "apt-2" },
-      );
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: [slotA] },
-        { id: "apt-2", slotsOfAppointment: [slotB] },
-      ]);
-
+      // #448 / #1554 — multiple_sessions means several occurrence rows: each
+      // row is one session of the one wrapper.
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1", "slot-2"],
       });
@@ -710,10 +704,6 @@ describe("Reschedule Route Handler - POST", () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-      ]);
-
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotIds: ["slot-1", "nonexistent-slot"],
       });
@@ -727,10 +717,6 @@ describe("Reschedule Route Handler - POST", () => {
     it("should support legacy single slotId parameter", async () => {
       const appointment = makeSubscriptionAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
-
-      mockTx.appointment.findMany.mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-      ]);
 
       const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
         slotId: "slot-1", // legacy single slotId (not array)
@@ -759,14 +745,19 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.success).toBe(true);
       expect(body.rescheduleType).toBe("entire_booking");
 
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        where: {
-          appointmentId: "apt-1",
-          // #837 — reschedule never resurrects COMPLETED/CANCELLED history
-          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-        },
-        data: { isTentative: true, completionStatus: "RESCHEDULED" },
-      });
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalledWith(
+        // objectContaining: `select` is the helper's own business.
+        expect.objectContaining({
+          where: {
+            appointmentId: "apt-1",
+            // #837 — reschedule never resurrects COMPLETED/CANCELLED history
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          },
+          data: { isTentative: true, completionStatus: "RESCHEDULED" },
+        }),
+      );
 
       expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
         where: { id: "web-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
@@ -813,9 +804,6 @@ describe("Reschedule Route Handler - POST", () => {
   it("should return session(s) message for partial reschedule", async () => {
     const appointment = makeSubscriptionAppointment();
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-    ]);
 
     const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
       slotIds: ["slot-1"],
@@ -844,7 +832,7 @@ describe("Reschedule Route Handler - POST", () => {
 
   it("should handle appointment with no slots", async () => {
     const appointment = makeConsultationAppointment({
-      slotsOfAppointment: [],
+      occurrences: [],
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
@@ -979,16 +967,22 @@ describe("Cancel Route Handler - POST", () => {
       // Verify slots soft-cancelled (not hard-deleted — preserves payment
       // audit trail); only live SCHEDULED slots flip, history is never
       // re-stamped.
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalledWith({
-        // RESCHEDULED counts too: a slot released by a pending reschedule is
-        // not SCHEDULED, and skipping it left non-terminal rows on a booking
-        // that no longer exists.
-        where: {
-          appointmentId: "apt-1",
-          completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
-        },
-        data: { completionStatus: "CANCELLED" },
-      });
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalledWith(
+        // objectContaining: `select` is the helper's own business.
+        expect.objectContaining({
+          // RESCHEDULED counts too: a slot released by a pending reschedule is
+          // not SCHEDULED, and skipping it left non-terminal rows on a booking
+          // that no longer exists.
+          where: {
+            appointmentId: "apt-1",
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+          },
+          // The tombstone is the other half of the soft-cancel (#676 A10).
+          data: { completionStatus: "CANCELLED", deletedAt: expect.any(Date) },
+        }),
+      );
 
       // Verify appointment is NOT deleted (soft-cancel preserves records)
       expect(mockTx.appointment.delete).not.toHaveBeenCalled();
@@ -998,9 +992,11 @@ describe("Cancel Route Handler - POST", () => {
       const req = makeCancelRequest("apt-1");
       await cancelHandler(req, makeParams("apt-1"));
 
-      // Soft-cancel: updateMany with completionStatus, not deleteMany
-      expect(mockTx.slotOfAppointment.updateMany).toHaveBeenCalled();
-      expect(mockTx.slotOfAppointment.deleteMany).not.toHaveBeenCalled();
+      // Soft-cancel: a completionStatus write, not deleteMany
+      expect(
+        mockTx.appointmentOccurrence.updateManyAndReturn,
+      ).toHaveBeenCalled();
+      expect(mockTx.appointmentOccurrence.deleteMany).not.toHaveBeenCalled();
       expect(mockTx.appointment.delete).not.toHaveBeenCalled();
     });
   });
@@ -1275,7 +1271,7 @@ describe("Cancel Route Handler - POST", () => {
 // Cleanup Tentative Slots
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("cleanupTentativeSlots", () => {
+describe("cleanupTentativeOccurrences", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // #1319 wave 6 — the sweep releases holds inside prisma.$transaction so
@@ -1289,9 +1285,9 @@ describe("cleanupTentativeSlots", () => {
   });
 
   it("should return success with 0 slots when none are stale", async () => {
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(true);
     expect(result.slotsReleased).toBe(0);
@@ -1323,12 +1319,16 @@ describe("cleanupTentativeSlots", () => {
       },
     ];
 
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue(staleSlots);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue(
+      staleSlots,
+    );
     (
-      prisma.slotOfAppointment as unknown as { updateManyAndReturn: jest.Mock }
+      prisma.appointmentOccurrence as unknown as {
+        updateManyAndReturn: jest.Mock;
+      }
     ).updateManyAndReturn.mockResolvedValue([{ id: "slot-1" }]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(true);
     expect(result.slotsReleased).toBe(1);
@@ -1369,27 +1369,31 @@ describe("cleanupTentativeSlots", () => {
       },
     ];
 
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue(staleSlots);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue(
+      staleSlots,
+    );
     (
-      prisma.slotOfAppointment as unknown as { updateManyAndReturn: jest.Mock }
+      prisma.appointmentOccurrence as unknown as {
+        updateManyAndReturn: jest.Mock;
+      }
     ).updateManyAndReturn.mockResolvedValue([
       { id: "slot-1" },
       { id: "slot-2" },
       { id: "slot-3" },
     ]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.slotsReleased).toBe(3);
     expect(result.appointmentsAffected).toBe(2); // 2 unique appointments
   });
 
   it("should handle database errors gracefully", async () => {
-    (prisma.slotOfAppointment as any).findMany.mockRejectedValue(
+    (prisma.appointmentOccurrence as any).findMany.mockRejectedValue(
       new Error("Connection lost"),
     );
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
@@ -1398,10 +1402,10 @@ describe("cleanupTentativeSlots", () => {
   });
 
   it("should include timestamp in result", async () => {
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
     const before = new Date().toISOString();
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
     const after = new Date().toISOString();
 
     expect(result.timestamp).toBeDefined();
@@ -1410,11 +1414,11 @@ describe("cleanupTentativeSlots", () => {
   });
 
   it("should query for tentative slots with no successful payment", async () => {
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
 
-    expect((prisma.slotOfAppointment as any).findMany).toHaveBeenCalledWith(
+    expect((prisma.appointmentOccurrence as any).findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           isTentative: true,
@@ -1436,13 +1440,13 @@ describe("cleanupTentativeSlots", () => {
   });
 
   it("should not write when no stale slots found", async () => {
-    (prisma.slotOfAppointment as any).findMany.mockResolvedValue([]);
+    (prisma.appointmentOccurrence as any).findMany.mockResolvedValue([]);
 
-    await cleanupTentativeSlots();
+    await cleanupTentativeOccurrences();
 
     expect(
       (
-        prisma.slotOfAppointment as unknown as {
+        prisma.appointmentOccurrence as unknown as {
           updateManyAndReturn: jest.Mock;
         }
       ).updateManyAndReturn,

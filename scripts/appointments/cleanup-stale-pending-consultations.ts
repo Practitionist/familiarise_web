@@ -22,11 +22,11 @@ import prisma from "../../lib/prisma";
 import {
   AppointmentStatus,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 import {
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -105,7 +105,7 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
         },
         appointment: {
           include: {
-            slotsOfAppointment: true,
+            occurrences: true,
             payment: { select: { id: true, paymentStatus: true } },
           },
         },
@@ -129,12 +129,11 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
 
       const appointment = consultation.appointment;
       const tentativeSlotsCount =
-        appointment?.slotsOfAppointment.filter((s) => s.isTentative).length ||
-        0;
+        appointment?.occurrences.filter((s) => s.isTentative).length || 0;
 
       if (appointment) {
         console.log(`   Appointment ID: ${appointment.id}`);
-        console.log(`   Slots: ${appointment.slotsOfAppointment.length}`);
+        console.log(`   Slots: ${appointment.occurrences.length}`);
         console.log(`   Payments: ${appointment.payment.length}`);
         console.log(`   Tentative slots to release: ${tentativeSlotsCount}`);
       }
@@ -172,13 +171,13 @@ async function cleanupStalePendingConsultationsUnlocked(): Promise<StalePendingC
 
           // Release tentative slots by status (rule 2: nothing is deleted).
           if (!appointment) return 0;
-          return transitionSlotCompletion(tx, {
+          return transitionOccurrenceCompletion(tx, {
             where: {
               appointmentId: appointment.id,
               isTentative: true,
               deletedAt: null,
             },
-            to: SlotCompletionStatus.CANCELLED,
+            to: OccurrenceCompletionStatus.CANCELLED,
             data: { deletedAt: new Date() },
             allowZero: true,
           });

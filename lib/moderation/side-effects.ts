@@ -13,9 +13,16 @@
  * and the outcome lands in ModerationAction.sideEffects for staff visibility.
  */
 import * as Sentry from "@sentry/nextjs";
-import type { ModerationActionType } from "@prisma/client";
+import type {
+  ModerationActionType,
+  ModerationReportType,
+} from "@prisma/client";
 import { EarningStatus } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
+import {
+  removeCollaboratorStanding,
+  type CollaborationRef,
+} from "@/lib/collaborators/standing";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import {
   getStreamChatClient,
@@ -36,6 +43,9 @@ import {
 
 export interface ModerationReportRef {
   id: string;
+  /** What the report is about. CONTENT_REMOVED acts on the id this type owns
+   *  and ignores any other, so a stored cross-type id can never be enforced. */
+  type: ModerationReportType;
   targetUserId: string;
   reviewId: string | null;
   /** #1270 — set on MESSAGE reports; what CONTENT_REMOVED deletes on Stream. */
@@ -67,6 +77,9 @@ export interface TransactionalEffectResult {
    *  because nothing invalidated the cache. */
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
+  /** #1580 C-P0-4 — the plans whose collaborator row the ban moved to REMOVED;
+   *  phase 2 revokes their Stream access. Reinstatement never restores them. */
+  collaborationsRemoved?: CollaborationRef[];
 }
 
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
@@ -84,6 +97,10 @@ export interface SideEffectSummary extends TransactionalEffectResult {
   /** #1270 — how many times the sweep has re-driven a failed Stream step. */
   streamAttempts?: number;
   notification?: StepStatus;
+  /** #1580 C-P0-4 — Stream revocation for every plan in `collaborationsRemoved`. */
+  collaboratorRevocation?: StepStatus;
+  /** #1580 — how many times the sweep has re-driven a failed revocation. */
+  collaboratorRevocationAttempts?: number;
   errors?: string[];
 }
 
@@ -116,12 +133,17 @@ export async function applyTransactionalEffects(
     case "CONTENT_REMOVED":
       // A reported chat message is removed in phase 2 — the delete is a Stream
       // API call and cannot join this transaction (#1270).
+      if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
     case "WARNING_ISSUED":
     case "NO_ACTION":
     case "USER_REINSTATED":
-      // A reinstatement is taken through the unban route, which owns clearing
-      // the ban columns and restoring Stream access; it never lands here.
+    case "REVIEW_REMOVED":
+    case "REVIEW_REPLY_REMOVED":
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
+    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
+      // A reinstatement is taken through the unban route, and the four #1562 acts
+      // are written by their own routes with the audit row; none lands here.
       return {};
   }
 }
@@ -158,6 +180,16 @@ async function banOrSuspendUser(
       report.targetUserId,
     );
     if (earningsHeld !== undefined) result.earningsHeld = earningsHeld;
+  }
+
+  // #1580 C-P0-4 — a moderated account otherwise stays an ACCEPTED collaborator
+  // in every split, roster and recording; the flip is shared with erasure.
+  const collaborationsRemoved = await removeCollaboratorStanding(
+    tx,
+    report.targetUserId,
+  );
+  if (collaborationsRemoved.length > 0) {
+    result.collaborationsRemoved = collaborationsRemoved;
   }
   return result;
 }
@@ -216,16 +248,21 @@ async function softDeleteReview(
   if (!reviewId) return {};
   const review = await tx.consultantReview.findUnique({
     where: { id: reviewId },
-    select: { consultantProfileId: true, deletedAt: true },
+    select: { consultantProfileId: true, deletedAt: true, removedBy: true },
   });
-  if (!review || review.deletedAt) return {};
-  await tx.consultantReview.update({
-    where: { id: reviewId },
-    data: { deletedAt: new Date() },
+  if (!review) return {};
+  // Already taken down by moderation: nothing to do. An AUTHOR's withdrawal is
+  // not a takedown — it is revivable — so moderation still stamps itself over
+  // it, or the author could revive content staff resolved as removed. The actor
+  // and reason are the report's ModerationAction row (#1562).
+  if (review.deletedAt && review.removedBy === "MODERATION") return {};
+  // CAS'd in the WHERE rather than trusting the read above.
+  const removed = await tx.consultantReview.updateMany({
+    where: { id: reviewId, OR: [{ deletedAt: null }, { removedBy: "AUTHOR" }] },
+    data: { deletedAt: new Date(), removedBy: "MODERATION" },
   });
-  // #705 — was an inlined plain `_avg`, a second implementation of the rating
-  // rule that silently disagreed with lib/reviews.ts once group sessions became
-  // one data point, and never touched publishedRating at all.
+  if (removed.count === 0) return {};
+  // #705 — one implementation of the rating rule, never an inlined `_avg`.
   await recomputeConsultantRating(tx, review.consultantProfileId);
   return {
     reviewRemoved: true,
@@ -248,6 +285,14 @@ export async function applyBestEffortEffects(
   }
   if (hasStreamEnforcement(actionType, input.report)) {
     await runStreamStep(input, summary, errors);
+  }
+  if (transactional.collaborationsRemoved?.length) {
+    await runCollaboratorRevocations(
+      input.report.targetUserId,
+      transactional.collaborationsRemoved,
+      summary,
+      errors,
+    );
   }
 
   await runNotification(input, transactional, summary, errors);
@@ -273,6 +318,38 @@ async function runBulkCancellations(
   }
 }
 
+// #1580 C-P0-4 — the Stream side of the rows phase 1 moved to REMOVED. The ban
+// notification already went out, so the per-plan removal Novu is skipped.
+async function runCollaboratorRevocations(
+  targetUserId: string,
+  plans: CollaborationRef[],
+  summary: SideEffectSummary,
+  errors: string[],
+): Promise<void> {
+  const failed: string[] = [];
+  // Lazy: a static import would pull the auth + email graph into every action.
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  for (const { planType, planId } of plans) {
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        planId,
+        targetUserId,
+        { notify: false },
+      );
+      if (!success) failed.push(`${planType}:${planId}`);
+    } catch (error) {
+      failed.push(`${planType}:${planId}`);
+      captureModerationError(error);
+    }
+  }
+  summary.collaboratorRevocation = failed.length === 0 ? "ok" : "failed";
+  if (failed.length > 0) {
+    errors.push(`collaborator-revoke: ${failed.join(", ")}`);
+  }
+}
+
 /**
  * #1270 — does this action owe Stream a write at all?
  *
@@ -286,7 +363,11 @@ export function hasStreamEnforcement(
   if (actionType === "USER_BANNED" || actionType === "USER_SUSPENDED") {
     return true;
   }
-  return actionType === "CONTENT_REMOVED" && Boolean(report.streamMessageId);
+  return (
+    actionType === "CONTENT_REMOVED" &&
+    report.type === "MESSAGE" &&
+    Boolean(report.streamMessageId)
+  );
 }
 
 /**
@@ -478,9 +559,13 @@ function triggerModerationNotification(
       });
     case "NO_ACTION":
     case "USER_REINSTATED":
+    case "REVIEW_REMOVED":
+    case "REVIEW_REPLY_REMOVED":
+    case "REVIEW_EXCLUDED_FROM_AGGREGATE":
+    case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
       // No Novu workflow exists for a reinstatement, and inventing a
       // log-and-skip trigger would report "skipped" for one nobody plans to
-      // build.
+      // build. The #1562 acts are never taken through a report.
       return Promise.resolve(null);
   }
 }

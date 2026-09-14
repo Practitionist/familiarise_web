@@ -258,7 +258,7 @@ Then `requireOrgOwner = requireCapability(..., "admin")` and `requireOrgBillingA
 
 ## C. Service-Class Bloat (optional, defer)
 
-### C1. `SlotAllocationService` (1,982 LoC) + helpers
+### C1. `SchedulingService` (1,982 LoC) + helpers
 
 Single service class with three allocation modes (auto / manual / requested) plus calculation + validation helpers. Procedural orchestrator that reads like a sequential checklist.
 
@@ -301,7 +301,7 @@ One huge file with subscription/one-off branching, slot locking, wallet vs inten
 | 3                               | Delete `ENABLE_TDS_ADMIN_VIEW` flag                                          | scattered          | -20         | LOW      |
 | 4                               | Delete `ENABLE_HRIS` flag                                                    | scattered          | -20         | LOW      |
 | 5                               | Unify role predicates → capability matrix                                    | 2 files refactored | -200        | MEDIUM   |
-| 6                               | Split SlotAllocationService                                                  | 3 files → 5 files  | 0 net       | OPTIONAL |
+| 6                               | Split SchedulingService                                                  | 3 files → 5 files  | 0 net       | OPTIONAL |
 | 7                               | Refactor checkout into handlers                                              | 1 file → 5 files   | 0 net       | DEFER    |
 | **Phase 1 total (high+medium)** |                                                                              |                    | **~-1,614** |          |
 
@@ -387,7 +387,7 @@ Actions:
 
 Trigger conditions:
 
-- `SlotAllocationService` split → defer until the next slot-related feature touches the file
+- `SchedulingService` split → defer until the next slot-related feature touches the file
 - `checkout.ts` modularization → defer until per-type variance increases (currently stable)
 
 Don't do these speculatively. Wait for a real feature to justify.
@@ -405,7 +405,7 @@ Don't do these speculatively. Wait for a real feature to justify.
 | Delete 7 stale/cosmetic docs | ✅ no code change   | N/A                       | None            | -1,113 | **YES**                  |
 | Trim/archive 4 docs          | ✅ no code change   | N/A                       | None            | -250   | **YES**                  |
 | Unify role predicates        | ✅ no schema change | ✅ refactor               | None            | -200   | Phase 2                  |
-| Split SlotAllocationService  | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3                  |
+| Split SchedulingService  | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3                  |
 | Modularize checkout.ts       | ✅ no schema change | ✅ refactor               | None            | 0 net  | Phase 3 (defer)          |
 
 ---

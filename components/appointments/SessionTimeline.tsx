@@ -7,32 +7,36 @@ import { cn } from "@/utils/tailwind";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   DEFAULT_MEETING_DURATION_MS,
-  getSessionVMJoinState,
-  isSessionOver,
-} from "@/lib/appointments/slots";
-import type { SessionVM } from "@/lib/appointments/view-model";
+  getOccurrenceVMJoinState,
+  isOccurrenceOver,
+  meetingClosedAt,
+} from "@/lib/appointments/occurrences";
+import type { OccurrenceVM } from "@/lib/appointments/view-model";
 import { CountdownBadge } from "./CountdownBadge";
 import { HeldSlotBadge } from "./HeldSlotBadge";
 
 /**
  * Per-session timeline for multi-session (and one-off) appointments.
- * Generalized from the consultee card timeline to consume SessionVM[].
+ * Generalized from the consultee card timeline to consume OccurrenceVM[].
  *
- * One SessionVM is one row. It used to re-group by owning appointment,
+ * One OccurrenceVM is one row. It used to re-group by owning appointment,
  * because the mappers emitted a VM per 30-minute slot row — but that rule was
  * wrong in the other direction: two separate sittings booked under a single
  * appointment fused into one row spanning both. The mappers now group into
- * contiguous runs (#1061, `sessionsOfAppointment`), which is the same rule the
+ * contiguous runs (#1061, `occurrencesOfAppointment`), which is the same rule the
  * room key and the join gate use, so re-grouping here would only undo it.
  */
 
 type SessionStatus = "completed" | "noRecord" | "upcoming" | "joinable";
 
+/** Statuses that mean the session did not take place. */
+const DEAD_SESSION = new Set(["CANCELLED", "RESCHEDULED"]);
+
 interface SessionTimelineProps {
-  sessions: SessionVM[];
+  occurrences: OccurrenceVM[];
   isJoining?: boolean;
   /** Absent ⇒ read-only timeline (no JOIN buttons). */
-  onJoinSession?: (session: SessionVM) => void;
+  onJoinSession?: (session: OccurrenceVM) => void;
   joinWindowMs?: number;
   /** Rows rendered when collapsed (default 1 focus row). */
   className?: string;
@@ -42,9 +46,15 @@ interface SessionTimelineProps {
    */
   defaultExpanded?: boolean;
   /**
+   * Rendered at the end of a past session's row. #705 uses it for the per-call
+   * rating, so the question sits on the session being rated instead of in a
+   * separate card that could only describe the whole booking.
+   */
+  renderSessionExtra?: (session: OccurrenceVM) => React.ReactNode;
+  /**
    * #1428 — opt-in: render tentative (held-pending-payment) sessions instead
    * of silently dropping them. Off by default so AppointmentSheet and
-   * RequestSlotAllocationTab, which never learned a hold deadline, keep
+   * RequestSchedulingTab, which never learned a hold deadline, keep
    * their existing tentative-is-invisible behaviour.
    */
   showHeld?: boolean;
@@ -56,7 +66,7 @@ interface SessionTimelineProps {
 
 interface SessionGroup {
   key: string;
-  slots: SessionVM[];
+  slots: OccurrenceVM[];
   startTime: Date;
   endTime: Date;
 }
@@ -68,17 +78,18 @@ interface SessionGroup {
  * hour, dropping whoever clicked it into a fresh empty room. Routing through
  * the shared predicate makes an ended run non-joinable here too.
  */
-function slotStatus(slot: SessionVM, joinWindowMs: number): SessionStatus {
-  const state = getSessionVMJoinState(slot, { joinWindowMs });
+function slotStatus(slot: OccurrenceVM, joinWindowMs: number): SessionStatus {
+  const state = getOccurrenceVMJoinState(slot, { joinWindowMs });
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
   // The host closing the call early is what separates a session we have a
-  // record of from one that simply ran past its slot with nobody in it.
-  if (slot.meetingEndedAt) return "completed";
+  // record of from one that simply ran past its slot with nobody in it. A
+  // timeout or a pre-start end is neither (#1607).
+  if (meetingClosedAt(slot)) return "completed";
   // `disabled` on a session whose time has not arrived is a dead row
   // (cancelled, or released for reschedule) — "no record" would be a lie
   // about the future, so it keeps reading as upcoming.
-  return isSessionOver(slot) ? "noRecord" : "upcoming";
+  return isOccurrenceOver(slot) ? "noRecord" : "upcoming";
 }
 
 function sessionStatusOf(
@@ -94,12 +105,12 @@ function sessionStatusOf(
   return "upcoming";
 }
 
-function toSessionGroups(sessions: SessionVM[]): SessionGroup[] {
+function toSessionGroups(sessions: OccurrenceVM[]): SessionGroup[] {
   return [...sessions]
     .map((session) => ({
-      // The anchor's slot id — unique per run, and the same id the video room
-      // is keyed to, so a row and its meeting name each other.
-      key: session.slotId,
+      // The occurrence id — the same id the video room is keyed to, so a row
+      // and its meeting name each other (#1554).
+      key: session.occurrenceId,
       slots: [session],
       startTime: session.startsAt,
       endTime:
@@ -142,12 +153,13 @@ const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
 };
 
 export function SessionTimeline({
-  sessions,
+  occurrences,
   isJoining = false,
   onJoinSession,
   joinWindowMs = CONSULTEE_JOIN_WINDOW_MS,
   className,
   defaultExpanded = true,
+  renderSessionExtra,
   showHeld = false,
   holdDeadline = null,
   onCompletePayment,
@@ -158,16 +170,16 @@ export function SessionTimeline({
   }, [defaultExpanded]);
 
   const nonTentative = useMemo(
-    () => sessions.filter((s) => !s.isTentative),
-    [sessions],
+    () => occurrences.filter((s) => !s.isTentative),
+    [occurrences],
   );
   // #1428 — tentative sessions used to be dropped outright here, so a
   // consultee holding reserved slots with a live payment deadline saw
   // nothing at all. Kept as its own list (never mixed into `groups`) so the
   // held row's countdown/CTA styling doesn't leak into the confirmed rules.
   const tentative = useMemo(
-    () => (showHeld ? sessions.filter((s) => s.isTentative) : []),
-    [sessions, showHeld],
+    () => (showHeld ? occurrences.filter((s) => s.isTentative) : []),
+    [occurrences, showHeld],
   );
   const groups = useMemo(() => toSessionGroups(nonTentative), [nonTentative]);
   const heldGroups = useMemo(() => toSessionGroups(tentative), [tentative]);
@@ -324,6 +336,22 @@ export function SessionTimeline({
                 {format(group.endTime, "h:mm a")}
               </span>
             </div>
+
+            {/* Nothing to rate on a call that never happened, or on one still
+                running. Gate on the STATUS, not on `joinable` — that is only
+                set when `onJoinSession` was also supplied, so a read-only
+                timeline (AppointmentDetailClient whenever its action is not
+                "join") left it undefined while the call was live and offered
+                stars mid-session. The route accepts such a rating, because
+                attendance is recorded the moment the user joins. */}
+            {renderSessionExtra &&
+            status !== "upcoming" &&
+            status !== "joinable" &&
+            !DEAD_SESSION.has(
+              group.slots[group.slots.length - 1].completionStatus ?? "",
+            )
+              ? renderSessionExtra(group.slots[group.slots.length - 1])
+              : null}
 
             {joinable ? (
               <button

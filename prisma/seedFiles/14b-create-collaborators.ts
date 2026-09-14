@@ -1,5 +1,6 @@
 import { faker } from "@faker-js/faker";
 import prisma from "../../lib/prisma";
+import { tierForRole } from "../../lib/collaborators/roles";
 
 /**
  * Creates collaborators for some webinar and class plans.
@@ -66,12 +67,14 @@ export async function createCollaborators() {
     for (const collab of selectedCollabs) {
       try {
         const status = faker.helpers.arrayElement(statuses);
+        const role = faker.helpers.arrayElement(webinarRoles);
         await prisma.collaborator.create({
           data: {
             consultantProfileId: collab.id,
             collaboratorType: "WEBINAR",
             webinarPlanId: plan.id,
-            role: faker.helpers.arrayElement(webinarRoles),
+            role,
+            tier: tierForRole(role),
             revenueShareBps: faker.helpers.arrayElement([
               1000, 1500, 2000, 2500, 3000,
             ]),
@@ -103,12 +106,14 @@ export async function createCollaborators() {
     for (const collab of selectedCollabs) {
       try {
         const status = faker.helpers.arrayElement(statuses);
+        const role = faker.helpers.arrayElement(classRoles);
         await prisma.collaborator.create({
           data: {
             consultantProfileId: collab.id,
             collaboratorType: "CLASS",
             classPlanId: plan.id,
-            role: faker.helpers.arrayElement(classRoles),
+            role,
+            tier: tierForRole(role),
             revenueShareBps: faker.helpers.arrayElement([
               1000, 1500, 2000, 2500, 3000,
             ]),

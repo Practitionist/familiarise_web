@@ -2,16 +2,20 @@ import "server-only";
 import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
-} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
-import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import {
   validateWeeklySlotTimeOrder,
   slotsOverlap,
-  getTimezoneOffsetMinutes,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
+import {
+  resolveWeeklyTimezone,
+  resolveWeeklyUtcOffsetMinutes,
+  weeklyRowLocalColumns,
+} from "@/lib/scheduling/weeklyUtcOffset";
 import { notifyNewConsultantApplication } from "@/lib/novu";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
@@ -102,7 +106,6 @@ async function upsertConsultantProfile(
     where: { userId },
     create: {
       userId,
-      rating: 0,
       domainId,
       subDomains: profileData.subDomains?.connect
         ? { connect: profileData.subDomains.connect }
@@ -142,16 +145,24 @@ async function syncAvailabilitySlots(
   tx: Tx,
   timezone?: string,
 ) {
-  const utcOffsetMinutes = timezone ? getTimezoneOffsetMinutes(timezone) : 0;
+  // #1326 — this path stored 0 for a consultant with no onboarding timezone,
+  // so their whole published week projected as if they lived in UTC. One
+  // resolver now answers for every write path, and a conflicting caller value
+  // throws into the failed transaction rather than being written.
+  const utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
+    profileTimezone: timezone,
+    consultantProfileId,
+  });
+  const rowTimezone = resolveWeeklyTimezone(timezone);
   if (scheduleType === ScheduleType.WEEKLY) {
-    await tx.slotOfAvailabilityCustom.deleteMany({
+    await tx.availabilityWindowCustom.deleteMany({
       where: { consultantProfileId },
     });
-    await tx.slotOfAvailabilityWeekly.deleteMany({
+    await tx.availabilityWindowWeekly.deleteMany({
       where: { consultantProfileId },
     });
 
-    const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
+    const weeklySlotsToCreate = profileData.availabilityWindowsWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       // Reject invalid slots instead of silently filtering them
       for (let i = 0; i < weeklySlotsToCreate.length; i++) {
@@ -191,26 +202,38 @@ async function syncAvailabilitySlots(
 
       // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
       // storage matches the window the customer is shown and can book.
-      await tx.slotOfAvailabilityWeekly.createMany({
-        data: mergeAdjacentWeeklyRows(weeklySlotsToCreate).map((slot) => ({
+      //
+      // #1326 — the offset is stamped BEFORE the merge: mergeAdjacentWeeklyRows
+      // refuses to fold rows whose offsets differ, and every row here carried
+      // an absent offset until after the fold, so that guard was comparing
+      // undefined with undefined and could never fire.
+      // #872 — the five DST columns are derived from the MERGED row, which is
+      // the one actually stored. No reader consults them until the reader flip.
+      const rowsWithOffset = weeklySlotsToCreate.map((slot) => ({
+        ...slot,
+        utcOffsetMinutes,
+      }));
+      await tx.availabilityWindowWeekly.createMany({
+        data: mergeAdjacentWeeklyRows(rowsWithOffset).map((slot) => ({
           startDay: slot.startDay,
           startTimeUtc: slot.startTimeUtc,
           endDay: slot.endDay,
           endTimeUtc: slot.endTimeUtc,
           consultantProfileId,
           utcOffsetMinutes,
+          ...weeklyRowLocalColumns(slot, rowTimezone, utcOffsetMinutes),
         })),
       });
     }
   } else if (scheduleType === ScheduleType.CUSTOM) {
-    await tx.slotOfAvailabilityWeekly.deleteMany({
+    await tx.availabilityWindowWeekly.deleteMany({
       where: { consultantProfileId },
     });
-    await tx.slotOfAvailabilityCustom.deleteMany({
+    await tx.availabilityWindowCustom.deleteMany({
       where: { consultantProfileId },
     });
 
-    const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
+    const customSlotsToCreate = profileData.availabilityWindowsCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       // Validate using UTC timestamps directly (no server-locale dependency)
       for (let i = 0; i < customSlotsToCreate.length; i++) {
@@ -247,7 +270,7 @@ async function syncAvailabilitySlots(
 
       // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
       // adjacent entries still has each entry checked on its own.
-      await tx.slotOfAvailabilityCustom.createMany({
+      await tx.availabilityWindowCustom.createMany({
         data: mergeAdjacentCustomRows(
           customSlotsToCreate.map((slot) => ({
             startsAt: new Date(slot.startsAt),
@@ -568,8 +591,8 @@ async function submitVerificationRequest(
 const onboardingUserInclude = {
   consultantProfile: {
     include: {
-      slotsOfAvailabilityWeekly: true,
-      slotsOfAvailabilityCustom: true,
+      availabilityWindowsWeekly: true,
+      availabilityWindowsCustom: true,
       domain: true,
       subDomains: true,
       tags: true,

@@ -33,7 +33,7 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
       findMany: jest.fn().mockResolvedValue([]),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: (...a: unknown[]) => mockSlotFindFirst(...a),
     },
   },
@@ -93,7 +93,7 @@ function seat(
     paymentIntent,
     refunds: [],
     disputes: [],
-    appointment: { cancellationPolicySnapshot: null },
+    appointment: { cancellationPolicy: null },
     ...extra,
   };
 }

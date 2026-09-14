@@ -12,10 +12,14 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
-  notifyAppointmentCancelled,
-} from "@/lib/novu";
+  liveParticipant,
+  releaseParticipant,
+} from "@/lib/booking/participants";
+import { collaboratorUserIdsForEvent } from "@/lib/collaborators/recipients";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
@@ -132,7 +136,7 @@ async function collectConsulteeWork(
       where: {
         requestedById: consulteeProfileId,
         status: { in: [...CANCELLABLE_FROM] },
-        appointment: { slotsOfAppointment: { some: futureSlot } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -140,17 +144,17 @@ async function collectConsulteeWork(
       where: {
         requestedById: consulteeProfileId,
         status: { in: [...CANCELLABLE_FROM] },
-        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
     // Group events the target merely attends — remove + refund just them.
-    prisma.slotOfAppointment.findMany({
+    prisma.appointmentOccurrence.findMany({
       where: {
         ...futureSlot,
-        user: { some: { id: targetUserId } },
         appointment: {
           OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+          participants: { some: liveParticipant(targetUserId) },
         },
       },
       select: {
@@ -193,7 +197,7 @@ async function collectConsultantWork(
       where: {
         consultationPlan: { consultantProfileId },
         status: { in: [...CANCELLABLE_FROM] },
-        appointment: { slotsOfAppointment: { some: futureSlot } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -201,7 +205,7 @@ async function collectConsultantWork(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: { in: [...CANCELLABLE_FROM] },
-        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -209,7 +213,7 @@ async function collectConsultantWork(
       where: {
         webinarPlan: { consultantProfileId },
         status: { in: EVENT_ALLOWED_FROM.CANCELLED },
-        appointment: { slotsOfAppointment: { some: futureSlot } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -217,7 +221,7 @@ async function collectConsultantWork(
       where: {
         classPlan: { consultantProfileId },
         status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
-        appointments: { some: { slotsOfAppointment: { some: futureSlot } } },
+        appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
     }),
@@ -353,7 +357,7 @@ async function loadExclusiveEngagement(
     select: {
       subscriptionPlan: planSelect,
       requestedBy: requestedBySelect,
-      appointments: appointmentSelect,
+      appointment: appointmentSelect,
     },
   });
   if (!row) return null;
@@ -361,7 +365,7 @@ async function loadExclusiveEngagement(
     planTitle: row.subscriptionPlan?.title,
     consultantUser: row.subscriptionPlan?.consultantProfile?.user,
     consulteeUser: row.requestedBy?.user,
-    appointments: row.appointments,
+    appointments: row.appointment ? [row.appointment] : [],
   };
 }
 
@@ -394,7 +398,7 @@ async function casCancelExclusiveEngagement(
             data: cancellationData,
           });
     if (res.count === 0) return 0;
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where:
         kind === "consultation"
           ? {
@@ -445,7 +449,11 @@ function notifyExclusiveCancellation(
       engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
     consultantName: engagement.consultantUser?.name || "Consultant",
     consulteeName: engagement.consulteeUser?.name || "Consultee",
-    planTitle: engagement.planTitle || "N/A",
+    // #536 — never show the customer a placeholder as the session's name.
+    planTitle: planTitleOrSessionLabel(
+      engagement.planTitle,
+      engagement.appointments[0]?.appointmentType ?? kind,
+    ),
     dashboardUrl: notificationHref(engagementOrgId, "appointments"),
     reason: "MODERATION",
     cancelledBy: "system",
@@ -497,7 +505,7 @@ async function cancelGroupEvent(
           data: { status: "CANCELLED" },
         });
     if (res.count === 0) return 0;
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: {
         appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
         completionStatus: "SCHEDULED",
@@ -544,15 +552,34 @@ async function cancelGroupEvent(
       appointment: { select: { organizationId: true } },
     },
   });
-  const attendeeIds = Array.from(new Set(attendees.map((p) => p.userId)));
+  // #1580 C-P1-5 — the event's accepted collaborators lose it too.
+  const collaboratorIds = await collaboratorUserIdsForEvent(
+    isWebinar ? "webinar" : "class",
+    eventId,
+  );
+  const attendeeIds = Array.from(
+    new Set([...attendees.map((p) => p.userId), ...collaboratorIds]),
+  );
   if (attendeeIds.length > 0) {
-    const eventOrgId = attendees[0]?.appointment?.organizationId ?? null;
+    // With collaborators but no paid seat there is no attendee row to read
+    // the org from; the event's appointment carries it either way (#1593).
+    const eventOrgId =
+      attendees[0]?.appointment?.organizationId ??
+      (
+        await prisma.appointment.findFirst({
+          where: isWebinar ? { webinarId: eventId } : { classId: eventId },
+          select: { organizationId: true },
+        })
+      )?.organizationId ??
+      null;
     void notifyAppointmentCancelled(attendeeIds, {
       ...notificationScope(eventOrgId),
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",
       consultantName: "Consultant",
       consulteeName: "Attendee",
-      planTitle: "N/A",
+      // #536 — the event's own title is not loaded on this path, so the
+      // session label stands in rather than a placeholder.
+      planTitle: planTitleOrSessionLabel(null, isWebinar ? "WEBINAR" : "CLASS"),
       dashboardUrl: notificationHref(eventOrgId, "appointments"),
       reason: "MODERATION",
       cancelledBy: "system",
@@ -569,25 +596,21 @@ async function removeAttendee(
   const isWebinar = kind === "webinar-attendance";
   const eventFilter = isWebinar ? { webinarId: eventId } : { classId: eventId };
 
-  const slots = await prisma.slotOfAppointment.findMany({
+  // #1554 — a seat is released by status; the release matches zero rows when
+  // the target is not (or no longer) on the roster, so nothing is refunded.
+  const upcoming = await prisma.appointmentOccurrence.count({
     where: {
       appointment: eventFilter,
       completionStatus: "SCHEDULED",
       startsAt: { gt: new Date() },
-      user: { some: { id: targetUserId } },
     },
-    select: { id: true },
   });
-  if (slots.length === 0) return;
-
-  await prisma.$transaction(
-    slots.map((slot) =>
-      prisma.slotOfAppointment.update({
-        where: { id: slot.id },
-        data: { user: { disconnect: { id: targetUserId } } },
-      }),
-    ),
-  );
+  if (upcoming === 0) return;
+  const released = await releaseParticipant(prisma, {
+    appointment: eventFilter,
+    userId: targetUserId,
+  });
+  if (released === 0) return;
   ctx.summary.attendeeRemovals += 1;
 
   const paid = await prisma.payment.findFirst({

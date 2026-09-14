@@ -37,7 +37,6 @@ export function getUserDetails(id: string) {
           id: true,
           description: true,
           experience: true,
-          rating: true,
           domainId: true,
           // New fields
           headline: true,
@@ -48,7 +47,7 @@ export function getUserDetails(id: string) {
           languages: true,
           toolsAndTechnologies: true,
           mentoringStyle: true,
-          sessionTypes: true,
+          offeringFormats: true,
           profileCompletionPercentage: true,
           isVerified: true,
           totalMenteesHelped: true,

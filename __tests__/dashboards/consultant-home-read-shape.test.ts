@@ -15,22 +15,28 @@
 
 import prisma from "@/lib/prisma";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
+import {
+  getNeedsYouSummary,
+  pendingConsultationWhere,
+  pendingSubscriptionWhere,
+} from "@/lib/data/needs-you";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findMany: jest.fn(), groupBy: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), groupBy: jest.fn() },
     appointment: { findMany: jest.fn() },
     consultation: { findMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), count: jest.fn() },
     activityLog: { findMany: jest.fn() },
     consultantEarnings: { aggregate: jest.fn() },
     consultantReview: { aggregate: jest.fn() },
-    trialSession: { groupBy: jest.fn() },
+    trial: { groupBy: jest.fn() },
+    membership: { findMany: jest.fn() },
   },
 }));
 
-const slotFindMany = prisma.slotOfAppointment.findMany as jest.Mock;
+const slotFindMany = prisma.appointmentOccurrence.findMany as jest.Mock;
 const apptFindMany = prisma.appointment.findMany as jest.Mock;
 const consultationCount = prisma.consultation.count as jest.Mock;
 const subscriptionCount = prisma.subscription.count as jest.Mock;
@@ -42,11 +48,12 @@ describe("consultant Home read shape (#1101)", () => {
     apptFindMany.mockResolvedValue([]);
     consultationCount.mockResolvedValue(0);
     subscriptionCount.mockResolvedValue(0);
-    (prisma.slotOfAppointment.groupBy as jest.Mock).mockResolvedValue([]);
+    (prisma.appointmentOccurrence.groupBy as jest.Mock).mockResolvedValue([]);
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.activityLog.findMany as jest.Mock).mockResolvedValue([]);
-    (prisma.trialSession.groupBy as jest.Mock).mockResolvedValue([]);
+    (prisma.trial.groupBy as jest.Mock).mockResolvedValue([]);
+    (prisma.membership.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.consultantEarnings.aggregate as jest.Mock).mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },
     });
@@ -105,6 +112,45 @@ describe("consultant Home read shape (#1101)", () => {
     }
   });
 
+  it("counts the badge in PERSONAL scope, so it still equals NeedsYou once org-funded requests exist (#1345)", async () => {
+    // Home is a B2C surface (ADR 19): an org-funded pending request belongs to
+    // that org's dashboard. The badge used to count every PENDING row with no
+    // org filter while NeedsYou and the mini list beside it counted personal
+    // ones, so one screen showed three different totals for the same cohort.
+    const personalConsultations = JSON.stringify(
+      pendingConsultationWhere("cp-1", { kind: "personal" }),
+    );
+    const personalSubscriptions = JSON.stringify(
+      pendingSubscriptionWhere("cp-1", { kind: "personal" }),
+    );
+    // Deliberately larger org cohorts: a badge that ignored scope would answer
+    // 8 + 6 rather than 3 + 2, so the assertion cannot pass vacuously.
+    consultationCount.mockImplementation(({ where }: { where: unknown }) =>
+      Promise.resolve(JSON.stringify(where) === personalConsultations ? 3 : 5),
+    );
+    subscriptionCount.mockImplementation(({ where }: { where: unknown }) =>
+      Promise.resolve(JSON.stringify(where) === personalSubscriptions ? 2 : 4),
+    );
+    (prisma.membership.findMany as jest.Mock).mockResolvedValue([
+      { organizationId: "org-1", organization: { name: "Acme" } },
+    ]);
+
+    const [dashboard, needsYou] = await Promise.all([
+      getConsultantDashboard("cp-1"),
+      getNeedsYouSummary("user-1", "cp-1"),
+    ]);
+
+    const personalContext = needsYou.contexts.find(
+      (context) => context.organizationId === null,
+    );
+    expect(personalContext?.pendingRequests).toBe(5);
+    expect(dashboard.pendingRequestsCount).toBe(
+      personalContext?.pendingRequests,
+    );
+    // The org work is still visible — on the org's own context, not the badge.
+    expect(needsYou.total).toBe(14);
+  });
+
   it("issues no display read at all when there is nothing upcoming (#1121)", async () => {
     // slotFindMany resolves [] from beforeEach, so homeAppointmentIds is empty —
     // a new consultant, an entirely past book, or one whose upcoming work was
@@ -157,7 +203,7 @@ describe("consultant Home read shape (#1101)", () => {
     expect(activeBookCall![0].take).toBeUndefined();
     // Soft-deleted slots must not keep an appointment counted as active.
     for (const clause of activeBookCall![0].where.AND) {
-      expect(clause.slotsOfAppointment.some.deletedAt).toBeNull();
+      expect(clause.occurrences.some.deletedAt).toBeNull();
     }
   });
 });

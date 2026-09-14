@@ -182,7 +182,7 @@ interface CheckoutInput {
   slotEndTimeInUTC?: string;
   notes?: string;
   paymentGateway: PaymentGateway;
-  slotOfAvailabilityWeeklyId?: string;
+  availabilityWindowWeeklyId?: string;
 }
 ```
 
@@ -226,7 +226,7 @@ const checkoutSchema = z.object({
   slotEndTimeInUTC: z.string().optional(),
   notes: z.string().optional(),
   paymentGateway: z.enum(["STRIPE", "RAZORPAY", "CARD"]),
-  slotOfAvailabilityWeeklyId: z.string().optional(),
+  availabilityWindowWeeklyId: z.string().optional(),
 });
 ```
 

@@ -1,10 +1,10 @@
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  getSessionJoinState,
-  groupSlotsIntoRuns,
-  type SessionSlotLike,
-} from "@/lib/appointments/slots";
+  getOccurrenceJoinState,
+  liveOccurrencesOf,
+  type JoinableOccurrence,
+} from "@/lib/appointments/occurrences";
 
 /**
  * Derives the "needs you now" queue for the personal dashboards.
@@ -72,7 +72,7 @@ export function imminentSessionItem(
   now: Date = new Date(),
 ): ActionItem | null {
   // The title rides along on the row so the winning run can name itself.
-  const rows: Array<SessionSlotLike & { title: string }> = sessions.map(
+  const rows: Array<JoinableOccurrence & { title: string }> = sessions.map(
     (session, index) => ({
       id: session.id ?? `imminent:${index}`,
       appointmentId: session.appointmentId ?? null,
@@ -82,20 +82,18 @@ export function imminentSessionItem(
     }),
   );
 
-  // Already ordered earliest-first by the grouping helper.
-  const runs = groupSlotsIntoRuns(rows);
-
-  for (const run of runs) {
+  // Ordered earliest-first by the shared helper.
+  for (const run of liveOccurrencesOf(rows)) {
     // The join window is the shared constant, and the window test is the
     // shared helper. #1061 was two surfaces holding private copies of both
     // and drifting apart; a third copy here would be the same mistake.
-    const state = getSessionJoinState(run, {
+    const state = getOccurrenceJoinState(run, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
       now,
     });
     if (state === "ended" || state === "disabled") continue;
 
-    const msUntilStart = run.startsAt.getTime() - now.getTime();
+    const msUntilStart = new Date(run.startsAt).getTime() - now.getTime();
     if (msUntilStart > IMMINENT_MS) break;
 
     // The same helper with no pre-start allowance: it can only answer
@@ -104,7 +102,7 @@ export function imminentSessionItem(
     // it this way rather than comparing times again keeps one definition of
     // when a session is under way.
     const inProgress =
-      getSessionJoinState(run, { joinWindowMs: 0, now }) === "joinable";
+      getOccurrenceJoinState(run, { joinWindowMs: 0, now }) === "joinable";
 
     // Rounded for display only — the window itself is decided above, on the
     // exact instant, because a session 10m29s out rounds to 10.
@@ -117,7 +115,7 @@ export function imminentSessionItem(
       // join window opens before the start and stays open throughout, so
       // one flag could not tell "about to begin" from "under way".
       title: sessionTitle(inProgress, state === "joinable", mins),
-      body: run.anchor.title,
+      body: run.title,
       // Both labels say "View": `ctaHref` is the appointments list, not the
       // meeting, and ActionRequiredPanel renders it as an ordinary link. Saying
       // "Join" promised a call and delivered a list. The urgency is already

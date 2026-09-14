@@ -31,6 +31,11 @@ import {
   type CoveredPlanType,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS, AppointmentType } from "./constants";
+import {
+  computeHoldUntil,
+  holdHoursFor,
+  resolveEarningsAnchor,
+} from "./earnings-hold";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
@@ -511,11 +516,18 @@ export async function createEarningsFromPayment({
   // Payment.originalAmount is stored in paise (smallest unit) — same as earnings
   const grossAmount = payment.originalAmount;
 
-  // Calculate hold period
-  const holdHours =
-    PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS[appointmentType] ||
-    PAYOUT_CONSTANTS.HOLD_PERIOD_HOURS.CONSULTATION;
-  const holdUntil = new Date(Date.now() + holdHours * 60 * 60 * 1000);
+  // #1569 — the hold runs from the later of the capture and the last live
+  // call's end, and a per-call fee names the occurrence it paid for.
+  const anchor = await resolveEarningsAnchor(
+    prisma,
+    payment.appointmentId,
+    appointmentType,
+  );
+  const holdUntil = computeHoldUntil({
+    capturedAt: new Date(),
+    lastOccurrenceEndsAt: anchor.lastOccurrenceEndsAt,
+    holdHours: holdHoursFor(appointmentType),
+  });
 
   // Determine if this payment involves collaborators (webinars/classes only)
   let planType: "webinar" | "class" | null = null;
@@ -612,13 +624,17 @@ export async function createEarningsFromPayment({
             ? orgSplit.consultantSharePaise
             : grossAmount - platformFeePaise;
 
-          // Calculate collaborator splits if applicable
+          // Calculate collaborator splits if applicable. Read through `tx`:
+          // under PG_POOL_MAX=1 a global-client read inside this open
+          // transaction waits on the connection it holds (#1435, #1580 C-P0-1).
           let splits: RevenueSplit[] = [];
           if (planType && planId) {
             splits = await calculateRevenueSplit(
               planType,
               planId,
               totalConsultantPool,
+              tx,
+              { excludeBuyerUserId: payment.userId },
             );
           }
 
@@ -722,6 +738,7 @@ export async function createEarningsFromPayment({
                   consultantSharePaise: creditedShare,
                   role: isOwner ? EarningRole.OWNER : EarningRole.COLLABORATOR,
                   shareBps,
+                  appointmentOccurrenceId: anchor.appointmentOccurrenceId,
                   // #687 E-02 — park consultant payables too when the sponsor
                   // is an unverified INVOICE org; else the platform owes real
                   // money for a ghost sponsor's booking.
@@ -748,6 +765,7 @@ export async function createEarningsFromPayment({
                 grossAmount,
                 platformFeePaise,
                 consultantSharePaise: totalConsultantPool,
+                appointmentOccurrenceId: anchor.appointmentOccurrenceId,
                 // #687 E-02 — see multi-party branch above.
                 status: initialEarningStatus,
                 holdUntil,

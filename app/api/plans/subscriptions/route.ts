@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
 import {
@@ -7,7 +8,7 @@ import {
   planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
       prisma.subscriptionPlan.findMany({
         where,
         include: {
-          consultantProfile: true,
+          consultantProfile: { select: planConsultantSelect },
           topics: true,
           subscriptionContents: {
             orderBy: { order: "asc" },
@@ -63,7 +64,10 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error fetching subscription plans:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching subscription plans" },
       { status: 500 },
@@ -133,7 +137,7 @@ export async function POST(request: NextRequest) {
     metricEndDate.setMonth(
       metricEndDate.getMonth() + validatedData.durationInMonths,
     );
-    const estimatedWeeks = SlotCalculationService.countWeeks(
+    const estimatedWeeks = ScheduleCalculationService.countWeeks(
       metricStartDate,
       metricEndDate,
     );
@@ -228,7 +232,10 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating subscription plan:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while creating the subscription plan" },
       { status: 500 },

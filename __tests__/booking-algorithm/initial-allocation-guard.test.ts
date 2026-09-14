@@ -21,20 +21,20 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
-    slotOfAppointment: { count: jest.fn() },
+    appointmentOccurrence: { count: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
 }));
 
-// Mock SlotValidationService so the race-window test can reach the write
+// Mock ScheduleValidationService so the race-window test can reach the write
 // transaction without a full availability fixture (same pattern as
-// slotAllocationService.test.ts).
+// schedulingService.test.ts).
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
@@ -53,13 +53,13 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
   subscription: { findUnique: jest.Mock };
   appointment: { findMany: jest.Mock; findFirst: jest.Mock };
-  slotOfAppointment: { count: jest.Mock };
+  appointmentOccurrence: { count: jest.Mock };
 };
 
 const FUTURE_SLOTS = [
@@ -81,9 +81,9 @@ beforeEach(() => {
 
 describe("manual allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
-    mockPrisma.slotOfAppointment.count.mockResolvedValue(4);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(4);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -99,9 +99,9 @@ describe("manual allocation with initialAllocation", () => {
   });
 
   it("counts only confirmed slots — tentative checkout holds do not trip the guard", async () => {
-    mockPrisma.slotOfAppointment.count.mockResolvedValue(0);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -111,7 +111,7 @@ describe("manual allocation with initialAllocation", () => {
 
     // Guard passes (count=0) and the flow proceeds until event data is
     // missing in this harness — a NOT_FOUND, decisively not the 409 guard.
-    expect(mockPrisma.slotOfAppointment.count).toHaveBeenCalledWith(
+    expect(mockPrisma.appointmentOccurrence.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ isTentative: false }),
       }),
@@ -120,16 +120,16 @@ describe("manual allocation with initialAllocation", () => {
   });
 
   it("without the flag, existing confirmed slots do NOT 409 (replace/reschedule preserved)", async () => {
-    mockPrisma.slotOfAppointment.count.mockResolvedValue(4);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(4);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
     });
 
-    expect(mockPrisma.slotOfAppointment.count).not.toHaveBeenCalled();
+    expect(mockPrisma.appointmentOccurrence.count).not.toHaveBeenCalled();
     expect(result.error).not.toContain("already allocated in another session");
   });
 });
@@ -138,15 +138,15 @@ describe("manual allocation: transaction race window", () => {
   it("409s when the pre-lock count sees zero but the in-txn count sees confirmed slots", async () => {
     // Tab B commits between tab A's out-of-txn guard and its write txn: the
     // first count returns 0, the advisory-locked in-txn count returns 2.
-    mockPrisma.slotOfAppointment.count.mockResolvedValueOnce(0);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValueOnce(0);
     mockPrisma.subscription.findUnique.mockResolvedValue({
       subscriptionPlan: {
         consultantProfileId: "cp-1",
         consultantProfile: {
           user: { id: "consultant-user-1" },
           scheduleType: "WEEKLY",
-          slotsOfAvailabilityWeekly: [],
-          slotsOfAvailabilityCustom: [],
+          availabilityWindowsWeekly: [],
+          availabilityWindowsCustom: [],
         },
         durationInMonths: 1,
         sessionsPerWeek: 1,
@@ -167,14 +167,14 @@ describe("manual allocation: transaction race window", () => {
     mockRevalidateConflictsFn.mockResolvedValue({ isValid: true, errors: [] });
 
     const mockTx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
-      slotOfAppointment: { count: jest.fn().mockResolvedValue(2) },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      appointmentOccurrence: { count: jest.fn().mockResolvedValue(2) },
     };
     mockPrisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -185,16 +185,16 @@ describe("manual allocation: transaction race window", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
     // The advisory lock is taken before the in-txn count
-    expect(mockTx.$queryRaw).toHaveBeenCalled();
-    expect(mockTx.slotOfAppointment.count).toHaveBeenCalled();
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.count).toHaveBeenCalled();
   });
 });
 
 describe("auto allocation with initialAllocation", () => {
   it("returns a typed 409 when another session already confirmed slots", async () => {
-    mockPrisma.slotOfAppointment.count.mockResolvedValue(2);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(2);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "auto",
@@ -211,14 +211,14 @@ describe("requested allocation with initialAllocation", () => {
   it("re-checks the guard INSIDE the transaction and 409s", async () => {
     const mockTx = {
       // Advisory xact lock taken before the guard count (ADR B10 atomicity)
-      $queryRaw: jest.fn().mockResolvedValue([]),
-      slotOfAppointment: { count: jest.fn().mockResolvedValue(2) },
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      appointmentOccurrence: { count: jest.fn().mockResolvedValue(2) },
     };
     mockPrisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
     );
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "requested",
@@ -227,6 +227,42 @@ describe("requested allocation with initialAllocation", () => {
 
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
-    expect(mockTx.slotOfAppointment.count).toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.count).toHaveBeenCalled();
+  });
+});
+
+describe("advisory lock statement shape (#1518)", () => {
+  it("takes the lock through $executeRaw with the per-event key, then continues", async () => {
+    // pg_advisory_xact_lock returns void; $queryRaw made the Prisma 7 driver
+    // adapter deserialise that column and throw before allocation began.
+    const mockTx = {
+      $executeRaw: jest.fn().mockResolvedValue(1),
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx),
+    );
+
+    const result = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "requested",
+      initialAllocation: true,
+    });
+
+    expect(mockTx.$queryRaw).not.toHaveBeenCalled();
+    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+    const [fragments, key] = mockTx.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      string,
+    ];
+    expect(Array.from(fragments).join("")).toContain(
+      "SELECT pg_advisory_xact_lock(hashtextextended(",
+    );
+    expect(key).toBe("initial-allocation:subscription:sub-1");
+    // The guard ran on past the lock: zero confirmed slots, so no 409.
+    expect(mockTx.appointmentOccurrence.count).toHaveBeenCalled();
+    expect(result.httpStatus).not.toBe(409);
   });
 });

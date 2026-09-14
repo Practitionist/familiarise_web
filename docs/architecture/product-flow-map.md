@@ -169,7 +169,7 @@ sequenceDiagram
     GW-->>API: paymentIntentId + clientSecret
 
     API->>DB: SERIALIZABLE transaction
-    Note over DB: Create Consultation/Subscription/Webinar/Class (PENDING)<br/>Create Appointment<br/>Create SlotOfAppointment (isTentative=true)<br/>Create Payment (PENDING) + PaymentLeg(s)
+    Note over DB: Create Consultation/Subscription/Webinar/Class (PENDING)<br/>Create Appointment<br/>Create AppointmentOccurrence (isTentative=true)<br/>Create Payment (PENDING) + PaymentLeg(s)
 
     API->>Redis: Release lock
     API-->>FE: paymentIntentId + clientSecret
@@ -181,7 +181,7 @@ sequenceDiagram
     WH->>WH: Idempotency check (WebhookEvent table)
 
     WH->>DB: Phase 1 — SERIALIZABLE transaction
-    Note over DB: Payment.status → SUCCEEDED<br/>SlotOfAppointment.isTentative → false<br/>Event.status → APPROVED
+    Note over DB: Payment.status → SUCCEEDED<br/>AppointmentOccurrence.isTentative → false<br/>Event.status → APPROVED
 
     WH->>DB: Phase 2 — fire-and-forget
     Note over DB: Create ConsultantEarnings (80%)<br/>Create Invoice<br/>Trigger Novu notifications<br/>Create ActivityLog entry
@@ -197,12 +197,12 @@ sequenceDiagram
 flowchart TD
     ConsAvail["Consultant sets availability\ne.g. Mon 6–9pm IST"] --> UTCStore["Stored as UTC integers\ndayOfWeek = MONDAY\nstartTimeUtc = 750 mins\nendTimeUtc = 930 mins"]
 
-    UTCStore --> SlotMath["SlotCalculationService\n30-minute atomic slots"]
+    UTCStore --> SlotMath["ScheduleCalculationService\n30-minute atomic slots"]
     SlotMath --> Slots6["6 × 30-min slots per Monday\n(6–9pm = 3 hours)"]
 
     Slots6 --> DurationMap["Duration → slots consumed\n30 min = 1 slot\n60 min = 2 slots\n90 min = 3 slots"]
 
-    DurationMap --> Conflict["validateNoConflicts()\nScans SlotOfAppointment where\nisTentative=false AND user includes consultantId"]
+    DurationMap --> Conflict["validateNoConflicts()\nScans AppointmentOccurrence where\nisTentative=false AND user includes consultantId"]
     Conflict --> Clean{No overlap?}
     Clean -- Yes --> Proceed["Slot available → proceed to checkout"]
     Clean -- No --> Block["409 Conflict → pick another time"]
@@ -225,7 +225,7 @@ flowchart TD
 
     ApprovalCheck -- No --> SlotPick[Picks slot from calendar]
     ApprovalCheck -- Yes --> RequestForm["Fills request form\nproposed time + description"]
-    RequestForm --> PendingReq["POST /api/slots/request-for-approval\nConsultation PENDING"]
+    RequestForm --> PendingReq["POST /api/scheduling/request-for-approval\nConsultation PENDING"]
     PendingReq --> ConsReview{Consultant reviews}
     ConsReview -- Rejects --> Rejected(["❌ REJECTED"])
     ConsReview -- Approves --> PayLink["APPROVED_PENDING_PAYMENT\nPayment link sent to consultee"]
@@ -263,11 +263,11 @@ flowchart TD
 flowchart TD
     SubEntry([Consultee views SubscriptionPlan]) --> TrialCheck{Trial offered?}
 
-    TrialCheck -- Yes, wants trial --> TrialReq["POST /api/trials\nTrialSession PENDING"]
+    TrialCheck -- Yes, wants trial --> TrialReq["POST /api/trials\nTrial PENDING"]
     TrialReq --> ConsApproves{Consultant approves?}
     ConsApproves -- No --> TrialRejected(["❌ Trial REJECTED"])
-    ConsApproves -- Yes --> TrialSession["Free 30/60 min session\nStream.io"]
-    TrialSession --> TrialCron["Cron: Trial COMPLETED 1hr after session"]
+    ConsApproves -- Yes --> Trial["Free 30/60 min session\nStream.io"]
+    Trial --> TrialCron["Cron: Trial COMPLETED 1hr after session"]
     TrialCron --> Converts{Converts to paid?}
     Converts -- No --> Dropout(["📉 Dropout tracked in analytics"])
     Converts -- Yes --> DirectSub
@@ -347,11 +347,11 @@ flowchart TD
     CapCheck -- Yes --> Enroll["Register / Enroll\n/checkout/plans/webinar/{planId}"]
     CapCheck -- No --> WaitlistFlow["→ Waitlist flow (see above)"]
 
-    Enroll --> Checkout["Checkout: Redis lock → re-check capacity\nCreate Webinar + Appointment (shared) + SlotOfAppointment + Payment"]
+    Enroll --> Checkout["Checkout: Redis lock → re-check capacity\nCreate Webinar + Appointment (shared) + AppointmentOccurrence + Payment"]
     Checkout --> Pay["Pay via gateway"]
     Pay --> Webhook["Webhook: isTentative → false\nparticipant count++"]
 
-    Webhook --> AllPartners["All N registrants share\nONE Appointment row\nONE SlotOfAppointment\n(many-to-one, not N separate bookings)"]
+    Webhook --> AllPartners["All N registrants share\nONE Appointment row\nONE AppointmentOccurrence\n(many-to-one, not N separate bookings)"]
     AllPartners --> Reminders["Reminders: 24h before + 1h before"]
     Reminders --> JoinNow["'Join Now' active 5 min before\nStream.io group room"]
 
@@ -558,7 +558,7 @@ flowchart LR
     end
 
     subgraph Every2h["⏰ Every 2 hours"]
-        CTS["cleanup-tentative-slots\nDeletes abandoned tentative slots\n7+ days old"]
+        CTS["cleanup-tentative-occurrences\nDeletes abandoned tentative slots\n7+ days old"]
     end
 
     subgraph Daily["📅 Daily"]
@@ -632,15 +632,15 @@ flowchart TD
 | Schema | `prisma/schema.prisma` |
 | Booking architecture | `docs/booking/01-architecture.md` |
 | Booking lifecycle | `docs/booking/06-booking-lifecycle.md` |
-| Slot math | `docs/booking/03-slot-math-and-calculations.md` |
-| Trial sessions | `docs/booking/09-trial-sessions.md` |
+| Slot math | `docs/booking/03-interval-math-and-calculations.md` |
+| Trial sessions | `docs/booking/09-trials.md` |
 | Waitlist system | `docs/booking/11-waitlist-system.md` |
 | Checkout + payment | `docs/booking/10-checkout-payment-integration.md` |
 | Enterprise overview | `docs/enterprise/00-foundations/01-overview.md` |
 | Enterprise scenarios | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
 | Funding & programs | `docs/enterprise/00-foundations/03-funding-and-programs.md` |
 | Enterprise readiness | `docs/enterprise/90-audits/01-readiness-audit.md` |
-| Slot allocation engine | `utils/slotAllocation/SlotAllocationService.ts` |
+| Slot allocation engine | `utils/scheduling-engine/SchedulingService.ts` |
 | Checkout orchestration | `lib/payments/operations/checkout.ts` |
 | Webhook handlers | `lib/payments/webhooks/handlers.ts` |
 | Explore pages | `app/explore/` |

@@ -100,7 +100,7 @@ export function describeCallingState(
  * a paid consultation that is the wrong default in a way that costs money and
  * data: a participant who shuts their laptop never produces
  * `call.session_participant_left`, so the session never closes. #1134 found
- * 1,417 MeetingSession rows left open exactly this way, which is also why
+ * 1,417 Meeting rows left open exactly this way, which is also why
  * attendance and no-show detection cannot be trusted.
  *
  * Ninety seconds is long enough to survive a lift, a tunnel or a Wi-Fi handover

@@ -9,7 +9,6 @@ import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { fetchReviews } from "@/lib/user";
 import {
   createCheckoutData,
   WebinarSearchParams,
@@ -47,12 +46,11 @@ import {
 import type {
   Appointment,
   ConsultantProfile,
-  ConsultantReview,
   Domain,
   Tag as PrismaTag,
   Topic as PrismaTopic,
   Webinar as PrismaWebinar,
-  SlotOfAppointment,
+  AppointmentOccurrence,
   SubDomain,
   User,
   WebinarPlan,
@@ -79,12 +77,11 @@ export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
   webinars: (PrismaWebinar & {
     appointment:
       | (Appointment & {
-          // `user` is what makes a seat count a seat — `fetchWebinarPlanDetail`
-          // has always included it, the type simply never said so, and
+          occurrences: AppointmentOccurrence[];
+          // `participants` is what makes a seat count a seat (#1554) —
+          // `fetchWebinarPlanDetail` includes it, and
           // `countWebinarParticipants` answers 0 in silence when it is absent.
-          slotsOfAppointment: (SlotOfAppointment & {
-            user: { id: string }[];
-          })[];
+          participants: { userId: string }[];
         })
       | null;
   })[];
@@ -115,7 +112,6 @@ export default function WebinarCheckoutPage({
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -450,10 +446,6 @@ export default function WebinarCheckoutPage({
         setPlanData(data);
 
         // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(
-          data.data.consultantProfile?.id ?? "",
-        );
-        _setReviews(reviewsData);
       } catch (error) {
         reportPaymentsError(error);
         console.error("Error fetching plan data:", error);
@@ -523,10 +515,10 @@ export default function WebinarCheckoutPage({
         setError("This webinar has already ended.");
       } else if (targetWebinar.status === "CANCELLED") {
         setError("This webinar has been cancelled.");
-      } else if (targetWebinar.appointment?.slotsOfAppointment?.[0]) {
+      } else if (targetWebinar.appointment?.occurrences?.[0]) {
         const firstSlotEnd = new Date(
-          targetWebinar.appointment.slotsOfAppointment[
-            targetWebinar.appointment.slotsOfAppointment.length - 1
+          targetWebinar.appointment.occurrences[
+            targetWebinar.appointment.occurrences.length - 1
           ].endsAt,
         );
         if (firstSlotEnd.getTime() < Date.now()) {
@@ -589,7 +581,7 @@ export default function WebinarCheckoutPage({
     : planDetails?.webinars?.[0];
 
   // Date and time of the session being paid for, for the same reason.
-  const nextSession = targetWebinar?.appointment?.slotsOfAppointment?.[0];
+  const nextSession = targetWebinar?.appointment?.occurrences?.[0];
 
   // Seats, honestly. This line used to print the PLAN's maxParticipants, which
   // an instance override silently contradicts, and counted nobody — so a sold

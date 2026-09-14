@@ -4,7 +4,7 @@ import React, { useMemo } from "react";
 import {
   validateAllSlotsDetailed,
   getSlotStatistics,
-} from "@/utils/timeSlotValidation";
+} from "@/utils/scheduling-engine/interval-validation";
 import {
   Tooltip,
   TooltipContent,

@@ -57,12 +57,12 @@ import {
   eventUnionStatusBadge,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/slots";
+import { getProximityLabel } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
-import { getJoinableSlot } from "../../utils/joinState";
+import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
-import { RequestSlotAllocationTabMini } from "@/components/dashboard/shared/requests/RequestSlotAllocationTabMini";
+import { RequestSchedulingTabMini } from "@/components/dashboard/shared/requests/RequestSchedulingTabMini";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
 import { FinancialSummary } from "./FinancialSummary";
 import type {
@@ -114,7 +114,7 @@ export function HomeTab({
   // bundle. This used to be a private copy of that pattern.
   const handleJoinMeeting = (
     appointment: TAppointment,
-    joinableSlot?: TAppointment["slotsOfAppointment"][number],
+    joinableSlot?: TAppointment["occurrences"][number],
   ) => void joinMeeting(appointment, joinableSlot);
 
   const expandedAppointments = useMemo(() => appointments || [], [appointments]);
@@ -174,7 +174,7 @@ export function HomeTab({
       deriveConsultantActionItems({
         pendingApprovals: pendingRequestsCount,
         upcomingSessions: allUpcomingAppointments.flatMap((a) =>
-          (a.slotsOfAppointment ?? []).map((slot) => ({
+          (a.occurrences ?? []).map((slot) => ({
             id: slot.id,
             appointmentId: a.id,
             startsAt: slot.startsAt,
@@ -225,8 +225,8 @@ export function HomeTab({
                     {todayAppointments.map((appointment) => {
                       const userName = getConsumeeName(appointment);
                       const startTime = getStartTime(appointment);
-                      const joinableSlot = getJoinableSlot(
-                        appointment.slotsOfAppointment ?? [],
+                      const joinableSlot = getJoinableOccurrence(
+                        appointment.occurrences ?? [],
                       );
                       // #1270 — this row had NO status check at all: any
                       // appointment with a slot inside the window lit up Join,
@@ -573,7 +573,7 @@ export function HomeTab({
                 viewAllText="View all requests"
               >
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
-                  <RequestSlotAllocationTabMini />
+                  <RequestSchedulingTabMini />
                 </div>
               </DataCard>
 

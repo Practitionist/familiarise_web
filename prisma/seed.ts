@@ -22,7 +22,7 @@ import { createWebinarPlans } from "./seedFiles/4c-create-webinar-plans";
 import { createClassPlans } from "./seedFiles/4d-create-class-plans";
 
 // Phase 5: Availability
-import { createSlotsOfAvailability } from "./seedFiles/5a-create-slots-of-availability";
+import { createSlotsOfAvailability } from "./seedFiles/5a-create-availability-windows";
 
 // Phase 6: Appointments
 import { createAppointments } from "./seedFiles/6a-create-appointments";
@@ -38,12 +38,12 @@ import { createDiscountCodes } from "./seedFiles/8a-create-discount-codes";
 import { createPayments } from "./seedFiles/8b-create-payments";
 
 // Phase 9: Support & Feedback
-import { createFeedbacks } from "./seedFiles/9a-create-feedbacks";
+import { createPlatformFeedback } from "./seedFiles/9a-create-platform-feedback";
 import { createSupportTickets } from "./seedFiles/9b-create-support-tickets";
 
 // Phase 11: Documents & Meetings
 import { createAppointmentDocuments } from "./seedFiles/11a-create-appointment-documents";
-import { createMeetingSessions } from "./seedFiles/11b-create-meeting-sessions";
+import { createMeetings } from "./seedFiles/11b-create-meetings";
 
 // Phase 12: Payment Extensions
 import { createRefunds } from "./seedFiles/12a-create-refunds";
@@ -65,6 +65,7 @@ import { createOrgCatalog } from "./seedFiles/15b-create-org-catalog";
 
 // Phase 16: Statutory lookups (#778 §D)
 import { createTdsRates } from "./seedFiles/16a-create-tds-rates";
+import { createPlatformCancellationPolicy } from "./seedFiles/16b-create-cancellation-policy";
 
 async function seed() {
   console.log("Starting seed process...");
@@ -147,7 +148,7 @@ async function seed() {
     await createWaitlistSubscribers();
 
     console.log("Creating consultant reviews...");
-    await createConsultantReviews(consultants, consultees);
+    await createConsultantReviews(consultants);
 
     // Phase 8: Payment-related data
     console.log("\n[Phase 8] Creating payment-related data...");
@@ -160,7 +161,7 @@ async function seed() {
     // Phase 9: Support & Feedback
     console.log("\n[Phase 9] Creating support & feedback data...");
     console.log("Creating feedbacks...");
-    await createFeedbacks(users);
+    await createPlatformFeedback(users);
 
     console.log("Creating support tickets...");
     await createSupportTickets(users);
@@ -171,7 +172,7 @@ async function seed() {
     await createAppointmentDocuments();
 
     console.log("Creating meeting sessions...");
-    await createMeetingSessions();
+    await createMeetings();
 
     // Phase 12: Payment Extensions
     console.log("\n[Phase 12] Creating payment extensions...");
@@ -212,6 +213,11 @@ async function seed() {
     // Phase 16: Statutory lookups
     console.log("\n[Phase 16] Seeding statutory TDS rates...");
     await createTdsRates();
+
+    // #1499 — the platform refund ladder every booking falls back to. Appointment
+    // seeds leave the FK null on purpose, which reads as this ladder anyway.
+    console.log("Seeding the platform cancellation policy...");
+    await createPlatformCancellationPolicy();
 
     // Summary
     const endTime = Date.now();

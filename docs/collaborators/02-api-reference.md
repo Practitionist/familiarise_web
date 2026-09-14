@@ -173,30 +173,3 @@ An empty array means the plan has no accepted collaborators and settlement will 
 ### GET /api/collaborations/class/[planId]/revenue-split
 
 The class variant behaves identically.
-
----
-
-## Co-host availability
-
-### GET /api/collaborators/[consultantProfileId]/availability?date=YYYY-MM-DD
-
-Returns a co-host's availability and booking status for one date; the host's scheduling calendar renders it as the color overlay. Access is limited to the profile owner, consultants who share an **accepted** collaboration with the target (checked across both plan types in one lookup on the merged model), and admin/staff; a missing `date` parameter returns 400.
-
-```json
-{
-  "data": {
-    "consultantProfileId": "clx...",
-    "scheduleType": "WEEKLY",
-    "date": "2026-03-15",
-    "weeklySlots": [
-      { "startDay": "MONDAY", "startTimeUtc": 540, "endDay": "MONDAY", "endTimeUtc": 1020 }
-    ],
-    "customSlots": [],
-    "bookedSlots": [
-      { "startsAt": "2026-03-15T10:00:00Z", "endsAt": "2026-03-15T11:00:00Z" }
-    ]
-  }
-}
-```
-
-`bookedSlots` uses overlap semantics against the day and includes events the co-host has accepted a collaboration on, not only events they own. The overlay interpretation is: green when availability exists and no booking overlaps, yellow when no availability is defined for the time, red when a booking overlaps. The overlay is advice for picking a time. On the webinar path that advice is backed by hard enforcement — `assertCollaboratorsAvailable` returns 409 — but on the class path the overlay is all there is, because no class route calls the guard. Both cases are described in [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability).

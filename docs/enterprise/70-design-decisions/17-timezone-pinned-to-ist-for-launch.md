@@ -53,3 +53,7 @@ single post-MVP issue, #872, which supersedes #503 and #502. It is revisited
 when the first consultant in a daylight-saving timezone onboards, at which point
 the frozen offset stops being sufficient and the local-plus-zone representation
 becomes load-bearing.
+
+---
+
+Addendum (2026-09-14): `SlotOfAvailabilityWeekly` is `AvailabilityWindowWeekly` since #1554.

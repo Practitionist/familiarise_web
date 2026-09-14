@@ -23,7 +23,7 @@ export const UpdateTrialSchema = z.object({
     .object({
       startsAt: z.string(),
       endsAt: z.string(),
-      slotOfAvailabilityId: z.string(),
+      availabilityWindowId: z.string(),
       slotType: z.enum(["WEEKLY", "CUSTOM"]),
     })
     .optional(),

@@ -9,13 +9,13 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
+import { getMeetingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const stopRecordingSchema = z.object({
-  meetingSessionId: z.string().min(1, "Meeting session ID is required"),
+  meetingId: z.string().min(1, "Meeting session ID is required"),
 });
 
 export async function POST(req: NextRequest) {
@@ -39,13 +39,13 @@ export async function POST(req: NextRequest) {
 
     // Parse and validate request body
     const body = await req.json();
-    const { meetingSessionId } = stopRecordingSchema.parse(body);
+    const { meetingId } = stopRecordingSchema.parse(body);
 
     // Verify the meeting session exists
-    const meetingSession = await prisma.meetingSession.findUnique({
-      where: { id: meetingSessionId },
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -54,6 +54,11 @@ export async function POST(req: NextRequest) {
                     webinarPlan: {
                       select: {
                         consultantProfileId: true,
+                        // #1580 C-P1-4 — the accepted co-presenter may stop too.
+                        collaborators: {
+                          where: { status: "ACCEPTED" as const },
+                          select: { consultantProfileId: true, role: true },
+                        },
                       },
                     },
                   },
@@ -63,6 +68,11 @@ export async function POST(req: NextRequest) {
                     classPlan: {
                       select: {
                         consultantProfileId: true,
+                        // #1580 C-P1-4 — the accepted co-presenter may stop too.
+                        collaborators: {
+                          where: { status: "ACCEPTED" as const },
+                          select: { consultantProfileId: true, role: true },
+                        },
                       },
                     },
                   },
@@ -94,7 +104,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       return NextResponse.json(
         { error: "Meeting session not found" },
         { status: 404 },
@@ -108,10 +118,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Verify the consultant owns this appointment using helper function
-    const { isOwner } = getMeetingSessionOwnershipInfo(
-      meetingSession,
-      consultantProfile?.id,
-    );
+    const { isOwner } = getMeetingOwnershipInfo(meeting, consultantProfile?.id);
 
     if (!isOwner) {
       return NextResponse.json(
@@ -121,7 +128,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify recording is actually in progress before calling Stream API
-    if (!meetingSession.isRecording) {
+    if (!meeting.isRecording) {
       return NextResponse.json(
         { error: "No recording in progress" },
         { status: 409 },
@@ -129,8 +136,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Atomically claim the stop operation (prevents concurrent stop requests)
-    const claimed = await prisma.meetingSession.updateMany({
-      where: { id: meetingSessionId, isRecording: true },
+    const claimed = await prisma.meeting.updateMany({
+      where: { id: meetingId, isRecording: true },
       data: { isRecording: false },
     });
 
@@ -143,17 +150,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Stop recording via Stream API (use DB-stored call ID, never trust client)
-    const result = await RecordingService.stopRecording(meetingSession.streamCallId);
+    const result = await RecordingService.stopRecording(meeting.streamCallId);
 
     if (!result.success) {
       // Rollback: restore isRecording=true since Stream stop failed
-      await prisma.meetingSession.update({
-        where: { id: meetingSessionId },
+      await prisma.meeting.update({
+        where: { id: meetingId },
         data: { isRecording: true },
       });
       streamLogger.error("Stream stop failed, rolled back DB state", null, {
-        meetingSessionId,
-        streamCallId: meetingSession.streamCallId,
+        meetingId,
+        streamCallId: meeting.streamCallId,
       });
       return NextResponse.json(
         { error: result.error || "Failed to stop recording" },
@@ -175,7 +182,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     return NextResponse.json(
       { error: "Failed to stop recording" },
       { status: 500 },

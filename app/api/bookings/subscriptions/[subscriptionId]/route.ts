@@ -67,13 +67,9 @@ type SubscriptionWithDetails = Prisma.Result<
           user: true;
         };
       };
-      appointments: {
+      appointment: {
         include: {
-          slotsOfAppointment: {
-            include: {
-              user: true;
-            };
-          };
+          occurrences: true;
         };
       };
     };
@@ -123,20 +119,9 @@ export async function GET(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -239,9 +224,6 @@ export async function PUT(
         schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: validatedData.schedulingPeriodEndsAt,
         requestNotes: validatedData.requestNotes,
-        feedbackFromConsultee: validatedData.feedbackFromConsultee,
-        feedbackFromConsultant: validatedData.feedbackFromConsultant,
-        rating: validatedData.rating,
         subscriptionPlan: validatedData.planId
           ? {
               connect: { id: validatedData.planId },
@@ -277,20 +259,9 @@ export async function PUT(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -481,18 +452,9 @@ export async function PATCH(
                     user: true,
                   },
                 },
-                appointments: {
-                  // Ordered so bookingOrgId's `find` picks the same org-tagged
-                  // appointment the creator's filtered read picks. Unordered, two
-                  // callers can resolve different orgs for one subscription and
-                  // mint two DM channels for the same pair.
-                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                appointment: {
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -549,18 +511,9 @@ export async function PATCH(
                     user: true,
                   },
                 },
-                appointments: {
-                  // Ordered so bookingOrgId's `find` picks the same org-tagged
-                  // appointment the creator's filtered read picks. Unordered, two
-                  // callers can resolve different orgs for one subscription and
-                  // mint two DM channels for the same pair.
-                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                appointment: {
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -584,22 +537,16 @@ export async function PATCH(
                 });
 
                 // Confirm existing tentative appointments by setting slots to non-tentative.
-                // Appointment slots are created by SlotAllocationService during checkout/allocation,
+                // Appointment slots are created by SchedulingService during checkout/allocation,
                 // not by this status handler. If no appointments exist here, that's expected for
                 // approval-pending-payment flows where slots get allocated after payment succeeds.
-                if (
-                  subscription.appointments &&
-                  subscription.appointments.length > 0
-                ) {
+                if (subscription.appointment) {
                   // RESCHEDULED rows keep their ORIGINAL startsAt; flipping them
                   // re-confirms the time the consultee asked to leave (#1169
-                  // PR 2). One statement, not one per appointment — the loop
-                  // multiplied round-trips against the 30s tx budget.
-                  await tx.slotOfAppointment.updateMany({
+                  // PR 2).
+                  await tx.appointmentOccurrence.updateMany({
                     where: {
-                      appointmentId: {
-                        in: subscription.appointments.map((a) => a.id),
-                      },
+                      appointmentId: subscription.appointment.id,
                       completionStatus: "SCHEDULED",
                     },
                     data: { isTentative: false },
@@ -638,18 +585,9 @@ export async function PATCH(
                           user: true,
                         },
                       },
-                      appointments: {
-                        // Ordered so bookingOrgId's `find` picks the same org-tagged
-                        // appointment the creator's filtered read picks. Unordered, two
-                        // callers can resolve different orgs for one subscription and
-                        // mint two DM channels for the same pair.
-                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                      appointment: {
                         include: {
-                          slotsOfAppointment: {
-                            include: {
-                              user: true,
-                            },
-                          },
+                          occurrences: true,
                         },
                       },
                     },
@@ -898,11 +836,8 @@ export async function PATCH(
             // `subscription-<id>` channel (the reconciler deleted it on the next
             // load), and the org is threaded so the DM key matches what
             // getDmPairsForUser expects.
-            // A subscription carries many appointments but is funded once, so
-            // the first ORG-TAGGED one is representative. `[0]` was wrong: this
-            // query has no `where` and no `orderBy`, so a mixed subscription
-            // could hand back a personal row and resolve `null` where the
-            // creator resolved an org — two different channel ids for one pair.
+            // #1554 — a subscription is one appointment, so the org tag is a
+            // single column and `bookingOrgId` reads the same row the creator did.
             const dmOrgId = bookingOrgId(subData);
             await createDirectMessageChannel(
               consultantUid,
@@ -990,7 +925,7 @@ async function checkSubscriptionPayment(
   const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
     include: {
-      appointments: {
+      appointment: {
         include: {
           payment: {
             where: {
@@ -1004,10 +939,7 @@ async function checkSubscriptionPayment(
     },
   });
 
-  return (
-    subscription?.appointments?.some((apt) => (apt.payment?.length ?? 0) > 0) ??
-    false
-  );
+  return (subscription?.appointment?.payment?.length ?? 0) > 0;
 }
 
 /**
@@ -1019,15 +951,12 @@ async function generatePaymentLinkForSubscription(
   schedulingPeriodEndsAt: Date,
 ) {
   const { subscriptionPlan, requestedBy } = subscription;
-  // #1181 — the request-time appointment (direct checkout creates a
-  // placeholder for exactly this linkage; proposed-times creates real rows).
-  // First under the route's deterministic createdAt/id ordering, the same row
-  // the confirm flip and org resolution read. Threading it stamps
+  // #1181 / #1554 — the purchase wrapper. Threading it stamps
   // Payment.appointmentId so capture confirms THAT row instead of building a
   // twin subscription off metadata, and the duplicate-payment guard (which
-  // walks appointments.payment) can see approval payments at all. Unset only
-  // when no appointment exists yet — nothing to confirm, mint as before.
-  const appointmentId = subscription.appointments[0]?.id ?? undefined;
+  // reads appointment.payment) can see approval payments at all. Unset only
+  // when no wrapper exists yet — nothing to confirm, mint as before.
+  const appointmentId = subscription.appointment?.id ?? undefined;
 
   return await createApprovalPaymentIntent({
     userId: requestedBy.user.id,
@@ -1040,9 +969,7 @@ async function generatePaymentLinkForSubscription(
     paymentGateway: PaymentGateway.RAZORPAY,
     // #1166 ORG-9 — carry org sponsorship when an org-tagged appointment
     // already exists on the request.
-    organizationId:
-      subscription.appointments?.find((a) => a.organizationId)
-        ?.organizationId ?? undefined,
+    organizationId: subscription.appointment?.organizationId ?? undefined,
     schedulingPeriodStartsAt: schedulingPeriodStartsAt.toISOString(),
     schedulingPeriodEndsAt: schedulingPeriodEndsAt.toISOString(),
     notes: subscription.requestNotes ?? undefined,

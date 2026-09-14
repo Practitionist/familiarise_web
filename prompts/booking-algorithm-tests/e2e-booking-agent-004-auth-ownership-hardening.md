@@ -40,8 +40,8 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - Timestamps -> `timestamptz` columns, stored as UTC
 - `priceCurrency` (not `currency`) on `ConsultationPlan` / `SubscriptionPlan`
 - `ConsulteeProfile` requires `userId` (NOT NULL) — create User first
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
-- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off availability
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**, NOT timestamps. Example: 240 = 04:00 UTC, 690 = 11:30 UTC. `startDay`/`endDay` are `DayOfWeek` enums.
+- `AvailabilityWindowCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()` — actual timestamps for one-off availability
 
 ### Step 0.1 — Domain + SubDomain
 
@@ -179,7 +179,7 @@ WHERE u.email = 'testconsultee004@familiarise.com';
 
 ```sql
 -- Weekly: Mon-Fri 04:00-07:00 UTC (09:30-12:30 IST)
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -192,7 +192,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Custom slot: next Saturday 04:30-10:30 UTC
-INSERT INTO "SlotOfAvailabilityCustom" (
+INSERT INTO "AvailabilityWindowCustom" (
   id, "startsAt", "endsAt",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -210,7 +210,7 @@ ON CONFLICT (id) DO NOTHING;
 
 ```sql
 -- Weekly: Mon-Wed 08:30-11:30 UTC (14:00-17:00 IST)
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -243,9 +243,9 @@ ON CONFLICT (id) DO NOTHING;
 ```sql
 SELECT id, headline FROM "ConsultantProfile" WHERE id IN ('test-consultant-profile-004a', 'test-consultant-profile-004b');
 SELECT id, title FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-004a';
-SELECT COUNT(*) as slot_count_a FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
-SELECT COUNT(*) as slot_count_b FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004b';
-SELECT id, "startsAt", "endsAt" FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
+SELECT COUNT(*) as slot_count_a FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
+SELECT COUNT(*) as slot_count_b FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004b';
+SELECT id, "startsAt", "endsAt" FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 ```
 
 **STOP and fix any missing rows before continuing.**
@@ -275,7 +275,7 @@ Log out first (ensure no session). Use `evaluate_script`:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     credentials: "omit",
     headers: { "Content-Type": "application/json" },
@@ -298,7 +298,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "PUT",
       credentials: "omit",
@@ -322,7 +322,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "PATCH",
       credentials: "omit",
@@ -341,7 +341,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "DELETE",
       credentials: "omit",
@@ -360,7 +360,7 @@ Login as CONSULTANT B. Then:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -383,7 +383,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -401,7 +401,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-mon",
+    "/api/scheduling/availability/weekly/test-w004a-mon",
     {
       method: "DELETE",
     },
@@ -419,7 +419,7 @@ Login as CONSULTANT A. Then:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-fri",
+    "/api/scheduling/availability/weekly/test-w004a-fri",
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -440,7 +440,7 @@ async () => {
 DB verify:
 
 ```sql
-SELECT "startTimeUtc", "endTimeUtc" FROM "SlotOfAvailabilityWeekly"
+SELECT "startTimeUtc", "endTimeUtc" FROM "AvailabilityWindowWeekly"
 WHERE id = 'test-w004a-fri';
 -- Expected: startTimeUtc=300, endTimeUtc=480
 ```
@@ -450,7 +450,7 @@ Restore original values:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w004a-fri",
+    "/api/scheduling/availability/weekly/test-w004a-fri",
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -476,7 +476,7 @@ Log out. Then:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/custom", {
+  const response = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     credentials: "omit",
     headers: { "Content-Type": "application/json" },
@@ -499,7 +499,7 @@ Login as CONSULTANT B. Then:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/custom/test-c004a-sat",
+    "/api/scheduling/availability/custom/test-c004a-sat",
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -520,7 +520,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/custom/test-c004a-sat",
+    "/api/scheduling/availability/custom/test-c004a-sat",
     {
       method: "DELETE",
     },
@@ -538,7 +538,7 @@ Login as CONSULTANT A. Then:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/custom/test-c004a-sat",
+    "/api/scheduling/availability/custom/test-c004a-sat",
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -559,7 +559,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/custom/test-c004a-sat",
+    "/api/scheduling/availability/custom/test-c004a-sat",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -721,7 +721,7 @@ DB verify:
 ```sql
 SELECT description FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-004a';
 -- Expected: 'Updated by rightful owner'
-SELECT COUNT(*) as slot_count FROM "SlotOfAvailabilityWeekly"
+SELECT COUNT(*) as slot_count FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 -- Expected: 2 (bulk PUT replaces all slots)
 ```
@@ -729,8 +729,8 @@ WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 Then restore original slots:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
-INSERT INTO "SlotOfAvailabilityWeekly" (
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -933,17 +933,11 @@ async () => {
         slotsOfAvailabilityCustom: [
           {
             startsAt: baseDate.toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 3 * 3600000,
-            ).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
           },
           {
-            startsAt: new Date(
-              baseDate.getTime() + 2 * 3600000,
-            ).toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 5 * 3600000,
-            ).toISOString(),
+            startsAt: new Date(baseDate.getTime() + 2 * 3600000).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 5 * 3600000).toISOString(),
           },
         ],
       }),
@@ -1081,7 +1075,7 @@ async () => {
 DB verify:
 
 ```sql
-SELECT COUNT(*) as slot_count FROM "SlotOfAvailabilityWeekly"
+SELECT COUNT(*) as slot_count FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 -- Expected: 3
 ```
@@ -1089,8 +1083,8 @@ WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 Restore original slots after this test:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
-INSERT INTO "SlotOfAvailabilityWeekly" (
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -1111,13 +1105,13 @@ ON CONFLICT (id) DO NOTHING;
 SELECT
   'Consultant A Weekly Slots' AS label,
   COUNT(*) AS count
-FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a'
+FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004a'
 UNION ALL
 SELECT 'Consultant B Weekly Slots', COUNT(*)
-FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004b'
+FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-004b'
 UNION ALL
 SELECT 'Consultant A Custom Slots', COUNT(*)
-FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a'
+FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a'
 UNION ALL
 SELECT 'Consultations Booked', COUNT(*)
 FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-004a';
@@ -1131,14 +1125,14 @@ Run cleanup in dependency order ONLY after all tests pass:
 
 ```sql
 -- Slots of appointments
-DELETE FROM "_SlotOfAppointmentToUser"
+DELETE FROM "_AppointmentParticipant"
 WHERE "A" IN (
-  SELECT s.id FROM "SlotOfAppointment" s
+  SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-004a')
 );
 
-DELETE FROM "SlotOfAppointment"
+DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-004a')
@@ -1157,8 +1151,8 @@ DELETE FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-004a';
 
 -- Availability
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" IN ('test-consultant-profile-004a', 'test-consultant-profile-004b');
-DELETE FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" IN ('test-consultant-profile-004a', 'test-consultant-profile-004b');
+DELETE FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-004a';
 
 -- Profiles + Users
 UPDATE users SET "consultantProfileId" = NULL
@@ -1183,7 +1177,7 @@ DELETE FROM "Domain" WHERE id = 'test-domain-004';
 SELECT
   (SELECT COUNT(*) FROM users WHERE email LIKE 'test%004%@familiarise.com') AS users,
   (SELECT COUNT(*) FROM "ConsultantProfile" WHERE id LIKE 'test-consultant-profile-004%') AS profiles,
-  (SELECT COUNT(*) FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" LIKE 'test-consultant-profile-004%') AS weekly_slots;
+  (SELECT COUNT(*) FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" LIKE 'test-consultant-profile-004%') AS weekly_slots;
 -- Expected: all zeros
 ```
 

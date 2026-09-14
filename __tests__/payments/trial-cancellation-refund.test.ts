@@ -32,7 +32,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
-        slotOfAppointment: {
+        appointmentOccurrence: {
           updateMany: (...a: unknown[]) => mockSlotUpdateMany(...a),
         },
         appointmentParticipant: {
@@ -68,7 +68,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
 
-import { SlotCompletionStatus } from "@prisma/client";
+import { OccurrenceCompletionStatus } from "@prisma/client";
 
 import {
   refundCancelledTrial,
@@ -90,10 +90,8 @@ const paidTrial = {
 
 function appointmentStartingInHours(hours: number) {
   return {
-    cancellationPolicySnapshot: null,
-    slotsOfAppointment: [
-      { startsAt: new Date(Date.now() + hours * 3_600_000) },
-    ],
+    cancellationPolicy: null,
+    occurrences: [{ startsAt: new Date(Date.now() + hours * 3_600_000) }],
   };
 }
 
@@ -125,7 +123,7 @@ describe("softCancelTrialAppointment", () => {
       expect.objectContaining({
         where: { appointmentId: APPOINTMENT_ID, deletedAt: null },
         data: {
-          completionStatus: SlotCompletionStatus.CANCELLED,
+          completionStatus: OccurrenceCompletionStatus.CANCELLED,
           deletedAt: expect.any(Date),
         },
       }),
@@ -251,7 +249,7 @@ describe("refundCancelledTrial", () => {
   });
 
   it("falls back to the appointment's payment when the trial link is unwritten", async () => {
-    // The capture webhook writes TrialSession.paymentId after the Payment row;
+    // The capture webhook writes Trial.paymentId after the Payment row;
     // a cancellation racing that write must still find the money.
     mockPaymentFindFirst.mockResolvedValue(paidTrial);
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));

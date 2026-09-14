@@ -2,7 +2,7 @@
 --
 -- This script captured two columns that exist in the database but not in
 -- prisma/schema.prisma (`ConsultantReview.isAnonymous` and
--- `AppointmentFeedback.slotOfAppointmentId`) into `_phantom_*` tables, so that
+-- `AppointmentFeedback.appointmentOccurrenceId`) into `_phantom_*` tables, so that
 -- the pre-MVP reset's `db push` could drop the columns without losing what they
 -- held. It does not work, and the way it fails is silent: `prisma db push`
 -- drops every table the Prisma schema does not know about, so the capture
@@ -39,10 +39,10 @@ END $$;
 --
 --   IF EXISTS (
 --     SELECT 1 FROM information_schema.columns
---     WHERE table_name = 'AppointmentFeedback' AND column_name = 'slotOfAppointmentId'
+--     WHERE table_name = 'AppointmentFeedback' AND column_name = 'appointmentOccurrenceId'
 --   ) THEN
 --     EXECUTE 'DROP TABLE IF EXISTS "_phantom_appointment_feedback_slot"';
 --     EXECUTE 'CREATE TABLE "_phantom_appointment_feedback_slot" AS
---              SELECT "id", "slotOfAppointmentId" FROM "AppointmentFeedback" WHERE "slotOfAppointmentId" IS NOT NULL';
+--              SELECT "id", "appointmentOccurrenceId" FROM "AppointmentFeedback" WHERE "appointmentOccurrenceId" IS NOT NULL';
 --   END IF;
 -- END $$;

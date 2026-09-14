@@ -34,7 +34,7 @@ import {
  * #1280 2.7 — guarded against re-entry per appointment. The first `await` is
  * `waitForGlobalVideoClient()`, which can take a second on a cold provider, so
  * a double-click used to run the whole chain twice. That matters here beyond
- * the wasted round trip: the `?? slotsOfAppointment?.[0]` fallback below reads
+ * the wasted round trip: the `?? occurrences?.[0]` fallback below reads
  * an UNSORTED array, so two concurrent runs can resolve two different anchor
  * rows and drop the two sides of one booking into two different rooms.
  */
@@ -75,7 +75,7 @@ export function useLazyJoinMeeting() {
         return false;
       }
 
-      const relevantSlot = joinableSlot ?? appointment.slotsOfAppointment?.[0];
+      const relevantSlot = joinableSlot ?? appointment.occurrences?.[0];
       if (!relevantSlot) {
         toast({
           title: "Error",

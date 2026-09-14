@@ -33,16 +33,16 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     expect(src).toContain("idempotencyKey: created.idempotencyKey");
   });
 
-  it("the sidecar stages the NOT NULL flips for the reset", () => {
+  it("the sidecar applies the NOT NULL flips (live since the reset, #1554)", () => {
     const sql = read("prisma/sql/check-constraints.sql");
-    const staged = sql.slice(sql.indexOf("STAGED FOR THE PRE-MVP RESET"));
-    expect(staged).toContain('"clientIdempotencyKey" SET NOT NULL');
-    expect(staged).toContain(
+    const applied = sql.slice(sql.indexOf("APPLIED AT THE PRE-MVP RESET"));
+    expect(applied).toContain('"clientIdempotencyKey" SET NOT NULL');
+    expect(applied).toContain(
       '"OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL',
     );
   });
 
-  it("the drift guard ignores the staged block but sees every live object", () => {
+  it("the drift guard sees every live object, including the once-staged ones", () => {
     // Runs the PRODUCTION parser over the real sidecar file, so this guards the
     // script rather than a copy of its regexes. The guard used to split on the
     // staged-for-reset banner, which also discarded the ACTIVE SQL below it —
@@ -53,13 +53,16 @@ describe("idempotency keys are always minted (#1093 §3)", () => {
     );
     const names = [...constraints, ...indexes];
 
-    // Staged for the reset — must NOT be demanded of a live database.
-    expect(names).not.toContain("program_assignment_no_active_overlap");
-    expect(names).not.toContain("subscription_plan_total_sessions_min");
-    // Live, and below the banner — these are the ones the old split lost.
+    // Applied at the reset (#1554) — demanded of the database from now on.
+    expect(names).toContain("program_assignment_no_active_overlap");
+    expect(names).toContain("subscription_plan_total_sessions_min");
+    expect(names).toContain("cancellation_policy_one_active_per_scope");
+    // Live, and below the old banner — these are the ones the old split lost.
     expect(names).toContain("appointment_doc_thread_version_unique");
     expect(names).toContain("onboarding_draft_payload_size");
-    expect(names).toContain("consultant_review_legacy_pair_key");
+    // `consultant_review_legacy_pair_key` used to live here. Reviews are now one
+    // per (consultant, consultee), which Prisma expresses as a real @@unique, so
+    // the sidecar's partial index was retired rather than left shadowing it.
     // `IF NOT EXISTS` must not be captured as an index name.
     expect(names).not.toContain("IF");
   });

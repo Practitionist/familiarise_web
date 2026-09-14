@@ -36,15 +36,15 @@ graph LR
 
 ### When to Use Each Path
 
-| Use Resend Directly                                            | Use Novu                                                          |
-| -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Auth emails (welcome, password reset, account linked)          | Appointment lifecycle (booked, cancelled, rescheduled, completed) |
-| Payment transactional (payment link, success, failed)          | Support tickets (created, updated, response)                      |
-| Newsletter opt-in (confirm, welcome)                           | Feedback and reviews                                              |
-| Any email that doesn't need in-app/push delivery               | Trial sessions, subscriptions                                     |
-|                                                                | Consultant-specific (booking requests, verification, payouts)     |
-|                                                                | Admin/system (announcements, new applications)                    |
-|                                                                | Disputes, recordings                                              |
+| Use Resend Directly                                   | Use Novu                                                          |
+| ----------------------------------------------------- | ----------------------------------------------------------------- |
+| Auth emails (welcome, password reset, account linked) | Appointment lifecycle (booked, cancelled, rescheduled, completed) |
+| Payment transactional (payment link, success, failed) | Support tickets (created, updated, response)                      |
+| Newsletter opt-in (confirm, welcome)                  | Feedback and reviews                                              |
+| Any email that doesn't need in-app/push delivery      | Trial sessions, subscriptions                                     |
+|                                                       | Consultant-specific (booking requests, verification, payouts)     |
+|                                                       | Admin/system (announcements, new applications)                    |
+|                                                       | Disputes, recordings                                              |
 
 ---
 
@@ -91,12 +91,12 @@ sequenceDiagram
 
 ### From Address Convention
 
-| Domain Prefix    | Used For                        |
-| ---------------- | ------------------------------- |
-| `onboarding@`    | Welcome emails                  |
-| `security@`      | Password reset, account linking |
-| `payments@`      | Payment link, success, failure  |
-| `newsletter@`    | Newsletter opt-in + broadcasts  |
+| Domain Prefix | Used For                        |
+| ------------- | ------------------------------- |
+| `onboarding@` | Welcome emails                  |
+| `security@`   | Password reset, account linking |
+| `payments@`   | Payment link, success, failure  |
+| `newsletter@` | Newsletter opt-in + broadcasts  |
 
 ---
 
@@ -187,10 +187,10 @@ notifySupportTicketUpdate(userId, payload)            -> triggerWorkflow
 notifySupportTicketResponse(userId, payload)          -> triggerWorkflow
 notifyFeedbackReceived(adminUserIds[], payload)   -> triggerForMultiple
 notifyNewReview(consultantUserId, payload)        -> triggerWorkflow
-notifyTrialSessionRequested(consultantUserId, payload)  -> triggerWorkflow
-notifyTrialSessionScheduled(consulteeUserId, payload)   -> triggerWorkflow
-notifyTrialSessionCompleted(userIds[], payload)         -> triggerForMultiple
-notifyTrialSessionCancelled(userIds[], payload)         -> triggerForMultiple
+notifyTrialRequested(consultantUserId, payload)  -> triggerWorkflow
+notifyTrialScheduled(consulteeUserId, payload)   -> triggerWorkflow
+notifyTrialCompleted(userIds[], payload)         -> triggerForMultiple
+notifyTrialCancelled(userIds[], payload)         -> triggerForMultiple
 notifySubscriptionStarted(userId, payload)        -> triggerWorkflow
 notifySubscriptionCancelled(userIds[], payload)   -> triggerForMultiple
 notifySubscriptionRenewed(userId, payload)        -> triggerWorkflow

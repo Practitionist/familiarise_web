@@ -1,43 +1,61 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import {
+  publicReviewSelect,
+  sanitisePublicReview,
+  sanitisePublicReviews,
+} from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
-import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { reviewWriteLimiter, applyRateLimit } from "@/lib/rate-limit";
 import {
+  ModeratedReviewError,
+  pickExistingReview,
   recomputeConsultantRating,
   resolveReviewableSession,
 } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { z } from "zod";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const rating = searchParams.get("rating");
     const consultantId = searchParams.get("consultantId");
-    const consulteeId = searchParams.get("consulteeId");
     const searchTerm = searchParams.get("search");
 
     const whereClause: Prisma.ConsultantReviewWhereInput = {};
 
-    if (rating) {
-      whereClause.rating = {
-        gte: parseInt(rating), // Greater than or equal to the specified rating
-      };
+    if (rating !== null) {
+      // `parseInt("4junk")` is 4 and `parseInt("abc")` is NaN; neither belongs
+      // in a Prisma filter.
+      const minRating = z.coerce.number().int().min(1).max(5).safeParse(rating);
+      if (!minRating.success) {
+        return NextResponse.json(
+          { error: "rating must be an integer from 1 to 5" },
+          { status: 400 },
+        );
+      }
+      whereClause.rating = { gte: minRating.data };
     }
 
     if (consultantId) {
       whereClause.consultantProfileId = consultantId;
     }
 
-    if (consulteeId) {
-      whereClause.consulteeProfileId = consulteeId;
-    }
+    // NO consulteeProfileId filter. This route is PUBLIC (middleware.ts) and
+    // CDN-cached, so an unauthenticated caller could pass any profile id and
+    // read back that person's reviews — including the ones they marked
+    // anonymous. Stripping `consulteeProfile` from the RESPONSE does nothing
+    // there: the caller supplied the identity, so the filter itself is the
+    // de-anonymisation. Nothing in the app ever passed this parameter.
+    // A "my reviews" surface must authenticate and derive the profile from the
+    // session, not accept it from the query string.
 
     if (searchTerm) {
       whereClause.reviewDescription = {
@@ -51,35 +69,20 @@ export async function GET(req: NextRequest) {
     const reviews = await prisma.consultantReview.findMany({
       where: whereClause,
       take: 50,
-      include: {
-        // #946 allowlist. This route is PUBLIC (middleware.ts marks it so) and
-        // its response is CDN-cached, so a bare `include:` here published every
-        // reviewed consultant's panNumber / ibanOrAccount / swiftBic /
-        // udyamNumber to anonymous callers.
-        consultantProfile: {
-          select: {
-            ...consultantPublicScalars,
-            user: { select: { name: true } },
-          },
-        },
-        consulteeProfile: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                image: true,
-              },
-            },
-          },
-        },
-      },
+      // The allowlist. This route is PUBLIC (middleware.ts marks it so) and its
+      // response is CDN-cached, so a bare `include:` here published every
+      // reviewed consultant's statutory PII AND every named reviewer's private
+      // profile — `goals`, `aboutMe`, `careerStage`, `budgetPreference`.
+      select: publicReviewSelect,
       orderBy: {
         rating: "desc",
       },
     });
 
     return NextResponse.json(
-      { data: reviews },
+      // PUBLIC and CDN-cached: a name withheld by the reviewer must not ship
+      // in the payload, or the anonymity is cosmetic.
+      { data: sanitisePublicReviews(reviews) },
       {
         status: 200,
         headers: {
@@ -88,7 +91,10 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Reviews.GET]", error });
   }
 }
@@ -100,8 +106,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Rate limit: 5 reviews per hour per user
-    const rl = await applyRateLimit(spamLimiter, `reviews:${session.user.id}`);
+    // 20 writes an hour: an edit is a POST too, so 5 shut out "write, tweak twice".
+    const rl = await applyRateLimit(
+      reviewWriteLimiter,
+      `reviews:${session.user.id}`,
+    );
     if (rl) return rl;
 
     const body = await req.json();
@@ -145,81 +154,221 @@ export async function POST(req: NextRequest) {
     // ConsultantProfile.rating (explore sort/filter) never drifts. Serializable
     // + retry so two concurrent reviews for the same consultant can't lose-update
     // the recomputed average (P2034 aborts one, retry then sees the committed row).
-    const newReview = await withSerializableRetry(() =>
-      prisma.$transaction(async (tx) => {
-      const created = await tx.consultantReview.create({
-        data: {
-          rating: validatedData.rating,
-          reviewDescription: validatedData.reviewDescription,
-          consultantProfileId: reviewable.consultantProfileId,
-          consulteeProfileId: sessionConsulteeProfileId,
-          appointmentId: reviewable.appointmentId,
-          // Denormalized at write time: `groupBy` can only group on this
-          // model's own scalars, and this is what makes a 200-seat webinar one
-          // data point instead of two hundred.
-          ratingUnitId: reviewable.ratingUnitId,
-        },
-        include: {
-          // #946 allowlist — the response goes back to the consultee who wrote
-          // the review; a bare `include:` handed them the consultant's PAN and
-          // bank account.
-          consultantProfile: {
-            select: {
-              ...consultantPublicScalars,
-              user: { select: { name: true } },
-            },
-          },
-          consulteeProfile: {
-            include: {
-              user: {
-                select: {
-                  name: true,
-                  image: true,
+    const writeResult = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // #1549 — the pair's review for THIS (track, event), or a NULL-track legacy
+          // row the write adopts. The same rule the composer uses (pickExistingReview),
+          // so the form never shows a review this write would not update.
+          const candidates = await tx.consultantReview.findMany({
+            where: {
+              consultantProfileId: reviewable.consultantProfileId,
+              consulteeProfileId: sessionConsulteeProfileId,
+              OR: [
+                {
+                  track: reviewable.track,
+                  ratingUnitId: reviewable.ratingUnitId,
                 },
-              },
+                { track: null },
+              ],
             },
-          },
+            select: {
+              id: true,
+              deletedAt: true,
+              removedBy: true,
+              track: true,
+              ratingUnitId: true,
+              rating: true,
+              reviewDescription: true,
+              revisionNo: true,
+              repliedAt: true,
+              replyDeletedAt: true,
+            },
+          });
+          const existing = pickExistingReview(
+            candidates,
+            reviewable.track,
+            reviewable.ratingUnitId,
+          );
+          // An author's withdrawal is revivable; a moderation removal is not.
+          const withdrawnByAuthor =
+            existing !== null &&
+            existing.deletedAt !== null &&
+            existing.removedBy === "AUTHOR";
+          if (existing?.deletedAt && !withdrawnByAuthor) {
+            throw new ModeratedReviewError();
+          }
+
+          // An explicit select, never `include`: `include` returns every scalar on
+          // the row, which (a) hands the author staff-only columns and (b) fails
+          // with P2022 whenever the schema is pushed ahead of the deploy — the
+          // documented order. Only what the notification below reads.
+          const select = {
+            ...publicReviewSelect,
+            consultantProfile: {
+              select: { userId: true, user: { select: { name: true } } },
+            },
+            consulteeProfile: {
+              select: { user: { select: { name: true, image: true } } },
+            },
+          } as const;
+
+          let created;
+          if (existing) {
+            // Only a changed OPINION is an edit. Re-submitting the same stars and
+            // the same words is idempotent, so it must not manufacture a
+            // revision or stamp `editedAt` — otherwise a double-tapped Save reads
+            // as "this person keeps changing their mind".
+            const textChanged =
+              existing.rating !== validatedData.rating ||
+              (existing.reviewDescription ?? null) !==
+                (validatedData.reviewDescription ?? null);
+
+            if (textChanged) {
+              // The revision number is allocated by an atomic increment on the
+              // review row, never from the `existing` read: two editors who both
+              // read N would otherwise both insert revision N and the loser got a
+              // P2002 that `withSerializableRetry` does not retry. The increment
+              // takes the row lock, so the loser aborts with P2034 and retries.
+              const bumped = await tx.consultantReview.update({
+                where: { id: existing.id },
+                data: { revisionNo: { increment: 1 }, editedAt: new Date() },
+                select: { revisionNo: true },
+              });
+              // The trail stores what the review USED to say.
+              await tx.consultantReviewRevision.create({
+                data: {
+                  reviewId: existing.id,
+                  revisionNo: bumped.revisionNo - 1,
+                  rating: existing.rating,
+                  reviewDescription: existing.reviewDescription,
+                  // Recorded for moderation context. It does NOT decide whether
+                  // the public surface marks the edit — every edit is marked, or
+                  // a consultant could reply to everything and brand every
+                  // subsequent revision.
+                  afterPublicReply:
+                    existing.repliedAt !== null &&
+                    existing.replyDeletedAt === null,
+                },
+              });
+            }
+
+            // Provenance moves as ONE fact — appointment, session clock, track
+            // and event key together. The row is either this (track, event)'s own
+            // or a NULL-track legacy row being adopted into it (#1549).
+            created = await tx.consultantReview.update({
+              where: { id: existing.id },
+              data: {
+                rating: validatedData.rating,
+                reviewDescription: validatedData.reviewDescription,
+                appointmentId: reviewable.appointmentId,
+                track: reviewable.track,
+                ratingUnitId: reviewable.ratingUnitId,
+                // `heldAt` is the slot's end, never now(). Kept when unknown (offline).
+                ...(reviewable.heldAt
+                  ? { ratedOccurrenceAt: reviewable.heldAt }
+                  : {}),
+                isAnonymous: validatedData.isAnonymous ?? undefined,
+                ...(withdrawnByAuthor
+                  ? { deletedAt: null, removedBy: null }
+                  : {}),
+              },
+              select,
+            });
+          } else {
+            created = await tx.consultantReview.create({
+              data: {
+                rating: validatedData.rating,
+                reviewDescription: validatedData.reviewDescription,
+                consultantProfileId: reviewable.consultantProfileId,
+                consulteeProfileId: sessionConsulteeProfileId,
+                appointmentId: reviewable.appointmentId,
+                isAnonymous: validatedData.isAnonymous ?? false,
+                track: reviewable.track,
+                // Group only — see lib/reviews.ts. NULL on a 1:1 review, where
+                // the review is already one data point.
+                ratingUnitId: reviewable.ratingUnitId,
+                // The SESSION's clock: provenance, never refreshed by an edit.
+                ratedOccurrenceAt: reviewable.heldAt,
+              },
+              select,
+            });
+          }
+
+          await recomputeConsultantRating(tx, created.consultantProfileId);
+
+          // A revived withdrawal is news to the consultant just as a first
+          // review is: the profile regains a review they were not told about.
+          return { review: created, isNew: !existing || withdrawnByAuthor };
         },
-      });
-
-      await recomputeConsultantRating(tx, created.consultantProfileId);
-
-      return created;
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    // Notify the consultant about the new review
-    void notifyNewReview(newReview.consultantProfile.userId, {
-      reviewerName: newReview.consulteeProfile?.user?.name || "User",
-      rating: newReview.rating,
-      comment: newReview.reviewDescription || undefined,
-      planTitle: reviewable.title,
-      // `/dashboard/consultant/reviews` never existed — the link 404'd for
-      // every review ever notified. The capability router picks the viewer's
-      // tree from a bare /dashboard.
-      dashboardUrl: "/dashboard",
-    });
+    const { review: newReview, isNew } = writeResult;
+
+    // Only a NEW (or revived) review is news; an edit must not re-notify.
+    if (isNew) {
+      void notifyNewReview(newReview.consultantProfile.userId, {
+        // The reviewer withheld their name from the public page; sending it to
+        // the consultant in a notification would hand back exactly what the
+        // flag exists to withhold, and to the one person it is kept from.
+        reviewerName: newReview.isAnonymous
+          ? "A verified client"
+          : newReview.consulteeProfile?.user?.name || "User",
+        rating: newReview.rating,
+        comment: newReview.reviewDescription || undefined,
+        planTitle: reviewable.title,
+        // `/dashboard/consultant/reviews` never existed — the link 404'd for
+        // every review ever notified. The capability router picks the viewer's
+        // tree from a bare /dashboard.
+        dashboardUrl: "/dashboard",
+      });
+    }
 
     // Reviews are the landing page's testimonials and they move the expert's
     // denormalized rating, which orders the directory — both surfaces are stale
     // until purged, and the landing page's window is an hour.
     purgeReviewSurfaces(newReview.consultantProfileId);
 
-    return NextResponse.json(newReview, { status: 201 });
+    // The public shape, exactly as a reader would get it: a removed reply is
+    // stripped and the consultant's user id (notification-only) does not travel.
+    const { consultantProfile, ...publicRow } = newReview;
+    return NextResponse.json(
+      sanitisePublicReview({
+        ...publicRow,
+        consultantProfile: { user: consultantProfile.user },
+      }),
+      { status: isNew ? 201 : 200 },
+    );
   } catch (error) {
-    // @@unique([appointmentId, consulteeProfileId]) — one review per session.
+    if (error instanceof ModeratedReviewError) {
+      return NextResponse.json(
+        {
+          error:
+            "This review was removed by our moderation team and can't be edited.",
+        },
+        { status: 409 },
+      );
+    }
+    // The sidecar unique (pair, track, event), lost as a find-then-create race:
+    // one review per expert for 1:1, one per event for a webinar or class (#1549).
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
       return NextResponse.json(
-        { error: "You have already reviewed this session" },
+        {
+          error:
+            "You already have a review for this expert or event. Reload to edit the one you have.",
+        },
         { status: 409 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     return apiError({ tag: "[Reviews.POST]", error });
   }
 }

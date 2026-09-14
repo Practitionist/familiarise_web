@@ -174,7 +174,7 @@ export async function claimProgramAssignment(
  *     Appointments the learner is being enrolled in (slots are
  *     pre-allocated by the consultant; all appointments are known then).
  *   - SUBSCRIPTION: pass at slot-allocation time
- *     (`SlotAllocationService.createAppointments`), 1 per consultant
+ *     (`SchedulingService.createAppointments`), 1 per consultant
  *     allocation — checkout creates only a placeholder appointment for
  *     SUBSCRIPTION and does NOT call this helper.
  *

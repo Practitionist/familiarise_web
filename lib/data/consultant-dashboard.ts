@@ -21,6 +21,10 @@
 import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
+import {
+  pendingConsultationWhere,
+  pendingSubscriptionWhere,
+} from "@/lib/data/needs-you";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -117,13 +121,10 @@ const consultantAppointmentScope = (consultantProfileId: string) =>
   }) satisfies Prisma.AppointmentWhereInput;
 
 const appointmentInclude = {
-  slotsOfAppointment: {
+  occurrences: {
     orderBy: { startsAt: "asc" as const },
     include: {
-      user: {
-        select: userSelectFields,
-      },
-      meetingSession: {
+      meeting: {
         select: { id: true, endedAt: true, endedReason: true },
       },
     },
@@ -367,7 +368,7 @@ export async function getConsultantDashboard(
     now.getMonth(),
     now.getDate(),
   );
-  const soonestSlots = await prisma.slotOfAppointment.findMany({
+  const soonestSlots = await prisma.appointmentOccurrence.findMany({
     where: {
       deletedAt: null,
       // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
@@ -425,12 +426,12 @@ export async function getConsultantDashboard(
         ...consultantAppointmentScope(consultantProfileId),
         AND: [
           {
-            slotsOfAppointment: {
+            occurrences: {
               some: { deletedAt: null, startsAt: { gte: ninetyDaysAgo } },
             },
           },
           {
-            slotsOfAppointment: {
+            occurrences: {
               some: {
                 deletedAt: null,
                 completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
@@ -491,17 +492,20 @@ export async function getConsultantDashboard(
     // every pending request regardless of age, and these two numbers render
     // inches apart, so matching its definition is what stops them contradicting
     // each other. The 90-day bound stays on the list, which is only a preview.
+    //
+    // #1345 — and the predicate itself is NeedsYou's, not a re-typed copy. Home
+    // is a personal (B2C) surface like PERSONAL_ORG_PIN below, so an org-funded
+    // pending request belongs to that org's dashboard and must not inflate this
+    // badge while the card underneath it excludes the same row.
     prisma.consultation.count({
-      where: {
-        consultationPlan: { consultantProfile: { id: consultantProfileId } },
-        status: "PENDING",
-      },
+      where: pendingConsultationWhere(consultantProfileId, {
+        kind: "personal",
+      }),
     }),
     prisma.subscription.count({
-      where: {
-        subscriptionPlan: { consultantProfileId },
-        status: "PENDING",
-      },
+      where: pendingSubscriptionWhere(consultantProfileId, {
+        kind: "personal",
+      }),
     }),
     // Fetch recent activities
     prisma.activityLog.findMany({
@@ -545,7 +549,7 @@ export async function getConsultantDashboard(
       where: { consultantProfileId, deletedAt: null },
     }),
     // 3. Session completion rate (last 30 days)
-    prisma.slotOfAppointment.groupBy({
+    prisma.appointmentOccurrence.groupBy({
       by: ["completionStatus"],
       _count: true,
       where: {
@@ -566,7 +570,7 @@ export async function getConsultantDashboard(
       },
     }),
     // 4. Trial conversion rate (90-day window)
-    prisma.trialSession.groupBy({
+    prisma.trial.groupBy({
       by: ["status"],
       _count: true,
       where: { consultantProfileId, createdAt: { gte: ninetyDaysAgo } },
@@ -595,8 +599,8 @@ export async function getConsultantDashboard(
 
   // Sort appointments by slot start time (matching original API behavior)
   const sortedAppointments = appointmentsRaw.sort((a, b) => {
-    const aTime = a.slotsOfAppointment?.[0]?.startsAt;
-    const bTime = b.slotsOfAppointment?.[0]?.startsAt;
+    const aTime = a.occurrences?.[0]?.startsAt;
+    const bTime = b.occurrences?.[0]?.startsAt;
 
     if (!aTime && !bTime) return 0;
     if (!aTime) return 1;
@@ -614,21 +618,13 @@ export async function getConsultantDashboard(
       // the consultant Home + Appointments surfaces. Previously dropped
       // by this manual field-mapping transform.
       organizationId: appointment.organizationId,
-      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
+      occurrences: appointment.occurrences.map((slot) => ({
         id: slot.id,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         isTentative: slot.isTentative,
         completionStatus: slot.completionStatus,
-        meetingSession: slot.meetingSession ?? null,
-        user: Array.isArray(slot.user)
-          ? slot.user.map((u) => ({
-              id: u.id,
-              name: u.name,
-              email: u.email,
-              image: u.image,
-            }))
-          : [],
+        meeting: slot.meeting ?? null,
       })),
       consultation: appointment.consultation
         ? {

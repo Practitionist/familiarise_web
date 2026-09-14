@@ -2,9 +2,12 @@
 
 import { useToast } from "@/components/ui/use-toast";
 import type { ConsultantDetailData } from "./types";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
-import { TConsultantReview } from "@/types/review";
+import type {
+  TPublicConsultantReview,
+  TReviewTrackPresence,
+} from "@/types/review";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -18,19 +21,22 @@ import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
+import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useTimezone } from "./hooks/useTimezone";
 import { formatInTimeZone } from "date-fns-tz";
 
 interface ExpertProfileClientProps {
   consultantDetails: ConsultantDetailData;
   userDetails: TUserWithProfessionalBackground;
-  reviews: TConsultantReview[];
+  reviews: TPublicConsultantReview[];
+  reviewTracks: TReviewTrackPresence;
 }
 
 export function ExpertProfileClient({
   consultantDetails,
   userDetails,
   reviews,
+  reviewTracks,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -42,8 +48,10 @@ export function ExpertProfileClient({
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
+  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
+    null,
+  );
 
   const timezone = browserTimezone || userDetails?.timezone;
 
@@ -74,7 +82,7 @@ export function ExpertProfileClient({
         endDateInUtc.setHours(23, 59, 59, 999);
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${
+          `/api/scheduling/availability-with-allocation/${
             consultantDetails.id
           }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
@@ -133,17 +141,17 @@ export function ExpertProfileClient({
       const endsAt = new Date(selectedSlot.endsAt);
 
       if (
-        (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
-        "WEEKLY"
+        (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
+          .type === "WEEKLY"
       ) {
         params.append(
-          "slotOfAvailabilityWeeklyId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowWeeklyId",
+          selectedSlot.availabilityWindowId,
         );
       } else {
         params.append(
-          "slotOfAvailabilityCustomId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowCustomId",
+          selectedSlot.availabilityWindowId,
         );
       }
       params.append("startsAt", startsAt.toISOString());
@@ -297,7 +305,7 @@ export function ExpertProfileClient({
               <ProfileHeader
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
-                reviewCount={consultantDetails.reviewCount}
+                reviewCount={consultantDetails._count.reviews}
               />
 
               <AboutSection
@@ -377,8 +385,27 @@ export function ExpertProfileClient({
           >
             <ReviewsSection
               reviews={reviews}
-              publishedRating={consultantDetails.publishedRating}
-              reviewCount={consultantDetails.reviewCount}
+              reviewTracks={reviewTracks}
+              reviewCount={consultantDetails._count.reviews}
+              publishedRatingOneToOne={
+                consultantDetails.publishedRatingOneToOne
+              }
+              publishedRatingGroup={consultantDetails.publishedRatingGroup}
+              ratedClientsOneToOne={consultantDetails.ratedClientsOneToOne}
+              ratedEventsGroup={consultantDetails.ratedEventsGroup}
+              // #1300 — a review is about the CONSULTANT, so it is written on
+              // their profile. It was only ever writable from the appointment
+              // detail page, which contradicted the model. A client island
+              // because eligibility is a per-user answer and this page is
+              // statically cached — rendering it server-side would either force
+              // the page dynamic or land one viewer's eligibility in a shared
+              // cache entry.
+              composer={
+                <ProfileReviewComposer
+                  consultantProfileId={consultantDetails.id}
+                  consultantName={consultantDetails.user?.name ?? null}
+                />
+              }
             />
           </motion.div>
           {/* Spacer to match pricing sidebar width */}

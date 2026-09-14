@@ -4,8 +4,8 @@
 
 /**
  * STR-4 — per-attendee presence handlers. Verifies the join/leave webhook
- * handlers resolve the MeetingSession by streamCallId and upsert a
- * MeetingAttendance row keyed on [meetingSessionId, userId]:
+ * handlers resolve the Meeting by streamCallId and upsert a
+ * MeetingAttendance row keyed on [meetingId, userId]:
  *  - first join stamps firstJoinedAt (create branch)
  *  - rejoin only increments joinCount (update branch, firstJoinedAt untouched)
  *  - leave stamps lastLeftAt
@@ -13,7 +13,7 @@
  */
 jest.mock("../../lib/prisma", () => {
   const client = {
-    meetingSession: { findUnique: jest.fn() },
+    meeting: { findUnique: jest.fn() },
     meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
   };
   return { __esModule: true, default: client };
@@ -34,8 +34,8 @@ import {
 } from "../../lib/stream/session-handlers";
 
 const mockFindUnique = (
-  prisma as unknown as { meetingSession: { findUnique: jest.Mock } }
-).meetingSession.findUnique;
+  prisma as unknown as { meeting: { findUnique: jest.Mock } }
+).meeting.findUnique;
 const mockUpsert = (
   prisma as unknown as { meetingAttendance: { upsert: jest.Mock } }
 ).meetingAttendance.upsert;
@@ -44,7 +44,10 @@ beforeEach(() => jest.clearAllMocks());
 
 describe("handleSessionParticipantJoined (STR-4)", () => {
   it("creates attendance with firstJoinedAt on first join (create branch)", async () => {
-    mockFindUnique.mockResolvedValue({ id: "ms_1" });
+    mockFindUnique.mockResolvedValue({
+      id: "ms_1",
+      appointmentOccurrenceId: "occ_1",
+    });
 
     await handleSessionParticipantJoined({
       call_cid: "default:call_abc",
@@ -57,15 +60,23 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
     // Resolved by the call id stripped from call_cid ("default:call_abc")
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { streamCallId: "call_abc" },
-      select: { id: true },
+      select: {
+        id: true,
+        endedAt: true,
+        endedReason: true,
+        appointmentOccurrenceId: true,
+      },
     });
 
     const arg = mockUpsert.mock.calls[0][0];
     expect(arg.where).toEqual({
-      meetingSessionId_userId: { meetingSessionId: "ms_1", userId: "user_1" },
+      meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
     });
+    // #1554 — the row names the call it belongs to, so the rating gate reads
+    // "you were at THIS call" straight off the occurrence.
     expect(arg.create).toMatchObject({
-      meetingSessionId: "ms_1",
+      meetingId: "ms_1",
+      appointmentOccurrenceId: "occ_1",
       userId: "user_1",
       firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
     });
@@ -119,14 +130,14 @@ describe("handleSessionParticipantLeft (STR-4)", () => {
 
     const arg = mockUpsert.mock.calls[0][0];
     expect(arg.where).toEqual({
-      meetingSessionId_userId: { meetingSessionId: "ms_1", userId: "user_1" },
+      meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
     });
     expect(arg.update).toEqual({
       lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
     });
     // A leave without a recorded join still creates the row defensively.
     expect(arg.create).toMatchObject({
-      meetingSessionId: "ms_1",
+      meetingId: "ms_1",
       userId: "user_1",
       firstJoinedAt: new Date("2026-06-16T10:30:00.000Z"),
       lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),

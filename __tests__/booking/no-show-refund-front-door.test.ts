@@ -54,19 +54,32 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundProcessed: jest.fn(),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+// #1493 — claimConsultantNoShow now runs the cancel through
+// transitionConsultationRequest inside prisma.$transaction, so the mock needs
+// $transaction (running its callback against this same client),
+// consultation.findUnique (the helper's pre-read of the from-status), and
+// bookingStatusHistory.create (the audit row the helper appends).
+jest.mock("../../lib/prisma", () => {
+  const client: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({
+        status: "APPROVED",
+        appointment: { id: "appt-1" },
+      }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+    },
     $disconnect: jest.fn(),
-  },
-}));
+  };
+  client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
+  return { __esModule: true, default: client };
+});
 
 // #1280 — the detector now corroborates against Stream before refunding,
 // because our attendance rows come from per-participant webhook deliveries that
@@ -123,9 +136,9 @@ function noShowCandidate(payment: {
           ...payment,
         },
       ],
-      slotsOfAppointment: [
+      occurrences: [
         {
-          meetingSession: {
+          meeting: {
             // #1280 — the detector now asks Stream to corroborate before any
             // money moves, so the session needs a call id for it to ask about.
             // Without one it refuses, which is the correct behaviour and not
@@ -236,7 +249,7 @@ describe("consultant no-show refunds", () => {
 
   it("leaves a session the consultant actually attended alone", async () => {
     const attended = noShowCandidate({ id: "pay-1", amount: 150000 });
-    attended.appointment.slotsOfAppointment[0].meetingSession.attendances = [
+    attended.appointment.occurrences[0].meeting.attendances = [
       { userId: CONSULTEE_USER },
       { userId: CONSULTANT_USER },
     ];

@@ -122,7 +122,7 @@ function consultation(
     },
     appointment: {
       organizationId,
-      slotsOfAppointment: [{ endsAt: daysAgo(lastSessionDaysAgo) }],
+      occurrences: [{ endsAt: daysAgo(lastSessionDaysAgo) }],
     },
   };
 }

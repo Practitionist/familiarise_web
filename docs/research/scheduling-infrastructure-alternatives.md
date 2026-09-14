@@ -15,7 +15,7 @@ The current custom slot booking system has several concerns:
 
 **Current Implementation Files:**
 - `utils/timeSlotsProcessing.ts` - Core availability processing logic (~400 lines)
-- `app/api/slots/availability-with-allocation/[consultantId]/route.ts` - API endpoint with defensive filters
+- `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` - API endpoint with defensive filters
 - Multiple components consuming slot data
 
 ---

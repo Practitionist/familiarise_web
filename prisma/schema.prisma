@@ -63,8 +63,6 @@ model User {
   orgWorkspaceProfile   OrgWorkspaceProfile?
   orgWorkspaceProfileId String?              @unique
 
-  slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
-
   rescheduleRequestsInitiated RescheduleRequest[]      @relation("RescheduleInitiator")
   // #1319 — A9 participant edge, A12 status-history actor, cancelledBy FKs.
   appointmentParticipations   AppointmentParticipant[]
@@ -72,13 +70,13 @@ model User {
   consultationsCancelled      Consultation[]           @relation("ConsultationCancelledBy")
   subscriptionsCancelled      Subscription[]           @relation("SubscriptionCancelledBy")
   rescheduleRequestsResolved  RescheduleRequest[]      @relation("RescheduleResolver")
-  rescheduleSlotsProposed     RescheduleProposedSlot[] @relation("ProposedSlotAuthor")
+  rescheduleTimesProposed     RescheduleProposedTime[] @relation("ProposedTimeAuthor")
 
   // Newsletter signup, when the subscriber was signed in at the time.
   waitlistSubscriptions Waitlist[]
 
-  // Feedback and Support
-  feedbacks                 Feedback[]
+  // Platform feedback and support
+  platformFeedback          PlatformFeedback[]
   supportTickets            SupportTicket[]
   // #appt-support — per-appointment support conversations + private CSAT.
   appointmentSupportThreads AppointmentSupportThread[]
@@ -87,14 +85,13 @@ model User {
   supportTicketsAssigned    SupportTicket[]            @relation("SupportTicketAssignee")
   supportMessagesAuthored   SupportMessage[]           @relation("SupportMessageAuthor")
   supportFlowOutcomes       SupportFlowOutcome[]
-
-  accounts         Account[] // BetterAuth Accounts
-  sessions         Session[] // BetterAuth Sessions
-  members          Member[] // BetterAuth membership rows
-  memberships      Membership[] // Typed enterprise memberships (Arch 4-Modified)
-  invitationsSent  Invitation[]      @relation("InvitationsSent")
-  consentArtifacts ConsentArtifact[]
-  dpdpGrievances   DpdpGrievance[]
+  accounts                  Account[] // BetterAuth Accounts
+  sessions                  Session[] // BetterAuth Sessions
+  members                   Member[] // BetterAuth membership rows
+  memberships               Membership[] // Typed enterprise memberships (Arch 4-Modified)
+  invitationsSent           Invitation[]               @relation("InvitationsSent")
+  consentArtifacts          ConsentArtifact[]
+  dpdpGrievances            DpdpGrievance[]
 
   // Staff Dashboard Relations
   reportsSubmitted  ModerationReport[] @relation("ReportsSubmitted")
@@ -146,25 +143,27 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  invitations               Invitation[]
-  ssoproviders              SsoProvider[]
-  erasureRequests           ErasureRequest[]
+  invitations                   Invitation[]
+  ssoproviders                  SsoProvider[]
+  erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed  ErasureRequest[]      @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed      ErasureRequest[]      @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned          Dispute[]             @relation("DisputeAssignee")
+  disputesAssigned              Dispute[]             @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed         AppointmentDocument[] @relation("DocumentReviewer")
+  documentsReviewed             AppointmentDocument[] @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted          AppointmentDocument[] @relation("DocumentDeleter")
+  documentsDeleted              AppointmentDocument[] @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested Recording[]           @relation("RecordingConsentAttestor")
+  recordingsConsentAttested     Recording[]           @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases        RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
+  recordingPurchases            RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
+  // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
+  publishedCancellationPolicies CancellationPolicy[]  @relation("CancellationPolicyPublisher")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -215,7 +214,7 @@ model OnboardingDraft {
   ///     Zod-validated big-bang transaction into fully-normalized tables;
   ///     this row is a convenience cache deleted on completion.
   ///   * The real tables CANNOT be reused as draft storage. Achievement and
-  ///     SlotOfAvailabilityWeekly both require a consultantProfileId, and no
+  ///     AvailabilityWindowWeekly both require a consultantProfileId, and no
   ///     consultant profile exists until processOnboardingData creates one at
   ///     the very end of the wizard. Drafting into them would mean either
   ///     creating a half-built profile hours before the user commits to being
@@ -250,13 +249,15 @@ model OnboardingDraft {
   @@map("onboarding_drafts")
 }
 
-model Feedback {
-  id          String         @id @default(uuid())
+// Feedback ABOUT THE PLATFORM (bugs, suggestions), triaged by staff; not a
+// rating of any call — that is AppointmentFeedback (#1554).
+model PlatformFeedback {
+  id          String                 @id @default(uuid())
   title       String
-  description String         @db.Text
-  rating      Int?           @db.SmallInt
+  description String                 @db.Text
+  rating      Int?                   @db.SmallInt
   category    String?
-  status      FeedbackStatus @default(PENDING)
+  status      PlatformFeedbackStatus @default(PENDING)
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String
@@ -540,6 +541,11 @@ model SupportFlowOutcome {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
+  // #1300 — "did the self-serve tree help?" Bound to the flow terminal because a
+  // RESOLVED outcome writes no ticket. NULL = not asked or not answered, never a 1.
+  // See docs/support/04-deflection-and-support-csat.md.
+  helpfulRating Int? @db.SmallInt
+
   createdAt DateTime @default(now()) @db.Timestamptz
 
   // The deflection rate itself, and the per-flow breakdown behind it.
@@ -562,7 +568,22 @@ enum SupportFlowOutcomeKind {
 // ConsultantReview. Gives webinar/class a feedback path they lack today and
 // feeds the org-level quality signal. One per (appointment, user).
 model AppointmentFeedback {
-  id             String        @id @default(uuid())
+  id String @id @default(uuid())
+
+  // #1554 — the held call being rated; NULL means the rating is about the
+  // whole appointment (a subscription or class as a purchase).
+  occurrence              AppointmentOccurrence? @relation(fields: [appointmentOccurrenceId], references: [id], onDelete: Cascade)
+  appointmentOccurrenceId String?
+
+  // #1550 — the consultant on the rated call (or the plan's, for a whole-
+  // appointment rating), so the org rollup groups without a join.
+  consultantProfileId  String?
+  // #1580 — the PRESENTER collaborator on the rated call's plan, if any.
+  coPresenterProfileId String?
+
+  // Kept alongside the occurrence: the org quality aggregate and every appointment-
+  // scoped read filter on this, and denormalizing it avoids a join on the
+  // hottest path.
   appointmentId  String
   appointment    Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   userId         String
@@ -583,15 +604,48 @@ model AppointmentFeedback {
 
   createdAt DateTime @default(now())
 
-  @@unique([appointmentId, userId])
+  // #1300 — NULL = never edited since it was written. NOT @updatedAt: Prisma stamps
+  // that on create too; the feedback route sets this only when rating or comment change.
+  updatedAt DateTime? @db.Timestamptz
+
+  // #1300 — the rater's CLAIM of cause, and the staff-only adjudication that removes
+  // the row from every aggregate. Same taxonomy as ConsultantReview; the actor is on ModerationAction.
+  ratingCause             RatingCause?
+  excludedFromAggregateAt DateTime?          @db.Timestamptz
+  moderationActions       ModerationAction[]
+
+  // One rating per person per call AND one per person per whole appointment:
+  // the NULLS NOT DISTINCT unique appointment_feedback_level_key in prisma/sql
+  // on (appointmentId, appointmentOccurrenceId, userId). No @@unique/@@index
+  // on that triple here (#1268).
+  // Still the unit for "show me this booking's feedback".
+  @@index([appointmentId, userId])
   // The org aggregate filters raterRole before the date range, so
   // (organizationId, createdAt) is no longer a usable prefix for it.
   @@index([organizationId, raterRole, createdAt])
+  // #1550 — the org rollup groups attendee ratings by consultant.
+  @@index([organizationId, raterRole, consultantProfileId])
 }
 
 enum AppointmentFeedbackRole {
   CONSULTEE
   PROVIDER
+}
+
+/// #1300 — what a rater says drove a low score, on the private rating and the public
+/// review alike. A claim, never an adjudication. NULL = not asked or not answered;
+/// CONSULTANT is the only value about the person. See docs/reviews/04-rating-cause-and-aggregate-exclusion.md.
+enum RatingCause {
+  CONSULTANT
+  /// Our stack failed — Stream video or chat, auth, the meeting route.
+  PLATFORM_TECHNICAL
+  /// Billing, refund or invoice friction, not the session.
+  PAYMENT
+  /// Reschedule churn, late confirmation, allocation.
+  SCHEDULING
+  /// Materials, handouts, pre-reads — the content, not the delivery.
+  CONTENT
+  OTHER
 }
 
 enum SupportThreadStatus {
@@ -636,7 +690,7 @@ enum SupportThreadCategory {
   OTHER
 }
 
-enum FeedbackStatus {
+enum PlatformFeedbackStatus {
   PENDING
   ACKNOWLEDGED
   IN_PROGRESS
@@ -1019,12 +1073,12 @@ model Organization {
   // Per-org credit-note counters (#776) — independent CN sequence (Rule 53).
   creditNoteCounters OrgCreditNoteCounter[]
 
-  // Trial attribution — TrialSession.organizationId is optional. Set
+  // Trial attribution — Trial.organizationId is optional. Set
   // only when the trial booker is a LEARNER of an active org. Used for
   // conversion analytics ("what % of Wipro trials convert to paid?")
   // without coupling trials to the Program/BookingUtilization ledger
   // (that's a Programs v2 item in epic #703).
-  trialsByOrg TrialSession[] @relation("TrialsByOrg")
+  trialsByOrg Trial[] @relation("TrialsByOrg")
 
   // Referral attribution (#727) — same contract as TrialsByOrg.
   referralsByOrg Referral[] @relation("ReferralsByOrg")
@@ -1032,6 +1086,8 @@ model Organization {
   // #674 personal-vs-org scope split — appointments / recordings booked or
   // produced by org members. Mirrors TrialsByOrg.
   appointmentsByOrg       Appointment[]            @relation("AppointmentByOrg")
+  // #1499 — every version of this org's cancellation ladder, live and archived.
+  cancellationPolicies    CancellationPolicy[]     @relation("CancellationPolicyByOrg")
   rescheduleRequests      RescheduleRequest[]      @relation("RescheduleByOrg")
   appointmentParticipants AppointmentParticipant[] @relation("AppointmentParticipantByOrg")
   bookingStatusHistory    BookingStatusHistory[]   @relation("BookingStatusHistoryByOrg")
@@ -1040,8 +1096,8 @@ model Organization {
   // so org dashboards manage handouts without polymorphic joins.
   planMaterialsByOrg      PlanMaterial[]           @relation("PlanMaterialByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
-  // `MeetingSession.organizationId` for the write-side rationale.
-  streamSessionsByOrg     MeetingSession[]         @relation("StreamSessionByOrg")
+  // `Meeting.organizationId` for the write-side rationale.
+  meetings                Meeting[]                @relation("MeetingByOrg")
 
   // Payment attribution
   payments Payment[] @relation("PaymentOrgTag")
@@ -1642,7 +1698,7 @@ model LicensedSeatConfig {
   /// `null` means unlimited — used for LICENSE-funded contracts where
   /// the flat fee already pays for unmetered usage.
   /// Term chosen to avoid collision with BetterAuth `Session` and Stream
-  /// `MeetingSession`.
+  /// `Meeting`.
   coveredEngagementsPerCycle Int?
   overageBehavior            OverageBehavior @default(BLOCK)
   activeSeatCount            Int             @default(0)
@@ -1704,8 +1760,10 @@ model ProgramAssignment {
   membershipId String
   membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
-  periodStart DateTime
-  periodEnd   DateTime
+  // #1554 — timestamptz so the ACTIVE-overlap exclusion below can index tstzrange()
+  // (the timestamp→timestamptz cast is only STABLE and Postgres refuses it, 42P17).
+  periodStart DateTime @db.Timestamptz
+  periodEnd   DateTime @db.Timestamptz
 
   /// Engagements consumed in the current cycle (1 per Appointment).
   /// Atomically incremented by recordBookingUtilization, decremented by
@@ -1759,7 +1817,7 @@ model BookingUtilization {
   ///     the learner is being enrolled in (slots are pre-allocated by
   ///     the consultant; all appointments are known at enrolment time).
   ///   - SUBSCRIPTION: at slot-allocation time, 1 per consultant
-  ///     allocation — see SlotAllocationService.createAppointments. The
+  ///     allocation — see SchedulingService.createAppointments. The
   ///     subscription checkout itself does NOT write a utilization row.
   /// Reversal is the negative of this value via reverseBookingUtilization.
   engagementsConsumed Int               @default(1)
@@ -2892,7 +2950,7 @@ enum GrievanceStatus {
   RESOLVED
 }
 
-//////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
+//////////////////////////////////////////////////// USER PROFILES and SCHEDULING ////////////////////////////////////////////////////
 
 model ConsultantProfile {
   id          String    @id @default(uuid())
@@ -2901,32 +2959,21 @@ model ConsultantProfile {
   deletedAt   DateTime?
   description String?   @db.Text
   experience  Float?
-  rating      Float     @default(0)
 
-  // #705 — `rating` above stays the RAW mean over rating units and remains the
-  // internal/staff number. It is NOT the public one, because a 5.0 from a
-  // single session must not outrank a 4.8 from two hundred in explore's
-  // `{ rating: "desc" }` sort.
-  //
-  // NULL = suppressed: fewer than MIN_RATED_UNITS_FOR_PUBLIC_SCORE
-  // (lib/reviews.ts) distinct sessions have been rated, so one review cannot
-  // define a new consultant and there is nothing to gain by gaming the first.
-  // Public reads, the minRating filter and the rating sort read THIS column
-  // with `nulls: "last"`. NULL is also the safe default, which is why the
-  // column needs no backfill to be CORRECT on day one — only to stop being
-  // conservative.
-  publishedRating    Float?
-  // Denominator behind `rating`: rating UNITS, not review rows. This is what
-  // the minimum-N gate tests, so one 200-seat webinar cannot buy a published
-  // score off a single data point.
-  ratingUnitCount    Int       @default(0)
-  // Display only ("based on N reviews"). Also retires the trending sort's
-  // `{ reviews: { _count: "desc" } }`, which counts soft-deleted rows because
-  // Prisma cannot filter a relation _count inside orderBy.
-  reviewCount        Int       @default(0)
-  // Drift audit: finds profiles whose aggregates predate their newest review
-  // without recomputing every profile to find out.
+  // #1300 — stamped by every recompute; a drift audit, since a score only moves on a review mutation (#1566).
   ratingAggregatedAt DateTime? @db.Timestamptz
+
+  // #1300 — TWO published scores, never blended. NULL = suppressed: fewer rated
+  // clients/events than the floor in lib/reviews.ts, so one review cannot define a
+  // new consultant. Public reads sort on these with `nulls: "last"`.
+  // See docs/reviews/02-two-track-scoring.md.
+  publishedRatingOneToOne Float?
+  publishedRatingGroup    Float?
+
+  // The suppression denominators and the "based on N" display: distinct CLIENTS for
+  // 1:1, EVENTS with >= MIN_GROUP_RESPONSES_PER_EVENT responses for group.
+  ratedClientsOneToOne Int @default(0)
+  ratedEventsGroup     Int @default(0)
 
   // New fields for enhanced consultant profile
   headline                    String?                      @db.VarChar(120) // Professional headline, max 120 chars
@@ -2937,7 +2984,7 @@ model ConsultantProfile {
   languages                   String[]                     @default([])
   toolsAndTechnologies        String[]                     @default([])
   mentoringStyle              String?                      @db.Text
-  sessionTypes                SessionType[]                @default([])
+  offeringFormats             OfferingFormat[]             @default([])
   profileCompletionPercentage Int                          @default(0)
   isVerified                  Boolean                      @default(false)
   verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
@@ -2951,8 +2998,8 @@ model ConsultantProfile {
   reviews      ConsultantReview[]
   scheduleType ScheduleType
 
-  slotsOfAvailabilityWeekly SlotOfAvailabilityWeekly[]
-  slotsOfAvailabilityCustom SlotOfAvailabilityCustom[]
+  availabilityWindowsWeekly AvailabilityWindowWeekly[]
+  availabilityWindowsCustom AvailabilityWindowCustom[]
 
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
@@ -2963,9 +3010,9 @@ model ConsultantProfile {
   collaborations        Collaborator[] @relation("Collaborator")
   invitedCollaborations Collaborator[] @relation("CollaboratorInvitedBy")
 
-  // Trial sessions and activity logs
-  trialSessions TrialSession[]
-  activityLogs  ActivityLog[]
+  // Trials and activity logs
+  trials       Trial[]
+  activityLogs ActivityLog[]
 
   // ADR 18 — program curated-panel stub (unenforced)
   programAllowlists ProgramConsultantAllowlist[]
@@ -3035,7 +3082,10 @@ model ConsultantProfile {
   @@index([isVerified])
   @@index([verificationStatus])
   // #705 — explore sorts and filters on the published score, not the raw mean.
-  @@index([publishedRating])
+  // #1300 — for a per-track sort with nulls last; a composite cannot serve a sort on
+  // its trailing column, so two single-column indexes.
+  @@index([publishedRatingOneToOne])
+  @@index([publishedRatingGroup])
 }
 
 model Domain {
@@ -3090,52 +3140,86 @@ model ConsultantReview {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
-  // #705 — the session that earned the review. This is what makes "verified
-  // booking" a fact rather than a claim, and it is what lets a repeat client
-  // review each session instead of being locked out forever by the old
-  // per-pair unique. SetNull, not Cascade: tombstoning an appointment must not
-  // silently delete published consumer reviews. Nullable only for rows written
-  // before the column existed — the API requires it, so NULL means legacy.
+  // #705 — PROVENANCE, not subject. The review is about the consultant and
+  // renders on their profile; this records which session prompted or last
+  // updated it, which is what makes "verified booking" a fact rather than a
+  // claim. SetNull, not Cascade: tombstoning an appointment must not silently
+  // delete published consumer reviews. Nullable only for rows written before
+  // the column existed — the API requires it, so NULL means legacy.
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   appointmentId String?
 
-  // #705 — the unit that contributes exactly ONE data point to
-  // ConsultantProfile.rating, so a 200-seat webinar cannot dominate a
-  // consultant whose 1:1 work is the real offering, and one bad event cannot
-  // tank them. Denormalized at write time because Prisma `groupBy` can only
-  // group on this model's own scalars.
-  // Format: "appointment:<id>" for 1:1, "webinar:<id>", "class:<id>".
-  // A plain sessionType enum cannot do this job: a WEBINAR shares one
-  // Appointment across every attendee, but a CLASS mints one per enrolment, so
-  // grouping by type alone would collapse every class the consultant ever ran
-  // into a single point — worse than the problem being fixed.
+  // #1300 — the GROUP EVENT key ("webinar:<id>" / "class:<id>"); NULL on a 1:1 review.
+  // Deliberately not moved on edit: reassigning merges event buckets.
   ratingUnitId String?
+
+  // #1300 — which reputation this feeds. NULL = legacy, unclassifiable, counts toward
+  // neither score (fails closed, like AppointmentFeedback.raterRole). Never moved once set.
+  track ReviewTrack?
+
+  // #1300 — version of the LIVE text; 1 = never edited. Also the allocator for
+  // ConsultantReviewRevision.revisionNo: this row's lock serialises concurrent edits.
+  revisionNo Int @default(1)
+
+  // #1300 — when the review TEXT last changed; NULL = never edited. `updatedAt`
+  // cannot answer this, because a consultant's reply moves it too.
+  editedAt DateTime? @db.Timestamptz
+
+  // #1300 — the reviewer's CLAIM of cause, and the staff ADJUDICATION that removes the
+  // row from both scores. Who and why live on ModerationAction (#1562).
+  ratingCause             RatingCause?
+  excludedFromAggregateAt DateTime?    @db.Timestamptz
+
+  // #1300 — the rated OCCURRENCE's clock for recency decay, stamped from its endsAt;
+  // an edit must not refresh it. NULL = legacy or unbounded offline; falls back to createdAt.
+  ratedOccurrenceAt DateTime? @db.Timestamptz
+
+  // #1300 — the append-only edit trail.
+  revisions ConsultantReviewRevision[]
+
+  // #1300 — reports naming this review; a real relation, not a bare string.
+  moderationReports ModerationReport[]
 
   // #705 — the consultant's right of reply. One reply per review, so columns
   // rather than a table: every read of a review already loads this row.
   // replyDeletedAt is separate from the review's own deletedAt so staff can
   // remove an abusive reply without erasing the consumer review beneath it.
-  replyBody      String?   @db.Text
-  repliedAt      DateTime? @db.Timestamptz
-  replyDeletedAt DateTime? @db.Timestamptz
+  replyBody      String?      @db.Text
+  repliedAt      DateTime?    @db.Timestamptz
+  replyDeletedAt DateTime?    @db.Timestamptz
+  // #1562 — set with replyDeletedAt (sidecar CHECK): the consultant may write again after
+  // their own withdrawal, never after a takedown. The staff actor is the ModerationAction row.
+  replyRemovedBy ReviewActor?
+
+  // Display choice only. Authenticity never depends on it: the review is welded
+  // to a paid, attended session either way, which is what separates this from
+  // the anonymous public reviews Google stepped away from. What it buys is
+  // candour — a consultee who wants to book this person again has an obvious
+  // reason to soften criticism that carries their name.
+  isAnonymous Boolean @default(false)
 
   // Moderation CONTENT_REMOVED soft-delete (#693); public reads filter on
   // null, staff moderation surfaces keep seeing the row.
   deletedAt DateTime? @db.Timestamptz
 
+  // #1562 — set with deletedAt (sidecar CHECK): the author may revive their own withdrawal,
+  // nobody revives a moderation removal. The staff actor is the ModerationAction row.
+  removedBy         ReviewActor?
+  moderationActions ModerationAction[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // #705 — one review per attendee per SESSION, replacing the per-pair unique.
-  // A webinar's attendees share one appointmentId with distinct consultees, so
-  // this still caps each attendee at one review of that event. Deliberately
-  // not partial on deletedAt: a moderation-removed review must not free the
-  // slot for the same person to re-post it. POST maps P2002 here to 409.
-  // Legacy rows carry a NULL appointmentId, and Postgres treats a NULL key as
-  // distinct, so they coexist — prisma/sql/check-constraints.sql keeps the old
-  // per-pair rule alive for exactly that band.
-  @@unique([appointmentId, consulteeProfileId])
-  // Serves recomputeConsultantRating's groupBy — the only hot aggregate.
+  // ONE review per consultee per consultant, ever — Practo's model. A reader
+  // wants one considered opinion of a person, not four near-identical ones from
+  // the same client; the reviewer edits theirs as the relationship develops, and
+  // `appointmentId` above records which session last prompted that.
+  //
+  // #1549 — the unique is the sidecar `consultant_review_pair_track_event_key` on
+  // (…, track, ratingUnitId) NULLS NOT DISTINCT; never declare that tuple here (Prisma would clobber it).
+  @@index([consultantProfileId, consulteeProfileId])
+  // Serves the score recompute's per-consultant scan. No longer a groupBy: per-row
+  // decay weights cannot be expressed as a Prisma aggregate.
   @@index([consultantProfileId, deletedAt, ratingUnitId])
   @@index([appointmentId])
   // #696 — explore "trending" sort orders ConsultantProfile by
@@ -3144,6 +3228,51 @@ model ConsultantReview {
   // (The @@unique above already prefixes consultantProfileId, so no separate
   // single-column index is needed for it.)
   @@index([consulteeProfileId])
+}
+
+/// #1300 — which reputation a review contributes to. No MIXED value: a review lands
+/// in exactly one track, or in neither (NULL = legacy, unclassifiable).
+enum ReviewTrack {
+  ONE_TO_ONE
+  GROUP
+}
+
+/// #1562 — who performed a removal on a review or a reply. The author may revive their
+/// own withdrawal; nobody revives a moderation removal.
+enum ReviewActor {
+  AUTHOR
+  MODERATION
+}
+
+/// #1300 — one append-only row per SUPERSEDED version of a review's text. The live
+/// text stays on ConsultantReview, so a never-edited review has zero rows here and
+/// the "Edited" disclosure is an existence check. See docs/reviews/03-edit-trail-and-disclosure.md.
+model ConsultantReviewRevision {
+  id String @id @default(uuid())
+
+  /// Cascade: the trail is the review's own history, and account erasure reaches the review through two cascades.
+  review   ConsultantReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId String
+
+  /// The version this snapshot WAS, allocated from ConsultantReview.revisionNo in the same transaction.
+  revisionNo Int
+
+  /// The superseded values. `rating` is not nullable — a review always had one.
+  rating            Int     @db.SmallInt
+  reviewDescription String? @db.Text
+
+  /// When this text stopped being the live text.
+  supersededAt DateTime @default(now()) @db.Timestamptz
+
+  /// STORED, not derived: `repliedAt` is mutable. Moderation context only — every edit
+  /// is marked regardless, or a reply would become the consultant's switch.
+  afterPublicReply Boolean @default(false)
+
+  /// No editor column: only the author edits (#1562), and no `createdAt`: `supersededAt` is the insert time.
+  /// The guard behind the allocator: two concurrent edits cannot both claim revision 3.
+  @@unique([reviewId, revisionNo])
+  /// "This review's history, newest first".
+  @@index([reviewId, supersededAt])
 }
 
 model ConsulteeProfile {
@@ -3161,7 +3290,7 @@ model ConsulteeProfile {
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
   consultantReviews    ConsultantReview[]
-  trialSessions        TrialSession[]
+  trials               Trial[]
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -3373,22 +3502,25 @@ model Achievement {
   @@index([consultantProfileId])
 }
 
-//////////////////////////////////////////////////// AVAILABILITY SLOTS ////////////////////////////////////////////////////
+//////////////////////////////////////////////////// AVAILABILITY WINDOWS ////////////////////////////////////////////////////
 
-model SlotOfAvailabilityWeekly {
+// #1554 — the hours a consultant offers; never booked directly. Weekly rows keep
+// weekday + minutes-since-midnight with a frozen offset (#503); custom rows are concrete.
+model AvailabilityWindowWeekly {
   id                String     @id @default(uuid())
   startDay          DayOfWeek
   startTimeUtc      Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
   endDay            DayOfWeek
   endTimeUtc        Int        @db.SmallInt // Minutes since midnight UTC (0-1439)
-  utcOffsetMinutes  Int        @default(0) @db.SmallInt // UTC offset in minutes at slot creation (e.g. 330 for IST, -300 for EST)
+  utcOffsetMinutes  Int        @default(0) @db.SmallInt // UTC offset in minutes at window creation (e.g. 330 for IST, -300 for EST)
   // #872 — DST schema finalized, implementation deferred. IST-only at launch, so
   // the frozen utcOffsetMinutes above is the live source of truth. The columns
   // below are the DST-correct representation (RFC 5545 / Calendly-style: local
   // wall-clock + IANA zone, materialized to UTC per occurrence — a frozen offset
-  // drifts across DST). They are frozen into the launch schema now but left
-  // nullable + UNWRITTEN until the post-MVP algorithm + UI lands, so going
-  // DST-aware needs no post-launch migration.
+  // drifts across DST). They are WRITTEN from 2026-09-05 by every weekly save
+  // path (lib/scheduling/weeklyUtcOffset.ts) and READ BY NOTHING until the
+  // reader flip lands with the post-MVP algorithm + UI, so going DST-aware
+  // needs no post-launch migration and no backfill.
   timezone          String?    @db.VarChar(64) // IANA zone, e.g. "Asia/Kolkata"
   localStartMinutes Int?       @db.SmallInt
   localEndMinutes   Int?       @db.SmallInt
@@ -3407,7 +3539,7 @@ model SlotOfAvailabilityWeekly {
   @@index([consultantProfileId])
 }
 
-model SlotOfAvailabilityCustom {
+model AvailabilityWindowCustom {
   id       String   @id @default(uuid())
   startsAt DateTime @db.Timestamptz
   endsAt   DateTime @db.Timestamptz
@@ -3496,17 +3628,13 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById          String
-  requestedAt            DateTime          @default(now()) @db.Timestamptz
-  requestNotes           String?
-  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
-  feedbackFromConsultee  String?
-  feedbackFromConsultant String?
-  rating                 Float?
-
+  status             AppointmentStatus   @default(PENDING) @map("requestStatus")
+  requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById      String
+  requestedAt        DateTime            @default(now()) @db.Timestamptz
+  requestNotes       String?
+  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
@@ -3583,7 +3711,7 @@ model SubscriptionPlan {
   slug                   String?                @unique
   topics                 Topic[]                @relation("TopicToSubscriptionPlan")
 
-  // Trial session offer. Free by default ONLY until paid-trial checkout is
+  // Trial offer. Free by default ONLY until paid-trial checkout is
   // wired (booking rejects paid trials today); the wiring PR flips the
   // default to 10000 (₹100) and removes that gate together. ₹0 stays
   // allowed after the flip but the UI adds friction. Admin floor lives in
@@ -3607,7 +3735,7 @@ model SubscriptionPlan {
 
   subscriptions        Subscription[]
   subscriptionContents SubscriptionContent[]
-  trialSessions        TrialSession[]
+  trials               Trial[]
   materials            PlanMaterial[]
   faqs                 PlanFaq[]
 
@@ -3629,17 +3757,13 @@ model Subscription {
   // boundaries. The default only applies where the consultant has no zone.
   schedulingTimezone       String   @default("Asia/Kolkata")
 
-  status                 AppointmentStatus @default(PENDING) @map("requestStatus")
-  requestedBy            ConsulteeProfile  @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById          String
-  requestedAt            DateTime          @default(now()) @db.Timestamptz
-  requestNotes           String?
-  pendingPaymentUrl      String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource          BookingSource     @default(REQUEST_SUBMITTED)
-  feedbackFromConsultee  String?
-  feedbackFromConsultant String?
-  rating                 Float?
-
+  status             AppointmentStatus   @default(PENDING) @map("requestStatus")
+  requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById      String
+  requestedAt        DateTime            @default(now()) @db.Timestamptz
+  requestNotes       String?
+  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
   cancellationNotes  String?             @db.Text
@@ -3655,8 +3779,8 @@ model Subscription {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
 
-  appointments       Appointment[]
-  convertedFromTrial TrialSession?
+  appointment        Appointment?
+  convertedFromTrial Trial?
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -3687,12 +3811,12 @@ enum AppointmentStatus {
   @@map("RequestStatus")
 }
 
-// Trial session tracking for subscriptions
+// Trials: the free or paid first call that precedes a subscription
 
-model TrialSession {
-  id     String             @id @default(cuid())
-  status TrialSessionStatus @default(PENDING)
-  notes  String?            @db.Text // Consultee's questions/goals
+model Trial {
+  id     String      @id @default(cuid())
+  status TrialStatus @default(PENDING)
+  notes  String?     @db.Text // Consultee's questions/goals
 
   // One trial per consultant per consultee
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id])
@@ -3704,7 +3828,7 @@ model TrialSession {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
   subscriptionPlanId String
 
-  // Session scheduling
+  // The held call, once the consultant has picked a time.
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
@@ -3715,7 +3839,7 @@ model TrialSession {
 
   // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
   // checkout hand-off). Frozen with the wiring follow-up, same as above.
-  payment   Payment? @relation("TrialSessionPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  payment   Payment? @relation("TrialPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   paymentId String?  @unique
 
   // Outcome tracking
@@ -3758,11 +3882,11 @@ model TrialSession {
   @@index([status, paymentDueAt])
 }
 
-enum TrialSessionStatus {
+enum TrialStatus {
   PENDING // Requested, awaiting consultant action
   AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
   SCHEDULED // Time slot confirmed
-  COMPLETED // Trial session completed
+  COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
   CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
   REJECTED // Declined by consultant
@@ -3790,7 +3914,7 @@ model ActivityLog {
   subscriptionId String?
   webinarId      String?
   classId        String?
-  trialSessionId String?
+  trialId        String?
 
   createdAt DateTime @default(now())
 
@@ -4040,7 +4164,7 @@ model Class {
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
 
-  appointments Appointment[]
+  appointment Appointment?
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4178,20 +4302,21 @@ enum WaitlistSource {
 // Generic Appointment Model
 
 model Appointment {
-  /// Refund-policy snapshot taken at booking (2026-06-10 decision): tiered
-  /// time-based windows (e.g. [{hoursBefore:24,refundPct:100},...]) resolved
-  /// from org/platform defaults at checkout, so later policy edits never
-  /// retroactively change a buyer's terms. Read by the cancel flow; null =
-  /// pre-snapshot booking (platform default tiers apply).
-  cancellationPolicySnapshot Json?
+  /// #1499 — the exact CancellationPolicy version that governed this sale. NULL means
+  /// the platform ladder applies, which is also what a pre-feature row reads as, so the
+  /// two are deliberately indistinguishable. SetNull rather than Cascade: a booking must
+  /// survive its org being torn down, and losing the pointer degrades to the platform
+  /// ladder rather than deleting money history.
+  cancellationPolicy   CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
+  cancellationPolicyId String?
 
-  id                 String              @id @default(uuid())
-  appointmentType    AppointmentsType
-  slotsOfAppointment SlotOfAppointment[]
+  id              String                  @id @default(uuid())
+  appointmentType AppointmentsType
+  occurrences     AppointmentOccurrence[]
 
   // Dedupe surface for allocation retries (client double-submit, webhook
   // redelivery): the allocate routes read the Idempotency-Key header and
-  // SlotAllocationService stamps it on the batch's first appointment. A
+  // SchedulingService stamps it on the batch's first appointment. A
   // sequential replay (key already committed) is caught by the pre-check
   // and returns the original batch; a concurrent replay that races past
   // that pre-check instead trips @unique (P2002) and is converted to a 409
@@ -4203,16 +4328,18 @@ model Appointment {
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique
 
+  // #1554 — one Appointment per purchase: a subscription or class is one
+  // wrapper with N occurrences, so its link is unique like the other three.
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  subscriptionId String?
+  subscriptionId String?       @unique
 
   webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarId String?  @unique
 
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String?
+  classId String? @unique
 
-  trialSession TrialSession?
+  trial Trial?
 
   payment           Payment[]
   documents         AppointmentDocument[]
@@ -4270,15 +4397,14 @@ model Appointment {
   @@index([chatChannelEnsuredAt, deletedAt, createdAt])
   // #1169 PR 9 — `deletedAt: null` rides nearly every hot filter unindexed.
   @@index([deletedAt])
+  // #1499 — the org policy editor asks "how many bookings cite this version" and the
+  // SetNull on teardown scans by policy id.
+  @@index([cancellationPolicyId])
 }
 
-/// #1319 A9 (adopted, schema-only) — the participant edge the implicit
-/// SlotOfAppointment↔User m:n cannot carry: role, per-seat status, and which
-/// Payment funded the seat. Written by every slot-connect writer in the SAME
-/// transaction; read by nothing in production yet (readers flip in a later
-/// epic), so it is a shadow write whose only consumer is the drift assertion
-/// in scripts/appointments/reconcile-slot-availability.ts. Added before the
-/// pre-MVP reset so it is populated from day one and never backfilled.
+/// #1319 A9 / #1554 — the ONLY participant list: role, per-seat status, and which
+/// Payment funded the seat. Written by every creation path in the SAME transaction
+/// (#1544); its unique is the #827 double-booking guard since the per-occurrence m:n went.
 model AppointmentParticipant {
   id String @id @default(uuid())
 
@@ -4360,7 +4486,7 @@ enum BookingHistoryEntity {
   CLASS
   TRIAL
   RESCHEDULE_REQUEST
-  SLOT
+  OCCURRENCE
 }
 
 enum AppointmentsType {
@@ -4369,6 +4495,58 @@ enum AppointmentsType {
   WEBINAR
   CLASS
   TRIAL
+}
+
+/// #1499 — the refund policy that governed a booking, as typed versioned rows.
+/// A published version is IMMUTABLE: an edit publishes a NEW row at version+1 and
+/// archives the old one, because Appointment.cancellationPolicyId points at the exact
+/// row that governed the sale.
+/// Scope: exactly one row has organizationId = NULL (the platform default, fixed id
+/// PLATFORM_CANCELLATION_POLICY_ID, provisioned by the seed and idempotently on first
+/// use); every other row belongs to one organization. At most one ACTIVE row per scope,
+/// enforced by the Serializable rotation in publishOrgCancellationPolicy; the structural
+/// partial unique index is staged for the reset in prisma/sql/check-constraints.sql
+/// (doctrine section 6).
+model CancellationPolicy {
+  id                     String                   @id @default(uuid())
+  organization           Organization?            @relation("CancellationPolicyByOrg", fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId         String?
+  version                Int                      @default(1)
+  status                 CancellationPolicyStatus @default(ACTIVE)
+  /// Basis points (repo integer convention: RateCard.platformBps, TdsRate.rateBps);
+  /// the API speaks percent.
+  consultantInitiatedBps Int                      @default(10000)
+  /// The org's prose policy at publication time, for the support trail; never read by
+  /// the maths.
+  policyText             String?                  @db.Text
+  tiers                  CancellationPolicyTier[]
+  appointments           Appointment[]
+  publishedBy            User?                    @relation("CancellationPolicyPublisher", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  publishedByUserId      String?
+  createdAt              DateTime                 @default(now()) @db.Timestamptz
+  archivedAt             DateTime?                @db.Timestamptz
+
+  @@unique([organizationId, version])
+  @@index([organizationId, status])
+}
+
+/// One rung of a version's notice ladder. Immutable with its parent. The lowest rung is
+/// always hoursBefore 0, so the ladder is total.
+model CancellationPolicyTier {
+  id          String             @id @default(uuid())
+  policy      CancellationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policyId    String
+  hoursBefore Int
+  /// 0-10000. Basis points for the same reason consultantInitiatedBps is.
+  refundBps   Int
+
+  @@unique([policyId, hoursBefore])
+  @@index([policyId])
+}
+
+enum CancellationPolicyStatus {
+  ACTIVE
+  ARCHIVED
 }
 
 /// A request to move booked slots, carrying the concrete times proposed to
@@ -4397,16 +4575,16 @@ model RescheduleRequest {
   status RescheduleRequestStatus @default(PENDING_REVIEW)
   reason String?
 
-  /// The slots being released. Held as ids rather than a relation because the
+  /// The occurrences being released. Held as ids rather than a relation because the
   /// rows stay on the appointment (flipped to RESCHEDULED) and are re-confirmed
   /// in place when a proposal is accepted.
-  releasedSlotIds String[]
+  releasedOccurrenceIds String[]
 
   /// 1 = the opening proposal, 2 = the single permitted counter. There is no
   /// round 3; an unresolved counter falls back to consultant allocation.
   round Int @default(1)
 
-  /// min(now + 72h, first released slot − 24h). A proposal on a session three
+  /// min(now + 72h, first released occurrence − 24h). A proposal on a call three
   /// months out can wait days; one on a session this week has to resolve before
   /// the session itself arrives, so a single fixed timer gets one case wrong.
   expiresAt DateTime @db.Timestamptz
@@ -4419,7 +4597,7 @@ model RescheduleRequest {
   /// EVERY open row must claim this, including a preference-only one that names
   /// no times (#1065). It is the only guard there is — the route has no
   /// pre-check and the 409 is a bare P2002 catch — and list-selects, the
-  /// withdraw route and slotsAllowReschedule all read "at most one" as given.
+  /// withdraw route and occurrencesAllowReschedule all read "at most one" as given.
   openForAppointmentId String? @unique
 
   resolvedAt     DateTime? @db.Timestamptz
@@ -4447,7 +4625,7 @@ model RescheduleRequest {
   preferredTimeOfDay ReschedulePreferredTimeOfDay?
   preferredDays      ReschedulePreferredDays?
 
-  proposedSlots RescheduleProposedSlot[]
+  proposedTimes RescheduleProposedTime[]
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4460,8 +4638,9 @@ model RescheduleRequest {
   @@index([organizationId])
 }
 
-/// One concrete time offered as a replacement, by whichever side proposed it.
-model RescheduleProposedSlot {
+/// One concrete time offered as a replacement, by whichever side proposed it;
+/// it becomes an occurrence only if accepted (#1554).
+model RescheduleProposedTime {
   id String @id @default(uuid())
 
   rescheduleRequest   RescheduleRequest @relation(fields: [rescheduleRequestId], references: [id], onDelete: Cascade)
@@ -4473,7 +4652,7 @@ model RescheduleProposedSlot {
   /// Which round offered this; round 2 rows are the counter-offer.
   round Int @default(1)
 
-  proposedBy   User   @relation("ProposedSlotAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
+  proposedBy   User   @relation("ProposedTimeAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
   proposedById String
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
@@ -4684,21 +4863,23 @@ model PlanFaq {
   @@index([classPlanId, order])
 }
 
-model SlotOfAppointment {
+/// #1554 — one held call of an appointment. Who attends is AppointmentParticipant
+/// (#827 guard lives on its unique); the overlap guard is the range exclusion sidecar.
+model AppointmentOccurrence {
   id String @id @default(uuid())
 
-  /// #834 — the implicit m:n join table's unique index on (A,B) is
-  /// load-bearing: it makes concurrent checkout `connect` calls
-  /// double-assignment-safe. Restored automatically at every push/reset;
-  /// do not convert to an explicit join model without re-declaring it.
-  user User[] @relation("SlotOfAppointmentToUser")
+  // #705 — the per-call private rating.
+  feedback AppointmentFeedback[]
 
+  // #1554 — 1-based position; a replacement after a reschedule inherits it, the
+  // partial unique in prisma/sql ignores dead rows.
+  ordinal     Int
   startsAt    DateTime @db.Timestamptz
   endsAt      DateTime @db.Timestamptz
   isTentative Boolean  @default(false)
 
-  completionStatus SlotCompletionStatus @default(SCHEDULED)
-  completedAt      DateTime?            @db.Timestamptz
+  completionStatus OccurrenceCompletionStatus @default(SCHEDULED)
+  completedAt      DateTime?                  @db.Timestamptz
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -4706,13 +4887,16 @@ model SlotOfAppointment {
   /// #440 — denormalized consultant for the DB-level overlap guard. The
   /// exclusion constraint (btree_gist on (consultantProfileId,
   /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
-  /// sidecar (prisma/sql/check-constraints.sql: slot_no_confirmed_overlap); a
-  /// violation surfaces as Postgres 23P01 → 409 (SlotAllocationService
-  /// .classifyError). Nullable for attendee (webinar/class) slots, which the
+  /// sidecar (prisma/sql/check-constraints.sql: occurrence_no_confirmed_overlap); a
+  /// violation surfaces as Postgres 23P01 → 409 (SchedulingService
+  /// .classifyError). Nullable for attendee (webinar/class) rows, which the
   /// partial-index guard excludes.
   consultantProfileId String?
 
-  meetingSession MeetingSession?
+  meeting     Meeting?
+  // #1554 — attendance is keyed to the call itself, so the "were you there"
+  // gate reads it without going through Meeting.
+  attendances MeetingAttendance[]
 
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -4720,6 +4904,8 @@ model SlotOfAppointment {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
+  // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
+  // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
   // OPT-3: Additional indexes for time range queries in validateSlotAvailability
   @@index([appointmentId])
   // #440 — serves the overlap recheck + the future exclusion constraint.
@@ -4732,20 +4918,20 @@ model SlotOfAppointment {
   @@index([deletedAt])
 }
 
-enum SlotCompletionStatus {
+enum OccurrenceCompletionStatus {
   SCHEDULED // Default — future, not yet happened
-  COMPLETED // Session held (MeetingSession.endedAt OR manual mark)
-  UNVERIFIED // Past + no MeetingSession record (may be offline session)
+  COMPLETED // Call held (Meeting.endedAt OR manual mark)
+  UNVERIFIED // Past + no Meeting record (may be an offline call)
   CANCELLED // Explicitly cancelled before it occurred
   /// KEEP + WIRE decision (2026-06-10 audit): reschedule historically rode
   /// the isTentative boolean and never wrote this value; the reschedule flow
-  /// now stamps replaced slots RESCHEDULED so lifecycle is explicit.
-  RESCHEDULED // Replaced by a later slot (via reschedule/reallocation)
+  /// now stamps replaced occurrences RESCHEDULED so lifecycle is explicit.
+  RESCHEDULED // Replaced by a later occurrence (via reschedule/reallocation)
 }
 
 ////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
 
-model MeetingSession {
+model Meeting {
   id           String   @id @default(cuid())
   streamCallId String   @unique
   platform     Platform @default(STREAM)
@@ -4763,21 +4949,21 @@ model MeetingSession {
 
   recordings        Recording[]
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
-  recordingConsents MeetingRecordingConsent[] // #1134 P1-7
+  recordingConsents RecordingConsent[] // #1134 P1-7
 
-  slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAppointmentId String            @unique
+  occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String                @unique
 
-  /// Denormalized from `slotOfAppointment.appointment.organizationId` —
+  /// Denormalized from `occurrence.appointment.organizationId` —
   /// the canonical tenant key (#674). Lets org-scoped Stream call audit
   /// queries (e.g. `/api/organizations/[orgId]/stream/calls`) index
   /// directly on (organizationId, createdAt) instead of joining
-  /// MeetingSession → SlotOfAppointment → Appointment. Nullable because
+  /// Meeting → AppointmentOccurrence → Appointment. Nullable because
   /// platform calls (personal bookings) have no org context. Written at
-  /// MeetingSession.create time alongside slotOfAppointmentId; never
+  /// Meeting.create time alongside appointmentOccurrenceId; never
   /// updated after.
   organizationId String?
-  organization   Organization? @relation("StreamSessionByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organization   Organization? @relation("MeetingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4791,7 +4977,7 @@ model MeetingSession {
 /// set on the first join, lastLeftAt advances on each leave, joinCount tracks
 /// rejoins. Drives #471 (no-show = no row) and #472 (overrun = lastLeftAt/
 /// endedAt past the slot end). userId is the Stream user_id, which equals our
-/// User.id — stored plain like MeetingSession.recordingStartedBy, no FK.
+/// User.id — stored plain like Meeting.recordingStartedBy, no FK.
 /// #1134 P1-7 — per-session recording consent.
 ///
 /// Before this, a consultee learned a session was being recorded from a passive
@@ -4808,13 +4994,13 @@ model MeetingSession {
 ///
 /// `noticeVersion` records which wording the person actually saw, so a later
 /// copy change cannot retroactively reinterpret an old decision.
-model MeetingRecordingConsent {
-  id               String         @id @default(uuid())
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
+model RecordingConsent {
+  id        String  @id @default(uuid())
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId String
   /// Stream user id, which equals User.id. Stored plain, matching
-  /// MeetingAttendance.userId and MeetingSession.recordingStartedBy.
-  userId           String
+  /// MeetingAttendance.userId and Meeting.recordingStartedBy.
+  userId    String
 
   decision      RecordingConsentDecision
   decidedAt     DateTime                 @db.Timestamptz
@@ -4825,11 +5011,11 @@ model MeetingRecordingConsent {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  /// One standing decision per person per session; changing your mind updates it.
-  @@unique([meetingSessionId, userId])
+  /// One standing decision per person per meeting; changing your mind updates it.
+  @@unique([meetingId, userId])
   @@index([userId])
-  /// Serves the recording gate: "has anyone on this session declined?"
-  @@index([meetingSessionId, decision])
+  /// Serves the recording gate: "has anyone on this meeting declined?"
+  @@index([meetingId, decision])
 }
 
 /// Declared below the model that uses it, per the schema convention.
@@ -4839,20 +5025,25 @@ enum RecordingConsentDecision {
 }
 
 model MeetingAttendance {
-  id               String         @id @default(cuid())
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
-  userId           String
-  firstJoinedAt    DateTime       @db.Timestamptz
-  lastLeftAt       DateTime?      @db.Timestamptz
-  joinCount        Int            @default(1)
+  id                      String                @id @default(cuid())
+  meeting                 Meeting               @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId               String
+  // #1554 — the call this attendance belongs to, stamped by the participant
+  // webhook so the rating gate reads "you were at THIS call" without a join.
+  occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentOccurrenceId String
+  userId                  String
+  firstJoinedAt           DateTime              @db.Timestamptz
+  lastLeftAt              DateTime?             @db.Timestamptz
+  joinCount               Int                   @default(1)
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([meetingSessionId, userId])
-  @@index([meetingSessionId])
+  @@unique([meetingId, userId])
+  @@index([meetingId])
   @@index([userId])
+  @@index([appointmentOccurrenceId, userId])
 }
 
 // Recording storage types
@@ -5009,18 +5200,18 @@ model Recording {
   // #366 — standalone replay purchases (see RecordingPurchase).
   purchases RecordingPurchase[]
 
-  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingSessionId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingId String
 
   // #674 personal-vs-org scope split — denormalized via parent appointment
-  // (Recording → MeetingSession → SlotOfAppointment → Appointment.organizationId).
+  // (Recording → Meeting → AppointmentOccurrence → Appointment.organizationId).
   organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([meetingSessionId])
+  @@index([meetingId])
   @@index([organizationId, createdAt])
   @@index([streamRecordingId])
   @@index([status])
@@ -5122,7 +5313,7 @@ model Payment {
   // Back-relations for org settlement flows
   organizationEarnings       OrganizationEarnings[] // PROVIDER/HYBRID 3-way split (one per org)
   organizationInvoiceSettled OrganizationInvoice?     @relation("OrgInvoicePayment") // back-relation for OrganizationInvoice.payment
-  trialSessionPaid           TrialSession?            @relation("TrialSessionPayment") // back-relation for TrialSession.payment
+  trialPaid                  Trial?                   @relation("TrialPayment") // back-relation for Trial.payment
   appointmentParticipants    AppointmentParticipant[]
   bookingUtilization         BookingUtilization?      @relation("PaymentBookingUtilization") // Program entitlement usage
   invoiceLineItems           InvoiceLineItem[] // back-relation for InvoiceLineItem.payment
@@ -5429,9 +5620,15 @@ model ConsultantEarnings {
   // Float percentage. Derived display field; the authoritative cut is the paise.
   shareBps Int         @default(10000)
 
+  // #1569 — the paid call, for a per-call fee (consultation, webinar, trial);
+  // NULL for a whole-purchase fee (subscription, class) until it is split.
+  appointmentOccurrenceId String?
+
   // Status tracking
   status           EarningStatus  @default(PENDING)
-  holdUntil        DateTime       @db.Timestamptz // Release after hold period
+  // #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
+  // recomputed when a reschedule moves the call.
+  holdUntil        DateTime       @db.Timestamptz
   paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
@@ -5451,7 +5648,9 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  @@unique([paymentId, consultantProfileId, role])
+  // One row per (payment, consultant, role, occurrence): the NULLS NOT DISTINCT
+  // sidecar unique consultant_earnings_occurrence_key in prisma/sql; no
+  // @@unique/@@index on that set here (#1268).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])
@@ -6004,7 +6203,7 @@ model Referral {
   qualifiedAt          DateTime?
   qualifyingAction     String?
 
-  // #727 — attribution-only org tag, mirroring TrialSession.organizationId.
+  // #727 — attribution-only org tag, mirroring Trial.organizationId.
   // Set when the referrer is a member of an active org; no money coupling
   // (org-funded payments still block credit application per #766).
   organization   Organization? @relation("ReferralsByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
@@ -6119,32 +6318,39 @@ model Collaborator {
   webinarPlanId       String?
   classPlanId         String?
   role                CollaboratorRole
-  // #768 lockdown #12 — replaced permissions Json with typed booleans.
-  canApprovePayment   Boolean            @default(false)
-  canViewAnalytics    Boolean            @default(false)
-  canEditEvent        Boolean            @default(false)
-  canSeeAttendees     Boolean            @default(false)
+  // #1580 — what the role grants: PRESENTER (CO_HOST / CO_INSTRUCTOR) sees the
+  // roster and holds host controls; CREW does not. Derived from `role` on write.
+  tier                CollaboratorTier
   // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
   revenueShareBps     Int
   status              CollaboratorStatus @default(PENDING)
-  invitedById         String
+  // #1580 — SetNull: the inviting profile's departure must not delete the seat.
+  invitedById         String?
   respondedAt         DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarPlan       WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan         ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  invitedBy         ConsultantProfile @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile  @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlan       WebinarPlan?       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan         ClassPlan?         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  invitedBy         ConsultantProfile? @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // Postgres treats NULLs as distinct, so each unique only bites for its own plan type.
   @@unique([consultantProfileId, webinarPlanId])
   @@unique([consultantProfileId, classPlanId])
+  // One live PRESENTER per plan: the partial uniques collaborator_one_presenter_
+  // {webinar,class} in prisma/sql (#1580).
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([status])
   @@index([invitedById])
+}
+
+// #1580 — declared after the model that uses it.
+enum CollaboratorTier {
+  PRESENTER
+  CREW
 }
 
 enum CollaboratorType {
@@ -6156,7 +6362,8 @@ enum CollaboratorStatus {
   PENDING
   ACCEPTED
   DECLINED
-  REMOVED
+  REMOVED // the host took the seat away
+  WITHDRAWN // #1580 — the collaborator left of their own accord
 }
 
 // #784 — union of the old WebinarCollaboratorRole + ClassCollaboratorRole values.
@@ -6241,9 +6448,10 @@ enum BudgetPreference {
   FLEXIBLE // No specific preference
 }
 
-enum SessionType {
-  ONE_ON_ONE // 1:1 video/audio sessions
-  GROUP // Group sessions
+// #1554 — the SHAPES of work a consultant offers; not a scheduling unit.
+enum OfferingFormat {
+  ONE_ON_ONE // 1:1 video/audio calls
+  GROUP // Group events
   ASYNC_REVIEW // Asynchronous document/code review
 }
 
@@ -6279,6 +6487,11 @@ enum ModerationActionType {
   // that could sign in but never chat again. Recording the reversal here keeps
   // the whole enforcement history on one report.
   USER_REINSTATED
+  // #1562 — direct staff acts on reviews and feedback that have no report behind them.
+  REVIEW_REMOVED
+  REVIEW_REPLY_REMOVED
+  REVIEW_EXCLUDED_FROM_AGGREGATE
+  FEEDBACK_EXCLUDED_FROM_AGGREGATE
 }
 
 enum ProfileVerificationStatus {
@@ -6319,7 +6532,10 @@ model ModerationReport {
   targetUser   User   @relation("ReportsReceived", fields: [targetUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
   // Optional entity references
-  reviewId String? // If reporting a ConsultantReview
+  // #1300 — a real relation, not a bare string. SetNull: a report is a record of what
+  // someone objected to even if the row it named is gone.
+  review   ConsultantReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  reviewId String?
 
   // #1270 — a MESSAGE report carried no pointer to the message it was about.
   // CONTENT_REMOVED therefore had nothing to delete (it fell through to the
@@ -6349,6 +6565,8 @@ model ModerationReport {
   @@index([createdAt])
   // #1270 — the per-message dedup lookup in POST /api/report.
   @@index([streamMessageId])
+  // The staff queue's "reports about this review", and the SetNull scan.
+  @@index([reviewId])
 }
 
 model ModerationAction {
@@ -6356,12 +6574,19 @@ model ModerationAction {
   actionType ModerationActionType
   notes      String?              @db.Text
 
-  report   ModerationReport @relation(fields: [reportId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  reportId String
+  // #1562 — nullable: a direct takedown, a reply removal or an exclusion has no report.
+  report   ModerationReport? @relation(fields: [reportId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  reportId String?
 
-  // Staff who took the action
-  takenById String
-  takenBy   User   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  // #1562 — the content the act was about; a sidecar CHECK requires one of report/review/feedback.
+  review     ConsultantReview?    @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  reviewId   String?
+  feedback   AppointmentFeedback? @relation(fields: [feedbackId], references: [id], onDelete: SetNull)
+  feedbackId String?
+
+  // Staff who took the action. SetNull: a departed staff member must not delete the record of what they did.
+  takenById String?
+  takenBy   User?   @relation(fields: [takenById], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // Post-hoc record of which side-effects actually executed (sessions
   // revoked, appointments cancelled, refund totals, per-step failures) —
@@ -6371,6 +6596,8 @@ model ModerationAction {
   createdAt DateTime @default(now())
 
   @@index([reportId])
+  @@index([reviewId])
+  @@index([feedbackId])
   @@index([takenById])
   @@index([actionType])
 }
@@ -6739,25 +6966,55 @@ model ScimGroupMapping {
 /// migration — Prisma 7's `partialIndexes` is still preview and the DB
 /// is the authoritative gate for "at most one open request per user".
 model ErasureRequest {
-  id                 String        @id @default(cuid())
-  userId             String
-  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  requestedAt        DateTime      @default(now())
-  completedAt        DateTime?
-  status             ErasureStatus @default(PENDING)
-  reason             String?       @db.Text
+  id                      String                  @id @default(cuid())
+  userId                  String
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt             DateTime                @default(now())
+  completedAt             DateTime?
+  status                  ErasureStatus           @default(PENDING)
+  reason                  String?                 @db.Text
   /// FK to the admin (User row with role=ADMIN) who processed or
   /// rejected the request. SetNull on admin deletion so the audit row
   /// survives — the regulatory evidence-of-erasure trail must outlive
   /// staff turnover. The processor's role is verified at the route
   /// layer; no DB-side enum constraint.
-  processedByAdminId String?
-  processedByAdmin   User?         @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
-  notes              String?       @db.Text
+  processedByAdminId      String?
+  processedByAdmin        User?                   @relation("ErasureRequestProcessor", fields: [processedByAdminId], references: [id], onDelete: SetNull)
+  notes                   String?                 @db.Text
+  /// #1593 — the Stream revocations the scrub still owes, one outbox row each.
+  streamRevocationRetries StreamRevocationRetry[]
 
   @@index([status, requestedAt])
   @@index([processedByAdminId])
   @@index([userId])
+}
+
+/// #1593 — an outbox row per (plan, erasure) whose Stream revocation failed inside
+/// the scrub; the retry sweep drains it, like FailedEmail / OutboundWebhookDelivery.
+model StreamRevocationRetry {
+  id               String           @id @default(cuid())
+  erasureRequest   ErasureRequest   @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
+  erasureRequestId String
+  planType         CollaboratorType
+  planId           String
+  status           RetryStatus      @default(PENDING)
+  attempts         Int              @default(0)
+  nextRetryAt      DateTime?        @db.Timestamptz
+  lastError        String?          @db.Text
+  completedAt      DateTime?        @db.Timestamptz
+  createdAt        DateTime         @default(now()) @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @db.Timestamptz
+
+  @@unique([erasureRequestId, planType, planId])
+  @@index([status, nextRetryAt])
+}
+
+/// Declared after the model that uses it. FAILED = the last attempt failed and
+/// the next is scheduled; SUCCEEDED is terminal.
+enum RetryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
 }
 
 enum ErasureStatus {

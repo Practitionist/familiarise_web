@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -56,12 +57,12 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
         include: {
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: { id: true },
-                  },
-                },
+              occurrences: true,
+              // #1554 — seat ids only; the explore/checkout capacity gates
+              // count these and never a User row per attendee.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -70,7 +71,12 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       topics: true,
       faqs: { orderBy: { order: "asc" } },
       collaborators: {
-        where: { status: "ACCEPTED" as const },
+        // A soft-deleted (erased) profile leaves the public co-host list even
+        // if its row somehow stayed ACCEPTED (#1580).
+        where: {
+          status: "ACCEPTED" as const,
+          consultantProfile: { deletedAt: null },
+        },
         include: {
           consultantProfile: {
             select: {
@@ -134,14 +140,12 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       },
       classes: {
         include: {
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: { id: true },
-                  },
-                },
+              occurrences: true,
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -151,7 +155,12 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       faqs: { orderBy: { order: "asc" } },
       classContents: { orderBy: { order: "asc" } },
       collaborators: {
-        where: { status: "ACCEPTED" as const },
+        // A soft-deleted (erased) profile leaves the public co-host list even
+        // if its row somehow stayed ACCEPTED (#1580).
+        where: {
+          status: "ACCEPTED" as const,
+          consultantProfile: { deletedAt: null },
+        },
         include: {
           consultantProfile: {
             select: {

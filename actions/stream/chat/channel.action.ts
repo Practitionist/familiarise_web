@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
@@ -279,8 +280,9 @@ export async function createWebinarChannel(
       },
       appointment: {
         include: {
-          slotsOfAppointment: {
-            include: { user: { select: { id: true } } },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -296,11 +298,9 @@ export async function createWebinarChannel(
     throw new Error(`Consultant not found for webinar: ${webinarId}`);
   }
 
-  // Registrants are the users connected to the webinar's session slots.
+  // Registrants are the live seat holders on the webinar's appointment (#1554).
   const appointmentIds =
-    webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
-      slot.user.map((u) => u.id),
-    ) || [];
+    webinar.appointment?.participants.map((p) => p.userId) || [];
 
   const allParticipantIds = Array.from(new Set(appointmentIds));
 
@@ -358,10 +358,11 @@ export async function createClassChannel(
           },
         },
       },
-      appointments: {
+      appointment: {
         include: {
-          slotsOfAppointment: {
-            include: { user: { select: { id: true } } },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -378,9 +379,7 @@ export async function createClassChannel(
   }
 
   const appointmentIds =
-    classData.appointments?.flatMap((apt) =>
-      apt.slotsOfAppointment?.flatMap((slot) => slot.user.map((u) => u.id)),
-    ) || [];
+    classData.appointment?.participants.map((p) => p.userId) || [];
 
   const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
 
@@ -462,9 +461,12 @@ export async function createConsultationChannel(
   // on a self-pair, so skip rather than take the whole approval path down.
   // Same guard the search routes apply per row.
   if (consultantId === consulteeId) {
-    streamLogger.warn("Skipping consultation channel — consultant and consultee are the same user", {
-      consultationId,
-    });
+    streamLogger.warn(
+      "Skipping consultation channel — consultant and consultee are the same user",
+      {
+        consultationId,
+      },
+    );
     return null;
   }
 
@@ -530,23 +532,10 @@ export async function createSubscriptionChannel(
       requestedBy: {
         include: { user: { select: { id: true } } },
       },
-      // Pull a single org-tagged appointment so we can fall back to
-      // its org id when the plan itself isn't org-hosted but the
-      // subscription is funded through an org-funded membership.
-      // Subscription has a 1:N appointments relation; all appointments
-      // in one subscription share the same org context (the org pays
-      // for the whole subscription upfront) so taking the first is
-      // sufficient. (C.3 / #674)
-      appointments: {
-        where: { organizationId: { not: null } },
-        select: { organizationId: true },
-        // Deterministic, not just filtered: `take: 1` over an
-        // unordered result can hand different callers different
-        // rows if a subscription ever carries two org-tagged
-        // appointments, which is the same divergence one layer down.
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        take: 1,
-      },
+      // The wrapper's org tag is the fallback when the plan itself isn't
+      // org-hosted but the subscription is funded through an org-funded
+      // membership (C.3 / #674). #1554 — one wrapper per subscription.
+      appointment: { select: { organizationId: true } },
     },
   });
 
@@ -559,9 +548,12 @@ export async function createSubscriptionChannel(
 
   // Same self-pair guard as the consultation path above.
   if (consultantId === consulteeId) {
-    streamLogger.warn("Skipping subscription channel — consultant and consultee are the same user", {
-      subscriptionId,
-    });
+    streamLogger.warn(
+      "Skipping subscription channel — consultant and consultee are the same user",
+      {
+        subscriptionId,
+      },
+    );
     return null;
   }
 
@@ -684,10 +676,25 @@ export async function createCollaboratorChannel(
   const channelId = `collab-${planType}-${planId}`;
   const client = getStreamChatClient();
 
+  // Stream refuses a channel whose members it has never seen; every other
+  // creator here upserts first, and this one did not (FAMILIARISE_WEB-37, #1580).
+  // The roster is whoever the upsert could sync: a member without
+  // STREAM_DATA_PROCESSING consent is left out of create, add and remove alike.
+  const { droppedIds } = await upsertUsersToStream(expectedMemberIds);
+  const roster = expectedMemberIds.filter((id) => !droppedIds.includes(id));
+  if (roster.length < 2 || !roster.includes(hostUserId)) {
+    streamLogger.warn("Skipping collaborator channel - roster not syncable", {
+      planType,
+      planId,
+      droppedIds,
+    });
+    return null;
+  }
+
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
     created_by_id: hostUserId,
-    members: expectedMemberIds,
+    members: roster,
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
   } as Record<string, unknown>);
@@ -707,9 +714,7 @@ export async function createCollaboratorChannel(
     .filter((id): id is string => !!id);
 
   // Add members present in DB but missing from channel
-  const toAdd = expectedMemberIds.filter(
-    (id) => !currentMemberIds.includes(id),
-  );
+  const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
   if (toAdd.length > 0) {
     await channel.addMembers(toAdd);
     streamLogger.debug("Collaborator channel: added missing members", {
@@ -719,9 +724,7 @@ export async function createCollaboratorChannel(
   }
 
   // Remove channel members no longer in the DB set
-  const toRemove = currentMemberIds.filter(
-    (id) => !expectedMemberIds.includes(id),
-  );
+  const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
   if (toRemove.length > 0) {
     await channel.removeMembers(toRemove);
     streamLogger.debug("Collaborator channel: removed departed members", {
@@ -734,14 +737,14 @@ export async function createCollaboratorChannel(
     channelId,
     planType,
     planId,
-    memberCount: expectedMemberIds.length,
+    memberCount: roster.length,
     added: toAdd.length,
     removed: toRemove.length,
   });
 
   return {
     channelId,
-    members: expectedMemberIds,
+    members: roster,
     channelData,
   };
 }

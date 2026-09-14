@@ -39,8 +39,8 @@ import type {
   RecordingStatus,
   ReferralStatus,
   RefundStatus,
-  SlotCompletionStatus,
-  TrialSessionStatus,
+  OccurrenceCompletionStatus,
+  TrialStatus,
   WaitlistStatus,
   WebinarStatus,
 } from "@prisma/client";
@@ -127,52 +127,51 @@ export const appointmentStatusBadge = (
   status: AppointmentStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(APPOINTMENT_STATUS_BADGE, status);
 
-// ───────────────────────────── TrialSessionStatus ─────────────────────────────
+// ───────────────────────────── TrialStatus ─────────────────────────────
 
-export const TRIAL_STATUS_BADGE: Record<TrialSessionStatus, StatusBadgeStyle> =
-  {
-    PENDING: {
-      label: "Pending",
-      className: "bg-amber-100 text-amber-900 border-amber-200",
-      dotClassName: "bg-amber-500",
-    },
-    // Accepted by the consultant, waiting on the learner to pay. Amber like
-    // PENDING because both are "waiting", but the label names who we're
-    // waiting on — that distinction is the whole reason this status exists.
-    AWAITING_PAYMENT: {
-      label: "Awaiting payment",
-      className: "bg-amber-100 text-amber-900 border-amber-200",
-      dotClassName: "bg-amber-500",
-    },
-    SCHEDULED: {
-      label: "Scheduled",
-      className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-      dotClassName: "bg-emerald-500",
-    },
-    COMPLETED: {
-      label: "Completed",
-      className: "bg-green-100 text-green-900 border-green-200",
-      dotClassName: "bg-green-500",
-    },
-    CONVERTED: {
-      label: "Converted",
-      className: "bg-purple-100 text-purple-900 border-purple-200",
-      dotClassName: "bg-purple-500",
-    },
-    CANCELLED: {
-      label: "Cancelled",
-      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-      dotClassName: "bg-zinc-400",
-    },
-    REJECTED: {
-      label: "Rejected",
-      className: "bg-red-100 text-red-900 border-red-200",
-      dotClassName: "bg-red-500",
-    },
-  };
+export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
+  PENDING: {
+    label: "Pending",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+    dotClassName: "bg-amber-500",
+  },
+  // Accepted by the consultant, waiting on the learner to pay. Amber like
+  // PENDING because both are "waiting", but the label names who we're
+  // waiting on — that distinction is the whole reason this status exists.
+  AWAITING_PAYMENT: {
+    label: "Awaiting payment",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+    dotClassName: "bg-amber-500",
+  },
+  SCHEDULED: {
+    label: "Scheduled",
+    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
+    dotClassName: "bg-emerald-500",
+  },
+  COMPLETED: {
+    label: "Completed",
+    className: "bg-green-100 text-green-900 border-green-200",
+    dotClassName: "bg-green-500",
+  },
+  CONVERTED: {
+    label: "Converted",
+    className: "bg-purple-100 text-purple-900 border-purple-200",
+    dotClassName: "bg-purple-500",
+  },
+  CANCELLED: {
+    label: "Cancelled",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
+    dotClassName: "bg-zinc-400",
+  },
+  REJECTED: {
+    label: "Rejected",
+    className: "bg-red-100 text-red-900 border-red-200",
+    dotClassName: "bg-red-500",
+  },
+};
 
 export const trialStatusBadge = (
-  status: TrialSessionStatus | string | null | undefined,
+  status: TrialStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(TRIAL_STATUS_BADGE, status);
 
 // ───────────────────────────── Webinar / Class status ─────────────────────────────
@@ -211,34 +210,36 @@ export const eventStatusBadge = (
   status: WebinarStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(EVENT_STATUS_BADGE, status);
 
-// ───────────────────────────── SlotCompletionStatus ─────────────────────────────
+// ───────────────────────────── OccurrenceCompletionStatus ─────────────────────────────
 
-export const SLOT_STATUS_BADGE: Record<SlotCompletionStatus, StatusBadgeStyle> =
-  {
-    SCHEDULED: {
-      label: "Scheduled",
-      className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    },
-    COMPLETED: {
-      label: "Completed",
-      className: "bg-green-100 text-green-900 border-green-200",
-    },
-    UNVERIFIED: {
-      label: "Unverified",
-      className: "bg-amber-100 text-amber-900 border-amber-200",
-    },
-    CANCELLED: {
-      label: "Cancelled",
-      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    },
-    RESCHEDULED: {
-      label: "Rescheduled",
-      className: "bg-blue-100 text-blue-900 border-blue-200",
-    },
-  };
+export const SLOT_STATUS_BADGE: Record<
+  OccurrenceCompletionStatus,
+  StatusBadgeStyle
+> = {
+  SCHEDULED: {
+    label: "Scheduled",
+    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  },
+  COMPLETED: {
+    label: "Completed",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  UNVERIFIED: {
+    label: "Unverified",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
+  CANCELLED: {
+    label: "Cancelled",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
+  },
+  RESCHEDULED: {
+    label: "Rescheduled",
+    className: "bg-blue-100 text-blue-900 border-blue-200",
+  },
+};
 
 export const slotStatusBadge = (
-  status: SlotCompletionStatus | string | null | undefined,
+  status: OccurrenceCompletionStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(SLOT_STATUS_BADGE, status);
 
 // ───────────────────────────── WaitlistStatus ─────────────────────────────
@@ -386,6 +387,21 @@ export const PAYMENT_STATUS_BADGE: Record<
 export const paymentStatusBadge = (
   status: PaymentDisplayStatus | string | null | undefined,
 ): StatusBadgeStyle => resolve(PAYMENT_STATUS_BADGE, status);
+
+/** A solid dot for a seat chip — the badge's pastel fill vanishes at 6px. */
+const PAYMENT_STATUS_DOT: Record<PaymentDisplayStatus, string> = {
+  PENDING: "bg-amber-500",
+  SUCCEEDED: "bg-green-500",
+  FAILED: "bg-red-500",
+  EXPIRED: "bg-zinc-400",
+  REFUNDED: "bg-purple-500",
+  PARTIALLY_REFUNDED: "bg-purple-500",
+};
+
+export const paymentStatusDot = (
+  status: PaymentDisplayStatus | string | null | undefined,
+): string =>
+  PAYMENT_STATUS_DOT[status as PaymentDisplayStatus] ?? "bg-zinc-400";
 
 // ───────────────────────────── RefundStatus ─────────────────────────────
 

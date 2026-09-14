@@ -12,7 +12,8 @@ type OriginalSlotData = {
   endsAt: string;
 };
 
-export interface ProcessedSlot {
+// #1554 — the expert-page picker item: an interval with its localised display strings.
+export interface PickerInterval {
   id: string;
   localStartTime: string;
   localEndTime: string;

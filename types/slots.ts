@@ -1,13 +1,13 @@
 import { DayOfWeek } from "@prisma/client";
 
-export type TSlotTiming = {
+export type TIntervalTiming = {
   slotId: string;
   dateInISO: string;
   dayOfWeek: DayOfWeek;
   startsAt: string;
   endsAt: string;
-  slotOfAvailabilityId: string;
-  slotOfAppointmentId: string;
+  availabilityWindowId: string;
+  appointmentOccurrenceId: string;
   localStartTime: string;
   localEndTime: string;
   isAllocated?: boolean;

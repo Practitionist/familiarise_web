@@ -3,7 +3,7 @@
  *
  * Stream's `default` call type grants `join-call` to `user`, which means any
  * holder of a valid token for the app can join any call by id. Our call ids are
- * deterministic (`slot-<anchorSlotId>`) and slot ids travel in availability
+ * deterministic (`occurrence-<occurrenceId>`) and occurrence ids travel in appointment
  * payloads, so a signed-in stranger could open a private consultation from
  * devtools. The app-side check was a React conditional and stopped nothing.
  *

@@ -4,6 +4,7 @@ import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
   transitionRescheduleRequest,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -40,7 +41,7 @@ export async function withdrawRescheduleRequest(args: {
       id: true,
       status: true,
       initiatedById: true,
-      releasedSlotIds: true,
+      releasedOccurrenceIds: true,
       appointmentId: true,
       appointment: {
         select: {
@@ -71,20 +72,29 @@ export async function withdrawRescheduleRequest(args: {
       // deciding, this matches zero rows and throws rather than un-releasing
       // slots that a concurrent accept has already re-confirmed.
       await transitionRescheduleRequest(tx, {
+        actorUserId: withdrawnById,
+        appointmentId: request.appointmentId,
         where: { id: request.id },
         to: "WITHDRAWN",
         data: { resolvedById: withdrawnById },
       });
 
-      // Reverses exactly what the reschedule did to these rows.
-      const result = await tx.slotOfAppointment.updateMany({
-        where: {
-          id: { in: request.releasedSlotIds },
-          completionStatus: "RESCHEDULED",
-        },
-        data: { isTentative: false, completionStatus: "SCHEDULED" },
+      // Reverses exactly what the reschedule did to these rows. The from-set
+      // rides in `fromIn` rather than the WHERE (the helper overwrites
+      // `completionStatus` there), and `allowZero` keeps the outcome below
+      // intact: restoring nothing means the released rows are gone, which is
+      // what an allocation replacing them does, not a lost CAS.
+      // No appointmentId: a whole-subscription reschedule releases slots across
+      // sibling appointments, so each row's history belongs to the appointment
+      // it actually sits on, not to the one the proposal was opened against.
+      restored = await transitionOccurrenceCompletion(tx, {
+        actorUserId: withdrawnById,
+        where: { id: { in: request.releasedOccurrenceIds } },
+        to: "SCHEDULED",
+        data: { isTentative: false },
+        fromIn: ["RESCHEDULED"],
+        allowZero: true,
       });
-      restored = result.count;
 
       // A consultation reschedule sends the booking back to PENDING so it
       // re-enters the consultant's queue; withdrawing has to undo that or the
@@ -97,6 +107,8 @@ export async function withdrawRescheduleRequest(args: {
       // re-stamped.
       if (request.appointment?.consultationId) {
         await transitionConsultationRequest(tx, {
+          actorUserId: withdrawnById,
+          appointmentId: request.appointmentId,
           where: { id: request.appointment.consultationId },
           to: "APPROVED",
           fromIn: ["PENDING"],
@@ -120,6 +132,8 @@ export async function withdrawRescheduleRequest(args: {
         });
         if (sub?.status === "PENDING") {
           await transitionSubscriptionRequest(tx, {
+            actorUserId: withdrawnById,
+            appointmentId: request.appointmentId,
             where: { id: request.appointment.subscriptionId },
             to: "APPROVED",
             fromIn: ["PENDING"],
@@ -138,12 +152,15 @@ export async function withdrawRescheduleRequest(args: {
     reportSentryError(err, {
       subsystem: "bookings",
       op: "reschedule-withdraw",
-      extra: { rescheduleRequestId, releasedSlotIds: request.releasedSlotIds },
+      extra: {
+        rescheduleRequestId,
+        releasedOccurrenceIds: request.releasedOccurrenceIds,
+      },
     });
     throw err;
   }
 
-  // The updateMany filters on RESCHEDULED, so a row whose status drifted stays
+  // The CAS moves RESCHEDULED rows only, so a row whose status drifted stays
   // released while the request is already WITHDRAWN — a half-restored booking
   // that otherwise reports success and shows nothing anywhere. The withdrawal
   // itself is committed and correct, so this reports rather than throws.
@@ -153,10 +170,10 @@ export async function withdrawRescheduleRequest(args: {
   // does. Withdrawing after that is a no-op the user cannot have intended, not
   // a fault in this code. A PARTIAL restore is the genuine anomaly the check
   // was written for, because it leaves one booking in two states at once.
-  if (restored !== request.releasedSlotIds.length) {
+  if (restored !== request.releasedOccurrenceIds.length) {
     reportSentryError(
       new Error(
-        `Withdrawal restored ${restored} of ${request.releasedSlotIds.length} released slots.`,
+        `Withdrawal restored ${restored} of ${request.releasedOccurrenceIds.length} released slots.`,
       ),
       {
         subsystem: "bookings",
@@ -164,7 +181,7 @@ export async function withdrawRescheduleRequest(args: {
         expected: restored === 0,
         extra: {
           rescheduleRequestId,
-          releasedSlotIds: request.releasedSlotIds,
+          releasedOccurrenceIds: request.releasedOccurrenceIds,
           restored,
         },
       },
@@ -184,22 +201,30 @@ export async function withdrawRescheduleRequest(args: {
             appointmentType: true,
             consultation: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 consultationPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
             },
             subscription: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 subscriptionPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
@@ -235,11 +260,14 @@ export async function withdrawRescheduleRequest(args: {
       );
     }
   } catch (notifyErr) {
-    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
-      subsystem: "bookings",
-      op: "reschedule-withdraw-notify",
-      expected: true,
-    });
+    reportSentryError(
+      notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+      {
+        subsystem: "bookings",
+        op: "reschedule-withdraw-notify",
+        expected: true,
+      },
+    );
   }
 
   return { withdrawn: true };

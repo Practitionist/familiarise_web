@@ -561,7 +561,7 @@ describe("Entity Channel Creation", () => {
           consultantProfile: { user: { id: "consultant-1" } },
         },
         appointment: {
-          slotsOfAppointment: [{ user: [{ id: "user-3" }, { id: "user-1" }] }],
+          participants: [{ userId: "user-3" }, { userId: "user-1" }],
         },
       });
 
@@ -625,8 +625,8 @@ describe("Entity Channel Creation", () => {
           consultantProfile: { user: { id: "consultant-2" } },
         },
         appointments: [
-          { slotsOfAppointment: [{ user: [{ id: "user-b" }] }] },
-          { slotsOfAppointment: [{ user: [{ id: "user-c" }] }] },
+          { participants: [{ userId: "user-b" }] },
+          { participants: [{ userId: "user-c" }] },
         ],
       });
 

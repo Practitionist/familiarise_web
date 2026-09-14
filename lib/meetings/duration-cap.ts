@@ -6,7 +6,7 @@
  * Prisma and the Stream client into the test process, and so the reasoning
  * below has one home.
  */
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
 /**
  * Grace added on top of the booked run before Stream's own duration cap fires.

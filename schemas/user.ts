@@ -29,7 +29,11 @@ export const BudgetPreferenceEnum = z.enum([
   "FLEXIBLE",
 ]);
 
-export const SessionTypeEnum = z.enum(["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"]);
+export const OfferingFormatEnum = z.enum([
+  "ONE_ON_ONE",
+  "GROUP",
+  "ASYNC_REVIEW",
+]);
 
 // Derived from Prisma, not hand-listed: this drifted when ORG_WORKSPACE landed,
 // which made Partial<OnboardingFormData> unassignable to every step-form prop
@@ -243,7 +247,7 @@ export const ConsultantProfileSchema = z.object({
       `Mentoring style must be ${SHORT_FORM_TEXT_MAX} characters or less`,
     )
     .optional(),
-  sessionTypes: z.array(SessionTypeEnum).default([]),
+  offeringFormats: z.array(OfferingFormatEnum).default([]),
   profileCompletionPercentage: z.number().min(0).max(100).default(0),
   isVerified: z.boolean().default(false),
   totalMenteesHelped: z.number().default(0),

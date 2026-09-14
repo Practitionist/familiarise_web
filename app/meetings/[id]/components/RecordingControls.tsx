@@ -8,14 +8,14 @@ import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 
 interface RecordingControlsProps {
-  meetingSessionId: string;
+  meetingId: string;
   recordingEnabled: boolean;
   showOnlyButton?: boolean;
   showOnlyIndicator?: boolean;
 }
 
 const RecordingControls = ({
-  meetingSessionId,
+  meetingId,
   recordingEnabled: _recordingEnabled,
   showOnlyButton = false,
   showOnlyIndicator = false,
@@ -140,7 +140,7 @@ const RecordingControls = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          meetingSessionId,
+          meetingId,
         }),
       });
 
@@ -175,7 +175,7 @@ const RecordingControls = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          meetingSessionId,
+          meetingId,
         }),
       });
 

@@ -1,18 +1,18 @@
 import * as Sentry from "@sentry/nextjs";
 import {
-  TimeSlot,
+  CalendarInterval,
   calculateRequiredSlots,
   validateSlotDistribution,
 } from "./calendarUtils";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
-import { countSessionsForDay } from "./slotSelectionValidation";
-import { isRecurringEventType } from "@/utils/slotAllocation/types";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { countSessionsForDay } from "./intervalSelectionValidation";
+import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import { AllocationService } from "./allocationService";
 
 /**
  * Client-side pre-validation + submission for the manual and requested
  * allocation modes. Auto mode has no client engine: the hook submits
- * `isAuto: true` and the SERVER picks the slots (utils/slotAllocation/,
+ * `isAuto: true` and the SERVER picks the slots (utils/scheduling-engine/,
  * preference scoring per #1065). The old client auto-allocator that lived
  * here — strategies, scoring, week distribution — survived only as a test
  * oracle after #997 Phase 1 and is deleted (#997/#1132); the parity suite
@@ -29,7 +29,7 @@ export interface AllocationOptions {
   startDate?: Date; // Required for subscriptions and classes
   endDate?: Date; // Required for subscriptions and classes
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
-  requestedSlots?: TimeSlot[];
+  requestedSlots?: CalendarInterval[];
   pastConfirmedSlotCount?: number; // For in-progress recurring events
   // Idempotency-Key for the allocate request; a double-submit replays the
   // original batch server-side instead of double-booking (#837).
@@ -45,7 +45,7 @@ export interface AllocationOptions {
 
 export interface AllocationResult {
   success: boolean;
-  selectedSlots: TimeSlot[];
+  selectedSlots: CalendarInterval[];
   error?: string;
   /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
   errorCode?: string;
@@ -60,7 +60,7 @@ export class AllocationAlgorithms {
    * ENHANCED: Better validation and error handling
    */
   static async manualAllocate(
-    selectedSlots: TimeSlot[],
+    selectedSlots: CalendarInterval[],
     options: AllocationOptions,
   ): Promise<AllocationResult> {
     try {
@@ -161,10 +161,10 @@ export class AllocationAlgorithms {
         // CONSECUTIVE sessions — a length-modulo check would let scattered
         // fragments reach the required total while forming no real session,
         // which the server then rejects.
-        const byDay = SlotCalculationService.groupSlotsByDay(
+        const byDay = ScheduleCalculationService.groupSlotsByDay(
           selectedSlots,
           options.schedulingTimezone ??
-            SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
+            ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
         );
         for (const [, daySlots] of Array.from(byDay)) {
           const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
@@ -210,7 +210,7 @@ export class AllocationAlgorithms {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "client", feature: "slot-allocation" },
+          tags: { subsystem: "client", feature: "scheduling" },
           extra: { eventType: options.eventType, mode: "manual" },
         },
       );
@@ -299,7 +299,7 @@ export class AllocationAlgorithms {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         {
-          tags: { subsystem: "client", feature: "slot-allocation" },
+          tags: { subsystem: "client", feature: "scheduling" },
           extra: { eventType: options.eventType, mode: "requested" },
         },
       );

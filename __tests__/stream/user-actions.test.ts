@@ -30,7 +30,14 @@ jest.mock("../../lib/stream-client", () => ({
   // assertions exercise the real Stream client mock unchanged.
   withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
+  // Mirrors the real predicate: Stream's "no such user" shape (code 16 / 404).
+  isExpectedStreamError: (error: unknown) =>
+    error instanceof Error &&
+    ((error as { code?: number }).code === 16 ||
+      (error as { status?: number }).status === 404),
 }));
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: mockLogger,
@@ -126,6 +133,40 @@ describe("User Actions", () => {
       );
     });
 
+    it("returns a refusal for a deactivated account instead of throwing — an account state, not an outage", async () => {
+      mockUserCache.isUserSynced.mockReturnValue(false);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: "user-deact",
+        name: "Deactivated",
+        email: "d@example.com",
+        image: null,
+        role: "CONSULTANT",
+      });
+      const deactivated = Object.assign(
+        new Error(
+          'StreamChat error code 16: UpdateUsers failed with error: "user user-deact was deactivated"',
+        ),
+        { code: 16, status: 404 },
+      );
+      mockStreamClient.upsertUser.mockRejectedValue(deactivated);
+      const Sentry = await import("@sentry/nextjs");
+
+      const { upsertUserToStream } =
+        await import("../../actions/stream/chat/user.action");
+
+      // Returned, not thrown: a thrown server-action error is auto-captured.
+      await expect(upsertUserToStream("user-deact")).resolves.toEqual({
+        refused: "account-disabled",
+      });
+      expect(Sentry.captureException).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("deactivated or missing"),
+        expect.objectContaining({ userId: "user-deact" }),
+      );
+      expect(mockUserCache.markUserSynced).not.toHaveBeenCalled();
+    });
+
     it("should use user ID as name fallback", async () => {
       const mockUser = {
         id: "user-456",
@@ -218,7 +259,7 @@ describe("User Actions", () => {
 
       const result = await upsertUsersToStream(["user-1", "user-2"]);
 
-      expect(result).toEqual({ users: {} });
+      expect(result).toEqual({ users: {}, droppedIds: [] });
       expect(mockStreamClient.upsertUsers).not.toHaveBeenCalled();
     });
 
@@ -243,7 +284,11 @@ describe("User Actions", () => {
         "nonexistent-2",
       ]);
 
-      expect(result).toEqual({ users: {} });
+      // The unknown ids are reported back so a roster builder can leave them out (#1580).
+      expect(result).toEqual({
+        users: {},
+        droppedIds: ["nonexistent-1", "nonexistent-2"],
+      });
       expect(mockStreamClient.upsertUsers).not.toHaveBeenCalled();
       expect(mockLogger.warn).toHaveBeenCalledWith(
         "No users found for batch upsert",
@@ -313,7 +358,7 @@ describe("User Actions", () => {
       // Mock batched relationship queries (findMany + .then())
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
-      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");
@@ -380,7 +425,7 @@ describe("User Actions", () => {
         },
       ]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
-      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");
@@ -399,9 +444,9 @@ describe("User Actions", () => {
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");
 
-      await expect(
-        searchUsersWithRelationships("test"),
-      ).rejects.toThrow("DB failure");
+      await expect(searchUsersWithRelationships("test")).rejects.toThrow(
+        "DB failure",
+      );
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         "User search failed",

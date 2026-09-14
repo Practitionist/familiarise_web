@@ -25,13 +25,13 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [README.md](./booking/README.md) - System overview, source code map, recommended reading order
 - [01-architecture.md](./booking/01-architecture.md) - Services, data model, data flows, tentative lifecycle
 - [02-event-types-and-validation.md](./booking/02-event-types-and-validation.md) - 5 event types, rules, 3 validation layers
-- [03-slot-math-and-calculations.md](./booking/03-slot-math-and-calculations.md) - 30-min slots, week counting, consecutive validation
+- [03-interval-math-and-calculations.md](./booking/03-interval-math-and-calculations.md) - 30-min slots, week counting, consecutive validation
 - [04-api-reference.md](./booking/04-api-reference.md) - 8 endpoints, Zod schemas, error codes
 - [05-troubleshooting-and-changelog.md](./booking/05-troubleshooting-and-changelog.md) - Common errors, debugging, recent fixes
 - [06-booking-lifecycle.md](./booking/06-booking-lifecycle.md) - End-to-end booking journey, per-event flows, status transitions
 - [07-rescheduling-flow.md](./booking/07-rescheduling-flow.md) - Reschedule API, slot lifecycle, known issues
 - [08-cancellation-flow.md](./booking/08-cancellation-flow.md) - Cancel API, cascading effects, refund triggers
-- [09-trial-sessions.md](./booking/09-trial-sessions.md) - Trial session system, status lifecycle, conversion
+- [09-trials.md](./booking/09-trials.md) - Trial session system, status lifecycle, conversion
 - [10-checkout-payment-integration.md](./booking/10-checkout-payment-integration.md) - How bookings connect to payments
 - [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
 - [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
@@ -154,13 +154,45 @@ Notification system: Resend (transactional email) + Novu (multi-channel orchestr
 
 ---
 
-### Support & Feedback
+### Support
 
 The `#support-hub` system: per-appointment support threads, stateless platform
-intake, org triage, and private CSAT feedback.
+intake, org triage, ticket references, SLA clocks, and the deflection counter.
 
-- [support-hub.md](./support/support-hub.md) - Two-scope architecture, the error envelope + Sentry policy, authz gate, ticket references, the SLA model, the deflection counter, invariants, testing map
-- [engineering-log-2026-08-29.md](./support/engineering-log-2026-08-29.md) - The support-drawer turn loss: eight causes, the schema they required, and two stale audit claims
+- [README.md](./support/README.md) - System overview, the three sibling subsystems, source code map, recommended reading order
+- [01-architecture.md](./support/01-architecture.md) - Two scopes on one engine, the error envelope and Sentry policy, the authz gate, the hub surfaces
+- [02-the-grid.md](./support/02-the-grid.md) - What each record is anchored to, who may see it, and when it exists, across every actor and booking shape
+- [03-ticket-references-and-sla.md](./support/03-ticket-references-and-sla.md) - The `FAM-` reference series and the statutory SLA model
+- [04-deflection-and-support-csat.md](./support/04-deflection-and-support-csat.md) - What fraction the tree resolves, and the two halves of support CSAT
+- [05-schema-reference.md](./support/05-schema-reference.md) - Every support column and index, and why
+- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Eleven invariants to know before editing, and the test map
+- [07-engineering-log-2026-08-29.md](./support/07-engineering-log-2026-08-29.md) - The support-drawer turn loss: eight causes, the schema they required, and two stale audit claims
+
+---
+
+### Feedback
+
+The private per-call CSAT rail (`AppointmentFeedback`): one rating per person per session, and the organisation's floored aggregate over it.
+
+- [README.md](./feedback/README.md) - System overview, source code map, recommended reading order
+- [01-architecture.md](./feedback/01-architecture.md) - One rating per call, `raterRole` and fail-closed provenance, the API, edit semantics, soft-delete
+- [02-org-quality-signal.md](./feedback/02-org-quality-signal.md) - The per-consultant rollup, `quality.read`, the k-anonymity floors and three suppression rules
+- [03-schema-reference.md](./feedback/03-schema-reference.md) - Every column and index of `AppointmentFeedback`
+
+---
+
+### Reviews
+
+The public reputation rail (`ConsultantReview`, `ConsultantReviewRevision`, the score columns on `ConsultantProfile`, and the `ModerationAction` audit row).
+
+- [README.md](./reviews/README.md) - System overview, source code map, recommended reading order
+- [01-architecture.md](./reviews/01-architecture.md) - One review per relationship, anonymity, the right of reply, attributed removal, the public read allowlist
+- [02-two-track-scoring.md](./reviews/02-two-track-scoring.md) - The 1:1 and group tracks, the plain-mean formula and its gates, the constants, the recompute
+- [03-edit-trail-and-disclosure.md](./reviews/03-edit-trail-and-disclosure.md) - The revision trail, `editedAt` versus `updatedAt`, and why every edit is marked
+- [04-rating-cause-and-aggregate-exclusion.md](./reviews/04-rating-cause-and-aggregate-exclusion.md) - Ratings protection: the shared cause taxonomy, claim versus adjudication, excluded versus deleted
+- [05-moderation-and-reports.md](./reviews/05-moderation-and-reports.md) - Reporting a review, soft-delete on `CONTENT_REMOVED`, the staff queue
+- [06-schema-reference.md](./reviews/06-schema-reference.md) - Every column and index of the four models, with the index rationale
+- [07-deployment-and-deferred-work.md](./reviews/07-deployment-and-deferred-work.md) - Why the schema is additive-only, `db:preflight`, the push-then-recompute order, and the deferred issues
 
 ---
 
@@ -174,10 +206,15 @@ Storage management and document review system.
 
 ### Performance
 
-Implemented performance optimizations.
+Implemented performance optimizations. The numbering runs from the broad
+strategy documents to the individual slow-query investigations.
 
-- [dashboard-prefetching.md](./performance/dashboard-prefetching.md) - Dashboard prefetching
-- [optimization-checklist.md](./performance/optimization-checklist.md) - Optimization checklist
+- [00-optimization-checklist.md](./performance/00-optimization-checklist.md) - The React Query migration and the broader dashboard optimization history
+- [01-navigation-performance.md](./performance/01-navigation-performance.md) - Canonical record of the navigation and bundle round (PR #887)
+- [02-dashboard-prefetching.md](./performance/02-dashboard-prefetching.md) - Hover-based route prefetching strategy
+- [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
+- [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
+- [05-allocation-500-investigation.md](./performance/05-allocation-500-investigation.md) - Investigation: auto-allocate HTTP 500 and transaction-start timeout
 
 ---
 
@@ -208,8 +245,12 @@ Mobile API integration documentation.
 
 Prisma operations and migration documentation.
 
-- [migrations-guide.md](./prisma/migrations-guide.md) - Migrations guide
-- [prisma-7-migration.md](./prisma/prisma-7-migration.md) - Prisma 7 migration
+- [prisma/README.md](./prisma/README.md) - **Full index**, and which document applies to the current posture
+- [00-schema-map.md](./prisma/00-schema-map.md) - Domain diagrams of the Prisma schema
+- [01-migrations-guide.md](./prisma/01-migrations-guide.md) - General-purpose Prisma Migrate reference
+- [02-pre-mvp-reset-runbook.md](./prisma/02-pre-mvp-reset-runbook.md) - The one-time reset that finalises the launch schema
+- [03-cutover-to-migrations.md](./prisma/03-cutover-to-migrations.md) - Launch-day runbook: `db push` to versioned migrations
+- [04-prisma-7-migration.md](./prisma/04-prisma-7-migration.md) - Record of the Prisma 6 to 7 upgrade
 
 ---
 
@@ -251,31 +292,34 @@ Internal team documentation — onboarding, testing guides, and contributor reso
 
 Competitor analysis and research.
 
-- [README.md](./competitors/README.md) - Competitors overview
-- [01-topmate-io.md](./competitors/01-topmate-io.md) - Topmate analysis
-- [02-preplaced-in.md](./competitors/02-preplaced-in.md) - Preplaced analysis
-- [03-metvy-com.md](./competitors/03-metvy-com.md) - Metvy analysis
-- [04-upgrad-com.md](./competitors/04-upgrad-com.md) - upGrad analysis
-- [05-propeers-in.md](./competitors/05-propeers-in.md) - ProPeers analysis
-- [06-growthschool-io.md](./competitors/06-growthschool-io.md) - GrowthSchool analysis
+- [README.md](./competition/competitors/README.md) - Competitors overview
+- [01-topmate-io.md](./competition/competitors/01-topmate-io.md) - Topmate analysis
+- [02-preplaced-in.md](./competition/competitors/02-preplaced-in.md) - Preplaced analysis
+- [03-metvy-com.md](./competition/competitors/03-metvy-com.md) - Metvy analysis
+- [04-upgrad-com.md](./competition/competitors/04-upgrad-com.md) - upGrad analysis
+- [05-propeers-in.md](./competition/competitors/05-propeers-in.md) - ProPeers analysis
+- [06-growthschool-io.md](./competition/competitors/06-growthschool-io.md) - GrowthSchool analysis
 
-- [competitor-analysis.md](./competitor-analysis.md) - Consolidated competitor analysis
+- [competitor-analysis.md](./competition/competitors/competitor-analysis.md) - Consolidated competitor analysis
 
 ---
 
 ## Roadmap — Planned & Future Work
 
-All documentation for features, integrations, and improvements that are **not yet implemented**.
+Planned work is tracked in GitHub issues, not in this directory. `docs/roadmap/`
+was retired in #1535 because it had become a second backlog running alongside
+the issue tracker: the same work was recorded in both places and retired in only
+one, so the directory ended up asserting that Sentry, Upstash Redis, rate
+limiting and the BetterAuth migration were all unimplemented long after they
+shipped.
 
-- [roadmap/README.md](./roadmap/README.md) - **Full roadmap index**
+The rule now is that anything actionable is an issue. This directory holds
+architecture, decisions, runbooks and reference — what the system **is**, rather
+than what it might become.
 
-### Highlights
-
-- [Auth Migration (BetterAuth)](./roadmap/auth/betterauth-migration.md) - NextAuth → BetterAuth migration
+- [Open issues](https://github.com/Practitionist/familiarise_web/issues) — the backlog, banded by the `launch: pre-mvp`, `launch: post-mvp` and `launch: scale` labels
+- [#1535](https://github.com/Practitionist/familiarise_web/issues/1535) — the retirement record, with a verdict for each of the 45 deleted files
+- [#1532](https://github.com/Practitionist/familiarise_web/issues/1532) — ten unbuilt product features
+- [#1533](https://github.com/Practitionist/familiarise_web/issues/1533) — SMS and WhatsApp notification channels
+- [#1534](https://github.com/Practitionist/familiarise_web/issues/1534) — mega-menu, blog and community surfaces
 - [Enterprise Subsystem](enterprise/00-foundations/01-overview.md) - SSO, org management, billing, payouts (canonical implementation docs)
-- [Infrastructure Hardening](./roadmap/infrastructure/README.md) - Security, monitoring, scaling (14 audit documents)
-- [Service Integration Architecture](./roadmap/content-strategy/README.md) - Directus, ConvertKit, Enterprise interlinking (planned)
-- [Content Strategy](./roadmap/content-strategy/README.md) - CMS, blog, gated community
-- [Navigation Mega-Menu](./roadmap/navigation/README.md) - Mega-menu design
-- [15 Planned Features](./roadmap/features/) - AI summaries, smart matching, referrals, and more
-- [Performance Improvements](./roadmap/performance/) - Caching, scaling, zero-downtime migrations

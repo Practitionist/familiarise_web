@@ -45,17 +45,17 @@ export function ClientClassRegistration({
   const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;
 
-  // Check if user is already enrolled in this class
-  const appointments = classes?.flatMap((c) => c.appointments ?? []) ?? [];
+  // Check if user is already enrolled in this class (#1554: one wrapper)
+  const appointment = classes?.[0]?.appointment ?? null;
   const isAlreadyEnrolled = userId
-    ? isUserEnrolled(appointments, userId)
+    ? isUserEnrolled(appointment, userId)
     : false;
 
   // Capacity comes from the class instance when it sets one, else the plan.
   const capacity = getClassCapacity({
     classInstance: {
       maxParticipants: classes?.[0]?.maxParticipants ?? null,
-      appointments,
+      appointment,
     },
     plan: { maxParticipants: maxParticipants ?? plan.maxParticipants ?? 100 },
     excludeUserIds: consultantUserId ? [consultantUserId] : [],

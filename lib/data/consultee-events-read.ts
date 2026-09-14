@@ -16,6 +16,7 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -45,7 +46,7 @@ const liveProposalInclude = {
     expiresAt: true,
     initiatorRole: true,
     initiatedById: true,
-    proposedSlots: {
+    proposedTimes: {
       orderBy: { startsAt: "asc" },
       // #1163 — the consultee card filters these to the current round.
       select: { startsAt: true, endsAt: true, round: true },
@@ -93,7 +94,7 @@ export async function readConsulteeEvents(
   //   - Subscription / Class (1:many appointments): filter via
   //     `appointments.some.organizationId` so the parent surfaces if
   //     ANY child appointment matches the scope
-  //   - TrialSession: filter directly via `organizationId`
+  //   - Trial: filter directly via `organizationId`
   //
   // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active member
   // below `operations.read` resolves to. Branching on `kind === "org"` alone
@@ -104,7 +105,7 @@ export async function readConsulteeEvents(
     scope.kind === "all" ? undefined : scopeToWhereOrgId(scope);
   const manyApptOrgWhere: Prisma.AppointmentWhereInput | undefined =
     oneApptOrgWhere;
-  const trialOrgWhere: Prisma.TrialSessionWhereInput | undefined =
+  const trialOrgWhere: Prisma.TrialWhereInput | undefined =
     scope.kind === "all" ? undefined : scopeToWhereOrgId(scope);
 
   // TTFB bound: cap each booking query to recent-or-future rows. The
@@ -149,10 +150,10 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  meetingSession: {
+                  meeting: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
@@ -170,7 +171,7 @@ export async function readConsulteeEvents(
           // Org scope only — NO slot requirement (see consultation above);
           // take:EVENTS_TAKE bounds the row count without hiding slot-less
           // PENDING subscriptions. #887
-          ...(manyApptOrgWhere && { appointments: { some: manyApptOrgWhere } }),
+          ...(manyApptOrgWhere && { appointment: manyApptOrgWhere }),
         },
         include: {
           subscriptionPlan: {
@@ -190,13 +191,13 @@ export async function readConsulteeEvents(
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  meetingSession: {
+                  meeting: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
@@ -212,13 +213,9 @@ export async function readConsulteeEvents(
       prisma.webinar.findMany({
         where: {
           appointment: {
-            slotsOfAppointment: {
-              // TTFB bound: the user must own a slot AND it must be in-window.
-              some: {
-                user: { some: { id: userId } },
-                startsAt: { gte: since },
-              },
-            },
+            // TTFB bound: the user must hold a seat AND a call must be in-window.
+            participants: { some: liveParticipant(userId) },
+            occurrences: { some: { startsAt: { gte: since } } },
             ...(oneApptOrgWhere ?? {}),
           },
         },
@@ -259,10 +256,10 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  meetingSession: {
+                  meeting: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
@@ -277,17 +274,11 @@ export async function readConsulteeEvents(
       // Classes the user enrolled in.
       prisma.class.findMany({
         where: {
-          appointments: {
-            some: {
-              slotsOfAppointment: {
-                // TTFB bound: the user must own a slot AND it must be in-window.
-                some: {
-                  user: { some: { id: userId } },
-                  startsAt: { gte: since },
-                },
-              },
-              ...(manyApptOrgWhere ?? {}),
-            },
+          appointment: {
+            // TTFB bound: the user must hold a seat AND a call must be in-window.
+            participants: { some: liveParticipant(userId) },
+            occurrences: { some: { startsAt: { gte: since } } },
+            ...(manyApptOrgWhere ?? {}),
           },
         },
         include: {
@@ -325,12 +316,12 @@ export async function readConsulteeEvents(
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  meetingSession: {
+                  meeting: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },
                 },
@@ -343,7 +334,7 @@ export async function readConsulteeEvents(
         take: EVENTS_TAKE,
       }),
       // Trial sessions requested by the consultee
-      prisma.trialSession.findMany({
+      prisma.trial.findMany({
         where: {
           consulteeProfileId: consulteeId,
           ...(trialOrgWhere ?? {}),
@@ -372,18 +363,10 @@ export async function readConsulteeEvents(
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                    },
-                  },
-                  meetingSession: {
+                  meeting: {
                     select: { id: true, endedAt: true, endedReason: true },
                   },
                 },

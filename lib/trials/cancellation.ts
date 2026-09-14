@@ -16,17 +16,18 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { setParticipantStatus } from "@/lib/booking/participants";
-import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
+import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
+import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
 import {
-  computeRefundPct,
-  parsePolicySnapshot,
-} from "@/lib/payments/operations/cancellation-policy";
+  POLICY_TERMS_INCLUDE,
+  termsFromPolicyRow,
+} from "@/lib/payments/operations/cancellation-policy-store";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 
 export type TrialRefundOutcome = {
@@ -51,10 +52,10 @@ export async function softCancelTrialAppointment(
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: { appointmentId, deletedAt: null },
       data: {
-        completionStatus: SlotCompletionStatus.CANCELLED,
+        completionStatus: OccurrenceCompletionStatus.CANCELLED,
         deletedAt: now,
       },
     });
@@ -88,7 +89,7 @@ export async function refundCancelledTrial(args: {
 }): Promise<TrialRefundOutcome | null> {
   const { trialId, appointmentId, paymentId, initiatedByUserId } = args;
 
-  // TrialSession.paymentId is ledger truth once a paid trial settles, but the
+  // Trial.paymentId is ledger truth once a paid trial settles, but the
   // webhook writes it after capture — fall back to the appointment's payment so
   // a cancellation racing that write still refunds.
   const payment = await prisma.payment.findFirst({
@@ -111,8 +112,8 @@ export async function refundCancelledTrial(args: {
     ? await prisma.appointment.findUnique({
         where: { id: appointmentId },
         select: {
-          cancellationPolicySnapshot: true,
-          slotsOfAppointment: {
+          cancellationPolicy: POLICY_TERMS_INCLUDE,
+          occurrences: {
             orderBy: { startsAt: "asc" },
             take: 1,
             select: { startsAt: true },
@@ -121,13 +122,13 @@ export async function refundCancelledTrial(args: {
       })
     : null;
 
-  const startsAt = appointment?.slotsOfAppointment[0]?.startsAt;
+  const startsAt = appointment?.occurrences[0]?.startsAt;
   const hoursUntilStart = startsAt
     ? (startsAt.getTime() - Date.now()) / 3_600_000
     : -1;
 
   const refundPct = computeRefundPct(
-    parsePolicySnapshot(appointment?.cancellationPolicySnapshot),
+    termsFromPolicyRow(appointment?.cancellationPolicy),
     hoursUntilStart,
     args.isConsultantInitiated,
   );

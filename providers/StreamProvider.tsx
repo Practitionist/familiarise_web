@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
+import type { ConnectFailure } from "@/lib/stream/connect-failure";
 import {
   getStreamConnectionServerSnapshot,
   getStreamConnectionSnapshot,
@@ -22,7 +23,9 @@ export interface StreamConnectionState {
   chatConnected: boolean;
   videoConnected: boolean;
   isConnecting: boolean;
+  /** Raw SDK message — for the debug dialog. Surfaces render `failure`. */
   error: string | null;
+  failure: ConnectFailure | null;
   retryConnection: () => void;
 }
 
@@ -31,6 +34,7 @@ const DEFAULT_CONNECTION_STATE: StreamConnectionState = {
   videoConnected: false,
   isConnecting: false,
   error: null,
+  failure: null,
   retryConnection: () => {},
 };
 
@@ -92,6 +96,7 @@ const StreamProvider = ({ children, ...connectorProps }: StreamProviderProps) =>
     videoConnected: snapshot.videoConnected,
     isConnecting: snapshot.isConnecting,
     error: snapshot.error,
+    failure: snapshot.failure,
     retryConnection,
   };
 

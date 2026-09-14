@@ -8,17 +8,18 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Site & Branch Architecture](#site--branch-architecture)
-3. [Environment Variables — What's There and Why](#environment-variables--whats-there-and-why)
-4. [The BetterAuth / "Invalid Origin" Incident](#the-betterauth--invalid-origin-incident)
-5. [Netlify CLI Setup](#netlify-cli-setup)
-6. [DNS Architecture on Netlify](#dns-architecture-on-netlify)
-7. [Setting Up dev.familiarisenow.com](#setting-up-devfamiliariseonowcom)
-8. [GCP OAuth Configuration](#gcp-oauth-configuration)
-9. [The `netlify.toml` File](#the-netlifytoml-file)
-10. [Deployment Workflow](#deployment-workflow)
-11. [Gotchas, Errors & Debugging Log](#gotchas-errors--debugging-log)
-12. [Checklist for New Environments](#checklist-for-new-environments)
+2. [Platform Limits, Plan, Region and the MCP](#platform-limits-plan-region-and-the-mcp)
+3. [Site & Branch Architecture](#site--branch-architecture)
+4. [Environment Variables — What's There and Why](#environment-variables--whats-there-and-why)
+5. [The BetterAuth / "Invalid Origin" Incident](#the-betterauth--invalid-origin-incident)
+6. [Netlify CLI Setup](#netlify-cli-setup)
+7. [DNS Architecture on Netlify](#dns-architecture-on-netlify)
+8. [Setting Up dev.familiarisenow.com](#setting-up-devfamiliariseonowcom)
+9. [GCP OAuth Configuration](#gcp-oauth-configuration)
+10. [The `netlify.toml` File](#the-netlifytoml-file)
+11. [Deployment Workflow](#deployment-workflow)
+12. [Gotchas, Errors & Debugging Log](#gotchas-errors--debugging-log)
+13. [Checklist for New Environments](#checklist-for-new-environments)
 
 ---
 
@@ -26,7 +27,7 @@
 
 | Property               | Value                                                 |
 | ---------------------- | ----------------------------------------------------- |
-| Platform               | Netlify (Pro plan — `nf_team_pro`)                    |
+| Platform               | Netlify (Pro plan — `nf_team_pro`; account `type_slug` `orb-pro`) |
 | Site name              | `familiarise`                                         |
 | Site ID                | `$NETLIFY_SITE_ID`                                    |
 | Production URL         | `https://familiarisenow.com`                          |
@@ -37,6 +38,20 @@
 | Netlify account        | `Practitionist-Deploys` (email: `<team-admin-email>`) |
 | GitHub repo            | `https://github.com/Practitionist/familiarise_web`    |
 | DNS managed by         | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`)         |
+
+---
+
+## Platform Limits, Plan, Region and the MCP
+
+The facts below were verified on 2026-09-12 and are kept in full, with sources and the measurements behind them, in `.claude/skills/deployment/netlify/`; this section is the summary that a deploy-time question usually needs.
+
+Functions run in Singapore (`sin`, `ap-southeast-1`), the closest region Netlify offers to the Supabase project in Mumbai; Netlify has no Mumbai region. The Next.js server handler runs on `@netlify/plugin-nextjs@5.15.13` (runtime API v2) under Node 22 at 1024 MB with streaming invocation, and `cron-tick` is the one scheduled function, every five minutes.
+
+A request has two ceilings. The Lambda execution limit is 60 seconds and this site completes 32–39 second invocations, but the edge returns a 504 at roughly 26 seconds to any response that has not started streaming, so a Route Handler that awaits a long query before returning JSON fails at ~26 s while its write lands (#1454). Fit under ~25 s, stream early, or move the work to a Background Function (15 minutes, enabled on this plan, standalone file only); no setting raises the edge cut.
+
+The per-function `memory`/`vcpu` setting works on this plan when targeted by name in `netlify.toml`, and the 2048 MB A/B of 2026-08-22 showed it does not touch the ~24 s cold-instance stall (#1124); do not re-add it without new evidence. The stall is open with a drafted support ticket at `docs/perf/netlify-stall-ticket-draft.md`.
+
+The Netlify MCP (`@netlify/mcp`, configured in `.mcp.json.example`) reads projects, deploys, teams, and env vars and writes env vars; it cannot read logs or change limits. Warm its npx cache by hand before the first `/mcp` connect, because a cold install takes ~28 s against a 30 s connect timeout and a timed-out install leaves a torn cache. Function logs come from `netlify logs --url <deploy permalink> --json`; plan capabilities from `netlify api listAccountsForUser`; deploy history with per-function memory and region from `netlify api listSiteDeploys`. The recipes are in `.claude/skills/deployment/netlify/mcp-and-cli.md`.
 
 ---
 
@@ -100,7 +115,7 @@ These variables are not required for the app to boot, but they tune runtime beha
 | ---------------------- | ---------------- | --------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `PRISMA_SLOW_QUERY_MS` | unset (uses 500) | unset (uses 500) | Threshold in milliseconds above which Prisma logs a slow-query warning. Optional; defaults to `500`. Must be a positive number, otherwise the default is used. |
 
-When a query runs longer than `PRISMA_SLOW_QUERY_MS`, `lib/prisma.ts` emits a `[Prisma:SLOW_QUERY]` `console.warn` so that missing indexes and N+1 patterns surface in any environment without enabling full query logging. The rationale is documented in [Navigation Performance](../performance/navigation-performance.md).
+When a query runs longer than `PRISMA_SLOW_QUERY_MS`, `lib/prisma.ts` emits a `[Prisma:SLOW_QUERY]` `console.warn` so that missing indexes and N+1 patterns surface in any environment without enabling full query logging. The rationale is documented in [Navigation Performance](../performance/01-navigation-performance.md).
 
 ### Why `BETTER_AUTH_URL` is the most important variable
 
@@ -526,7 +541,7 @@ the dashboard env vars (dashboard wins on conflict):
 
 ### Build configuration in `next.config.mjs`
 
-A few build-time settings that affect the deployed bundle now live in `next.config.mjs` rather than in any Netlify configuration. The navigation-performance work (PR #887) added or broadened the following, and the reasoning for each is recorded in [Navigation Performance](../performance/navigation-performance.md):
+A few build-time settings that affect the deployed bundle now live in `next.config.mjs` rather than in any Netlify configuration. The navigation-performance work (PR #887) added or broadened the following, and the reasoning for each is recorded in [Navigation Performance](../performance/01-navigation-performance.md):
 
 - `experimental.optimizePackageImports` tree-shakes large barrel imports (such as the icon, charting, and Stream React packages) so only the symbols actually used ship to the client.
 - `experimental.staleTimes` lets the client router cache hold RSC payloads between navigations instead of refetching on every move, which is the single biggest contributor to instant in-app navigation.

@@ -1,9 +1,10 @@
 /**
- * Shared types for Feedback API responses.
- * Used by admin/feedback page and its API routes.
+ * Shared types for the platform-feedback API responses (feedback ABOUT the
+ * product, triaged by staff — not a rating of a call, #1554).
+ * Used by the staff feedback page and its API routes.
  */
 
-import type { FeedbackStatus } from "@prisma/client";
+import type { PlatformFeedbackStatus } from "@prisma/client";
 
 export interface FeedbackUser {
   id: string;
@@ -14,13 +15,13 @@ export interface FeedbackUser {
   createdAt?: string;
 }
 
-export interface Feedback {
+export interface PlatformFeedback {
   id: string;
   title: string;
   description: string;
   rating: number | null;
   category: string | null;
-  status: FeedbackStatus;
+  status: PlatformFeedbackStatus;
   user: FeedbackUser;
   createdAt: string;
   updatedAt: string;

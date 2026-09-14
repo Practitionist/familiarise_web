@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // Check if a trial already exists for this consultee-consultant pair
-    const existingTrial = await prisma.trialSession.findUnique({
+    const existingTrial = await prisma.trial.findUnique({
       where: {
         consulteeProfileId_consultantProfileId: {
           consulteeProfileId,

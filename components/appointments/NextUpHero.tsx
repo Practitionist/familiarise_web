@@ -6,7 +6,7 @@ import { CalendarCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/slots";
+import { getProximityLabel } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { CountdownBadge } from "./CountdownBadge";
@@ -49,7 +49,7 @@ export function NextUpHero({ vm, adapter, stats, onOpen }: NextUpHeroProps) {
   }
 
   const anchorSession = vm.nextAt
-    ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
   const proximity = getProximityLabel(vm.nextAt);
 

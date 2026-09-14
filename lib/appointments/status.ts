@@ -5,7 +5,7 @@
  * importing from a dashboard route.
  *
  * The event union carries statuses from three enums (AppointmentStatus,
- * TrialSessionStatus, Webinar/ClassStatus) plus legacy lowercase values,
+ * TrialStatus, Webinar/ClassStatus) plus legacy lowercase values,
  * so guards normalize case rather than typing against one enum.
  */
 
@@ -22,7 +22,7 @@ const TERMINAL_STATUSES = new Set([
   "REJECTED",
   "COMPLETED",
   "EXPIRED",
-  // TrialSessionStatus terminal: the consultee subscribed after the trial —
+  // TrialStatus terminal: the consultee subscribed after the trial —
   // nothing further can happen on the trial booking itself.
   "CONVERTED",
 ]);
@@ -92,7 +92,7 @@ export function isConfirmedStatus(status: string | null | undefined): boolean {
 /**
  * Badge style for the event status UNION (consultations/subscriptions carry
  * AppointmentStatus, webinars/classes carry Webinar/ClassStatus, trials
- * carry TrialSessionStatus). Tries the maps in specificity order and falls
+ * carry TrialStatus). Tries the maps in specificity order and falls
  * back to a neutral title-cased pill for legacy values.
  */
 export function eventUnionStatusBadge(

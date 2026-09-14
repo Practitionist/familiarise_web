@@ -173,7 +173,7 @@ A DM requires that the two people have transacted. `canDirectMessage`
 
 - a `Consultation` or `Subscription` in `APPROVED`,
   `APPROVED_PENDING_PAYMENT`, `SCHEDULED` or `COMPLETED`, in either direction;
-- or a shared, non-deleted `SlotOfAppointment`.
+- or a shared, non-deleted `AppointmentOccurrence`.
 
 Permanent once established — a lapsed subscription still leaves the thread
 open. `DM_ELIGIBLE_STATUSES` is shared by the gate, the two search routes, and
@@ -196,7 +196,7 @@ constant, so narrowing it evicts people from live conversations.
 }
 ```
 
-Members come from `appointment.slotsOfAppointment[].user`, deduplicated — a
+Members come from `appointment.appointmentOccurrences[].user`, deduplicated — a
 webinar's registrants are connected to every one of its slots, so the same id
 appears once per slot. The host is added separately and is always a member.
 
@@ -204,7 +204,7 @@ appears once per slot. The host is added separately and is always a member.
 
 **Format**: `class-{classId}` · **Stream type**: `team`
 
-Identical in shape; the roster walks `class.appointments[].slotsOfAppointment[].user`.
+Identical in shape; the roster walks `class.appointments[].appointmentOccurrences[].user`.
 
 ### Collaborators
 
@@ -332,7 +332,7 @@ export async function createWebinarChannel(webinarId: string) {
       },
       appointment: {
         include: {
-          slotsOfAppointment: { include: { user: true } },
+          appointmentOccurrences: { include: { user: true } },
         },
       },
     },
@@ -349,7 +349,7 @@ export async function createWebinarChannel(webinarId: string) {
 
   // Members are everyone connected to the webinar's session slots.
   const appointmentParticipantIds =
-    webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
+    webinar.appointment?.appointmentOccurrences?.flatMap((slot) =>
       slot.user.map((user) => user.id),
     ) || [];
 

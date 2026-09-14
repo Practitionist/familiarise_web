@@ -16,7 +16,7 @@ import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   CONSULTEE_JOIN_WINDOW_MS,
-} from "@/lib/appointments/slots";
+} from "@/lib/appointments/occurrences";
 import type {
   AppointmentBucket,
   AppointmentVM,
@@ -222,7 +222,7 @@ export function AppointmentsShell({
     const candidates = vms.filter((vm) => {
       if (vm.bucket !== "upcoming" && vm.bucket !== "needsAction") return false;
       if (!vm.nextAt) return false;
-      const anchor = vm.sessions.find(
+      const anchor = vm.occurrences.find(
         (s) => s.startsAt.getTime() === vm.nextAt?.getTime(),
       );
       const end =

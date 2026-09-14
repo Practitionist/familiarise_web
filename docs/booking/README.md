@@ -5,8 +5,8 @@ The booking system handles slot allocation and validation for all five event typ
 ```mermaid
 graph TD
     subgraph Frontend
-        A[useSlotAllocation Hook] --> B[AllocationService API Client]
-        C[useCalendarData Hook] --> D[UnifiedCalendar / SlotPicker]
+        A[useScheduling Hook] --> B[AllocationService API Client]
+        C[useCalendarData Hook] --> D[UnifiedCalendar / TimePicker]
     end
 
     subgraph "API Layer"
@@ -17,8 +17,8 @@ graph TD
     subgraph "Validation Pipeline"
         E --> G[Zod Schema Validation]
         F --> G
-        G --> H[SlotValidationService]
-        H --> I[SlotAllocationService]
+        G --> H[ScheduleValidationService]
+        H --> I[SchedulingService]
     end
 
     subgraph "Database"
@@ -32,10 +32,11 @@ graph TD
 - **30-minute atomic slots** -- all scheduling is built on 30-min intervals (48 per day)
 - **5 event types** -- consultation (one-time, 1:1), subscription (recurring, 1:1), webinar (one-time, 1:many), class (recurring, 1:many), trial (one-time, 1:1, free)
 - **3 allocation modes** -- auto (system finds slots), manual (user selects), requested (consultee pre-selects, consultant approves)
-- **3 validation layers** -- Zod schemas (input format) -> SlotValidationService (business rules) -> Prisma (DB constraints)
-- **Sunday-to-Saturday weeks** -- `SlotCalculationService.countWeeks()` is the single source of truth
+- **3 validation layers** -- Zod schemas (input format) -> ScheduleValidationService (business rules) -> Prisma (DB constraints)
+- **Sunday-to-Saturday weeks** -- `ScheduleCalculationService.countWeeks()` is the single source of truth
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
 - **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
+- The canonical scheduling glossary — availability window, bookable interval, appointment occurrence, appointment, engagement, meeting, trial, auth session — lives in [`docs/enterprise/00-foundations/07-scheduling-glossary.md`](../enterprise/00-foundations/07-scheduling-glossary.md), which this document assumes rather than restates.
 
 ## Reading the audit trail
 
@@ -43,13 +44,16 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 
 ## Source Code Map
 
-### Backend Services (`utils/slotAllocation/`)
+### Backend Services (`utils/scheduling-engine/`)
 
 | File                        | Purpose                                                                                        |
 | --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `SlotCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress |
-| `SlotValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules  |
-| `SlotAllocationService.ts`  | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation             |
+| `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress |
+| `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules  |
+| `SchedulingService.ts`  | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation             |
+| `intervals.ts`               | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange` |
+| `interval-validation.ts`     | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
+| `interval-meta.ts`           | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta` |
 | `types.ts`                  | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.             |
 
 ### Zod Schemas (`schemas/slotAllocation/`)
@@ -58,13 +62,13 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `validationSchemas.ts` | allocationRequestSchema, validationRequestSchema, eventIdSchema, formatZodError helper |
 
-Auto-allocation itself has no client-side engine: the client submits `isAuto: true` and the server (`utils/slotAllocation/`, preference scoring in `preferenceScoring.ts`) picks the slots. The client-side allocation code below pre-validates and submits only the manual and requested modes; the old client-side auto-allocator (strategies, scoring, week distribution) was deleted once it stopped serving anything but a test oracle.
+Auto-allocation itself has no client-side engine: the client submits `isAuto: true` and the server (`utils/scheduling-engine/`, preference scoring in `preferenceScoring.ts`) picks the slots. The client-side allocation code below pre-validates and submits only the manual and requested modes; the old client-side auto-allocator (strategies, scoring, week distribution) was deleted once it stopped serving anything but a test oracle.
 
 ### Frontend Hooks (`hooks/scheduling/`)
 
 | File                    | Purpose                                                                                                                 |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `useSlotAllocation.ts`  | Central hook for the Allocate Slots calendar: manual/requested submission, event-specific blocking, weekly distribution |
+| `useScheduling.ts`  | Central hook for the Allocate Slots calendar: manual/requested submission, event-specific blocking, weekly distribution |
 | `useCalendarData.ts`    | Calendar data sync: fetch, polling (`availabilityPolling.ts`), server-calculated slot status                            |
 | `useInFlightGuard.ts`   | Runs at most one instance of an async action at a time, keyed by string — guards double-click races on join/allocate    |
 | `useLazyJoinMeeting.ts` | Lazy-loads and joins a Stream call from a slot/appointment, built on `useInFlightGuard`                                 |
@@ -87,7 +91,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 
 ### Frontend Components (`components/scheduling/`)
 
-`UnifiedCalendar.tsx` (wrapped by `SafeUnifiedCalendar.tsx` for lazy-loading and error handling) is the shared week-grid calendar; `SlotPicker.tsx` and `SlotStatusLegend.tsx` build on it, and `slot-picker-policy.ts` describes the four surfaces that place slots on a consultant's calendar as data rather than as boolean props.
+`UnifiedCalendar.tsx` (wrapped by `SafeUnifiedCalendar.tsx` for lazy-loading and error handling) is the shared week-grid calendar; `TimePicker.tsx` and `SlotStatusLegend.tsx` build on it, and `slot-picker-policy.ts` describes the four surfaces that place slots on a consultant's calendar as data rather than as boolean props.
 
 ### API Routes (`app/api/bookings/`)
 
@@ -110,12 +114,12 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | See why the system is built this way   | [00-architecture-decisions.md](./00-architecture-decisions.md)                 |
 | Understand the system architecture     | [01-architecture.md](./01-architecture.md)                                     |
 | Learn event type rules and validation  | [02-event-types-and-validation.md](./02-event-types-and-validation.md)         |
-| Understand slot math and calculations  | [03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)         |
+| Understand slot math and calculations  | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)         |
 | Look up API endpoints                  | [04-api-reference.md](./04-api-reference.md)                                   |
 | Debug an error or see recent fixes     | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)   |
 | Understand rescheduling                | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                           |
 | Understand cancellation                | [08-cancellation-flow.md](./08-cancellation-flow.md)                           |
-| Learn about trial sessions             | [09-trial-sessions.md](./09-trial-sessions.md)                                 |
+| Learn about trial sessions             | [09-trials.md](./09-trials.md)                                 |
 | See how checkout connects to booking   | [10-checkout-payment-integration.md](./10-checkout-payment-integration.md)     |
 | Learn about concurrency and locking    | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
 | See all cron jobs and background tasks | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
@@ -126,6 +130,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
 | **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
 | Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
+| Look up booking table columns and indexes | [21-schema-reference.md](./21-schema-reference.md)                       |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 
@@ -136,7 +141,7 @@ For new developers, read in this order:
 1. **[06-booking-lifecycle.md](./06-booking-lifecycle.md)** -- End-to-end overview of how bookings flow from browse to completion
 2. **[02-event-types-and-validation.md](./02-event-types-and-validation.md)** -- The 5 event types and their rules
 3. **[01-architecture.md](./01-architecture.md)** -- Service layer, data model, data flows
-4. **[03-slot-math-and-calculations.md](./03-slot-math-and-calculations.md)** -- How 30-minute slot math works
+4. **[03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)** -- How 30-minute slot math works
 5. **[04-api-reference.md](./04-api-reference.md)** -- API endpoints and schemas
 6. **[10-checkout-payment-integration.md](./10-checkout-payment-integration.md)** -- How bookings connect to payments
 7. **[12-concurrency-and-locking.md](./12-concurrency-and-locking.md)** -- Race condition prevention
@@ -146,7 +151,7 @@ For new developers, read in this order:
 Then reference these as needed:
 
 - [07-rescheduling-flow.md](./07-rescheduling-flow.md), [08-cancellation-flow.md](./08-cancellation-flow.md) -- Modify existing bookings
-- [09-trial-sessions.md](./09-trial-sessions.md) -- Trial session specifics
+- [09-trials.md](./09-trials.md) -- Trial session specifics
 - [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md) -- Debug errors
 
 ## Related Documentation
@@ -154,6 +159,6 @@ Then reference these as needed:
 - **Payments**: [../payments/README.md](../payments/README.md) -- Payment architecture, checkout flows, refunds, payouts
 - **Notifications**: [../notifications/README.md](../notifications/README.md) -- Novu workflows triggered by booking events
 - **Agent-run booking test corpus**: `prompts/booking-algorithm-tests/` -- the E2E prompt corpus that exercises this subsystem; scenario prompts and the harness that runs them
-- **Booking-specific Claude Code skills**: `.claude/skills/booking-*` -- doctrine and workflow skills for agents working in this subsystem
+- **Booking-specific Claude Code skills**: `.claude/skills/booking/` -- doctrine and workflow skills for agents working in this subsystem
 - **Distributed Locking**: [../upstash/redis/locking/00_README.md](../upstash/redis/locking/00_README.md) -- Redis locking deep dive
 - **Cron Setup**: [../guides/cron-setup.md](../guides/cron-setup.md) -- Deployment-specific cron configuration

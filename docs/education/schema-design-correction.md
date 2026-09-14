@@ -67,7 +67,7 @@ model Payment {
 model Appointment {
   id                 String              @id @default(uuid())
   appointmentType    AppointmentsType
-  slotsOfAppointment SlotOfAppointment[]
+  appointmentOccurrences AppointmentOccurrence[]
 - paymentExpiresAt   DateTime?          // ❌ Removed redundant field
 
   payment Payment[]
@@ -127,7 +127,7 @@ const abandonedAppointments = await prisma.appointment.findMany({
 
 ```typescript
 // ✅ User deduplication using payment expiration
-const recentAttempt = await tx.slotOfAppointment.findFirst({
+const recentAttempt = await tx.appointmentOccurrence.findFirst({
   where: {
     // ... slot overlap logic
     appointment: {

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma } from "@prisma/client";
@@ -42,12 +43,8 @@ const consultationInclude = {
   },
   appointment: {
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
+      occurrences: {
+        include: {},
         orderBy: {
           startsAt: "asc" as const,
         },
@@ -80,15 +77,9 @@ const subscriptionInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
+      occurrences: true,
       payment: true,
     },
   },
@@ -115,19 +106,7 @@ const webinarInclude = {
   },
   appointment: {
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              consulteeProfileId: true,
-            },
-          },
-        },
-      },
+      occurrences: true,
       payment: true,
     },
   },
@@ -156,21 +135,9 @@ const classInclude = {
       },
     },
   },
-  appointments: {
+  appointment: {
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              consulteeProfileId: true,
-            },
-          },
-        },
-      },
+      occurrences: true,
       payment: true,
     },
   },
@@ -263,7 +230,7 @@ export async function GET(
         prisma.subscription.findMany({
           where: {
             requestedById: consulteeId,
-            appointments: { some: PERSONAL_ORG_PIN },
+            appointment: PERSONAL_ORG_PIN,
           },
           include: subscriptionInclude,
           orderBy: {
@@ -279,15 +246,10 @@ export async function GET(
               {
                 appointment: {
                   ...PERSONAL_ORG_PIN,
-                  slotsOfAppointment: {
+                  participants: {
                     some: {
-                      user: {
-                        some: {
-                          consulteeProfile: {
-                            id: consulteeId,
-                          },
-                        },
-                      },
+                      ...liveParticipant(),
+                      user: { consulteeProfile: { id: consulteeId } },
                     },
                   },
                 },
@@ -308,19 +270,12 @@ export async function GET(
             OR: [
               // Get classes where consultee is registered through appointments
               {
-                appointments: {
-                  some: {
-                    ...PERSONAL_ORG_PIN,
-                    slotsOfAppointment: {
-                      some: {
-                        user: {
-                          some: {
-                            consulteeProfile: {
-                              id: consulteeId,
-                            },
-                          },
-                        },
-                      },
+                appointment: {
+                  ...PERSONAL_ORG_PIN,
+                  participants: {
+                    some: {
+                      ...liveParticipant(),
+                      user: { consulteeProfile: { id: consulteeId } },
                     },
                   },
                 },

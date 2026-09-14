@@ -16,12 +16,12 @@ import { StreamChatScope } from "@/components/stream/StreamChatScope";
 export function MessagesTab() {
   // Connection state from the lazy Stream provider: render the chat UI only
   // once the chat client is live; surface failures instead of a blank box.
-  const { chatConnected, error, retryConnection } = useStreamConnection();
+  const { chatConnected, failure, retryConnection } = useStreamConnection();
 
   return (
     <div className="-m-4 h-[calc(100dvh-3.5rem-4rem-var(--maintenance-banner-height,0px))] overflow-hidden border-border bg-card sm:-m-6 md:h-[calc(100dvh-3.5rem-var(--maintenance-banner-height,0px))] lg:-m-8">
-      {error ? (
-        <ChatUnavailable description={error} onRetry={retryConnection} />
+      {failure ? (
+        <ChatUnavailable failure={failure} onRetry={retryConnection} />
       ) : chatConnected ? (
         <StreamChatScope>
           <ChatLayout />

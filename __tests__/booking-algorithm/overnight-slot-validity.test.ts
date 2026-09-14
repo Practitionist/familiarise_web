@@ -11,7 +11,7 @@
 
 import "./setup";
 
-import { isValidOvernightSlot } from "@/utils/timeSlotsProcessing";
+import { isValidOvernightSlot } from "@/utils/scheduling-engine/intervals";
 
 describe("isValidOvernightSlot", () => {
   it("accepts a normal forward slot", () => {

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -23,17 +24,20 @@ const webinarInclude = {
   },
   appointment: {
     include: {
-      slotsOfAppointment: {
+      // #1554 — the seat count is the live roster; ids only, so the planner
+      // payload never carries a User row per attendee.
+      participants: {
+        where: liveParticipant(),
+        select: { userId: true },
+      },
+      occurrences: {
         include: {
-          // Display fields only — the full User row per attendee was the
-          // planner payload's biggest over-fetch. Slot scalars
-          // (isTentative etc.) still come through; the in-memory
-          // participant count below relies on them.
-          user: { select: { id: true, name: true, email: true, image: true } },
           // #1061 — without this the planner cannot tell that the host has
           // already ended the call, so its Join gate could only ever expire on
           // the clock. Two columns per row.
-          meetingSession: { select: { id: true, endedAt: true, endedReason: true } },
+          meeting: {
+            select: { id: true, endedAt: true, endedReason: true },
+          },
         },
       },
     },
@@ -47,6 +51,10 @@ const webinarInclude = {
  * the bound drops rows the join path could never pick while keeping every run
  * it can pick whole. Truncating a run mid-way would re-split the room #1061
  * just closed, which is why the window is a day and not the join window.
+ *
+ * The card's displayed date does not read these rows any more: it reads
+ * `firstSessionAt`, a separate unwindowed lookup, because a class whose
+ * sessions all fall outside this window arrives here with zero slots (#1346).
  */
 const PLANNER_CLASS_SLOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -67,7 +75,7 @@ const classInclude = (now: Date) =>
         },
       },
     },
-    appointments: {
+    appointment: {
       include: {
         // #1080 — the planner derives a class's joinable session from these
         // rows, and `appointments: true` returned none of them, so every class
@@ -75,10 +83,10 @@ const classInclude = (now: Date) =>
         // Only the fields the join path reads: this route trims deliberately,
         // and the attendee `user` rows the webinar side carries are not read
         // here (the class participant count has its own batched query).
-        // `meetingSession` is not optional — without it `getSessionJoinState`
+        // `meeting` is not optional — without it `getSessionJoinState`
         // can only expire on the clock and never sees a host-ended call, the
         // same reason `webinarInclude` selects it.
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: new Date(now.getTime() - PLANNER_CLASS_SLOT_WINDOW_MS),
@@ -91,7 +99,9 @@ const classInclude = (now: Date) =>
             endsAt: true,
             isTentative: true,
             completionStatus: true,
-            meetingSession: { select: { id: true, endedAt: true, endedReason: true } },
+            meeting: {
+              select: { id: true, endedAt: true, endedReason: true },
+            },
           },
         },
       },
@@ -121,6 +131,10 @@ type ClassEvent = PlannerClass & {
   type: "class";
   collaboratorRole: string;
   isCollaborated: boolean;
+  // #1346 — classInclude's slots are windowed to ±24h of now for the Join
+  // affordance, so a class whose sessions fall outside that day arrives with
+  // zero slots here; the card's date comes from this field instead.
+  firstSessionAt: string | null;
 };
 
 interface PlannerData {
@@ -135,32 +149,24 @@ interface PlannerData {
 
 /**
  * Webinar participant counts computed from the ALREADY-FETCHED webinar rows
- * (webinarInclude carries appointment.slotsOfAppointment.user) — the old
+ * (webinarInclude carries appointment.participants) — the old
  * helper re-queried the same rows from Postgres a second time per request.
- * FIX #556 semantics preserved: confirmed (non-tentative) slots only,
- * deduplicated across multi-slot webinars, consultant host excluded.
+ * FIX #556 semantics preserved: live seats only, deduplicated per webinar,
+ * consultant host excluded.
  */
 function countWebinarParticipants(
   webinars: Array<{
     id: string;
-    appointment: {
-      slotsOfAppointment: Array<{
-        isTentative: boolean;
-        user: Array<{ id: string }>;
-      }>;
-    } | null;
+    appointment: { participants: Array<{ userId: string }> } | null;
   }>,
   excludeConsultantUserId?: string,
 ): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const webinar of webinars) {
     const uniqueUserIds = new Set<string>();
-    for (const slot of webinar.appointment?.slotsOfAppointment || []) {
-      if (slot.isTentative) continue;
-      for (const user of slot.user) {
-        if (user.id !== excludeConsultantUserId) {
-          uniqueUserIds.add(user.id);
-        }
+    for (const seat of webinar.appointment?.participants || []) {
+      if (seat.userId !== excludeConsultantUserId) {
+        uniqueUserIds.add(seat.userId);
       }
     }
     counts[webinar.id] = uniqueUserIds.size;
@@ -185,15 +191,11 @@ async function getClassParticipantCounts(
       where: { id: { in: classIds } },
       select: {
         id: true,
-        appointments: {
+        appointment: {
           select: {
-            slotsOfAppointment: {
-              select: {
-                user: {
-                  select: { id: true },
-                },
-              },
-              where: { isTentative: false },
+            participants: {
+              where: liveParticipant(),
+              select: { userId: true },
             },
           },
         },
@@ -201,17 +203,13 @@ async function getClassParticipantCounts(
     });
 
     for (const classEvent of classCounts) {
-      // Use a Set to count unique users across ALL appointments/sessions
+      // Unique users on the class's one wrapper (#1554).
       // FIX #556: Exclude the consultant host from participant count
       const uniqueUserIds = new Set<string>();
 
-      for (const appointment of classEvent.appointments) {
-        for (const slot of appointment.slotsOfAppointment) {
-          for (const user of slot.user) {
-            if (user.id !== excludeConsultantUserId) {
-              uniqueUserIds.add(user.id);
-            }
-          }
+      for (const seat of classEvent.appointment?.participants ?? []) {
+        if (seat.userId !== excludeConsultantUserId) {
+          uniqueUserIds.add(seat.userId);
         }
       }
 
@@ -311,15 +309,13 @@ export async function GET(
       scopeResolution.scope.kind === "personal"
         ? {
             OR: [
-              { appointments: { none: {} } },
-              { appointments: { some: { organizationId: null } } },
+              { appointment: null },
+              { appointment: { organizationId: null } },
             ],
           }
         : plannerOrgId
           ? {
-              appointments: {
-                some: { organizationId: plannerOrgId },
-              },
+              appointment: { organizationId: plannerOrgId },
             }
           : undefined;
 
@@ -422,14 +418,51 @@ export async function GET(
         type: "class" as const,
         collaboratorRole: "HOST",
         isCollaborated: false,
+        firstSessionAt: null,
       })),
       ...uniqueCollabClasses.map((c) => ({
         ...transformNestedPlanTopics(c, "classPlan"),
         type: "class" as const,
         collaboratorRole: classRoleMap[c.classPlanId] || "COLLABORATOR",
         isCollaborated: true,
+        firstSessionAt: null,
       })),
     ];
+
+    // #1346 — classInclude's slot window drops rows outside ±24h of now, so
+    // the earliest session must be read separately, unwindowed, in one
+    // batched query rather than per-card.
+    const classAppointmentIds = classes.flatMap((c) =>
+      c.appointment ? [c.appointment.id] : [],
+    );
+    if (classAppointmentIds.length > 0) {
+      const earliestSlots = await prisma.appointmentOccurrence.groupBy({
+        by: ["appointmentId"],
+        where: {
+          appointmentId: { in: classAppointmentIds },
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        },
+        _min: { startsAt: true },
+      });
+      const appointmentToClassId: Record<string, string> = {};
+      for (const c of classes) {
+        if (c.appointment) appointmentToClassId[c.appointment.id] = c.id;
+      }
+      const earliestByClassId: Record<string, Date> = {};
+      for (const row of earliestSlots) {
+        const classId = appointmentToClassId[row.appointmentId];
+        const startsAt = row._min.startsAt;
+        if (!classId || !startsAt) continue;
+        const existing = earliestByClassId[classId];
+        if (!existing || startsAt < existing) {
+          earliestByClassId[classId] = startsAt;
+        }
+      }
+      for (const c of classes) {
+        c.firstSessionAt = earliestByClassId[c.id]?.toISOString() ?? null;
+      }
+    }
 
     // Participant counts for all events (owned + collaborated).
     // FIX #556: the consultant's own userId is excluded — reuse the

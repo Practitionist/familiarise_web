@@ -12,6 +12,11 @@
  *
  * Schedule: hourly.
  *
+ * Its candidates no longer race `auto-complete-appointments` (#1504). Both jobs
+ * read the same attendance predicate from `lib/booking/attendance.ts`, and that
+ * job now defers a booking in the no-show shape instead of completing it out
+ * from under this one an hour before this one may look at it.
+ *
  * Scope: CONSULTATION only — a single-session, single-consultant exclusive
  * booking where a full refund of the one payment is the correct remedy.
  * Subscriptions are multi-session (a per-session no-show is a partial refund of
@@ -29,7 +34,7 @@ import {
   AppointmentStatus,
   CancellationReason,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   SupportIssueType,
 } from "@prisma/client";
 import {
@@ -40,15 +45,18 @@ import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { CANCELLABLE_FROM } from "@/lib/booking/transitions";
+import {
+  CANCELLABLE_FROM,
+  transitionConsultationRequest,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  NO_SHOW_GRACE_MINUTES,
+  attendedAnySession,
+  classifyConsultantAttendance,
+  meetingsOf,
+} from "@/lib/booking/attendance";
 import { recordSystemError } from "@/lib/enterprise/system-events";
-
-// Conservative grace window: a session must have ended at least this long ago
-// before we treat a missing consultant as a no-show. Well past the slot end so
-// a late join or a delayed Stream participant-webhook cannot cause a false
-// positive (which would wrongly cancel + refund a session the consultant DID
-// attend). Money movement is hard to reverse, so this is deliberately generous.
-const NO_SHOW_GRACE_MINUTES = 120;
 
 export interface NoShowResult {
   success: boolean;
@@ -86,7 +94,7 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
 
 // Candidate consultations: still active (not already cancelled/completed),
 // paid, whose slots have all ended past the grace window and where a
-// MeetingSession actually happened (the call took place — a precondition for
+// Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
 function findNoShowCandidates(graceCutoff: Date) {
   return prisma.consultation.findMany({
@@ -104,11 +112,11 @@ function findNoShowCandidates(graceCutoff: Date) {
             deletedAt: null,
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           every: { endsAt: { lt: graceCutoff } },
           some: {
             endsAt: { lt: graceCutoff },
-            meetingSession: { isNot: null },
+            meeting: { isNot: null },
           },
         },
       },
@@ -135,9 +143,9 @@ function findNoShowCandidates(graceCutoff: Date) {
               paymentStatus: true,
             },
           },
-          slotsOfAppointment: {
+          occurrences: {
             include: {
-              meetingSession: {
+              meeting: {
                 include: { attendances: { select: { userId: true } } },
               },
             },
@@ -159,10 +167,10 @@ type PaidPayment = NonNullable<
 >["payment"][number];
 
 // Returns the party ids when `consultation` is a confirmed CONSULTANT no-show,
-// or null to skip. Conservative definition: the consultee has a recorded join
-// (positive evidence they showed up) AND the consultant has no MeetingAttendance
-// row at all (firstJoinedAt is only ever written on a join, so an absent row
-// means they never arrived). Neither-showed and consultee-no-show cases are
+// or null to skip. The definition itself lives in lib/booking/attendance.ts
+// (#1504) because auto-complete has to read the same one: the consultee has a
+// recorded join (positive evidence they showed up) AND the consultant has no
+// MeetingAttendance row at all. Neither-showed and consultee-no-show cases are
 // intentionally excluded — no consultant-fault refund there.
 function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
@@ -179,19 +187,11 @@ function evaluateConsultantNoShow(
   }
 
   // Presence across every session tied to this booking's slots.
-  const sessions = (consultation.appointment?.slotsOfAppointment ?? [])
-    .map((s) => s.meetingSession)
-    .filter((m): m is NonNullable<typeof m> => !!m);
-  if (sessions.length === 0) return null;
-
-  const consultantJoined = sessions.some((s) =>
-    s.attendances.some((a) => a.userId === consultantUserId),
+  const verdict = classifyConsultantAttendance(
+    consultation.appointment?.occurrences ?? [],
+    { consultantUserId, consulteeUserId },
   );
-  const consulteeJoined = sessions.some((s) =>
-    s.attendances.some((a) => a.userId === consulteeUserId),
-  );
-
-  if (!consulteeJoined || consultantJoined) return null;
+  if (verdict !== "consultant-absent") return null;
 
   return { consultantUserId, consulteeUserId, appointmentId };
 }
@@ -219,8 +219,8 @@ export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
-  const callIds = (consultation.appointment?.slotsOfAppointment ?? [])
-    .map((slot) => slot.meetingSession?.streamCallId)
+  const callIds = (consultation.appointment?.occurrences ?? [])
+    .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
   if (callIds.length === 0) return "no Stream call on any slot";
@@ -336,16 +336,12 @@ export async function detectBothAbsent(
       const consulteeUserId = consultation.requestedBy?.userId;
       if (!consultantUserId || !consulteeUserId) continue;
 
-      const sessions = (consultation.appointment?.slotsOfAppointment ?? [])
-        .map((slot) => slot.meetingSession)
-        .filter((m): m is NonNullable<typeof m> => !!m);
+      const sessions = meetingsOf(consultation.appointment?.occurrences ?? []);
       if (sessions.length === 0) continue;
 
-      const anyoneJoined = sessions.some((session) =>
-        session.attendances.some(
-          (a) => a.userId === consultantUserId || a.userId === consulteeUserId,
-        ),
-      );
+      const anyoneJoined =
+        attendedAnySession(sessions, consultantUserId) ||
+        attendedAnySession(sessions, consulteeUserId);
       if (anyoneJoined) continue;
 
       // Corroborate: no attendance rows is not evidence of an empty room when
@@ -421,26 +417,44 @@ async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
 ): Promise<boolean> {
-  const claimed = await prisma.consultation.updateMany({
-    where: { id: consultationId, status: { in: CANCELLABLE_FROM } },
-    data: {
-      status: AppointmentStatus.CANCELLED,
-      cancellationReason: CancellationReason.CONSULTANT_UNAVAILABLE,
-      cancellationNotes: "#471 consultant no-show — auto-cancelled + refunded",
-      cancelledAt: new Date(),
-    },
-  });
-  if (claimed.count === 0) return false;
+  try {
+    await prisma.$transaction(async (tx) => {
+      // #1493 — route through the CAS helper so this cancel writes a
+      // BookingStatusHistory row like every other status change; the bare
+      // updateMany left no timeline entry for the no-show path.
+      await transitionConsultationRequest(tx, {
+        where: { id: consultationId },
+        to: AppointmentStatus.CANCELLED,
+        fromIn: CANCELLABLE_FROM,
+        actorUserId: null,
+        reason: "#471 consultant no-show — auto-cancelled + refunded",
+        data: {
+          cancellationReason: CancellationReason.CONSULTANT_UNAVAILABLE,
+          cancellationNotes:
+            "#471 consultant no-show — auto-cancelled + refunded",
+          cancelledAt: new Date(),
+        },
+      });
 
-  await prisma.slotOfAppointment.updateMany({
-    where: {
-      appointmentId,
-      completionStatus: {
-        in: [SlotCompletionStatus.SCHEDULED, SlotCompletionStatus.UNVERIFIED],
-      },
-    },
-    data: { completionStatus: SlotCompletionStatus.CANCELLED },
-  });
+      await tx.appointmentOccurrence.updateMany({
+        where: {
+          appointmentId,
+          completionStatus: {
+            in: [
+              OccurrenceCompletionStatus.SCHEDULED,
+              OccurrenceCompletionStatus.UNVERIFIED,
+            ],
+          },
+        },
+        data: { completionStatus: OccurrenceCompletionStatus.CANCELLED },
+      });
+    });
+  } catch (error) {
+    // Zero rows matched means someone else moved it between the scan and this
+    // claim — the existing skip branch at the call site, unchanged.
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
+  }
   return true;
 }
 

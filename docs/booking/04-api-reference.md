@@ -15,21 +15,21 @@ All endpoints require session-based authentication. The `{id}` parameter accepts
 
 ## Slot Endpoint Authentication
 
-All `/api/slots/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in middleware, meaning they require a valid session cookie. Two sub-paths are exempted as public:
+All `/api/scheduling/` endpoints are covered by `AUTHENTICATED_API_PREFIXES` in middleware, meaning they require a valid session cookie. Two sub-paths are exempted as public:
 
 | Path                                    | Auth Required | Notes                                                              |
 | --------------------------------------- | ------------- | ------------------------------------------------------------------ |
-| `/api/slots/availability/`              | No            | Public -- consultees can view consultant availability without auth |
-| `/api/slots/availability-with-allocation/` | No         | Public -- includes allocation data for calendar display            |
-| `/api/slots/appointments` (GET)         | Yes           | Non-privileged users are filtered to their own profile only        |
-| `/api/slots/appointments` (POST)        | Yes           | Admin/staff only                                                   |
-| `/api/slots/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
+| `/api/scheduling/availability/`              | No            | Public -- consultees can view consultant availability without auth |
+| `/api/scheduling/availability-with-allocation/` | No         | Public -- includes allocation data for calendar display            |
+| `/api/scheduling/appointments` (GET)         | Yes           | Non-privileged users are filtered to their own profile only        |
+| `/api/scheduling/appointments` (POST)        | Yes           | Admin/staff only                                                   |
+| `/api/scheduling/appointments/[id]` (GET)    | Yes           | Requires participant check (consultant or consultee on the appointment) |
 
-**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `slot_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SlotAllocationService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
+**Removed (booking-journey audit B3 / #1193)**: the `[id]` route's `PATCH` (blind delete-all + slot recreate with no conflict validation and no `consultantProfileId`, so recreated confirmed slots sat OUTSIDE the `slot_no_confirmed_overlap` guard), `PUT`, and `DELETE` (hard-delete bypassing the soft-cancel doctrine) handlers. No in-repo caller used them; slot mutations go through `SchedulingService` (allocate/reschedule/manage-timings), which carries locks, revalidation, and the GiST backstop.
 
 ### Status Filters
 
-The `/api/slots/appointments` GET endpoint supports status filtering. The accepted status values depend on the event type:
+The `/api/scheduling/appointments` GET endpoint supports status filtering. The accepted status values depend on the event type:
 
 | Event Type                   | Status Enum    | Valid Values                                       |
 | ---------------------------- | -------------- | -------------------------------------------------- |
@@ -49,7 +49,7 @@ sequenceDiagram
     participant Client
     participant API as POST /validate
     participant Zod
-    participant VS as SlotValidationService
+    participant VS as ScheduleValidationService
     participant DB
 
     Client->>API: {slots: ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"]}
@@ -126,7 +126,7 @@ sequenceDiagram
     participant Client
     participant API as PATCH /allocate
     participant Zod
-    participant SA as SlotAllocationService
+    participant SA as SchedulingService
 
     alt Auto mode
         Client->>API: {isAuto: true}
@@ -186,7 +186,7 @@ Approves pre-created appointments from a consultee's request. Verifies appointme
     {
       "id": "appointment-id",
       "appointmentType": "CONSULTATION",
-      "slotsOfAppointment": [
+      "appointmentOccurrences": [
         {
           "id": "slot-id",
           "startsAt": "2025-01-15T10:00:00.000Z",
@@ -249,7 +249,7 @@ Validates URL path parameter `{id}`. Accepts UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxx
 
 ## Type Definitions
 
-**File**: `utils/slotAllocation/types.ts`
+**File**: `utils/scheduling-engine/types.ts`
 
 | Type                       | Description                                                                                        |
 | -------------------------- | -------------------------------------------------------------------------------------------------- |

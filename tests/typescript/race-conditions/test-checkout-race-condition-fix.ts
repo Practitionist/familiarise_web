@@ -8,7 +8,7 @@
  * BACKGROUND:
  * Previous implementation created payment with appointmentId=null during checkout,
  * then created appointment later via webhook. This allowed race conditions because
- * validation checked slotOfAppointment table but payments were invisible.
+ * validation checked the occurrence table but payments were invisible.
  *
  * FIX IMPLEMENTED:
  * Now creates tentative appointment (isTentative=true) INSIDE distributed lock,
@@ -117,14 +117,14 @@ async function testConcurrentCheckout() {
 
     const appointments = await prisma.appointment.findMany({
       where: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: new Date(TEST_CONFIG.SLOT_START),
           },
         },
       },
       include: {
-        slotsOfAppointment: true,
+        occurrences: true,
         consultation: true,
       },
     });
@@ -133,8 +133,8 @@ async function testConcurrentCheckout() {
     appointments.forEach((apt, idx) => {
       console.log(`   [${idx + 1}] ID: ${apt.id}`);
       console.log(`       Type: ${apt.appointmentType}`);
-      console.log(`       Slots: ${apt.slotsOfAppointment.length}`);
-      apt.slotsOfAppointment.forEach((slot) => {
+      console.log(`       Slots: ${apt.occurrences.length}`);
+      apt.occurrences.forEach((slot) => {
         console.log(`         - ${slot.startsAt} to ${slot.endsAt}`);
         console.log(`           Tentative: ${slot.isTentative}`);
       });
@@ -178,7 +178,7 @@ async function testConcurrentCheckout() {
       {
         condition:
           appointments.length > 0 &&
-          appointments[0].slotsOfAppointment.every(
+          appointments[0].occurrences.every(
             (s) => s.isTentative === false,
           ),
         message: `Appointment slots should be confirmed (isTentative=false)`,
@@ -237,7 +237,7 @@ async function cleanupTestData() {
   // Delete test appointments for the slot
   const appointments = await prisma.appointment.findMany({
     where: {
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           startsAt: new Date(TEST_CONFIG.SLOT_START),
         },
@@ -254,7 +254,7 @@ async function cleanupTestData() {
         where: { id: appointment.consultation.id },
       });
     }
-    await prisma.slotOfAppointment.deleteMany({
+    await prisma.appointmentOccurrence.deleteMany({
       where: { appointmentId: appointment.id },
     });
     await prisma.appointment.delete({

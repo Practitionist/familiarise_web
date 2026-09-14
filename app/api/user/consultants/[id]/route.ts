@@ -3,7 +3,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
-} from "@/utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
@@ -13,7 +13,7 @@ import {
   type OrgPlanVisibility,
   Prisma,
   ScheduleType,
-  SessionType,
+  OfferingFormat,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -21,14 +21,23 @@ import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
+import {
+  removeCollaboratorStanding,
+  type CollaborationRef,
+} from "@/lib/collaborators/standing";
 import { apiError } from "@/lib/errors";
 import * as Sentry from "@sentry/nextjs";
 import {
   dateToMinuteUtc,
   validateWeeklySlotTimeOrder,
   slotsOverlap,
-  getTimezoneOffsetMinutes,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
+import {
+  resolveWeeklyTimezone,
+  resolveWeeklyUtcOffsetMinutes,
+  WeeklyOffsetConflictError,
+  weeklyRowLocalColumns,
+} from "@/lib/scheduling/weeklyUtcOffset";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -74,8 +83,11 @@ const updateConsultantSchema = z
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),
     tagIds: z.array(uuidSchema),
-    slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
-    slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
+    availabilityWindowsWeekly: z.array(weeklySlotSchema).optional(),
+    availabilityWindowsCustom: z.array(customSlotSchema).optional(),
+    // #1326 — accepted only so a caller who sends an offset is checked against
+    // the profile timezone instead of silently ignored; it never wins.
+    utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
     // New fields - accept null values from frontend for optional fields
     headline: z.string().max(120).nullable().optional(),
     websiteUrl: z.string().url().nullable().optional().or(z.literal("")),
@@ -85,7 +97,10 @@ const updateConsultantSchema = z
     languages: z.array(z.string()).nullable().optional(),
     toolsAndTechnologies: z.array(z.string()).nullable().optional(),
     mentoringStyle: z.string().nullable().optional(),
-    sessionTypes: z.array(z.nativeEnum(SessionType)).nullable().optional(),
+    offeringFormats: z
+      .array(z.nativeEnum(OfferingFormat))
+      .nullable()
+      .optional(),
     // User-level field (stored on User model, not ConsultantProfile)
     linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
   })
@@ -93,14 +108,14 @@ const updateConsultantSchema = z
     (data) => {
       if (data.scheduleType === "WEEKLY") {
         return (
-          data.slotsOfAvailabilityWeekly &&
-          data.slotsOfAvailabilityWeekly.length > 0
+          data.availabilityWindowsWeekly &&
+          data.availabilityWindowsWeekly.length > 0
         );
       }
       if (data.scheduleType === "CUSTOM") {
         return (
-          data.slotsOfAvailabilityCustom &&
-          data.slotsOfAvailabilityCustom.length > 0
+          data.availabilityWindowsCustom &&
+          data.availabilityWindowsCustom.length > 0
         );
       }
       return false;
@@ -215,8 +230,8 @@ export async function GET(
         domain: true,
         subDomains: true,
         tags: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: true,
         consultationPlans: {
           ...(planVisibilityFilter && { where: planVisibilityFilter }),
           include: { faqs: { orderBy: { order: "asc" } } },
@@ -306,8 +321,8 @@ export async function PUT(
       domainId,
       subDomainIds,
       tagIds,
-      slotsOfAvailabilityWeekly,
-      slotsOfAvailabilityCustom,
+      availabilityWindowsWeekly,
+      availabilityWindowsCustom,
       // New fields
       headline,
       websiteUrl,
@@ -317,7 +332,7 @@ export async function PUT(
       languages,
       toolsAndTechnologies,
       mentoringStyle,
-      sessionTypes,
+      offeringFormats,
       // User-level field
       linkedinUrl,
     } = data;
@@ -372,7 +387,7 @@ export async function PUT(
         languages: languages ?? [],
         toolsAndTechnologies: toolsAndTechnologies ?? [],
         mentoringStyle: mentoringStyle ?? null,
-        sessionTypes: sessionTypes ?? [],
+        offeringFormats: offeringFormats ?? [],
       },
     });
 
@@ -393,22 +408,39 @@ export async function PUT(
 
     // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
-      if (slotsOfAvailabilityWeekly?.length) {
-        // Resolve timezone offset once for all slots (same user → same timezone)
+      if (availabilityWindowsWeekly?.length) {
+        // Resolve timezone offset once for all slots (same user → same
+        // timezone), through the one resolver every write path shares (#1326).
         const userTimezone = await prisma.user
           .findUnique({
             where: { id: session.user.id },
             select: { timezone: true },
           })
           .then((u) => u?.timezone ?? null);
-        const utcOffsetMinutes = userTimezone
-          ? getTimezoneOffsetMinutes(userTimezone)
-          : 330; // #872 — IST-only at launch: default a missing timezone to IST, never UTC 0.
+        let utcOffsetMinutes: number;
+        try {
+          utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
+            profileTimezone: userTimezone,
+            callerSupplied: data.utcOffsetMinutes ?? null,
+            consultantProfileId: id,
+          });
+        } catch (error) {
+          if (error instanceof WeeklyOffsetConflictError) {
+            return NextResponse.json(
+              { error: error.message, code: error.code },
+              { status: 400 },
+            );
+          }
+          throw error;
+        }
+        const rowTimezone = resolveWeeklyTimezone(userTimezone);
 
-        const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
-          slotsOfAvailabilityWeekly.map((slot) => {
+        const weeklySlotData: Prisma.AvailabilityWindowWeeklyCreateManyInput[] =
+          availabilityWindowsWeekly.map((slot) => {
             const startTimeUtc = dateToMinuteUtc(new Date(slot.startsAt));
             const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
+            // #1343 — dayOfWeekforStartTimeInUTC is the wire name the settings
+            // form still sends; what it carries is the consultant's LOCAL day.
             return {
               consultantProfileId: id,
               startDay: slot.dayOfWeekforStartTimeInUTC,
@@ -416,8 +448,6 @@ export async function PUT(
               startTimeUtc,
               endTimeUtc,
               utcOffsetMinutes,
-              // TODO(#872): restore local wall-clock + IANA-zone source of truth
-              // for non-IST consultants; DST parked post-MVP (IST-only at launch).
             };
           });
 
@@ -466,21 +496,29 @@ export async function PUT(
 
         // Delete existing then create new, atomically — a failure between the
         // two halves would leave the consultant with no availability at all.
-        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
         //
         // Serializable, like the per-row slot routes: at Read Committed a
         // second replacement running concurrently takes its snapshot before
         // the first commits, so its delete misses the rows the first inserted
         // and both sets survive — overlapping availability, which every
         // downstream reader assumes cannot exist.
-        const mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData);
+        // #872 — the five DST columns are dual-written from the same resolver,
+        // and computed AFTER the merge so they describe the row that is
+        // actually stored. No reader consults them until the reader flip.
+        const mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData).map(
+          (row) => ({
+            ...row,
+            ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
+          }),
+        );
         await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              await tx.slotOfAvailabilityWeekly.deleteMany({
+              await tx.availabilityWindowWeekly.deleteMany({
                 where: { consultantProfileId: id },
               });
-              await tx.slotOfAvailabilityWeekly.createMany({
+              await tx.availabilityWindowWeekly.createMany({
                 data: mergedWeekly,
               });
             },
@@ -493,7 +531,7 @@ export async function PUT(
         );
       } else {
         // No weekly slots submitted — clear existing
-        await prisma.slotOfAvailabilityWeekly.deleteMany({
+        await prisma.availabilityWindowWeekly.deleteMany({
           where: { consultantProfileId: id },
         });
       }
@@ -501,13 +539,13 @@ export async function PUT(
 
     // Update custom slots if schedule type is CUSTOM
     if (scheduleType === ScheduleType.CUSTOM) {
-      if (slotsOfAvailabilityCustom?.length) {
+      if (availabilityWindowsCustom?.length) {
         // Dates, not the wider `string | Date` the Prisma input allows, so the
         // merge below can compare instants (#1320).
-        const customSlotData: (Prisma.SlotOfAvailabilityCustomCreateManyInput & {
+        const customSlotData: (Prisma.AvailabilityWindowCustomCreateManyInput & {
           startsAt: Date;
           endsAt: Date;
-        })[] = slotsOfAvailabilityCustom.map((slot) => ({
+        })[] = availabilityWindowsCustom.map((slot) => ({
           consultantProfileId: id,
           startsAt: new Date(slot.startsAt),
           endsAt: new Date(slot.endsAt),
@@ -545,15 +583,15 @@ export async function PUT(
 
         // Delete existing then create new, atomically and Serializably — see
         // the weekly arm for both reasons.
-        // #1320 — see utils/slotAllocation/mergeAdjacentWeeklyRows.ts.
+        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
         const mergedCustom = mergeAdjacentCustomRows(customSlotData);
         await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              await tx.slotOfAvailabilityCustom.deleteMany({
+              await tx.availabilityWindowCustom.deleteMany({
                 where: { consultantProfileId: id },
               });
-              await tx.slotOfAvailabilityCustom.createMany({
+              await tx.availabilityWindowCustom.createMany({
                 data: mergedCustom,
               });
             },
@@ -566,7 +604,7 @@ export async function PUT(
         );
       } else {
         // No custom slots submitted — clear existing
-        await prisma.slotOfAvailabilityCustom.deleteMany({
+        await prisma.availabilityWindowCustom.deleteMany({
           where: { consultantProfileId: id },
         });
       }
@@ -592,8 +630,8 @@ export async function PUT(
         domain: true,
         subDomains: true,
         tags: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
+        availabilityWindowsWeekly: true,
+        availabilityWindowsCustom: true,
         consultationPlans: true,
         subscriptionPlans: {
           include: {
@@ -604,7 +642,14 @@ export async function PUT(
         },
         webinarPlans: true,
         classPlans: true,
-        reviews: { where: { deletedAt: null } },
+        // #1300 — `reviews` deliberately NOT included. This response is
+        // authenticated as the profile OWNER, i.e. the reviewed consultant, and a
+        // bare relation include returns every scalar: `consulteeProfileId`,
+        // `appointmentId`, `ratingUnitId` and `isAnonymous` for every row. Those
+        // are exactly the join keys `stripAnonymousReviewer` nulls, and the
+        // consultant is the one party `isAnonymous` exists to withhold them from
+        // — they know their own appointment ids. Nothing read it either: the only
+        // caller checks `response.ok` and then issues a fresh GET.
       },
     });
 
@@ -620,6 +665,38 @@ export async function PUT(
       { tags: { subsystem: "auth" } },
     );
     return apiError({ tag: "[Consultant.PUT]", error });
+  }
+}
+
+// Best-effort after commit, as erasure and the moderation ban do: the rows are
+// REMOVED either way and a Stream miss is reported.
+async function revokeRemovedCollaborations(
+  removed: CollaborationRef[],
+  userId: string,
+): Promise<void> {
+  if (removed.length === 0) return;
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  for (const { planType, planId } of removed) {
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        planId,
+        userId,
+        { notify: false },
+      );
+      if (!success) {
+        Sentry.captureMessage(
+          "Collaborator Stream access not fully revoked on consultant delete",
+          { level: "warning", extra: { planType, planId } },
+        );
+      }
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "collaborators" }, extra: { planType, planId } },
+      );
+    }
   }
 }
 
@@ -666,18 +743,22 @@ export async function DELETE(
       // against) survive for statutory retention. Slots go so nothing is
       // bookable; plans stay (historical bookings reference them) but the
       // browse/checkout surfaces filter deletedAt profiles out.
-      await prisma.$transaction([
-        prisma.slotOfAvailabilityWeekly.deleteMany({
+      // #1580 — the collaborations go with the profile: a deactivated
+      // consultant must not keep a share on every future settlement.
+      const collaborationsRemoved = await prisma.$transaction(async (tx) => {
+        await tx.availabilityWindowWeekly.deleteMany({
           where: { consultantProfileId: id },
-        }),
-        prisma.slotOfAvailabilityCustom.deleteMany({
+        });
+        await tx.availabilityWindowCustom.deleteMany({
           where: { consultantProfileId: id },
-        }),
-        prisma.consultantProfile.update({
+        });
+        await tx.consultantProfile.update({
           where: { id },
           data: { deletedAt: new Date() },
-        }),
-      ]);
+        });
+        return removeCollaboratorStanding(tx, session.user.id);
+      });
+      await revokeRemovedCollaborations(collaborationsRemoved, session.user.id);
       // deletedAt is one of the two public gates — the profile has just left
       // both public surfaces.
       purgeExpertSurfaces(id);
@@ -687,41 +768,32 @@ export async function DELETE(
       });
     }
 
-    // No money ever moved — full hard delete is safe.
-    await prisma.$transaction([
-      // Delete slots
-      prisma.slotOfAvailabilityWeekly.deleteMany({
+    // No money ever moved — full hard delete is safe. The collaborator rows
+    // cascade with the profile, so their plans are captured in the same
+    // transaction as the deletes, before the profile goes (#1580).
+    const hardRemoved = await prisma.$transaction(async (tx) => {
+      const removed = await removeCollaboratorStanding(tx, session.user.id);
+      await tx.availabilityWindowWeekly.deleteMany({
         where: { consultantProfileId: id },
-      }),
-      prisma.slotOfAvailabilityCustom.deleteMany({
+      });
+      await tx.availabilityWindowCustom.deleteMany({
         where: { consultantProfileId: id },
-      }),
-
-      // Delete plans
-      prisma.consultationPlan.deleteMany({
+      });
+      await tx.consultationPlan.deleteMany({
         where: { consultantProfileId: id },
-      }),
-      prisma.subscriptionPlan.deleteMany({
+      });
+      await tx.subscriptionPlan.deleteMany({
         where: { consultantProfileId: id },
-      }),
-      prisma.webinarPlan.deleteMany({
+      });
+      await tx.webinarPlan.deleteMany({ where: { consultantProfileId: id } });
+      await tx.classPlan.deleteMany({ where: { consultantProfileId: id } });
+      await tx.consultantReview.deleteMany({
         where: { consultantProfileId: id },
-      }),
-      prisma.classPlan.deleteMany({
-        where: { consultantProfileId: id },
-      }),
-
-      // Delete reviews
-      prisma.consultantReview.deleteMany({
-        where: { consultantProfileId: id },
-      }),
-
-      // Delete the consultant profile
-      prisma.consultantProfile.delete({
-        where: { id },
-      }),
-    ]);
-
+      });
+      await tx.consultantProfile.delete({ where: { id } });
+      return removed;
+    });
+    await revokeRemovedCollaborations(hardRemoved, session.user.id);
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {

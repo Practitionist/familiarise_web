@@ -16,27 +16,20 @@ export const ITEMS_PER_PAGE = 12;
 
 export type ProgramType = "all" | "class" | "webinar";
 
-// Type for registration data from API
-interface SlotUser {
-  id: string;
-}
-
-interface SlotWithUser {
-  user?: SlotUser[];
+// Type for registration data from API — the roster is the appointment's live
+// participant rows (#1554), seat ids only.
+interface SeatHolder {
+  userId: string;
 }
 
 interface WebinarWithAppointment {
   appointment?: {
-    slotsOfAppointment?: SlotWithUser[];
+    participants?: SeatHolder[];
   } | null;
 }
 
-interface ClassSlot extends Record<string, unknown> {
-  user?: SlotUser[];
-}
-
 interface ClassAppointment {
-  slotsOfAppointment: ClassSlot[];
+  participants?: SeatHolder[];
 }
 
 export interface ClassInstance {
@@ -44,11 +37,17 @@ export interface ClassInstance {
   schedulingPeriodStartsAt?: string | Date | null;
   /** Per-instance capacity override; null inherits the plan's value. */
   maxParticipants?: number | null;
-  appointments?: ClassAppointment[];
+  appointment?: ClassAppointment | null;
 }
 
 type ProgramConsultantProfile = {
-  rating?: number;
+  /** #1300 — the two published scores. NULL on either means SUPPRESSED, which a
+   *  card must render as nothing rather than as 0.0. Resolve with
+   *  `displayedScore` from lib/reviews, preferring GROUP on a program card. */
+  publishedRatingOneToOne?: number | null;
+  publishedRatingGroup?: number | null;
+  ratedClientsOneToOne?: number;
+  ratedEventsGroup?: number;
   headline?: string | null;
   user?: {
     name?: string | null;

@@ -12,8 +12,8 @@
 import "./setup";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildDeadHoldFilter } from "../../utils/slotAllocation/occupancyPolicy";
-import { isOccupiedByLiveAppointment } from "../../utils/slotAllocation/SlotValidationService";
+import { buildDeadHoldFilter } from "../../utils/scheduling-engine/occupancyPolicy";
+import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/ScheduleValidationService";
 
 const NOW = new Date("2026-09-02T10:00:00Z");
 const PAST = new Date("2026-09-02T09:00:00Z");
@@ -155,7 +155,7 @@ describe("lock budgets and names (source pins)", () => {
   // with different slots neither trips the availability check — without the
   // claim the second created a second appointment and repointed the trial at
   // it, stranding the first slot hold (CodeRabbit round 2).
-  // #1321 routes every trial status write through transitionTrialSession, so
+  // #1321 routes every trial status write through transitionTrial, so
   // the claim rides its fromIn rather than a bare updateMany.
   it("the trial scheduling transition claims the status it read", () => {
     const src = read("app/api/trials/[trialId]/route.ts");

@@ -51,7 +51,7 @@ const THREAD_METADATA_SELECT = {
   appointment: {
     select: {
       appointmentType: true,
-      slotsOfAppointment: {
+      occurrences: {
         orderBy: { startsAt: "asc" as const },
         take: 1,
         select: { startsAt: true, endsAt: true },
@@ -130,7 +130,7 @@ export async function GET(
         member: t.user,
         appointment: {
           appointmentType: t.appointment.appointmentType,
-          startsAt: t.appointment.slotsOfAppointment[0]?.startsAt ?? null,
+          startsAt: t.appointment.occurrences[0]?.startsAt ?? null,
           planTitle:
             t.appointment.consultation?.consultationPlan?.title ??
             t.appointment.subscription?.subscriptionPlan?.title ??

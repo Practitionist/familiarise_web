@@ -20,10 +20,10 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import type { MeetingSlot } from "@/lib/meeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
-  getCurrentOrNextSession,
-  getJoinableSession,
-  getSessionJoinState,
-} from "@/lib/appointments/slots";
+  getCurrentOrNextOccurrence,
+  getJoinableOccurrence,
+  getOccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 import {
   PlannerWebinarEvent,
   PlannerClassEvent,
@@ -39,6 +39,8 @@ import {
   useConsultationPlanMutations,
   useSubscriptionPlans,
   useSubscriptionPlanMutations,
+  useWebinarPlanMutations,
+  useClassPlanMutations,
 } from "../hooks/usePlanner";
 import {
   LayoutTemplate,
@@ -86,10 +88,14 @@ export function EventManagementDashboard({
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
+  const { archiveWebinarPlan } = useWebinarPlanMutations(consultantId);
+  const { archiveClassPlan } = useClassPlanMutations(consultantId);
   // Create/update moved to the offering editor, which owns its own save; the
   // planner only deletes now.
-  const { deleteConsultationPlan } = useConsultationPlanMutations(consultantId);
-  const { deleteSubscriptionPlan } = useSubscriptionPlanMutations(consultantId);
+  const { deleteConsultationPlan, archiveConsultationPlan } =
+    useConsultationPlanMutations(consultantId);
+  const { deleteSubscriptionPlan, archiveSubscriptionPlan } =
+    useSubscriptionPlanMutations(consultantId);
   const router = useRouter();
   const [joiningEventId, setJoiningEventId] = useState<string | null>(null);
   // #1280 2.7 — `joiningEventId` is state, and it is set AFTER the first await
@@ -112,29 +118,28 @@ export function EventManagementDashboard({
   // Compute which webinar/class events are currently joinable (inside the
   // shared host window before start, through to end). #1270 — the planner
   // used to declare its own 10-minute constant, so the SAME host got in five
-  // minutes later here than from the appointments list. #1061 — measured over the run of slot rows the
-  // session is stored as; the old `slotsOfAppointment[0]` read closed the
-  // window 30 minutes into anything longer than half an hour.
+  // minutes later here than from the appointments list. #1554 — measured over
+  // the occurrence's own bounds.
   const joinableEventIds = useMemo(() => {
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
-      const run = getJoinableSession(
-        webinar.appointment?.slotsOfAppointment ?? [],
-        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS, now },
+      const run = getJoinableOccurrence(
+        webinar.appointment?.occurrences ?? [],
+        {
+          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+          now,
+        },
       );
       if (run && webinar.id) ids.add(webinar.id);
     }
 
     for (const cls of classes) {
-      // For classes, check the nearest upcoming appointment
-      for (const appt of cls.appointments ?? []) {
-        const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-          joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-          now,
-        });
-        if (run && cls.id) ids.add(cls.id);
-      }
+      const run = getJoinableOccurrence(cls.appointment?.occurrences ?? [], {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+        now,
+      });
+      if (run && cls.id) ids.add(cls.id);
     }
 
     return ids;
@@ -167,16 +172,15 @@ export function EventManagementDashboard({
       return;
     }
 
-    // #1061 — the session's anchor row, not whichever row happens to be first
-    // in the payload, so a late Join lands in the room already in progress.
-    // Both fallbacks are run-derived: `slotsOfAppointment` arrives unsorted,
-    // so `[0]` could hand an arbitrary row's startsAt to the Stream call.
-    const slots = webinar.appointment?.slotsOfAppointment ?? [];
-    const run =
-      getJoinableSession(slots, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ??
-      getCurrentOrNextSession(slots);
-    const slot = run?.anchor;
-    if (!run || !slot || !webinar.appointment) {
+    // The live occurrence, not whichever row happens to be first in the
+    // payload: `occurrences` arrives unsorted, so `[0]` could hand an
+    // arbitrary row's startsAt to the Stream call.
+    const slots = webinar.appointment?.occurrences ?? [];
+    const slot =
+      getJoinableOccurrence(slots, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) ?? getCurrentOrNextOccurrence(slots);
+    if (!slot || !webinar.appointment) {
       toast({
         title: "Error",
         description: "Meeting slot information is not available.",
@@ -185,15 +189,16 @@ export function EventManagementDashboard({
       return;
     }
 
-    // `getJoinableSession` returns null for three different reasons —
+    // `getJoinableOccurrence` returns null for three different reasons —
     // countdown, disabled and ended — and the fallback fires for all of them.
     // Only `ended` must actually refuse: opening a room for a session the host
     // has already closed, or whose time has passed, walks straight through the
     // guard this change exists to build. Countdown still gets in, because
     // hosts have always been able to open the room a little early.
     if (
-      getSessionJoinState(run, { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS }) ===
-      "ended"
+      getOccurrenceJoinState(slot, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) === "ended"
     ) {
       toast({
         title: "Session has ended",
@@ -263,20 +268,11 @@ export function EventManagementDashboard({
     // the same room) past its first half hour instead of reporting "No
     // joinable session found".
     const now = new Date();
-    let targetAppt = null;
-    let targetSlot = null;
-
-    for (const appt of classEvent.appointments ?? []) {
-      const run = getJoinableSession(appt.slotsOfAppointment ?? [], {
-        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
-        now,
-      });
-      if (run) {
-        targetAppt = appt;
-        targetSlot = run.anchor;
-        break;
-      }
-    }
+    const targetAppt = classEvent.appointment;
+    const targetSlot = getJoinableOccurrence(targetAppt?.occurrences ?? [], {
+      joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      now,
+    });
 
     if (!targetAppt || !targetSlot) {
       toast({
@@ -446,6 +442,24 @@ export function EventManagementDashboard({
     deleteSubscriptionPlan.mutate(planId);
   };
 
+  // Archive/restore toggles (#1494) — one handler per plan family, each
+  // wired to the matching PATCH mutation.
+  const handleConsultationPlanArchiveToggle = (
+    planId: string,
+    archived: boolean,
+  ) => archiveConsultationPlan.mutate({ id: planId, archived });
+
+  const handleSubscriptionPlanArchiveToggle = (
+    planId: string,
+    archived: boolean,
+  ) => archiveSubscriptionPlan.mutate({ id: planId, archived });
+
+  const handleWebinarPlanArchiveToggle = (planId: string, archived: boolean) =>
+    archiveWebinarPlan.mutate({ id: planId, archived });
+
+  const handleClassPlanArchiveToggle = (planId: string, archived: boolean) =>
+    archiveClassPlan.mutate({ id: planId, archived });
+
   // Calculate stats
   const totalPlans =
     (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
@@ -549,6 +563,12 @@ export function EventManagementDashboard({
                 onDelete={handleConsultationPlanDelete}
                 eventType="consultation"
                 participantCounts={{}}
+                onArchiveToggle={handleConsultationPlanArchiveToggle}
+                archivingPlanId={
+                  archiveConsultationPlan.isPending
+                    ? (archiveConsultationPlan.variables?.id ?? null)
+                    : null
+                }
               />
             )}
           </div>
@@ -608,6 +628,12 @@ export function EventManagementDashboard({
                 participantCounts={{}}
                 pendingTrialCounts={pendingTrialCounts}
                 onTrialsClick={handleTrialsClick}
+                onArchiveToggle={handleSubscriptionPlanArchiveToggle}
+                archivingPlanId={
+                  archiveSubscriptionPlan.isPending
+                    ? (archiveSubscriptionPlan.variables?.id ?? null)
+                    : null
+                }
               />
             )}
           </div>
@@ -667,6 +693,12 @@ export function EventManagementDashboard({
               onJoinMeeting={handleJoinWebinarMeeting}
               joinableEventIds={joinableEventIds}
               joiningEventId={joiningEventId}
+              onArchiveToggle={handleWebinarPlanArchiveToggle}
+              archivingPlanId={
+                archiveWebinarPlan.isPending
+                  ? (archiveWebinarPlan.variables?.id ?? null)
+                  : null
+              }
             />
           </div>
 
@@ -708,6 +740,12 @@ export function EventManagementDashboard({
               onJoinMeeting={handleJoinClassMeeting}
               joinableEventIds={joinableEventIds}
               joiningEventId={joiningEventId}
+              onArchiveToggle={handleClassPlanArchiveToggle}
+              archivingPlanId={
+                archiveClassPlan.isPending
+                  ? (archiveClassPlan.variables?.id ?? null)
+                  : null
+              }
             />
           </div>
         </motion.section>

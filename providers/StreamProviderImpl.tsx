@@ -20,9 +20,50 @@ import {
 import { upsertUserToStream } from "@/actions/stream/chat/user.action";
 import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { useUserData } from "@/hooks/useUserData";
+import { useSession } from "@/lib/auth-client";
 import { mapRoleToStream } from "@/lib/user";
 import { streamLogger } from "@/lib/stream-logger";
 import { setStreamConnection } from "@/lib/stream/connection-store";
+import {
+  classifyConnectFailure,
+  type ConnectFailure,
+} from "@/lib/stream/connect-failure";
+import * as Sentry from "@sentry/nextjs";
+
+/** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
+const MAX_CONNECT_ATTEMPTS = 5;
+
+const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
+  result.status === "fulfilled" ? result.value : null;
+
+/**
+ * One Sentry event per non-retryable connect outcome — `warning` for an
+ * account state, `error` otherwise — with a stable fingerprint so a disabled
+ * account groups into one issue instead of one per page load.
+ */
+function reportNonRetryableConnectFailure(
+  error: unknown,
+  classified: ConnectFailure,
+): void {
+  if (process.env.NODE_ENV === "development") return;
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(classified.detail),
+    {
+      level: classified.kind === "account-disabled" ? "warning" : "error",
+      fingerprint: [
+        "stream-connect",
+        classified.kind,
+        String(classified.code ?? "none"),
+      ],
+      tags: {
+        subsystem: "stream",
+        "stream.failure": classified.kind,
+        "stream.code": String(classified.code ?? ""),
+      },
+      contexts: { stream: { operation: "connect" } },
+    },
+  );
+}
 
 /**
  * The connector takes no `children`. It renders nothing and publishes the
@@ -99,6 +140,7 @@ const StreamProviderImpl = ({
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ConnectFailure | null>(null);
   // We need BOTH a ref and state for retry count: the ref (connectionAttemptsRef)
   // is used inside setTimeout/async closures where state would be stale, while
   // this state variable drives re-renders so the UI shows the correct attempt count.
@@ -113,6 +155,24 @@ const StreamProviderImpl = ({
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const { userDetails, isLoading } = useUserData(userId);
+
+  // The token action refuses to mint without a session, and a tab whose cookie
+  // expired while it sat open kept calling it anyway — 8 unauthorized throws on
+  // the error feed with nobody to show them to (FAMILIARISE_WEB-10). The
+  // client's own copy of the session is the cheap gate.
+  //
+  // `isPending` counts as ALLOWED on purpose: blocking the first mint on the
+  // session round trip would put a serial wait back on the join path, which is
+  // exactly what the prefetch effect below exists to remove (#248).
+  const { data: clientSession, isPending: isSessionPending } = useSession();
+  const signedOut = !isSessionPending && !clientSession?.user?.id;
+  // The video SDK calls `tokenProvider` again on its own schedule, long after
+  // this render; the ref is how that callback sees the current answer without
+  // changing `getCachedToken`'s identity and re-firing the connect effect.
+  const signedOutRef = useRef(false);
+  useEffect(() => {
+    signedOutRef.current = signedOut;
+  }, [signedOut]);
 
   // Token caching with expiry tracking — use ref to avoid triggering re-renders
   // (useState here caused getCachedToken → connectChat → connectServices to
@@ -169,14 +229,19 @@ const StreamProviderImpl = ({
         return type === "chat" ? cache.chatToken! : cache.videoToken!;
       }
 
-      const existing = type === "chat" ? tokenPromiseRef.current.chat : tokenPromiseRef.current.video;
+      const existing =
+        type === "chat"
+          ? tokenPromiseRef.current.chat
+          : tokenPromiseRef.current.video;
       if (existing) return existing;
+
+      if (signedOutRef.current) {
+        throw new Error("Stream token skipped: no signed-in session");
+      }
 
       // Generate new token
       const request =
-        type === "chat"
-          ? chatTokenProvider(userId)
-          : tokenProvider(userId);
+        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId);
       if (type === "chat") tokenPromiseRef.current.chat = request;
       else tokenPromiseRef.current.video = request;
 
@@ -198,15 +263,17 @@ const StreamProviderImpl = ({
       // fails; left unattached that is an unhandled rejection on every failed
       // mint. The catch swallows exactly that derived rejection — the original
       // still propagates to `return request` callers.
-      void request.finally(() => {
-        if (tokenPromiseRef.current.userId !== userId) return;
-        if (type === "chat" && tokenPromiseRef.current.chat === request) {
-          delete tokenPromiseRef.current.chat;
-        }
-        if (type === "video" && tokenPromiseRef.current.video === request) {
-          delete tokenPromiseRef.current.video;
-        }
-      }).catch(() => {});
+      void request
+        .finally(() => {
+          if (tokenPromiseRef.current.userId !== userId) return;
+          if (type === "chat" && tokenPromiseRef.current.chat === request) {
+            delete tokenPromiseRef.current.chat;
+          }
+          if (type === "video" && tokenPromiseRef.current.video === request) {
+            delete tokenPromiseRef.current.video;
+          }
+        })
+        .catch(() => {});
 
       return request;
     },
@@ -222,14 +289,21 @@ const StreamProviderImpl = ({
   // failures are handled by the normal connect paths, which re-request via
   // getCachedToken (cleared promise ref → fresh attempt).
   useEffect(() => {
-    if (!apiKey || !userId) return;
+    if (!apiKey || !userId || signedOut) return;
     if (enableChat && !isTokenValid("chat", userId)) {
       void getCachedToken("chat").catch(() => {});
     }
     if (enableVideo && !isTokenValid("video", userId)) {
       void getCachedToken("video").catch(() => {});
     }
-  }, [userId, enableChat, enableVideo, getCachedToken, isTokenValid]);
+  }, [
+    userId,
+    enableChat,
+    enableVideo,
+    getCachedToken,
+    isTokenValid,
+    signedOut,
+  ]);
 
   // Exponential backoff retry logic
   const getRetryDelay = useCallback((attempt: number) => {
@@ -411,15 +485,30 @@ const StreamProviderImpl = ({
         userId: userDetails.id,
       });
 
+      // No `user` in the constructor: that path connects in the background,
+      // retries five times inside the SDK, and leaks one unhandled rejection
+      // per attempt to Sentry — while this function reported "connected"
+      // without ever awaiting it. One attempt, awaited; the outer catch owns
+      // classification, retry and reporting, exactly as for chat.
       const client = new StreamVideoClient({
         apiKey: apiKey,
-        user: {
-          id: userDetails.id,
-          name: userDetails.name ?? userDetails.id,
-          image: userDetails.image ?? undefined,
-        },
-        tokenProvider: () => getCachedToken("video"),
+        options: { maxConnectUserRetries: 1 },
       });
+      try {
+        await client.connectUser(
+          {
+            id: userDetails.id,
+            name: userDetails.name ?? userDetails.id,
+            image: userDetails.image ?? undefined,
+          },
+          () => getCachedToken("video"),
+        );
+      } catch (error) {
+        // Release the coordinator so nothing keeps the failed client alive;
+        // the global ref is only ever set for a client that connected.
+        await client.disconnectUser().catch(() => undefined);
+        throw error;
+      }
 
       // Store in global reference
       setGlobalVideoClient(client);
@@ -431,7 +520,9 @@ const StreamProviderImpl = ({
       });
       return client;
     } catch (error) {
-      streamLogger.error("Video connection failed", error, {
+      // Warn, not error: the outer catch reports once per outcome. Capturing
+      // here as well sent an event per backoff attempt.
+      streamLogger.warn("Video connection failed", {
         userId: userDetails.id,
       });
       setVideoConnected(false);
@@ -442,6 +533,10 @@ const StreamProviderImpl = ({
   // Stable connectServices function using ref pattern for retry logic
   const connectServices = useCallback(async () => {
     if (isLoading || !userDetails) return;
+    // A scheduled idle-callback or retry timeout can still fire after
+    // sign-out; getCachedToken then rejects and the catch below would queue
+    // up to 5 more retries for a session that is never coming back.
+    if (signedOutRef.current) return;
 
     setIsConnecting(true);
     setError(null);
@@ -456,10 +551,7 @@ const StreamProviderImpl = ({
         connectVideo(),
       ]);
 
-      setClients({
-        chat: chatResult.status === "fulfilled" ? chatResult.value : null,
-        video: videoResult.status === "fulfilled" ? videoResult.value : null,
-      });
+      setClients({ chat: settled(chatResult), video: settled(videoResult) });
 
       const failure = [chatResult, videoResult].find(
         (result) => result.status === "rejected",
@@ -469,30 +561,43 @@ const StreamProviderImpl = ({
       connectionAttemptsRef.current = 0; // Reset on success
       setRetryCount(0);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Connection failed";
-      setError(errorMessage);
+      const classified = classifyConnectFailure(error);
+      setError(classified.detail || "Connection failed");
+      setFailure(classified);
 
       // Implement exponential backoff retry using ref
       connectionAttemptsRef.current += 1;
       setRetryCount(connectionAttemptsRef.current); // Sync state for UI display
       const currentAttempts = connectionAttemptsRef.current;
+      const signedOut = signedOutRef.current;
 
-      if (currentAttempts < 5) {
-        // Max 5 attempts
-        const delay = getRetryDelay(currentAttempts);
-        streamLogger.debug(`Retrying connection in ${delay}ms`, {
+      if (classified.kind !== "retryable") {
+        // Stream said this cannot succeed as-is (deactivated user, bad token,
+        // suspended app). Report once and stop: the five backoff retries per
+        // client per page were the Sentry noise.
+        if (!signedOut) reportNonRetryableConnectFailure(error, classified);
+        return;
+      }
+      if (signedOut) {
+        streamLogger.debug("Skipping retry — signed out", {
           attempt: currentAttempts,
         });
-        setIsConnecting(false);
-        retryTimeoutRef.current = setTimeout(() => {
-          // Re-run connection (the ref ensures we get current attempt count)
-          connectServices();
-        }, delay);
         return;
-      } else {
-        streamLogger.error("Max connection attempts reached", error);
       }
+      if (currentAttempts >= MAX_CONNECT_ATTEMPTS) {
+        streamLogger.error("Max connection attempts reached", error);
+        return;
+      }
+
+      const delay = getRetryDelay(currentAttempts);
+      streamLogger.debug(`Retrying connection in ${delay}ms`, {
+        attempt: currentAttempts,
+      });
+      setIsConnecting(false);
+      retryTimeoutRef.current = setTimeout(() => {
+        // Re-run connection (the ref ensures we get current attempt count)
+        connectServices();
+      }, delay);
     } finally {
       setIsConnecting(false);
     }
@@ -504,6 +609,7 @@ const StreamProviderImpl = ({
   const retryConnection = useCallback(() => {
     connectionAttemptsRef.current = 0;
     setError(null);
+    setFailure(null);
     connectServices();
   }, [connectServices]);
 
@@ -629,8 +735,9 @@ const StreamProviderImpl = ({
       videoConnected,
       isConnecting,
       error,
+      failure,
     });
-  }, [clients, chatConnected, videoConnected, isConnecting, error]);
+  }, [clients, chatConnected, videoConnected, isConnecting, error, failure]);
 
   // The shell exposes `retryConnection` without importing the SDK bundle, so it
   // asks for a retry by event rather than by calling into here directly.

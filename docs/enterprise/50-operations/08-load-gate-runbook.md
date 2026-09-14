@@ -366,10 +366,10 @@ listed in `LOAD_GATE_EVENT_EXCLUDE_USER_IDS` or the event will read as one seat
 over-booked.
 
 **The public availability route reports only free slots.** A booked minute
-simply vanishes from `GET /api/slots/availability/[consultantId]`; there is no
+simply vanishes from `GET /api/scheduling/availability/[consultantId]`; there is no
 field distinguishing free from tentative from confirmed, and the response is
 CDN-cached for fifteen seconds. It is useless as a double-booking oracle. The
-verifier uses `GET /api/slots/appointments` instead, which returns full slot
+verifier uses `GET /api/scheduling/appointments` instead, which returns full slot
 scalars including `isTentative`, `completionStatus` and `deletedAt` — and which
 answers 403 to anyone not filtering by their own profile, which is why
 `LOAD_GATE_VERIFY_TOKEN` must belong to the consultant or to `ADMIN`/`STAFF`.

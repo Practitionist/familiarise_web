@@ -5,6 +5,7 @@
 // centralizes the one config so a sampling/PII/env tweak lands in one place. (#913)
 
 import * as Sentry from "@sentry/nextjs";
+import { isExpectedError } from "@/lib/observability/expected";
 import {
   isNotDevelopmentEnvironment,
   isProductionEnvironment,
@@ -27,6 +28,19 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // developer's .env DSN doesn't flood the shared prod project with dev noise.
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+
+    // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
+    // an error found on a preview was invisible in the one anybody watches and
+    // had to be dug out of Netlify function logs. They now share the production
+    // project; `environment` ("preview" vs "production") keeps them out of
+    // production alerting, and this tag says WHICH branch produced it.
+    initialScope: {
+      tags: {
+        ...(process.env.NEXT_PUBLIC_SENTRY_BRANCH
+          ? { branch: process.env.NEXT_PUBLIC_SENTRY_BRANCH }
+          : {}),
+      },
+    },
 
     // Sample 10% of traces in production; everything outside production.
     tracesSampleRate: isProductionEnvironment() ? 0.1 : 1,
@@ -68,6 +82,19 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       /^safari-extension:\/\//i,
       /^safari-web-extension:\/\//i,
     ],
+
+    // Errors captured by Next's `onRequestError` hook carry no per-call
+    // options, so a guard that fires by design (an expired cookie reaching an
+    // auth check) arrives looking like a fault. `markExpected` puts a marker on
+    // the thrown error and this stamps the tag. Never drops an event — it only
+    // re-levels one. (FAMILIARISE_WEB-10)
+    beforeSend(event, hint) {
+      if (isExpectedError(hint?.originalException)) {
+        event.level = "warning";
+        event.tags = { ...event.tags, expected: "true" };
+      }
+      return event;
+    },
 
     // Last, so a caller can narrow a knob it has better information about.
     // Undefined spreads to nothing, which is what every app entrypoint does.

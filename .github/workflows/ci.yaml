@@ -21,8 +21,14 @@ name: CI
 
 on:
   pull_request:
-    branches: [dev, staging, prod]
-    types: [opened, synchronize, reopened]
+    # `feat/**` is here because a stacked train is the normal shape for large
+    # work in this repo and, without it, a sub-PR whose base is a feature branch
+    # ran NO checks at all — no tsc, no drift guard, no sidecar assertion — until
+    # the integration PR. The gap was found the hard way (#1268's stack).
+    branches: [dev, staging, prod, "feat/**"]
+    # labeled/unlabeled: the `db-reset` label decides which database the guards
+    # and the build run against (#1554), so toggling it must re-run the job.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
 
 jobs:
@@ -116,6 +122,17 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
+      - name: Point the database at the reset rehearsal (label db-reset)
+        # #1554 — a PR that renames tables cannot be checked against the live
+        # database until the reset. With the `db-reset` label the sidecar/drift
+        # guards and the build run against the rehearsal project instead of
+        # being skipped; remove the label (and the two secrets) after the cutover.
+        if: contains(github.event.pull_request.labels.*.name, 'db-reset')
+        run: |
+          test -n "${{ secrets.REHEARSAL_DATABASE_URL }}" || { echo "db-reset label set but REHEARSAL_DATABASE_URL is missing"; exit 1; }
+          sed -i -E 's#^DATABASE_URL=.*#DATABASE_URL="${{ secrets.REHEARSAL_DATABASE_URL }}"#; s#^DIRECT_URL=.*#DIRECT_URL="${{ secrets.REHEARSAL_DIRECT_URL }}"#' .env
+          grep -cE '^(DATABASE_URL|DIRECT_URL)=' .env
+
       - name: TypeScript Check
         run: npx tsc --noEmit
 
@@ -134,6 +151,12 @@ jobs:
         # boundary map; that half is enforced by the extension drift test.
         run: npx --yes tsx@4.23.1 scripts/ci/check-money-columns.ts
 
+      - name: Terminology guard
+        # #1554 — the scheduling vocabulary the reset retired (SlotOfAppointment,
+        # MeetingSession, TrialSession, /api/slots/ …) must not come back into
+        # code. Docs and prompts are reported, never fatal. Static only.
+        run: node_modules/.bin/tsx scripts/ci/check-terminology.ts
+
       - name: Workflow hygiene guard
         # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
         # and the job still reports success — that is how #677 PM-1 came back
@@ -147,6 +170,9 @@ jobs:
         # esbuild and that broke the Netlify build; see the PR discussion.
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
+      - name: Unit Tests
+        run: npm run test
+
       - name: Database sidecar + drift guard
         # `prisma db push` does not manage the ledger CONSTRAINT TRIGGER or any
         # CHECK constraint, so a bare push silently drops every money invariant.
@@ -156,9 +182,6 @@ jobs:
         run: |
           npx --yes tsx@4.23.1 scripts/ci/check-db-sidecars.ts
           npx --yes tsx@4.23.1 scripts/ci/check-db-drift.ts
-
-      - name: Unit Tests
-        run: npm run test
 
       - name: Build
         # Raise the V8 heap so `next build` (+ Sentry source-map generation) does

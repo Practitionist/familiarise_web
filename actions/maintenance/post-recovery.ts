@@ -18,7 +18,7 @@ import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-sta
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
-import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
+import { reconcileOccurrenceAvailability } from "@/scripts/appointments/reconcile-occurrence-availability";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
 interface RecoveryResult {
@@ -89,7 +89,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
       "reconcile-pending-refunds",
       "reconcile-disputes",
       "reconcile-payout-status",
-      "reconcile-slot-availability",
+      "reconcile-occurrence-availability",
       "reconcile-document-storage",
     ];
     const reconciliationRuns = await Promise.allSettled([
@@ -97,7 +97,7 @@ export async function runPostRecovery(): Promise<RecoveryResult> {
       reconcilePendingRefunds(),
       reconcileDisputes(),
       reconcilePayoutStatus(),
-      reconcileSlotAvailability(),
+      reconcileOccurrenceAvailability(),
       reconcileDocumentStorage(),
     ]);
     result.reconciliation = reconciliationRuns.map((r, i) => ({

@@ -4,7 +4,7 @@
 
 Collaborator permissions are four **typed boolean columns** on the `Collaborator` model, set by the host at invite time and defaulting to `false` so an unspecified permission is never silently granted (#768 lockdown #12). The earlier design — role-based defaults with an optional `permissions` JSON override and a `lib/collaborators/permissions.ts` checking module — no longer exists; the JSON column was replaced by the booleans and there is no permissions module. This page was rewritten on 2026-08-14 to describe what is actually enforced.
 
-The columns live at `prisma/schema.prisma:5133-5136`:
+The columns live at `prisma/schema.prisma:6400-6403`:
 
 ```prisma
 canApprovePayment   Boolean @default(false)
@@ -19,12 +19,12 @@ canSeeAttendees     Boolean @default(false)
 
 The intent of each flag and its current enforcement status are as follows.
 
-| Flag | Intended capability | Enforced today? |
-| --- | --- | --- |
-| `canSeeAttendees` | View the participant roster of the plan's events | **Yes** — the participant-roster GETs |
-| `canApprovePayment` | Approve payment-gated requests on the plan | No — stored only, pending #768 |
-| `canViewAnalytics` | View the plan's analytics and stats | No — stored only, pending #768 |
-| `canEditEvent` | Edit event details | No — stored only, pending #768 |
+| Flag                | Intended capability                              | Enforced today?                       |
+| ------------------- | ------------------------------------------------ | ------------------------------------- |
+| `canSeeAttendees`   | View the participant roster of the plan's events | **Yes** — the participant-roster GETs |
+| `canApprovePayment` | Approve payment-gated requests on the plan       | No — stored only, pending #768        |
+| `canViewAnalytics`  | View the plan's analytics and stats              | No — stored only, pending #768        |
+| `canEditEvent`      | Edit event details                               | No — stored only, pending #768        |
 
 The three unenforced flags are **write-only**: the invite and update APIs persist them, and the UI can display them, but no endpoint reads them yet because the collaborator-facing payment-approval, analytics, and event-edit surfaces do not exist. The gate lands together with each surface under #768. Treat any claim that they restrict anything today as false — and conversely, do not build a new collaborator-facing surface for one of these areas without wiring its boolean.
 
@@ -71,11 +71,14 @@ Some capabilities attach to the `ACCEPTED` status itself rather than to any perm
 - Appear in the plan's collaborator list visible to the owner and other accepted collaborators.
 - See the other `ACCEPTED` collaborators (`getCollaboratorsForUser` scoping).
 - Use the plan's private Stream coordination channel.
-- View co-host availability of consultants they share an accepted collaboration with (`GET /api/collaborators/[consultantProfileId]/availability`).
 - View the plan's revenue-split preview (`GET .../revenue-split`).
 - Receive their earnings share at settlement.
+- Withdraw their own row (`DELETE .../[id]` on their own collaboration, #1580 C-P1-7); the host is notified.
+- Join the plan's video calls and event chat channels, and receive the booking, cancellation, reschedule and reminder notifications the host receives (#1580 C-P1-5).
 
-Scheduling is deliberately **not** a permission: no flag grants it, and only the plan owner can create events and set times. When the owner schedules a webinar, that scheduling is itself constrained by the co-host availability guard; class scheduling is not, because no class route calls it (#784 AE-2 — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
+Two capabilities attach to the **role** rather than to a flag: the accepted co-presenter (`CO_HOST` / `CO_INSTRUCTOR`) may end a call for everyone and start or stop a recording, exactly as the owner may; crew roles may not (#1580 C-P1-4). Support treats every accepted collaborator as a provider, so none of them is offered the attendee no-show flow (C-P1-3).
+
+Scheduling is deliberately **not** a permission: no flag grants it, and only the plan owner can create events and set times. When the owner schedules a webinar or a class, that scheduling is itself constrained by the co-host availability guard (#784 AE-2 — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
 
 ---
 
@@ -83,15 +86,16 @@ Scheduling is deliberately **not** a permission: no flag grants it, and only the
 
 The full capability matrix, with the enforcement source for each row, is:
 
-| Capability | Host | Collaborator | Where enforced |
-| --- | --- | --- | --- |
-| Create the plan | Yes | No | Plan CRUD ownership checks |
-| Invite / update / remove collaborators | Yes | No | Collaboration routes (owner check) |
-| Create events, set times | Yes | No — never | Event CRUD ownership; no flag exists |
-| View participant roster | Yes | Only with `canSeeAttendees` | Participant GETs (#768) |
-| View revenue-split preview | Yes | Yes (accepted) | Revenue-split route scoping |
-| View co-host availability | Yes | Yes (shared accepted collaboration) | Availability route scoping |
-| Chat in the collaborator channel | Yes | Yes (accepted) | Stream channel membership |
-| Accept/decline own invitation | — | Yes | Respond route identity check |
-| Receive earnings | Yes | Yes (accepted) | Settlement split |
-| Approve payments / view analytics / edit events | Yes (as owner) | Not yet — flags stored, unenforced | Pending #768 |
+| Capability                                      | Host           | Collaborator                       | Where enforced                             |
+| ----------------------------------------------- | -------------- | ---------------------------------- | ------------------------------------------ |
+| Create the plan                                 | Yes            | No                                 | Plan CRUD ownership checks                 |
+| Invite / update / remove collaborators          | Yes            | No                                 | Collaboration routes (owner check)         |
+| Create events, set times                        | Yes            | No — never                         | Event CRUD ownership; no flag exists       |
+| View participant roster                         | Yes            | Only with `canSeeAttendees`        | Participant GETs (#768)                    |
+| View revenue-split preview                      | Yes            | Yes (accepted)                     | Revenue-split route scoping                |
+| Chat in the collaborator channel                | Yes            | Yes (accepted)                     | Stream channel membership                  |
+| Accept/decline own invitation                   | —              | Yes                                | Respond route identity check               |
+| Withdraw own collaboration                      | —              | Yes (pending or accepted)          | `member-handlers.ts` withdraw branch       |
+| End call for everyone / record                  | Yes            | Co-presenter only                  | `lib/meetings/access.ts`, recording routes |
+| Receive earnings                                | Yes            | Yes (accepted)                     | Settlement split                           |
+| Approve payments / view analytics / edit events | Yes (as owner) | Not yet — flags stored, unenforced | Pending #768                               |

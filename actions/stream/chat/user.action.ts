@@ -7,6 +7,7 @@ import {
   getStreamChatClient,
   withStreamCircuitBreaker,
   StreamUnavailableError,
+  isExpectedStreamError,
 } from "@/lib/stream-client";
 import { forEachChunk } from "@/lib/stream/batch";
 import { streamLogger } from "@/lib/stream-logger";
@@ -14,6 +15,7 @@ import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import type { UpsertRefusal } from "@/lib/stream/connect-failure";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 
@@ -92,9 +94,12 @@ export const upsertUserToStream = async (userId: string) => {
       purposeCode: PURPOSE_CODES.STREAM_DATA_PROCESSING,
     });
     if (!hasStreamConsent) {
-      streamLogger.warn("Refusing Stream upsert — STREAM_DATA_PROCESSING consent absent", {
-        userId: user.id,
-      });
+      streamLogger.warn(
+        "Refusing Stream upsert — STREAM_DATA_PROCESSING consent absent",
+        {
+          userId: user.id,
+        },
+      );
       throw new ConsentRequiredError(
         PURPOSE_CODES.STREAM_DATA_PROCESSING,
         "Video and chat are unavailable because data-processing consent for messaging has not been granted (or was withdrawn). Consent is established at signup and managed by your organization administrator.",
@@ -138,7 +143,25 @@ export const upsertUserToStream = async (userId: string) => {
     if (error instanceof ConsentRequiredError) {
       throw error;
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    // Code 16 / 404 on an upsert is the account itself — deactivated by a
+    // moderation ban, or missing — not an outage. Returned, not thrown: Sentry
+    // auto-captures anything a server action throws, and this made three error
+    // shapes per page load for one disabled account. The client classifies
+    // the connect that follows and reports it once.
+    if (isExpectedStreamError(error)) {
+      streamLogger.warn(
+        "Stream refused the upsert — account deactivated or missing",
+        {
+          userId: validatedUserId,
+        },
+      );
+      const refusal: UpsertRefusal = { refused: "account-disabled" };
+      return refusal;
+    }
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to upsert user to Stream", error, {
       userId: validatedUserId,
     });
@@ -159,11 +182,13 @@ export const upsertUsersToStream = async (userIds: string[]) => {
   // Filter out already synced users
   const unsyncedIds = validatedIds.filter((id) => !isUserSynced(id));
 
+  // #1580 — callers building a channel roster need to know who was NOT synced
+  // (no STREAM_DATA_PROCESSING consent, or unknown), or Stream refuses the roster.
   if (unsyncedIds.length === 0) {
     streamLogger.debug("All users already synced, skipping batch upsert", {
       totalRequested: validatedIds.length,
     });
-    return { users: {} };
+    return { users: {}, droppedIds: [] as string[] };
   }
 
   try {
@@ -183,7 +208,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       streamLogger.warn("No users found for batch upsert", {
         requestedIds: unsyncedIds,
       });
-      return { users: {} };
+      return { users: {}, droppedIds: unsyncedIds };
     }
 
     // DPDP gate (batch). Filter out users who have withdrawn — or never
@@ -213,8 +238,11 @@ export const upsertUsersToStream = async (userIds: string[]) => {
         { droppedIds, droppedCount: droppedIds.length },
       );
     }
+    const unknownIds = unsyncedIds.filter(
+      (id) => !users.some((u) => u.id === id),
+    );
     if (consenters.length === 0) {
-      return { users: {} };
+      return { users: {}, droppedIds: [...droppedIds, ...unknownIds] };
     }
 
     const client = getStreamChatClient();
@@ -248,9 +276,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     await forEachChunk(streamUsers, async (batch) => {
       result = await withStreamCircuitBreaker(
         () =>
-          client.upsertUsers(
-            batch as Parameters<typeof client.upsertUsers>[0],
-          ),
+          client.upsertUsers(batch as Parameters<typeof client.upsertUsers>[0]),
         () => {
           throw new StreamUnavailableError();
         },
@@ -260,9 +286,12 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     // Mark all as synced
     consenters.forEach((user) => markUserSynced(user.id));
 
-    return result;
+    return { ...result, droppedIds: [...droppedIds, ...unknownIds] };
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Failed to batch upsert users to Stream", error, {
       userCount: unsyncedIds.length,
     });
@@ -354,20 +383,30 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
     const relationshipQueries: Promise<void>[] = [];
 
     // Current user is consultant → find consultees among results
-    if (currentUser.consultantProfileId && resultConsulteeProfileIds.length > 0) {
+    if (
+      currentUser.consultantProfileId &&
+      resultConsulteeProfileIds.length > 0
+    ) {
       relationshipQueries.push(
         prisma.consultation
           .findMany({
             where: {
-              consultationPlan: { consultantProfileId: currentUser.consultantProfileId },
+              consultationPlan: {
+                consultantProfileId: currentUser.consultantProfileId,
+              },
               requestedById: { in: resultConsulteeProfileIds },
               status: dmEligibleStatusFilter(),
             },
-            select: { requestedBy: { select: { user: { select: { id: true } } } } },
+            select: {
+              requestedBy: { select: { user: { select: { id: true } } } },
+            },
           })
-          .then((rows) => rows.forEach((r) => {
-            if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
-          })),
+          .then((rows) =>
+            rows.forEach((r) => {
+              if (r.requestedBy?.user?.id)
+                relatedUserIds.add(r.requestedBy.user.id);
+            }),
+          ),
         // No `schedulingPeriodEndsAt` bound: under the ever-transacted rule a
         // lapsed subscription is still a relationship that happened, and the
         // window used to make this disagree with the search routes about who
@@ -376,55 +415,85 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
         prisma.subscription
           .findMany({
             where: {
-              subscriptionPlan: { consultantProfileId: currentUser.consultantProfileId },
+              subscriptionPlan: {
+                consultantProfileId: currentUser.consultantProfileId,
+              },
               requestedById: { in: resultConsulteeProfileIds },
               status: dmEligibleStatusFilter(),
             },
-            select: { requestedBy: { select: { user: { select: { id: true } } } } },
+            select: {
+              requestedBy: { select: { user: { select: { id: true } } } },
+            },
           })
-          .then((rows) => rows.forEach((r) => {
-            if (r.requestedBy?.user?.id) relatedUserIds.add(r.requestedBy.user.id);
-          })),
+          .then((rows) =>
+            rows.forEach((r) => {
+              if (r.requestedBy?.user?.id)
+                relatedUserIds.add(r.requestedBy.user.id);
+            }),
+          ),
       );
     }
 
     // Current user is consultee → find consultants among results
-    if (currentUser.consulteeProfileId && resultConsultantProfileIds.length > 0) {
+    if (
+      currentUser.consulteeProfileId &&
+      resultConsultantProfileIds.length > 0
+    ) {
       relationshipQueries.push(
         prisma.consultation
           .findMany({
             where: {
-              consultationPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
+              consultationPlan: {
+                consultantProfileId: { in: resultConsultantProfileIds },
+              },
               requestedById: currentUser.consulteeProfileId,
               status: dmEligibleStatusFilter(),
             },
             select: {
               consultationPlan: {
-                select: { consultantProfile: { select: { user: { select: { id: true } } } } },
+                select: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } },
+                  },
+                },
               },
             },
           })
-          .then((rows) => rows.forEach((r) => {
-            if (r.consultationPlan?.consultantProfile?.user?.id)
-              relatedUserIds.add(r.consultationPlan.consultantProfile.user.id);
-          })),
+          .then((rows) =>
+            rows.forEach((r) => {
+              if (r.consultationPlan?.consultantProfile?.user?.id)
+                relatedUserIds.add(
+                  r.consultationPlan.consultantProfile.user.id,
+                );
+            }),
+          ),
         prisma.subscription
           .findMany({
             where: {
-              subscriptionPlan: { consultantProfileId: { in: resultConsultantProfileIds } },
+              subscriptionPlan: {
+                consultantProfileId: { in: resultConsultantProfileIds },
+              },
               requestedById: currentUser.consulteeProfileId,
               status: dmEligibleStatusFilter(),
             },
             select: {
               subscriptionPlan: {
-                select: { consultantProfile: { select: { user: { select: { id: true } } } } },
+                select: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } },
+                  },
+                },
               },
             },
           })
-          .then((rows) => rows.forEach((r) => {
-            if (r.subscriptionPlan?.consultantProfile?.user?.id)
-              relatedUserIds.add(r.subscriptionPlan.consultantProfile.user.id);
-          })),
+          .then((rows) =>
+            rows.forEach((r) => {
+              if (r.subscriptionPlan?.consultantProfile?.user?.id)
+                relatedUserIds.add(
+                  r.subscriptionPlan.consultantProfile.user.id,
+                );
+            }),
+          ),
       );
     }
 
@@ -482,7 +551,10 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
 
     return page;
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("User search failed", error, {
       searchTerm: validatedTerm,
     });

@@ -161,10 +161,11 @@ describe("checkout names the appointments it meters", () => {
     );
     const body = call.slice(0, call.indexOf("});"));
     expect(body).toContain("appointmentIds:");
-    // CLASS meters one engagement per class session, so the id set has to be
-    // the whole class, not just the appointment the Payment links to.
+    // CLASS meters one engagement per class session, so the id set is the
+    // wrapper's occurrence rows (#1554), not the one appointment the Payment
+    // links to.
     expect(body).toContain('validatedData.appointmentType === "CLASS"');
-    expect(body).toContain("classId: validatedData.eventId");
+    expect(body).toContain("classEngagementIds");
     expect(body).toContain("[createdAppointment.id]");
   });
 });

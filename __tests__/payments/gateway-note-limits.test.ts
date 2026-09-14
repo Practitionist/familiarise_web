@@ -62,7 +62,7 @@ function consultationInput(notes: string): CheckoutInput {
     paymentGateway: "RAZORPAY",
     startsAt: startsAt.toISOString(),
     endsAt: endsAt.toISOString(),
-    slotOfAvailabilityWeeklyId: "weekly-1",
+    availabilityWindowWeeklyId: "weekly-1",
     notes,
   } as CheckoutInput;
 }
@@ -117,8 +117,8 @@ describe("#1437 gateway note limits", () => {
 
     expect(metadata).not.toHaveProperty("startsAt");
     expect(metadata).not.toHaveProperty("endsAt");
-    expect(metadata).not.toHaveProperty("slotOfAvailabilityWeeklyId");
-    expect(metadata).not.toHaveProperty("slotOfAvailabilityCustomId");
+    expect(metadata).not.toHaveProperty("availabilityWindowWeeklyId");
+    expect(metadata).not.toHaveProperty("availabilityWindowCustomId");
     expect(metadata).not.toHaveProperty("notes");
     expect(Object.values(metadata)).not.toContain("");
     // What the sale actually needs still travels.

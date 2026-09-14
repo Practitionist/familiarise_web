@@ -40,6 +40,7 @@ import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import {
@@ -101,9 +102,8 @@ async function isEventParticipant(
           {
             appointment: {
               deletedAt: null,
-              slotsOfAppointment: {
-                some: { deletedAt: null, user: { some: { id: userId } } },
-              },
+              occurrences: { some: { deletedAt: null } },
+              participants: { some: liveParticipant(userId) },
             },
           },
           { webinarPlan: { consultantProfile: { userId } } },
@@ -114,7 +114,7 @@ async function isEventParticipant(
         appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },
@@ -125,7 +125,7 @@ async function isEventParticipant(
     });
     if (!hit) return false;
     return !isPastRetention(
-      hit.appointment?.slotsOfAppointment[0]?.endsAt ?? null,
+      hit.appointment?.occurrences[0]?.endsAt ?? null,
       hit.appointment?.organization?.streamRecordingRetentionDays ??
         DEFAULT_RETENTION_DAYS,
     );
@@ -137,21 +137,18 @@ async function isEventParticipant(
       status: { in: [...OPENABLE_EVENT_STATUSES] },
       OR: [
         {
-          appointments: {
-            some: {
+          appointment: {
               deletedAt: null,
-              slotsOfAppointment: {
-                some: { deletedAt: null, user: { some: { id: userId } } },
-              },
+              occurrences: { some: { deletedAt: null } },
+              participants: { some: liveParticipant(userId) },
             },
-          },
         },
         { classPlan: { consultantProfile: { userId } } },
       ],
     },
     select: {
       id: true,
-      appointments: {
+      appointment: {
         // A class spans one appointment per cohort but ONE channel; age is the
         // latest end across cohorts, carrying that cohort's org dial — same
         // collapse rule as the expire cron. Each appointment contributes only
@@ -159,7 +156,7 @@ async function isEventParticipant(
         // cohort.
         select: {
           organization: { select: { streamRecordingRetentionDays: true } },
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
             select: { endsAt: true },
@@ -169,25 +166,11 @@ async function isEventParticipant(
     },
   });
   if (!hit) return false;
-  const latestCohort = hit.appointments.reduce<
-    | {
-        endsAt: Date;
-        retentionDays: number;
-      }
-    | null
-  >((latest, apt) => {
-    const aptLatest = apt.slotsOfAppointment[0]?.endsAt;
-    if (!aptLatest) return latest;
-    const retentionDays =
-      apt.organization?.streamRecordingRetentionDays ?? DEFAULT_RETENTION_DAYS;
-    if (!latest || aptLatest > latest.endsAt) {
-      return { endsAt: aptLatest, retentionDays };
-    }
-    return latest;
-  }, null);
+  // #1554 — a class is one wrapper, so its window reads like the webinar's.
   return !isPastRetention(
-    latestCohort?.endsAt ?? null,
-    latestCohort?.retentionDays ?? DEFAULT_RETENTION_DAYS,
+    hit.appointment?.occurrences[0]?.endsAt ?? null,
+    hit.appointment?.organization?.streamRecordingRetentionDays ??
+      DEFAULT_RETENTION_DAYS,
   );
 }
 

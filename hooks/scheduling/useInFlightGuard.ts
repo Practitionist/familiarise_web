@@ -12,8 +12,8 @@ import { useMemo } from "react";
  *
  * Two concurrent joins mint the call twice. Idempotent call ids and a `P2002`
  * catch bound most of the damage — except that `useLazyJoinMeeting`'s
- * `joinableSlot ?? appointment.slotsOfAppointment?.[0]` fallback is documented
- * as unsafe under exactly this race, because `slotsOfAppointment` arrives
+ * `joinableSlot ?? appointment.occurrences?.[0]` fallback is documented
+ * as unsafe under exactly this race, because `occurrences` arrives
  * unsorted. Two clicks can resolve two different anchor rows and put the two
  * sides of one booking in two different rooms — which is #1061, the bug that
  * started this whole train.

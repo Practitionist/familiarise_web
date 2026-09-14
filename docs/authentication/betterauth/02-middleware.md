@@ -49,7 +49,7 @@ Routes are classified by **string prefix matching** — no globs, no regex.
 
 | Category | Examples | Behavior |
 |---|---|---|
-| **Public API** | `/api/auth/`, `/api/health/`, `/api/user/consultants`, `/api/slots/availability/` | Pass through |
+| **Public API** | `/api/auth/`, `/api/health/`, `/api/user/consultants`, `/api/scheduling/availability/` | Pass through |
 | **Authenticated API** | `/api/user/`, `/api/dashboard/`, `/api/admin/`, `/api/organizations/` | 401 if no cookie |
 | **Public auth pages** | `/auth/` | Always pass — client-side redirect logic |
 | **Protected pages** | `/form/`, `/dashboard/`, `/settings/`, `/checkout/` | Redirect to `/auth/signin?callbackUrl=…` |
