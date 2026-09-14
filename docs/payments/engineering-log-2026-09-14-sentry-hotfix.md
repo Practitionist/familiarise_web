@@ -19,3 +19,7 @@ Razorpay answers `refunds.fetch` for an id it has no record of, and for a test-m
 ## FAMILIARISE_WEB-1H: "Rendered more hooks than during the previous render" on the class offering editor
 
 Two events, on two different previews, both on `/dashboard/consultant/[consultantId]/offerings/class/[offeringId]/edit`. The stack is minified and carries no component name. Within the time box the edit page, `OfferingEditorContainer`, `OfferingEditor`, `OfferingField` and its four composite fields, `ContentItemsEditor`, `FaqEditor`, `CollaboratorsTab` and `PlanImageUploader` were read for a hook after an early return or a hook called on a condition, and none has one; the page calls `notFound()` before its `useQuery`, but a thrown render never commits and cannot be the "previous render". The item is left open with those components ruled out.
+
+## Seed: the QA logins are always onboarded
+
+The same day's production audit could not use two of the three documented QA accounts because `prisma/seedFiles/1a-create-users.ts` set `onboardingCompleted` to a coin flip for every seeded user, so which named account was hard-gated to `/form/onboarding` changed on every reset. The first three users of each role are now always onboarded (`QA_ACCOUNTS_PER_ROLE`); everyone else keeps the random flag so the onboarding funnel still has both states in seed data. Emails are derived deterministically from the user index, so the QA cohort is the same addresses on every reset.
