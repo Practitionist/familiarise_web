@@ -87,7 +87,7 @@ curl -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $RESEND_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "from": "Familiarise <payments@familiarise.com>",
+    "from": "Familiarise <payments@mail.familiarisenow.com>",
     "to": "test@example.com",
     "subject": "Test Email",
     "html": "<p>Test</p>"
@@ -852,9 +852,9 @@ WHERE request_status = 'APPROVED_PENDING_PAYMENT'
 
 ### Internal Team
 
-- **DevOps**: ops@familiarise.com (for Redis/deployment issues)
-- **Backend**: backend@familiarise.com (for API/database issues)
-- **Frontend**: frontend@familiarise.com (for UI/React Query issues)
+- **DevOps**: ops@familiarisenow.com (for Redis/deployment issues)
+- **Backend**: backend@familiarisenow.com (for API/database issues)
+- **Frontend**: frontend@familiarisenow.com (for UI/React Query issues)
 
 ### External Services
 

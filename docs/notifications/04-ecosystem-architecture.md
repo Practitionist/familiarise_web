@@ -2,7 +2,7 @@
 
 > Complete map of every service, pipeline, component, and data flow in the Familiarise notification system.
 
-**Last Updated**: 2026-03-24
+**Last Updated**: 2026-09-14
 
 ---
 
@@ -35,13 +35,14 @@ flowchart TB
 
     subgraph PIPE1["PIPELINE 1: Resend Direct — LIVE"]
         direction TB
-        P1_LIB["lib/email.ts\n6 functions"]
+        P1_LIB["lib/email/index.ts\n11 functions"]
         subgraph P1_TEMPLATES["10 React Email Templates"]
             P1_T1["emails/auth/\nWelcomeEmail\nPasswordResetEmail\nAccountLinkedEmail"]
             P1_T2["emails/payments/\nPaymentLinkEmail\nPaymentSuccessEmail\nPaymentFailedEmail"]
             P1_T3["emails/waitlist/\nConfirm | Welcome"]
         end
-        P1_RENDER["@react-email/render\nJSX → HTML string"]
+        P1_RENDER["renderEmail()\nreact-email → {html, text}"]
+        P1_DELIVER["deliver()\nsingle send core, idempotency key"]
     end
 
     subgraph PIPE2["PIPELINE 2: Novu Orchestrated — CODE DONE, DASHBOARD NEEDS CONFIG"]
@@ -63,7 +64,7 @@ flowchart TB
         direction TB
         P3_SUB["POST /api/newsletter/subscribe\nSaves email + calls ConvertKit stub"]
         P3_UNSUB["GET /api/newsletter/unsubscribe\nHMAC-signed token verification\nSets unsubscribed=true"]
-        P3_SEND["POST /api/admin/newsletter/send\nAdmin-only, Resend batch API\n100/call, auto-appends\nunsubscribe footer + headers"]
+        P3_SEND["POST /api/admin/waitlist/broadcast\nAdmin-only, Resend batch API\n100/call, auto-appends\nunsubscribe footer + headers"]
         P3_DB[("Newsletter table\nid, email, unsubscribed\nunsubscribedAt")]
     end
 
@@ -93,7 +94,7 @@ flowchart TB
         D_CONSULTANT["Consultant Settings\nMISSING prefs panel ⚠️"]
         D_CONSULTEE["Consultee Settings\nMISSING prefs panel ⚠️"]
         D_ANNOUNCE["Admin: POST /api/announcements\nCreates announcement record\n+ notifyGeneralAnnouncement()\ntriggerBroadcast to ALL users"]
-        D_NL_SEND["Admin: Newsletter Send UI\nPOST /api/admin/newsletter/send"]
+        D_NL_SEND["Admin: Newsletter Send UI\nPOST /api/admin/waitlist/broadcast"]
     end
 
     subgraph DELIVERY["DELIVERY"]
@@ -120,7 +121,8 @@ flowchart TB
 
     %% Pipeline 1 internal
     P1_LIB --> P1_RENDER
-    P1_RENDER --> DEL_RESEND
+    P1_RENDER --> P1_DELIVER
+    P1_DELIVER --> DEL_RESEND
 
     %% Pipeline 2 internal
     P2_SVC --> P2_CLIENT --> NOVU_CLOUD
@@ -165,23 +167,28 @@ flowchart TB
 
 **How it works:**
 
-1. Business logic calls a send function (e.g., `sendWelcomeEmail()`)
-2. Function calls `getResendClient()` (lazy singleton, graceful degradation if no API key)
-3. React Email component is rendered to HTML via `@react-email/render`
-4. HTML is sent via `resend.emails.send()` with appropriate `from:` address
+1. Business logic calls a send function (e.g., `sendWelcomeEmail()`) in `lib/email/index.ts`
+2. The function renders its React Email element via `renderEmail()` (`lib/email/render.ts`) into `{html, text}`
+3. The function calls `deliver()` (`lib/email/deliver.ts`), the single send core: `getResendClient()` (lazy singleton), a content-hash Idempotency-Key, and a `From` address read from `SENDERS`
+4. `deliver()` sends via `resend.emails.send()`; a thrown `EmailNotConfiguredError` or any other terminal failure is dead-lettered into `FailedEmail` rather than dropped
 
-**10 Templates:**
+**10 React Email templates behind 11 senders** (the contact-inquiry sender builds inline HTML instead of a template):
 
-| Template             | From Address                 | Triggered By                                          |
-| -------------------- | ---------------------------- | ----------------------------------------------------- |
-| WelcomeEmail         | `onboarding@familiarise.com` | BetterAuth `user.create.after` hook                   |
-| PasswordResetEmail   | `security@familiarise.com`   | Password reset flow                                   |
-| AccountLinkedEmail   | `security@familiarise.com`   | OAuth account linking                                 |
-| PaymentLinkEmail     | `payments@familiarise.com`   | Consultant approves consultation/subscription request |
-| PaymentSuccessEmail  | `payments@familiarise.com`   | Stripe/Razorpay payment webhook                       |
-| PaymentFailedEmail   | `payments@familiarise.com`   | Stripe/Razorpay failure webhook                       |
-| WaitlistConfirmEmail | `newsletter@familiarise.com` | Double opt-in confirmation for a newsletter signup    |
-| WaitlistWelcomeEmail | `newsletter@familiarise.com` | Sent once the confirm link is clicked                 |
+| Template                   | From Address                            | Triggered By                                          |
+| -------------------------- | --------------------------------------- | ----------------------------------------------------- |
+| WelcomeEmail               | `onboarding@mail.familiarisenow.com`    | BetterAuth `user.create.after` hook (awaited, #1298)  |
+| PasswordResetEmail         | `security@mail.familiarisenow.com`      | Password reset flow                                   |
+| VerificationEmail          | `onboarding@mail.familiarisenow.com`    | Email verification flow                               |
+| AccountLinkedEmail         | `security@mail.familiarisenow.com`      | OAuth account linking (awaited, #1298)                |
+| PaymentLinkEmail           | `payments@mail.familiarisenow.com`      | Consultant approves consultation/subscription request |
+| PaymentSuccessEmail        | `payments@mail.familiarisenow.com`      | Stripe/Razorpay payment webhook                       |
+| PaymentFailedEmail         | `payments@mail.familiarisenow.com`      | Stripe/Razorpay failure webhook                       |
+| OrgInvitationEmail         | `notifications@mail.familiarisenow.com` | Organization invitation flow (no caller today)        |
+| WaitlistConfirmEmail       | `newsletter@news.familiarisenow.com`    | Double opt-in confirmation for a waitlist signup      |
+| WaitlistWelcomeEmail       | `newsletter@news.familiarisenow.com`    | Sent once the confirm link is clicked                 |
+| (inline HTML, no template) | `notifications@mail.familiarisenow.com` | `/contactus` submission → `sendContactInquiryEmail`   |
+
+Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN`; the values shown are the defaults.
 
 **Design system:** White card on `#f5f5f5` background, black CTA button, `-apple-system` font stack, `16px` body, `28px` heading.
 
@@ -219,9 +226,9 @@ flowchart TB
 | `app/api/appointments/[id]/reschedule/route.ts`             | appointmentRescheduled                                         |
 | `app/api/cleanup/appointment-reminders/route.ts`            | appointmentReminder (cron)                                     |
 | `scripts/appointments/auto-complete-appointments.ts`        | appointmentCompleted (cron)                                    |
-| `app/api/scheduling/request-for-approval/route.ts`               | newBookingRequest                                              |
+| `app/api/scheduling/request-for-approval/route.ts`          | newBookingRequest                                              |
 | `app/api/bookings/subscriptions/`                           | subscriptionStarted, subscriptionCancelled                     |
-| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trial\* (4)                                             |
+| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trial\* (4)                                                    |
 | `app/api/user/support-tickets/route.ts`                     | supportTicketCreated                                           |
 | `app/api/staff/support-tickets/[id]/responses/route.ts`     | supportTicketResponse                                          |
 | `app/api/user/reviews/route.ts`                             | newReview                                                      |
@@ -250,12 +257,16 @@ Subscribe:
     → returns {success: true}
 
 Send:
-  Admin calls POST /api/admin/newsletter/send {subject, htmlBody}
-    → Auth check (ADMIN role only)
-    → Query Newsletter table WHERE unsubscribed = false
-    → For each batch of 100: resend.batch.send()
+  Admin calls POST /api/admin/waitlist/broadcast {subject, htmlBody, textBody?}
+    → Auth check (ADMIN role only, requireAdminAuth())
+    → listSendableSubscribers() from lib/waitlist/service.ts
+    → For each batch of 100: resend.batch.send() via getResendClient() from lib/email
     → Each email gets: unsubscribe footer + List-Unsubscribe header
     → Returns {sent, failed, total}
+
+  There is no `/api/admin/newsletter/send` route; the broadcast endpoint lives
+  under `/api/admin/waitlist/broadcast` because the send list and the double
+  opt-in confirmation share the Waitlist table.
 
 Unsubscribe:
   User clicks link → GET /api/newsletter/unsubscribe?email=...&token=...
@@ -414,16 +425,15 @@ flowchart LR
 
 | Component                                      | Files                                                                                                            |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Resend email client                            | `lib/email.ts`                                                                                                   |
-| 10 React Email templates                       | `emails/auth/`, `emails/payments/`, `emails/waitlist/`                                                           |
+| Resend email client                            | `lib/email/index.ts`, `lib/email/deliver.ts`, `lib/email/config.ts`                                              |
+| 10 React Email templates behind 11 senders     | `emails/auth/`, `emails/payments/`, `emails/organizations/`, `emails/waitlist/`, `emails/components/`            |
 | Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                                  |
 | Novu React provider + bell icon + sync hook    | `providers/NovuProvider.tsx`, `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts` |
 | Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                                      |
 | Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                                    |
 | Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                                        |
-| Newsletter subscribe                           | `app/api/newsletter/subscribe/route.ts`                                                                          |
-| Newsletter unsubscribe                         | `app/api/newsletter/unsubscribe/route.ts`                                                                        |
-| Admin newsletter send                          | `app/api/admin/newsletter/send/route.ts`                                                                         |
+| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                              |
+| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                                      |
 | Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                                 |
 | Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                             |
 | Stream recording webhook                       | `app/api/webhooks/stream/recording/route.ts`                                                                     |
@@ -433,19 +443,17 @@ flowchart LR
 
 ### STUB (placeholder code, no functionality)
 
-| Component            | File                                 | What It Does Now              | When to Implement  |
-| -------------------- | ------------------------------------ | ----------------------------- | ------------------ |
-| ConvertKit           | `lib/newsletter/convertkit.ts`       | 4 functions that log + return | 500+ subscribers   |
-| Directus CMS webhook | `app/api/webhooks/directus/route.ts` | Logs event, returns 200       | When blog launches |
+| Component            | File                                 | What It Does Now        | When to Implement  |
+| -------------------- | ------------------------------------ | ----------------------- | ------------------ |
+| Directus CMS webhook | `app/api/webhooks/directus/route.ts` | Logs event, returns 200 | When blog launches |
 
 ### NEEDS EXTERNAL CONFIG (code complete, config needed)
 
-| Component                | What's Needed                                                                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Novu Dashboard           | Create 16 Tier 1 workflows using `docs/notifications/03-novu-template-specs.md`, add Resend as email provider, configure preference categories |
-| Resend domain            | Verify `familiarise.com` domain in Resend dashboard (DKIM, SPF, DMARC)                                                                         |
-| Cron scheduling          | Schedule reminder + auto-complete cron jobs in GitHub Actions or Netlify                                                                       |
-| `NEWSLETTER_HMAC_SECRET` | Add env var (falls back to `RESEND_API_KEY`)                                                                                                   |
+| Component       | What's Needed                                                                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Novu workflows  | Not a dashboard task: `lib/novu/templates/` is the source of truth and `npm run novu:sync` writes it to the Development environment (ADR 30); all sixteen families are in-app only, no Resend integration to configure |
+| Resend domains  | Add `mail.familiarisenow.com` and `news.familiarisenow.com` in the Resend dashboard, then add the DKIM/return-path/SPF/DMARC records the dashboard returns in Netlify DNS (region: Tokyo, `ap-northeast-1`)            |
+| Cron scheduling | Schedule reminder + auto-complete cron jobs in GitHub Actions or Netlify                                                                                                                                               |
 
 ### MISSING (no code, no stub)
 
@@ -462,27 +470,30 @@ flowchart LR
 
 ## Environment Variables
 
-| Variable                  | Required  | Used By                                                   |
-| ------------------------- | --------- | --------------------------------------------------------- |
-| `RESEND_API_KEY`          | Yes       | Resend direct emails, Novu email channel, newsletter send |
-| `NOVU_SECRET_KEY`         | Yes       | Novu server-side SDK                                      |
-| `NEXT_PUBLIC_NOVU_APP_ID` | Yes       | Novu React SDK (client-side)                              |
-| `NEXT_PUBLIC_APP_URL`     | Yes       | Email link URLs, unsubscribe URLs                         |
-| `CRON_SECRET`             | Yes       | Auth for cron job endpoints                               |
-| `NEWSLETTER_HMAC_SECRET`  | Optional  | Unsubscribe token signing (falls back to RESEND_API_KEY)  |
-| `STREAM_WEBHOOK_SECRET`   | Yes       | Stream webhook signature verification                     |
-| `CONVERTKIT_API_KEY`      | No (stub) | Future ConvertKit integration                             |
-| `CONVERTKIT_FORM_ID`      | No (stub) | Future ConvertKit form ID                                 |
+| Variable                             | Required | Used By                                                                              |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
+| `RESEND_API_KEY`                     | Yes      | Resend direct emails, waitlist broadcast                                             |
+| `EMAIL_TRANSACTIONAL_DOMAIN`         | No       | Transactional sender domain (defaults to `mail.familiarisenow.com`)                  |
+| `EMAIL_NEWSLETTER_DOMAIN`            | No       | Waitlist/newsletter sender domain (defaults to `news.familiarisenow.com`)            |
+| `NEXT_PUBLIC_SUPPORT_EMAIL`          | No       | Public support mailbox, default Reply-To                                             |
+| `CONTACT_INBOX_ADDRESS`              | No       | `/contactus` delivery inbox (defaults to the support mailbox)                        |
+| `BILLING_EMAIL`                      | No       | Supplier contact on tax invoices (defaults to the support mailbox)                   |
+| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | No       | Optional postal line in `EmailFooter`                                                |
+| `NOVU_SECRET_KEY`                    | Yes      | Novu server-side SDK                                                                 |
+| `NEXT_PUBLIC_NOVU_APP_ID`            | Yes      | Novu React SDK (client-side)                                                         |
+| `NEXT_PUBLIC_APP_URL`                | Yes      | Email link URLs, unsubscribe URLs                                                    |
+| `CRON_SECRET`                        | Yes      | Auth for cron job endpoints                                                          |
+| `WAITLIST_HMAC_SECRET`               | Yes      | Waitlist confirm/unsubscribe token signing; there is no fallback to `RESEND_API_KEY` |
+| `STREAM_WEBHOOK_SECRET`              | Yes      | Stream webhook signature verification                                                |
 
 ---
 
 ## NPM Packages
 
-| Package                   | Version | Pipeline            |
-| ------------------------- | ------- | ------------------- |
-| `resend`                  | 6.8.0   | Pipeline 1 + 3      |
-| `@react-email/components` | 1.0.6   | Pipeline 1          |
-| `@react-email/render`     | 2.0.4   | Pipeline 1          |
-| `@novu/api`               | 3.13.0  | Pipeline 2 (server) |
-| `@novu/nextjs`            | 3.13.0  | Pipeline 2 (client) |
-| `@novu/react`             | 3.13.0  | Pipeline 2 (client) |
+| Package        | Version | Pipeline                                                                                 |
+| -------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `resend`       | ^6.28.0 | Pipeline 1 + 3                                                                           |
+| `react-email`  | 6.9.5   | Pipeline 1 (replaces the deprecated `@react-email/components` and `@react-email/render`) |
+| `@novu/api`    | 3.13.0  | Pipeline 2 (server)                                                                      |
+| `@novu/nextjs` | 3.13.0  | Pipeline 2 (client)                                                                      |
+| `@novu/react`  | 3.13.0  | Pipeline 2 (client)                                                                      |

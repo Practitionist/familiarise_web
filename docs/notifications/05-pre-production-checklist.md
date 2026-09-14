@@ -2,14 +2,14 @@
 
 > Everything needed before going live. Current state, free tier limits, when to pay, and the exact setup steps.
 
-**Last Updated**: 2026-03-24
+**Last Updated**: 2026-09-14
 **Live Domain**: `familiarisenow.com` (Netlify)
 
 ---
 
 ## Table of Contents
 
-- [Critical Blocker: Email Domain](#critical-blocker-email-domain)
+- [Decision (2026-09-14): Sending Domain](#decision-2026-09-14-sending-domain)
 - [Service Free Tier Limits](#service-free-tier-limits)
 - [Pre-Launch Checklist (Free, $0/month)](#pre-launch-checklist-free-0month)
 - [DNS Setup for Resend (Step-by-Step)](#dns-setup-for-resend-step-by-step)
@@ -23,35 +23,34 @@
 
 ---
 
-## Critical Blocker: Email Domain
+## Decision (2026-09-14): Sending Domain
 
-The codebase sends emails from `@familiarise.com`:
+The prod outage tracked as #1298 had three causes: the `RESEND_API_KEY` deployed to Netlify prod, the GitHub Actions secret, `.env` and `.mcp.json` was invalid (Resend returned 400 "API key is invalid" on every send); every `from:` address was `@familiarise.com`, a domain the company has never owned (it sits parked at NameBright/HugeDomains with SPF `-all`, which tells receiving servers to reject mail claiming to be from it); and `familiarisenow.com`, the domain the company does own and the live site runs on, had no DKIM/SPF/DMARC records — its DNS is Netlify DNS (nameservers at NS1), not the registrar.
+
+`familiarise.com` was never a real option: the company does not control its DNS, so Resend cannot verify it, and buying it back does not fix the second and third causes.
+
+The owner decided to send from `familiarisenow.com` through two subdomains, splitting reputations so a newsletter bounce spike cannot affect transactional deliverability:
 
 ```
-onboarding@familiarise.com
-security@familiarise.com
-payments@familiarise.com
-notifications@familiarise.com
-newsletter@familiarise.com
+onboarding@mail.familiarisenow.com
+security@mail.familiarisenow.com
+payments@mail.familiarisenow.com
+notifications@mail.familiarisenow.com
+finance@mail.familiarisenow.com
+dpdp@mail.familiarisenow.com
+noreply@mail.familiarisenow.com
+system@mail.familiarisenow.com   (bare requester id, not a From header)
+newsletter@news.familiarisenow.com
 ```
+
+The region is Tokyo (`ap-northeast-1`). Resend offers four regions (`us-east-1`, `eu-west-1`, `sa-east-1`, `ap-northeast-1`); the region controls where Resend dispatches mail from, not where account data is stored, which stays in the US regardless of the region chosen.
+
+Support and contact mail still goes to a real mailbox through `NEXT_PUBLIC_SUPPORT_EMAIL` / `CONTACT_INBOX_ADDRESS`, because `familiarisenow.com` has no MX record yet and cannot receive mail.
 
 **Files using these `from:` addresses:**
 
-- `lib/email.ts` — 6 functions (onboarding@, security@, payments@)
-- `app/api/admin/newsletter/send/route.ts` — 1 function (newsletter@)
-
-**The problem:** The live site is at `familiarisenow.com`, not `familiarise.com`. Resend requires you to verify the sending domain via DNS. You can only verify a domain you own and control.
-
-**Two options:**
-
-| Option                          | Pros                                                | Cons                                                                 |
-| ------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
-| **A: Buy `familiarise.com`**    | Clean brand, matches existing code, no code changes | Domain may be taken/expensive                                        |
-| **B: Use `familiarisenow.com`** | You already own it, free                            | Need to update all `from:` addresses in code (~11 places in 3 files) |
-
-**Decision needed before launch.** Everything else can proceed regardless.
-
----
+- `lib/email/index.ts` — 11 sender functions, all reading `SENDERS` from `lib/email/config.ts`
+- `app/api/admin/waitlist/broadcast/route.ts` — the newsletter broadcast, `SENDERS.newsletter`
 
 ## Service Free Tier Limits
 
@@ -82,15 +81,15 @@ newsletter@familiarise.com
 
 ### Novu (Notification Orchestration)
 
-| Feature                    | Free      | Pro (~$25-30/mo) |
-| -------------------------- | --------- | ---------------- |
-| Events/month               | ~10,000   | 30,000           |
-| In-app notifications       | Yes       | Yes              |
-| Email channel (via Resend) | Yes       | Yes              |
-| Digest/batching            | Limited   | Full             |
-| Activity feed retention    | 7 days    | 30 days          |
-| Subscribers                | Unlimited | Unlimited        |
-| Workflows                  | 20        | 20 (100 on Team) |
+| Feature                 | Free                                       | Pro (~$25-30/mo) |
+| ----------------------- | ------------------------------------------ | ---------------- |
+| Events/month            | ~10,000                                    | 30,000           |
+| In-app notifications    | Yes                                        | Yes              |
+| Email channel           | Not used — all 16 families are in-app only | Not used         |
+| Digest/batching         | Limited                                    | Full             |
+| Activity feed retention | 7 days                                     | 30 days          |
+| Subscribers             | Unlimited                                  | Unlimited        |
+| Workflows               | 20                                         | 20 (100 on Team) |
 
 **What an "event" is:**
 
@@ -135,22 +134,20 @@ newsletter@familiarise.com
 
 ### Step 1: Domain Decision
 
-- [ ] Decide: `familiarise.com` (buy) or `familiarisenow.com` (already owned)
-- [ ] If using `familiarisenow.com`: update `from:` addresses in `lib/email.ts` and `app/api/admin/waitlist/broadcast/route.ts`
-- [ ] If buying `familiarise.com`: purchase and configure DNS
+- [x] Decided 2026-09-14: send from `familiarisenow.com` through `mail.familiarisenow.com` (transactional) and `news.familiarisenow.com` (newsletter); see [Decision (2026-09-14): Sending Domain](#decision-2026-09-14-sending-domain)
+- [ ] Add both subdomains in the Resend dashboard and verify (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
 
 ### Step 2: Resend Setup
 
 - [ ] Create account at [resend.com](https://resend.com)
-- [ ] Add sending domain (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
-- [ ] Verify domain (DKIM + SPF)
+- [ ] Add both sending domains (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
+- [ ] Verify both domains (DKIM + SPF)
 - [ ] Copy API key → save for Step 5
 
 ### Step 3: Novu Setup
 
 - [ ] Create account at [novu.co](https://novu.co)
-- [ ] Add Resend as email provider in Novu → Integrations
-- [ ] Sync the workflows (see [Novu Dashboard Configuration](#novu-dashboard-configuration))
+- [ ] Sync the workflows (see [Novu Dashboard Configuration](#novu-dashboard-configuration)) — no Resend email provider to add, every family is in-app only
 - [ ] Copy Secret Key + App ID → save for Step 5
 
 ### Step 4: Prisma Migration
@@ -180,27 +177,28 @@ newsletter@familiarise.com
 
 ## DNS Setup for Resend (Step-by-Step)
 
+Two domains need to be added and verified, because transactional and newsletter mail are split to keep their sender reputations apart.
+
 1. Log into [Resend Dashboard → Domains](https://resend.com/domains)
-2. Click **"+ Add Domain"**
-3. Enter your domain: `familiarisenow.com` (or `familiarise.com`)
-4. Select region: **us-east-1** (or closest to your users)
-5. Resend will display DNS records to add:
+2. Click **"+ Add Domain"** and enter `mail.familiarisenow.com`; repeat for `news.familiarisenow.com`
+3. Select region **ap-northeast-1 (Tokyo)** for both — the region controls where Resend dispatches mail from, not where account data lives, which stays in the US
+4. Resend displays the DNS records each domain needs once it is added:
 
-| Type | Name                               | Value                                   | Purpose           |
-| ---- | ---------------------------------- | --------------------------------------- | ----------------- |
-| TXT  | `resend._domainkey.yourdomain.com` | `p=MIGfMA0GCSq...`                      | DKIM signature    |
-| TXT  | `yourdomain.com`                   | `v=spf1 include:amazonses.com ~all`     | SPF authorization |
-| MX   | `bounce.yourdomain.com`            | `feedback-smtp.us-east-1.amazonses.com` | Bounce handling   |
+| Type | Name                                        | Value                                               | Purpose                       |
+| ---- | ------------------------------------------- | --------------------------------------------------- | ----------------------------- |
+| TXT  | `resend._domainkey.mail.familiarisenow.com` | `p=MIGfMA0GCSq...` (read from the Resend dashboard) | DKIM signature                |
+| TXT  | `send.mail.familiarisenow.com`              | `v=spf1 include:amazonses.com ~all`                 | SPF authorization             |
+| MX   | `send.mail.familiarisenow.com`              | `feedback-smtp.ap-northeast-1.amazonses.com`        | Return-path / bounce handling |
+| TXT  | `_dmarc.mail.familiarisenow.com`            | `v=DMARC1; p=none; ...` (optional)                  | DMARC policy                  |
 
-6. Go to your DNS provider (Netlify DNS or domain registrar)
-7. Add each record exactly as shown
-8. Back in Resend, click **"Verify DNS"**
-9. Wait for verification (minutes to 48 hours for DNS propagation)
-10. Status should change to **"Verified"** with green checkmarks
+The exact record names and values are read from the Resend dashboard after each domain is added, not copied from this table — Resend generates the DKIM key per domain. The same four records are added again for `news.familiarisenow.com`.
 
-**If using Cloudflare DNS:** Resend has automatic Cloudflare integration — click "Sign in to Cloudflare" to auto-add records.
+5. Add the records in **Netlify DNS**, which is where the `familiarisenow.com` zone lives (nameservers point at NS1, not the domain registrar): `netlify api createDnsRecord --data '{...}'` against the zone, or through the Netlify dashboard's DNS panel
+6. Back in Resend, click **"Verify DNS"** for each domain
+7. Wait for verification (minutes to 48 hours for DNS propagation)
+8. Status should change to **"Verified"** with a green checkmark for both `mail.familiarisenow.com` and `news.familiarisenow.com`
 
-**Important:** Do NOT proxy the DNS records through Cloudflare (orange cloud). DKIM and SPF records must be DNS-only (gray cloud).
+**Important:** Netlify DNS records are not proxied, so there is no orange-cloud/gray-cloud distinction to worry about here (that concern is specific to Cloudflare DNS, which this repository does not use for `familiarisenow.com`).
 
 ---
 
@@ -208,13 +206,9 @@ newsletter@familiarise.com
 
 Use the template specs at `docs/notifications/03-novu-template-specs.md` for copy-paste-ready content.
 
-### 1. Add Resend Email Provider
+### 1. Add Resend Email Provider — not needed
 
-1. Go to **Novu Dashboard → Integrations**
-2. Click **"Add Provider"** → select **Resend**
-3. Enter your `RESEND_API_KEY`
-4. Set default From: `Familiarise <notifications@yourdomain.com>`
-5. Save and activate
+All sixteen Novu workflow families are in-app only; none has an email step, so there is no Resend integration to add in Novu → Integrations. Novu's own "email" integration option is its demo provider and is not used here. Email for a Novu-triggered event, if ever wanted, is a product decision tracked separately and is not part of this checklist.
 
 ### 2. Sync the workflows
 
@@ -232,16 +226,28 @@ Nothing to configure by hand. Each family carries its opt-out category as a tag 
 
 The `prod` branch deploys on merge, and the code it carries triggers family ids. Before merging `dev` into `prod` after any change under `lib/novu/templates/`, run `npm run novu:sync` and then `npm run novu:check` and confirm it reports nothing to change; a deploy that lands before the sync drops every notification of a missing family silently. The same order applies in reverse for the first migration: merge, sync, then verify one event per changed family in an inbox.
 
---------------------- | -------------------------------------------------------------------------------------------------- |
-| `appointments` | appointment-booked, appointment-cancelled, appointment-reminder, new-booking-request |
-| `payments` | payment-success, payment-failed |
-| `subscriptions` | subscription-started, subscription-cancelled |
-| `trials` | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled |
-| `support` | support-ticket-created, support-ticket-response |
-| `feedback` | new-review-received |
-| (none — always sends) | verification-status-changed |
+---
+
+## Owner Runbook: Rotating `RESEND_API_KEY`
+
+The key that caused #1298 was the same invalid value in four places; all four need the new key, in this order, because a partial rotation leaves some paths sending and others silently dead-lettering:
+
+1. **Netlify production** — Site settings → Environment variables → `RESEND_API_KEY`, scoped to the production context.
+2. **GitHub Actions secret** — `gh secret set RESEND_API_KEY`, so the retry worker cron (`5-59/15 * * * *`) and any CI-side email test use the same key.
+3. **`.env`** — local development.
+4. **`.mcp.json`** — the Resend MCP server configuration used for live verification.
+
+Then, before the first send:
+
+5. Add `mail.familiarisenow.com` and `news.familiarisenow.com` as domains in the Resend dashboard (see [DNS Setup](#dns-setup-for-resend-step-by-step)) and add the DNS records in Netlify DNS.
+6. Set `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` per [.env.sample](../../.env.sample) if a non-default value is wanted.
+7. Redeploy so Netlify picks up the new environment variables.
+8. Smoke test: sign up a test user and confirm the welcome email arrives; check the Resend dashboard shows both domains "Verified"; check the `FailedEmail` table has no new `PENDING` rows after the smoke test.
+9. Resolve the open Sentry issues fingerprinted `["email-send-terminal", ...]` that were paging during the outage, once sends succeed again.
 
 ---
+
+## Cron Job Scheduling
 
 ## Cron Job Scheduling
 
@@ -304,22 +310,28 @@ jobs:
 
 Set these in **Netlify Dashboard → Site → Environment Variables**:
 
-| Variable                  | Value                                     | Required                                |
-| ------------------------- | ----------------------------------------- | --------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`     | `https://familiarisenow.com`              | Yes                                     |
-| `RESEND_API_KEY`          | From Resend dashboard                     | Yes                                     |
-| `NOVU_SECRET_KEY`         | From Novu dashboard → Settings → API Keys | Yes                                     |
-| `NEXT_PUBLIC_NOVU_APP_ID` | From Novu dashboard → Settings → API Keys | Yes                                     |
-| `CRON_SECRET`             | Generate: `openssl rand -hex 32`          | Yes                                     |
-| `NEWSLETTER_HMAC_SECRET`  | Generate: `openssl rand -hex 32`          | Optional (falls back to RESEND_API_KEY) |
-| `STREAM_WEBHOOK_SECRET`   | From Stream.io dashboard                  | Yes (for recording notifications)       |
+| Variable                             | Value                                     | Required                                       |
+| ------------------------------------ | ----------------------------------------- | ---------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                | `https://familiarisenow.com`              | Yes                                            |
+| `RESEND_API_KEY`                     | From Resend dashboard                     | Yes                                            |
+| `EMAIL_TRANSACTIONAL_DOMAIN`         | `mail.familiarisenow.com`                 | No (this is the default)                       |
+| `EMAIL_NEWSLETTER_DOMAIN`            | `news.familiarisenow.com`                 | No (this is the default)                       |
+| `NEXT_PUBLIC_SUPPORT_EMAIL`          | `support@familiarisenow.com`              | No (this is the default)                       |
+| `CONTACT_INBOX_ADDRESS`              | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`   | No                                             |
+| `BILLING_EMAIL`                      | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`   | No                                             |
+| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | Omitted from the footer when unset        | No                                             |
+| `NOVU_SECRET_KEY`                    | From Novu dashboard → Settings → API Keys | Yes                                            |
+| `NEXT_PUBLIC_NOVU_APP_ID`            | From Novu dashboard → Settings → API Keys | Yes                                            |
+| `CRON_SECRET`                        | Generate: `openssl rand -hex 32`          | Yes                                            |
+| `WAITLIST_HMAC_SECRET`               | Generate: `openssl rand -hex 32`          | Yes (there is no fallback to `RESEND_API_KEY`) |
+| `STREAM_WEBHOOK_SECRET`              | From Stream.io dashboard                  | Yes (for recording notifications)              |
 
 **Generate secrets locally:**
 
 ```bash
 # Run these and copy the output
 openssl rand -hex 32  # → CRON_SECRET
-openssl rand -hex 32  # → NEWSLETTER_HMAC_SECRET
+openssl rand -hex 32  # → WAITLIST_HMAC_SECRET
 ```
 
 ---

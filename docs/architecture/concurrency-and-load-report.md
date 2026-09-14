@@ -2,7 +2,7 @@
 
 **Generated:** 2026-06-11  
 **Stack:** Next.js 15 · Supabase (PostgreSQL + Supavisor) · Netlify · Upstash Redis  
-**Scope:** Pre-MVP; all data is mock/dev data in a shared Supabase project  
+**Scope:** Pre-MVP; all data is mock/dev data in a shared Supabase project
 
 ---
 
@@ -55,21 +55,21 @@ The GitHub Actions cron layer is the platform's substitute for a job queue. It i
 
 These are the concrete constraints imposed by the hosting and database providers, not by the application code. Every load-testing exercise should be designed to find where the platform hits these walls.
 
-| Constraint | Value | Tier | Risk Level |
-|---|---|---|---|
-| Netlify function timeout | 10 seconds | Free | 🔴 Will fail on slow DB queries |
-| Netlify function timeout | 26 seconds | Pro/Business | 🟡 Adequate for most operations |
-| Netlify background function timeout | 15 minutes | Pro+ | 🟢 For long-running jobs |
-| Netlify concurrent invocations | **125 per site** | All paid | 🟡 Flash-sale ceiling |
-| Netlify function memory | 1,024 MB | All plans | 🟢 Sufficient |
-| Netlify cold start latency | ~3 seconds | All plans | 🟡 Affects first-user UX |
-| Supabase direct connections | **60** | Free + Pro Micro | 🔴 Primary bottleneck |
-| Supabase Supavisor pool | **200** | Free | 🟡 |
-| Supabase Supavisor pool | Dedicated (scales with compute) | Pro+ | 🟢 |
-| Supavisor sustained TPS (benchmarked) | ~21,700 TPS | Single node | 🟢 Plenty for MVP |
-| Supabase realtime concurrent users | 200 | Free | 🟡 |
-| Supabase realtime concurrent users | 500 | Pro | 🟢 |
-| Upstash Redis REST latency | ~100–200 ms per call | All plans | 🟡 Adds latency on lock-heavy paths |
+| Constraint                            | Value                           | Tier             | Risk Level                          |
+| ------------------------------------- | ------------------------------- | ---------------- | ----------------------------------- |
+| Netlify function timeout              | 10 seconds                      | Free             | 🔴 Will fail on slow DB queries     |
+| Netlify function timeout              | 26 seconds                      | Pro/Business     | 🟡 Adequate for most operations     |
+| Netlify background function timeout   | 15 minutes                      | Pro+             | 🟢 For long-running jobs            |
+| Netlify concurrent invocations        | **125 per site**                | All paid         | 🟡 Flash-sale ceiling               |
+| Netlify function memory               | 1,024 MB                        | All plans        | 🟢 Sufficient                       |
+| Netlify cold start latency            | ~3 seconds                      | All plans        | 🟡 Affects first-user UX            |
+| Supabase direct connections           | **60**                          | Free + Pro Micro | 🔴 Primary bottleneck               |
+| Supabase Supavisor pool               | **200**                         | Free             | 🟡                                  |
+| Supabase Supavisor pool               | Dedicated (scales with compute) | Pro+             | 🟢                                  |
+| Supavisor sustained TPS (benchmarked) | ~21,700 TPS                     | Single node      | 🟢 Plenty for MVP                   |
+| Supabase realtime concurrent users    | 200                             | Free             | 🟡                                  |
+| Supabase realtime concurrent users    | 500                             | Pro              | 🟢                                  |
+| Upstash Redis REST latency            | ~100–200 ms per call            | All plans        | 🟡 Adds latency on lock-heavy paths |
 
 ### What these numbers mean in practice
 
@@ -93,16 +93,16 @@ The lock implementation includes a circuit breaker: after 5 consecutive Redis fa
 
 Eight rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
 
-| Endpoint | Limit | Window | Key |
-|---|---|---|---|
-| `POST /api/auth/sign-in,sign-up,forget-password` | 10 requests | 15 minutes | IP |
-| `GET /api/user/consultants` | 60 requests | 1 minute | IP |
-| `GET /api/trials/check-eligibility` | 100 requests | 1 hour | IP |
-| `POST /api/newsletter/subscribe` | 30 requests | 1 hour | IP |
-| `GET /api/scheduling/availability/*` | 60 requests | 1 minute | IP |
-| `POST /api/organizations/.../invitations/accept` | 30 requests | 1 minute | IP |
-| `GET /api/auth/sso/domain-check` | 60 requests | 1 hour | IP |
-| `POST /api/checkout` | 5 requests | 1 minute | User ID |
+| Endpoint                                         | Limit        | Window     | Key     |
+| ------------------------------------------------ | ------------ | ---------- | ------- |
+| `POST /api/auth/sign-in,sign-up,forget-password` | 10 requests  | 15 minutes | IP      |
+| `GET /api/user/consultants`                      | 60 requests  | 1 minute   | IP      |
+| `GET /api/trials/check-eligibility`              | 100 requests | 1 hour     | IP      |
+| `POST /api/newsletter/subscribe`                 | 30 requests  | 1 hour     | IP      |
+| `GET /api/scheduling/availability/*`             | 60 requests  | 1 minute   | IP      |
+| `POST /api/organizations/.../invitations/accept` | 30 requests  | 1 minute   | IP      |
+| `GET /api/auth/sso/domain-check`                 | 60 requests  | 1 hour     | IP      |
+| `POST /api/checkout`                             | 5 requests   | 1 minute   | User ID |
 
 All rules are configured to fail open: if Upstash is unreachable, the request passes rather than being blocked. This is the correct choice for availability, but it means the rate limit does not protect against a Redis outage coinciding with a brute-force attempt.
 
@@ -165,11 +165,11 @@ The following risks are ordered by estimated impact at launch-scale load. The mi
 
 **Acceptable pre-launch.** At pre-MVP scale this is not a blocker. Post-MVP, this is the primary candidate for Inngest's durable step execution, which would fan out one Inngest function per org and process them in parallel with automatic retries.
 
-### Risk 5 — Email Dispatch Without Retry (Severity: MEDIUM)
+### Risk 5 — Email Dispatch Without Retry (Severity: MEDIUM, superseded by #474 and #1298)
 
-**What can go wrong.** Email sending via Resend is implemented as direct `async` calls in `lib/email.ts`. If Resend returns a transient error (5xx, timeout, rate limit), the call throws, the error is logged, and the email is silently dropped. There is no dead-letter queue, no retry schedule, and no admin visibility into failed emails.
+**What can go wrong (historical).** At the time this report was written, email sending via Resend was implemented as direct `async` calls in `lib/email.ts`. If Resend returned a transient error (5xx, timeout, rate limit), the call threw, the error was logged, and the email was silently dropped. There was no dead-letter queue, no retry schedule, and no admin visibility into failed emails.
 
-**Current mitigation.** None.
+**Current mitigation.** As of #474 and #1298 this risk is closed without QStash. `lib/email/deliver.ts` is now the single send core behind all eleven senders in `lib/email/index.ts`: a transient Resend failure, and a missing or invalid `RESEND_API_KEY`, are both captured to the `FailedEmail` table instead of dropped, and `jobs/email/retry-failed-emails.ts` replays a stored message on a one-minute/five-minute/thirty-minute/two-hour/eight-hour backoff, using a content-hash Idempotency-Key so a retry cannot double-send. A terminal failure (dead key, unverified domain) dead-letters on the first attempt and pages through Sentry rather than walking the ladder. See [docs/notifications/01-architecture.md](../notifications/01-architecture.md) for the current pipeline.
 
 **Acceptable pre-launch?** Marginal. Payment confirmation emails and org invitation emails are on this path. A transient Resend outage at checkout time would result in users not receiving payment confirmation — a poor experience that could generate support tickets. Post-MVP, routing email dispatch through Upstash QStash (which provides automatic retry and a delivery log) is the simplest fix.
 
@@ -237,7 +237,7 @@ Upstash QStash is the only message queue tool in this list that is architectural
 
 **Use cases where QStash would immediately improve reliability:**
 
-1. **Email retry queue.** Currently, `lib/email.ts` calls Resend directly and silently drops emails on transient errors. Replacing these calls with a `qstash.publishJSON({ url: '/api/workers/send-email', body: payload })` enqueue would give every email up to 5 automatic retries with exponential backoff and a delivery log in the QStash dashboard.
+1. **Email retry queue — superseded.** This risk (originally: `lib/email.ts` calling Resend directly and silently dropping emails on transient errors) is closed by #474 and #1298 without QStash. `lib/email/deliver.ts` now dead-letters a failed or unconfigured send into the `FailedEmail` table, and `jobs/email/retry-failed-emails.ts` replays it on a fixed backoff schedule with a content-hash idempotency key, which is the delivery-log-plus-retry behavior a QStash enqueue would have added.
 
 2. **Outbound webhook reliability.** The current outbound webhook worker (`lib/enterprise/outbound-webhooks/worker.ts`) runs in a cron every minute and processes up to 50 pending rows. QStash could replace the polling loop: when a webhook delivery is created, enqueue it to QStash immediately rather than waiting for the next cron tick. This reduces delivery latency from up to 60 seconds to near-zero.
 
@@ -315,10 +315,10 @@ const checkoutTrend = new Trend("checkout_duration");
 // Adjust vus and duration for more aggressive tests.
 export const options = {
   stages: [
-    { duration: "30s", target: 20 },   // warm-up ramp
-    { duration: "60s", target: 50 },   // sustained load
-    { duration: "30s", target: 100 },  // spike test
-    { duration: "30s", target: 0 },    // ramp down
+    { duration: "30s", target: 20 }, // warm-up ramp
+    { duration: "60s", target: 50 }, // sustained load
+    { duration: "30s", target: 100 }, // spike test
+    { duration: "30s", target: 0 }, // ramp down
   ],
   thresholds: {
     // 95th percentile response time must be under 3 seconds
@@ -349,14 +349,14 @@ export function setup() {
     const loginRes = http.post(
       `${BASE_URL}/api/auth/sign-in/email`,
       JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
-      { headers: { "Content-Type": "application/json" } }
+      { headers: { "Content-Type": "application/json" } },
     );
     const cookie = loginRes.cookies["better-auth.session_token"]?.[0]?.value;
     if (!cookie) {
       // Fail fast: without a session every request 401s and the run
       // measures nothing but noise.
       throw new Error(
-        `setup login ${i + 1}/${SESSION_POOL_SIZE} failed (status ${loginRes.status}) — check TEST_EMAIL/TEST_PASSWORD against ${BASE_URL}`
+        `setup login ${i + 1}/${SESSION_POOL_SIZE} failed (status ${loginRes.status}) — check TEST_EMAIL/TEST_PASSWORD against ${BASE_URL}`,
       );
     }
     sessions.push(cookie);
@@ -375,7 +375,7 @@ export default function (data) {
   group("slot_availability", function () {
     const res = http.get(
       `${BASE_URL}/api/scheduling/availability/${CONSULTANT_ID}`,
-      { headers }
+      { headers },
     );
     slotAvailabilityTrend.add(res.timings.duration);
     const ok = check(res, {
@@ -413,10 +413,9 @@ export default function (data) {
 
   // ── 3. Consultant search (public, rate-limited 60/min/IP) ──────────────────
   group("consultant_search", function () {
-    const res = http.get(
-      `${BASE_URL}/api/user/consultants?limit=20&page=1`,
-      { headers }
-    );
+    const res = http.get(`${BASE_URL}/api/user/consultants?limit=20&page=1`, {
+      headers,
+    });
     const ok = check(res, {
       "search 200": (r) => r.status === 200,
     });
@@ -444,13 +443,15 @@ export function handleSummary(data) {
     stdout: JSON.stringify(
       {
         vus_max: data.metrics.vus_max?.values?.max,
-        http_req_duration_p95: data.metrics.http_req_duration?.values?.["p(95)"],
+        http_req_duration_p95:
+          data.metrics.http_req_duration?.values?.["p(95)"],
         error_rate: data.metrics.errors?.values?.rate,
         total_requests: data.metrics.http_reqs?.values?.count,
-        slot_availability_p95: data.metrics.slot_availability_duration?.values?.["p(95)"],
+        slot_availability_p95:
+          data.metrics.slot_availability_duration?.values?.["p(95)"],
       },
       null,
-      2
+      2,
     ),
   };
 }
@@ -524,7 +525,7 @@ export default function () {
         "Content-Type": "application/json",
         Cookie: `better-auth.session_token=${AUTH_TOKEN}`,
       },
-    }
+    },
   );
 
   if (res.status === 201) created.add(1);
@@ -545,13 +546,15 @@ export function handleSummary(data) {
   return {
     stdout: JSON.stringify(
       {
-        result: pass ? "PASS — exactly 1 booking succeeded" : "FAIL — race condition detected",
+        result: pass
+          ? "PASS — exactly 1 booking succeeded"
+          : "FAIL — race condition detected",
         created: c,
         conflicted: x,
         unexpected: o,
       },
       null,
-      2
+      2,
     ),
   };
 }
@@ -564,9 +567,9 @@ export function handleSummary(data) {
 name: Load Test (Smoke)
 
 on:
-  workflow_dispatch:         # manual trigger only — do not run on every PR
+  workflow_dispatch: # manual trigger only — do not run on every PR
   schedule:
-    - cron: "0 6 * * 1"      # optional: weekly Monday 6 AM UTC
+    - cron: "0 6 * * 1" # optional: weekly Monday 6 AM UTC
 
 jobs:
   smoke:
@@ -667,17 +670,17 @@ At sustained production load (>1,000 daily active users, >10,000 bookings per mo
 
 ## Appendix A: External Service Throughput Reference
 
-| Service | Limit | Plan | Notes |
-|---|---|---|---|
-| Resend | 100 emails/day | Free | $20/month for 50k/month |
-| Upstash Redis | 10,000 commands/day | Free | $10/month for 10M/month |
-| Upstash QStash | 1,000 messages/day | Free | $1 per 100k messages |
-| Stream.io | 100 MAU, 5 GB storage | Free | Scales with usage |
-| Novu | 30,000 events/month | Free | Cloud-hosted |
-| Razorpay | No published QPS limit | Standard | Contact support for burst limits |
-| Stripe | No published QPS limit | Standard | 25 events/second on webhooks by default |
-| BetterStack | 1 monitor, 1 status page | Free | Paid tiers from $20/month |
+| Service        | Limit                    | Plan     | Notes                                   |
+| -------------- | ------------------------ | -------- | --------------------------------------- |
+| Resend         | 100 emails/day           | Free     | $20/month for 50k/month                 |
+| Upstash Redis  | 10,000 commands/day      | Free     | $10/month for 10M/month                 |
+| Upstash QStash | 1,000 messages/day       | Free     | $1 per 100k messages                    |
+| Stream.io      | 100 MAU, 5 GB storage    | Free     | Scales with usage                       |
+| Novu           | 30,000 events/month      | Free     | Cloud-hosted                            |
+| Razorpay       | No published QPS limit   | Standard | Contact support for burst limits        |
+| Stripe         | No published QPS limit   | Standard | 25 events/second on webhooks by default |
+| BetterStack    | 1 monitor, 1 status page | Free     | Paid tiers from $20/month               |
 
 ---
 
-*Report generated from a six-agent codebase scan and web research pass on 2026-06-11. All platform limits should be verified against current provider documentation before a production capacity planning exercise, as these limits change with plan updates.*
+_Report generated from a six-agent codebase scan and web research pass on 2026-06-11. All platform limits should be verified against current provider documentation before a production capacity planning exercise, as these limits change with plan updates._
