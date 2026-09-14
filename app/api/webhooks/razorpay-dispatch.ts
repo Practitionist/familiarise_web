@@ -467,14 +467,19 @@ export async function processRazorpayWebhookEvent(
         `Razorpay webhook ${eventId} is permanently unprocessable:`,
         detail,
       );
-      reportSentryError(handlerError, {
-        subsystem: "payments",
-        op: "razorpay.schema_mismatch",
-        expected: true,
-        level: "warning",
-        tags: { provider: "razorpay" },
-        contexts: { dispatch: { eventType, eventId, detail } },
-      });
+      // A synthetic error, as the Stream dispatch does: the ZodError itself
+      // carries received values and must not ride into Sentry's `thrown`.
+      reportSentryError(
+        new Error(`Razorpay ${eventType} payload failed schema validation`),
+        {
+          subsystem: "payments",
+          op: "razorpay.schema_mismatch",
+          expected: true,
+          level: "warning",
+          tags: { provider: "razorpay" },
+          contexts: { dispatch: { eventType, eventId, detail } },
+        },
+      );
     } else {
       processingError =
         handlerError instanceof Error

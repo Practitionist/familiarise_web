@@ -317,6 +317,29 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     expect(refundTable.update).not.toHaveBeenCalled();
     expect(transient.failedUnknownId).toBe(0);
     expect(transient.errors).toHaveLength(1);
+
+    // A webhook settled the row between the select and the CAS: the claim
+    // loses (count 0), so nothing is counted, paged, or errored.
+    jest.clearAllMocks();
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([row]);
+    refundTable.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockGet.mockRejectedValueOnce(
+      new RefundError(
+        "invalid request sent",
+        "BAD_REQUEST_ERROR",
+        "RAZORPAY",
+        undefined,
+        "input_validation_failed",
+      ),
+    );
+
+    const lost = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).toHaveBeenCalledTimes(1);
+    expect(lost.failedUnknownId).toBe(0);
+    expect(lost.failedCount).toBe(0);
+    expect(lost.errors).toEqual([]);
+    expect(mockPage).not.toHaveBeenCalled();
   });
 
   // #1458 — with STRIPE_ENABLED unset, the Stripe client is never built, so
